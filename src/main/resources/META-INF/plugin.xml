@@ -1,0 +1,28 @@
+<idea-plugin>
+    <id>dev.alexk.claude-studio-tabs</id>
+    <name>Claude Studio Tabs</name>
+    <vendor>Alexk413x</vendor>
+    <description><![CDATA[
+    Opens a new Claude Code session in an editor tab: from a toolbar button, the Tools menu,
+    or a loopback-only HTTP request another Claude session can send.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.terminal</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <httpRequestHandler implementation="dev.alexk.claudestudiotabs.ClaudeTabHttpHandler"/>
+        <postStartupActivity implementation="dev.alexk.claudestudiotabs.EndpointFileActivity"/>
+    </extensions>
+
+    <actions>
+        <action id="ClaudeStudioTabs.NewClaudeTab"
+                class="dev.alexk.claudestudiotabs.NewClaudeTabAction"
+                text="New Claude Tab"
+                description="Open a new Claude Code session in an editor tab, in the project root"
+                icon="AllIcons.Debugger.Console">
+            <add-to-group group-id="ToolsMenu" anchor="first"/>
+            <add-to-group group-id="MainToolbarRight" anchor="first"/>
+        </action>
+    </actions>
+</idea-plugin>
