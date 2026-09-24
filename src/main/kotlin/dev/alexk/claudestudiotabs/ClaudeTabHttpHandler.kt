@@ -6,6 +6,7 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.wm.IdeFocusManager
+import com.intellij.util.concurrency.AppExecutorUtil
 import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelFutureListener
 import io.netty.channel.ChannelHandlerContext
@@ -18,8 +19,11 @@ import io.netty.handler.codec.http.QueryStringDecoder
 import org.jetbrains.ide.HttpRequestHandler
 import java.net.InetSocketAddress
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 const val ENDPOINT_PATH = "/claude-studio-tabs/open"
+const val START_TIMEOUT_SECONDS = 10L
 
 class ClaudeTabHttpHandler : HttpRequestHandler() {
 
@@ -38,7 +42,14 @@ class ClaudeTabHttpHandler : HttpRequestHandler() {
             respond(context, 400, error(e.message ?: "bad request"))
             return true
         }
+        val claimed = AtomicBoolean(false)
+        AppExecutorUtil.getAppScheduledExecutorService().schedule({
+            if (claimed.compareAndSet(false, true)) {
+                respond(context, 503, error("the IDE did not respond in $START_TIMEOUT_SECONDS s, likely a modal dialog; nothing was opened"))
+            }
+        }, START_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         ApplicationManager.getApplication().invokeLater {
+            if (!claimed.compareAndSet(false, true)) return@invokeLater
             val project = chooseProject(open.path)
             if (project == null) {
                 respond(context, 409, error("no open project to host the tab"))

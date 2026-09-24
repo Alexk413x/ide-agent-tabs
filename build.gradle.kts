@@ -56,7 +56,11 @@ intellijPlatformTesting.runIde.register("runIdeWithClaude") {
             (this as JavaExec).environment.keys.removeIf { inherited.matches(it) }
         }
         dependsOn(claudeCodePluginZip)
-        args(layout.projectDirectory.asFile.absolutePath)
+        // A plain folder, not this Gradle repo: opening the repo starts an Android Gradle sync that stops
+        // on a missing-SDK dialog, and a modal dialog blocks every tab the plugin opens.
+        val sandboxProject = layout.buildDirectory.dir("sandbox-project").get().asFile
+        doFirst { sandboxProject.mkdirs() }
+        args(sandboxProject.absolutePath)
         jvmArgs(
             "-Ddisable.android.first.run=true",
             "-Didea.trust.all.projects=true",
