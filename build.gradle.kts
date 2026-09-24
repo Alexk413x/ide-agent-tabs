@@ -36,13 +36,25 @@ intellijPlatform {
     instrumentCode = false
 }
 
-val claudeCodePlugin = providers.gradleProperty("claudeCodePluginPath")
+val claudeCodePluginZip = tasks.register<Zip>("claudeCodePluginZip") {
+    from(providers.gradleProperty("claudeCodePluginPath")) {
+        into("claude-code-jetbrains-plugin")
+    }
+    archiveFileName = "claude-code-jetbrains-plugin.zip"
+    destinationDirectory = layout.buildDirectory.dir("sandbox-plugins")
+}
 
 intellijPlatformTesting.runIde.register("runIdeWithClaude") {
     plugins {
-        localPlugin(claudeCodePlugin)
+        localPlugin(claudeCodePluginZip.flatMap { it.archiveFile })
     }
     task {
+        // Launched from a Claude Code session, the sandbox would inherit NO_COLOR (which turns claude's
+        // color off) and CLAUDE_CODE_SSE_PORT (which ties sandbox sessions to the outer IDE's plugin).
+        val inherited = Regex("^(NO_COLOR|CLAUDECODE|CLAUDE_.*|ENABLE_IDE_INTEGRATION)$")
+        doFirst {
+            (this as JavaExec).environment.keys.removeIf { inherited.matches(it) }
+        }
         args(layout.projectDirectory.asFile.absolutePath)
         jvmArgs(
             "-Ddisable.android.first.run=true",
