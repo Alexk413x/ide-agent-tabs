@@ -1,11 +1,13 @@
 package dev.alexk.claudestudiotabs
 
-import com.intellij.execution.configurations.PathEnvironmentVariableUtil
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.project.Project
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.util.concurrency.annotations.RequiresEdt
+import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 
 const val PROMPT_ENV = "CLAUDE_STUDIO_TABS_PROMPT"
 const val STARTUP_ENV = "JEDITERM_SOURCE"
@@ -36,11 +38,21 @@ object ClaudeTabLauncher {
         }
     }
 
-    private fun shell(): String =
-        PathEnvironmentVariableUtil.findInPath("pwsh.exe")?.path
-            ?: PathEnvironmentVariableUtil.findInPath("powershell.exe")?.path
-            ?: "powershell.exe"
+    private fun shell(): String {
+        val path = System.getenv("PATH").orEmpty()
+        return findOnPath(path, "pwsh.exe") ?: findOnPath(path, "powershell.exe") ?: "powershell.exe"
+    }
 }
+
+// Not PathEnvironmentVariableUtil.findInPath: it misses the Microsoft Store pwsh.exe under WindowsApps,
+// and the tab then starts Windows PowerShell 5.1 instead.
+fun findOnPath(path: String, executable: String): String? =
+    path.split(File.pathSeparatorChar)
+        .map { it.trim().trim('"') }
+        .filter { it.isNotEmpty() }
+        .firstNotNullOfOrNull { dir ->
+            runCatching { Path.of(dir, executable) }.getOrNull()?.takeIf { Files.exists(it) }?.toString()
+        }
 
 class ClaudeLaunch(val command: List<String>, val env: Map<String, String>)
 

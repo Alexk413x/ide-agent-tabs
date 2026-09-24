@@ -10,7 +10,16 @@ import java.util.concurrent.TimeUnit
 
 class ClaudeCommandTest {
 
-    private val pwsh: Path? = System.getenv("PATH").split(';').map { Path.of(it, "pwsh.exe") }.firstOrNull { Files.exists(it) }
+    private val pwsh: Path? = findOnPath(System.getenv("PATH"), "pwsh.exe")?.let { Path.of(it) }
+
+    @Test
+    fun `finds an executable on PATH and skips blank, quoted and invalid entries`() {
+        val dir = Files.createTempDirectory("cst-path")
+        Files.createFile(dir.resolve("tool.exe"))
+        val path = listOf("", "  ", "C:\\no\\such\\dir", "bad<>|dir", "\"$dir\"").joinToString(";")
+        assertEquals(dir.resolve("tool.exe").toString(), findOnPath(path, "tool.exe"))
+        assertEquals(null, findOnPath(path, "absent.exe"))
+    }
 
     @Test
     fun `shell gets no arguments so the terminal's integration arguments stay intact`() {
