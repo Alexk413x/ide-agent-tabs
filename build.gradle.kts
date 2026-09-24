@@ -35,3 +35,20 @@ intellijPlatform {
     buildSearchableOptions = false
     instrumentCode = false
 }
+
+val claudeCodePlugin = providers.gradleProperty("claudeCodePluginPath")
+
+intellijPlatformTesting.runIde.register("runIdeWithClaude") {
+    plugins {
+        localPlugin(claudeCodePlugin)
+    }
+    task {
+        args(layout.projectDirectory.asFile.absolutePath)
+        jvmArgs(
+            "-Ddisable.android.first.run=true",
+            "-Didea.trust.all.projects=true",
+            "-Djb.consents.confirmation.enabled=false",
+            "-Djb.privacy.policy.text=<!--999.999-->",
+        )
+    }
+}

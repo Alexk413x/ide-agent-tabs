@@ -1,6 +1,7 @@
 package dev.alexk.claudestudiotabs
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.nio.file.Files
@@ -9,30 +10,46 @@ import java.util.concurrent.TimeUnit
 
 class ClaudeCommandTest {
 
+    private val pwsh: Path? = System.getenv("PATH").split(';').map { Path.of(it, "pwsh.exe") }.firstOrNull { Files.exists(it) }
+
     @Test
-    fun `plain command runs claude and keeps the shell`() {
-        assertEquals(listOf("pwsh.exe", "-NoLogo", "-NoExit", "-Command", "claude"), claudeCommand("pwsh.exe", withPrompt = false))
+    fun `shell gets no arguments so the terminal's integration arguments stay intact`() {
+        val launch = claudeLaunch("pwsh.exe", prompt = null)
+        assertEquals(listOf("pwsh.exe"), launch.command)
+        assertEquals(mapOf(STARTUP_ENV to "claude"), launch.env)
     }
 
     @Test
-    fun `prompt reaches a native program as one intact argument`() {
-        val pwsh = System.getenv("PATH").split(';').map { Path.of(it, "pwsh.exe") }.firstOrNull { Files.exists(it) }
+    fun `plain launch runs claude through the real integration script`() {
+        assertEquals("0||null", runThroughIntegration(prompt = null))
+    }
+
+    @Test
+    fun `prompt reaches a native program as one intact argument through the real integration script`() {
+        val prompt = """Say "hi" & run $(whoami); `tick` 'quote' --flag é ✓ 🙂
+second line"""
+        assertEquals("1|$prompt|null", runThroughIntegration(prompt))
+    }
+
+    private fun runThroughIntegration(prompt: String?): String {
         assumeTrue("pwsh.exe not on PATH", pwsh != null)
-        val echo = Files.createTempFile("echo", ".ps1")
+        val integration = javaClass.classLoader.getResource("shell-integrations/powershell/powershell-integration.ps1")
+        assertNotNull("terminal plugin's PowerShell integration script is not on the test classpath", integration)
+        val dir = Files.createTempDirectory("cst-integration")
+        val script = dir.resolve("powershell-integration.ps1")
+        integration!!.openStream().use { Files.copy(it, script) }
+
+        val echo = dir.resolve("echo.ps1")
         Files.writeString(echo, """
             ${'$'}text = "${'$'}(${'$'}args.Count)|${'$'}(${'$'}args[0])|${'$'}(${'$'}env:$PROMPT_ENV ?? 'null')"
             ${'$'}bytes = [Text.Encoding]::UTF8.GetBytes(${'$'}text)
             [Console]::OpenStandardOutput().Write(${'$'}bytes, 0, ${'$'}bytes.Length)
         """.trimIndent(), Charsets.UTF_8)
-        val prompt = """Say "hi" & run $(whoami); `tick` 'quote' --flag é ✓ 🙂
-second line"""
 
-        val command = claudeCommand(pwsh.toString(), withPrompt = true, claude = "& '$pwsh' -NoProfile -File '$echo'")
-            .filter { it != "-NoExit" }
-        val process = ProcessBuilder(command).apply { environment()[PROMPT_ENV] = prompt }.start()
+        val launch = claudeLaunch(pwsh.toString(), prompt, claude = "& '$pwsh' -NoProfile -File '$echo'")
+        val command = launch.command + listOf("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString())
+        val process = ProcessBuilder(command).apply { environment().putAll(launch.env) }.start()
         process.waitFor(60, TimeUnit.SECONDS)
-        val out = process.inputStream.readAllBytes().toString(Charsets.UTF_8)
-
-        assertEquals("1|$prompt|null", out)
+        return process.inputStream.readAllBytes().toString(Charsets.UTF_8)
     }
 }

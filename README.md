@@ -35,8 +35,12 @@ Send one request:
 ```powershell
 $endpoint = Get-Content "$HOME\.claude-studio-tabs\endpoint.json" | ConvertFrom-Json
 $body = @{ path = 'C:\path\to\repo'; prompt = 'Your first message' } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri $endpoint.url -ContentType 'application/json' -Body $body
+Invoke-RestMethod -Method Post -Uri $endpoint.url -ContentType 'application/json' -Body $body -UserAgent 'claude-studio-tabs'
 ```
+
+Set a User-Agent that does not start with `Mozilla/5.0`. The IDE's built-in server treats such a `POST`
+without an `Origin` header as a browser write and answers 404 before the plugin sees it.
+`Invoke-WebRequest` and `Invoke-RestMethod` send a `Mozilla/5.0` User-Agent by default; `curl` does not.
 
 - `path` (required): an absolute path to an existing folder. The session starts there.
 - `prompt` (optional, up to 30,000 characters): passed as `claude "<prompt>"`, so it becomes the
