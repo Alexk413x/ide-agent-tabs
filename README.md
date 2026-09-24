@@ -57,6 +57,7 @@ in the last focused project window.
 | 405 | The method was not `POST`. |
 | 409 | No project is open. |
 | 415 | `Content-Type` was not `application/json`. |
+| 503 | The IDE did not start the tab within 10 seconds, usually because a modal dialog is open. Nothing opens later. |
 
 The `Origin`, `Referer` and `Content-Type` rules keep web pages from opening sessions: a browser cannot
 send a cross-origin JSON `POST` without a preflight, and it always sends `Origin` on the request.
