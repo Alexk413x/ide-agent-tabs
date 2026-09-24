@@ -46,7 +46,7 @@ val claudeCodePluginZip = tasks.register<Zip>("claudeCodePluginZip") {
 
 intellijPlatformTesting.runIde.register("runIdeWithClaude") {
     plugins {
-        localPlugin(claudeCodePluginZip.flatMap { it.archiveFile })
+        localPlugin(layout.buildDirectory.file("sandbox-plugins/claude-code-jetbrains-plugin.zip").get().asFile)
     }
     task {
         // Launched from a Claude Code session, the sandbox would inherit NO_COLOR (which turns claude's
@@ -55,6 +55,7 @@ intellijPlatformTesting.runIde.register("runIdeWithClaude") {
         doFirst {
             (this as JavaExec).environment.keys.removeIf { inherited.matches(it) }
         }
+        dependsOn(claudeCodePluginZip)
         args(layout.projectDirectory.asFile.absolutePath)
         jvmArgs(
             "-Ddisable.android.first.run=true",
