@@ -5,6 +5,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
@@ -19,6 +20,13 @@ class ClaudeCommandTest {
         val path = listOf("", "  ", "C:\\no\\such\\dir", "bad<>|dir", "\"$dir\"").joinToString(";")
         assertEquals(dir.resolve("tool.exe").toString(), findOnPath(path, "tool.exe"))
         assertEquals(null, findOnPath(path, "absent.exe"))
+    }
+
+    @Test
+    fun `finds the Microsoft Store pwsh alias`() {
+        val windowsApps = Path.of(System.getenv("LOCALAPPDATA").orEmpty(), "Microsoft", "WindowsApps")
+        assumeTrue("Store pwsh not installed", Files.exists(windowsApps.resolve("pwsh.exe"), LinkOption.NOFOLLOW_LINKS))
+        assertEquals(windowsApps.resolve("pwsh.exe").toString(), findOnPath(windowsApps.toString(), "pwsh.exe"))
     }
 
     @Test

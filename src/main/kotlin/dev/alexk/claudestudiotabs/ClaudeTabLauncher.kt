@@ -7,6 +7,7 @@ import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.util.UUID
 
@@ -54,14 +55,15 @@ object ClaudeTabLauncher {
     }
 }
 
-// Not PathEnvironmentVariableUtil.findInPath: it misses the Microsoft Store pwsh.exe under WindowsApps,
-// and the tab then starts Windows PowerShell 5.1 instead.
+// The Microsoft Store pwsh.exe under WindowsApps is an app execution alias that the JVM cannot follow, so
+// PathEnvironmentVariableUtil.findInPath and a following Files.exists miss it and the tab starts Windows
+// PowerShell 5.1. Checking the link itself finds it.
 fun findOnPath(path: String, executable: String): String? =
     path.split(File.pathSeparatorChar)
         .map { it.trim().trim('"') }
         .filter { it.isNotEmpty() }
         .firstNotNullOfOrNull { dir ->
-            runCatching { Path.of(dir, executable) }.getOrNull()?.takeIf { Files.exists(it) }?.toString()
+            runCatching { Path.of(dir, executable) }.getOrNull()?.takeIf { Files.exists(it, LinkOption.NOFOLLOW_LINKS) }?.toString()
         }
 
 class ClaudeLaunch(val command: List<String>, val env: Map<String, String>)
