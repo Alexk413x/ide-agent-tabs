@@ -51,6 +51,47 @@ class OpenRequestTest {
     }
 
     @Test
+    fun `parses args and env`() {
+        val path = dir.toString().replace("\\", "\\\\")
+        val request = OpenRequest.parse("""{"path":"$path","args":["--plugin-dir","C:\\a b"],"env":{"FOO":"x y","EMPTY":""}}""")
+        assertEquals(listOf("--plugin-dir", "C:\\a b"), request.args)
+        assertEquals(mapOf("FOO" to "x y", "EMPTY" to ""), request.env)
+    }
+
+    @Test
+    fun `args and env are optional`() {
+        val request = OpenRequest.parse(body(dir.toString()))
+        assertEquals(emptyList<String>(), request.args)
+        assertEquals(emptyMap<String, String>(), request.env)
+        val path = dir.toString().replace("\\", "\\\\")
+        assertEquals(emptyList<String>(), OpenRequest.parse("""{"path":"$path","args":null,"env":null}""").args)
+    }
+
+    @Test
+    fun `rejects bad args and env`() {
+        val path = dir.toString().replace("\\", "\\\\")
+        val bad = listOf(
+            """"args":"--x"""",
+            """"args":[1]""",
+            """"args":[["x"]]""",
+            """"env":["A"]""",
+            """"env":{"A":1}""",
+            """"env":{"A=B":"x"}""",
+            """"env":{"A B":"x"}""",
+            """"env":{"":"x"}""",
+            """"env":{"$STARTUP_ENV":"x"}""",
+            """"env":{"claude_studio_tabs_id":"x"}""",
+        )
+        for (field in bad) {
+            val body = """{"path":"$path",$field}"""
+            assertThrows(body, IllegalArgumentException::class.java) { OpenRequest.parse(body) }
+        }
+        assertThrows(IllegalArgumentException::class.java) { OpenRequest.of(dir.toString(), null, List(MAX_ENTRIES + 1) { "x" }) }
+        assertThrows(IllegalArgumentException::class.java) { OpenRequest.of(dir.toString(), null, listOf("x".repeat(MAX_PROMPT_CHARS + 1))) }
+        assertThrows(IllegalArgumentException::class.java) { OpenRequest.of(dir.toString(), null, env = mapOf("A" to "x\u0000y")) }
+    }
+
+    @Test
     fun `close takes a string id`() {
         assertEquals("abc", parseCloseId("""{"id":"abc"}"""))
         for (bad in listOf("", "{}", """{"id":""}""", """{"id":"  "}""", """{"id":7}""", "[]", "nope")) {

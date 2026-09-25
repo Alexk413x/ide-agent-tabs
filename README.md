@@ -71,6 +71,20 @@ $tab.id
 - `path` (required): an absolute path to an existing folder. The session starts there.
 - `prompt` (optional, up to 30,000 characters): passed as `claude "<prompt>"`, so it becomes the
   session's first message.
+- `args` (optional, an array of up to 64 strings): extra `claude` arguments, placed before the prompt,
+  for example `["--plugin-dir", "C:\\path\\to\\plugin"]`. Each string reaches `claude` as one argument.
+- `env` (optional, an object of up to 64 string values): environment variables set for the tab's shell
+  and the session. Names that the plugin sets itself (`CLAUDE_STUDIO_TABS_*`, `JEDITERM_SOURCE`) are
+  refused.
+
+```powershell
+$body = @{
+    path   = 'C:\path\to\repo'
+    prompt = 'Your first message'
+    args   = @('--plugin-dir', 'C:\path\to\plugin')
+    env    = @{ MY_SETTING = 'value' }
+} | ConvertTo-Json
+```
 
 The reply carries the tab's `id`, the `project` window it opened in, and the `path`. The tab opens in
 the open project that contains `path`. If no open project contains it, the tab opens in the last
