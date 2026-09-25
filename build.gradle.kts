@@ -36,6 +36,40 @@ intellijPlatform {
     instrumentCode = false
 }
 
+val pluginRepositoryDir = providers.gradleProperty("pluginRepositoryDir")
+    .orElse(providers.systemProperty("user.home").map { "$it/.claude-studio-tabs/repository" })
+
+val updatePluginsXml = tasks.register("updatePluginsXml") {
+    val out = layout.buildDirectory.file("repository/updatePlugins.xml")
+    val repoDir = pluginRepositoryDir
+    val pluginVersion = version.toString()
+    inputs.property("repoDir", repoDir)
+    inputs.property("version", pluginVersion)
+    outputs.file(out)
+    doLast {
+        val zipUrl = File(repoDir.get(), "claude-studio-tabs-$pluginVersion.zip").toPath().toUri()
+        out.get().asFile.writeText(
+            """
+            <plugins>
+              <plugin id="dev.alexk.claude-studio-tabs" url="$zipUrl" version="$pluginVersion">
+                <idea-version since-build="262" until-build="262.*"/>
+                <name>Claude Studio Tabs</name>
+                <vendor>Alexk413x</vendor>
+                <description>Opens a new Claude Code session in an editor tab.</description>
+              </plugin>
+            </plugins>
+            """.trimIndent() + "\n"
+        )
+    }
+}
+
+tasks.register<Sync>("publishLocal") {
+    description = "Copies the plugin zip and updatePlugins.xml into the local plugin repository."
+    from(tasks.named("buildPlugin"))
+    from(updatePluginsXml)
+    into(pluginRepositoryDir)
+}
+
 val claudeCodePluginZip = tasks.register<Zip>("claudeCodePluginZip") {
     from(providers.gradleProperty("claudeCodePluginPath")) {
         into("claude-code-jetbrains-plugin")
