@@ -62,6 +62,7 @@ intellijPlatformTesting.runIde.register("runIdeWithClaude") {
         doFirst { sandboxProject.mkdirs() }
         args(sandboxProject.absolutePath)
         jvmArgs(
+            "-Dclaude.studio.tabs.endpoint.file=${layout.buildDirectory.file("sandbox-endpoint.json").get().asFile.absolutePath}",
             "-Ddisable.android.first.run=true",
             "-Didea.trust.all.projects=true",
             "-Djb.consents.confirmation.enabled=false",

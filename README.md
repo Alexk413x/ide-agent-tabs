@@ -24,7 +24,8 @@ install the plugin compiles against. A new Android Studio version is a change to
 
 ## Endpoint
 
-On startup the plugin writes `~/.claude-studio-tabs/endpoint.json`:
+On startup the plugin writes `~/.claude-studio-tabs/endpoint.json` (the sandbox from `runIdeWithClaude`
+writes `build/sandbox-endpoint.json` instead, so it never replaces the real IDE's file):
 
 ```json
 {"url":"http://127.0.0.1:63342/claude-studio-tabs/open",
