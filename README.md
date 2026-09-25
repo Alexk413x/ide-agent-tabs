@@ -22,6 +22,24 @@ Plugin from Disk**, then restart the IDE. `studioPath` in `gradle.properties` na
 install the plugin compiles against. A new Android Studio version is a change to `studioPath` and
 `untilBuild`, then a rebuild.
 
+## Updates
+
+The plugin updates from a private plugin repository on this machine, `~/.claude-studio-tabs/repository`.
+
+One-time setup: in **Settings > Plugins > ⚙ > Manage Plugin Repositories**, add
+`file:///C:/Users/Alexk/.claude-studio-tabs/repository/updatePlugins.xml`.
+
+To release a build, raise `pluginVersion` in `gradle.properties`, then run:
+
+```powershell
+.\gradlew.bat publishLocal
+```
+
+`publishLocal` builds the zip, copies it into the repository and writes `updatePlugins.xml`. The IDE
+offers the update the next time it checks, or at once from **Settings > Plugins > Installed >
+Check for Updates**. Installing an update needs an IDE restart. Set `pluginRepositoryDir` in
+`gradle.properties` to publish somewhere else.
+
 ## Endpoint
 
 On startup the plugin writes `~/.claude-studio-tabs/endpoint.json` (the sandbox from `runIdeWithClaude`
