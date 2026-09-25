@@ -24,18 +24,41 @@ object Admission {
     }
 }
 
+private fun parseObject(body: String): JsonObject {
+    val json = try {
+        JsonParser.parseString(body)
+    } catch (e: JsonSyntaxException) {
+        throw IllegalArgumentException("body is not JSON")
+    }
+    if (!json.isJsonObject) throw IllegalArgumentException("body must be a JSON object")
+    return json.asJsonObject
+}
+
+private fun JsonObject.string(name: String): String? {
+    val value = get(name) ?: return null
+    if (value.isJsonNull) return null
+    if (!value.isJsonPrimitive || !value.asJsonPrimitive.isString) {
+        throw IllegalArgumentException("$name must be a string")
+    }
+    return value.asString
+}
+
+fun parseCloseId(body: String): String {
+    val id = parseObject(body).string("id")
+    if (id.isNullOrBlank()) throw IllegalArgumentException("id is required")
+    return id
+}
+
+fun parseEmpty(body: String) {
+    if (body.isNotBlank()) parseObject(body)
+}
+
 data class OpenRequest(val path: Path, val prompt: String?) {
 
     companion object {
 
         fun parse(body: String): OpenRequest {
-            val json = try {
-                JsonParser.parseString(body)
-            } catch (e: JsonSyntaxException) {
-                throw IllegalArgumentException("body is not JSON")
-            }
-            if (!json.isJsonObject) throw IllegalArgumentException("body must be a JSON object")
-            val obj = json.asJsonObject
+            val obj = parseObject(body)
             return of(obj.string("path"), obj.string("prompt"))
         }
 
@@ -48,15 +71,6 @@ data class OpenRequest(val path: Path, val prompt: String?) {
                 throw IllegalArgumentException("prompt exceeds $MAX_PROMPT_CHARS characters")
             }
             return OpenRequest(dir.normalize(), prompt?.takeIf { it.isNotBlank() })
-        }
-
-        private fun JsonObject.string(name: String): String? {
-            val value = get(name) ?: return null
-            if (value.isJsonNull) return null
-            if (!value.isJsonPrimitive || !value.asJsonPrimitive.isString) {
-                throw IllegalArgumentException("$name must be a string")
-            }
-            return value.asString
         }
     }
 }

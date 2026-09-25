@@ -26,7 +26,9 @@ class EndpointFile : Disposable {
         if (written) return
         val port = BuiltInServerManager.getInstance().waitForStart().port
         val body = JsonObject().apply {
-            addProperty("url", "http://127.0.0.1:$port$ENDPOINT_PATH")
+            addProperty("url", "http://127.0.0.1:$port$OPEN_PATH")
+            addProperty("close", "http://127.0.0.1:$port$CLOSE_PATH")
+            addProperty("list", "http://127.0.0.1:$port$LIST_PATH")
             addProperty("port", port)
             addProperty("pid", pid)
         }

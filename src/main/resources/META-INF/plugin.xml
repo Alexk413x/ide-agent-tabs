@@ -15,6 +15,11 @@
         <postStartupActivity implementation="dev.alexk.claudestudiotabs.EndpointFileActivity"/>
     </extensions>
 
+    <projectListeners>
+        <listener class="dev.alexk.claudestudiotabs.ClaudeTabClosedListener"
+                  topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
+    </projectListeners>
+
     <actions>
         <action id="ClaudeStudioTabs.NewClaudeTab"
                 class="dev.alexk.claudestudiotabs.NewClaudeTabAction"

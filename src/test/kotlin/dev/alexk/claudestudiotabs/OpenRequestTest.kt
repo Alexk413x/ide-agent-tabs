@@ -51,6 +51,22 @@ class OpenRequestTest {
     }
 
     @Test
+    fun `close takes a string id`() {
+        assertEquals("abc", parseCloseId("""{"id":"abc"}"""))
+        for (bad in listOf("", "{}", """{"id":""}""", """{"id":"  "}""", """{"id":7}""", "[]", "nope")) {
+            assertThrows(bad, IllegalArgumentException::class.java) { parseCloseId(bad) }
+        }
+    }
+
+    @Test
+    fun `list accepts an empty body or an object`() {
+        parseEmpty("")
+        parseEmpty("{}")
+        assertThrows(IllegalArgumentException::class.java) { parseEmpty("[]") }
+        assertThrows(IllegalArgumentException::class.java) { parseEmpty("nope") }
+    }
+
+    @Test
     fun `closest base picks the deepest containing project`() {
         val a = Path.of("C:\\work")
         val b = Path.of("C:\\work\\repo")

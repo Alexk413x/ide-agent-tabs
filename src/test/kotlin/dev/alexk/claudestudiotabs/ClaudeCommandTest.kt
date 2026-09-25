@@ -23,9 +23,14 @@ class ClaudeCommandTest {
 
     @Test
     fun `shell gets no arguments so the terminal's integration arguments stay intact`() {
-        val launch = claudeLaunch("pwsh.exe", prompt = null)
+        val launch = claudeLaunch("pwsh.exe", prompt = null, tabId = "tab-1")
         assertEquals(listOf("pwsh.exe"), launch.command)
-        assertEquals(mapOf(STARTUP_ENV to "claude"), launch.env)
+        assertEquals(mapOf(STARTUP_ENV to "claude", TAB_ID_ENV to "tab-1"), launch.env)
+    }
+
+    @Test
+    fun `every launch carries its tab id so the session can close its own tab`() {
+        assertEquals("tab-2", claudeLaunch("pwsh.exe", prompt = "hi", tabId = "tab-2").env[TAB_ID_ENV])
     }
 
     @Test
@@ -55,7 +60,7 @@ second line"""
             [Console]::OpenStandardOutput().Write(${'$'}bytes, 0, ${'$'}bytes.Length)
         """.trimIndent(), Charsets.UTF_8)
 
-        val launch = claudeLaunch(pwsh.toString(), prompt, claude = "& '$pwsh' -NoProfile -File '$echo'")
+        val launch = claudeLaunch(pwsh.toString(), prompt, tabId = "tab-3", claude = "& '$pwsh' -NoProfile -File '$echo'")
         val command = launch.command + listOf("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString())
         val process = ProcessBuilder(command).apply { environment().putAll(launch.env) }.start()
         process.waitFor(60, TimeUnit.SECONDS)

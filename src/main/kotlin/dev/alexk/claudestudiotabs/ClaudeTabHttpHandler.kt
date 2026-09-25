@@ -1,5 +1,6 @@
 package dev.alexk.claudestudiotabs
 
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
@@ -22,52 +23,86 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-const val ENDPOINT_PATH = "/claude-studio-tabs/open"
+const val ENDPOINT_BASE = "/claude-studio-tabs"
+const val OPEN_PATH = "$ENDPOINT_BASE/open"
+const val CLOSE_PATH = "$ENDPOINT_BASE/close"
+const val LIST_PATH = "$ENDPOINT_BASE/list"
 const val START_TIMEOUT_SECONDS = 10L
+
+private class Reply(val status: Int, val body: JsonObject)
 
 class ClaudeTabHttpHandler : HttpRequestHandler() {
 
     override fun isSupported(request: FullHttpRequest): Boolean =
-        QueryStringDecoder(request.uri()).path() == ENDPOINT_PATH
+        QueryStringDecoder(request.uri()).path() in setOf(OPEN_PATH, CLOSE_PATH, LIST_PATH)
 
     override fun process(urlDecoder: QueryStringDecoder, request: FullHttpRequest, context: ChannelHandlerContext): Boolean {
         val remote = (context.channel().remoteAddress() as? InetSocketAddress)?.address
         Admission.check(remote, request.method().name()) { request.headers().get(it) }?.let {
-            respond(context, it.status, error(it.message))
+            respond(context, Reply(it.status, error(it.message)))
             return true
         }
-        val open = try {
-            OpenRequest.parse(request.content().toString(Charsets.UTF_8))
+        val body = request.content().toString(Charsets.UTF_8)
+        val work: () -> Reply = try {
+            when (urlDecoder.path()) {
+                OPEN_PATH -> OpenRequest.parse(body).let { { open(it) } }
+                CLOSE_PATH -> parseCloseId(body).let { { close(it) } }
+                else -> parseEmpty(body).let { { list() } }
+            }
         } catch (e: IllegalArgumentException) {
-            respond(context, 400, error(e.message ?: "bad request"))
+            respond(context, Reply(400, error(e.message ?: "bad request")))
             return true
         }
+        onEdt(context, work)
+        return true
+    }
+
+    private fun onEdt(context: ChannelHandlerContext, work: () -> Reply) {
         val claimed = AtomicBoolean(false)
         AppExecutorUtil.getAppScheduledExecutorService().schedule({
             if (claimed.compareAndSet(false, true)) {
-                respond(context, 503, error("the IDE did not respond in $START_TIMEOUT_SECONDS s, likely a modal dialog; nothing was opened"))
+                respond(context, Reply(503, error("the IDE did not respond in $START_TIMEOUT_SECONDS s, likely a modal dialog; nothing was done")))
             }
         }, START_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         ApplicationManager.getApplication().invokeLater {
             if (!claimed.compareAndSet(false, true)) return@invokeLater
-            val project = chooseProject(open.path)
-            if (project == null) {
-                respond(context, 409, error("no open project to host the tab"))
-                return@invokeLater
-            }
-            try {
-                ClaudeTabLauncher.open(project, open.path.toString(), open.prompt, focus = false)
-                respond(context, 200, JsonObject().apply {
-                    addProperty("ok", true)
-                    addProperty("project", project.name)
-                    addProperty("path", open.path.toString())
-                })
+            val reply = try {
+                work()
             } catch (e: Exception) {
-                LOG.warn("Opening a Claude tab failed", e)
-                respond(context, 500, error(e.toString()))
+                LOG.warn("Claude tab request failed", e)
+                Reply(500, error(e.toString()))
             }
+            respond(context, reply)
         }
-        return true
+    }
+
+    private fun open(request: OpenRequest): Reply {
+        val project = chooseProject(request.path) ?: return Reply(409, error("no open project to host the tab"))
+        val id = ClaudeTabLauncher.open(project, request.path.toString(), request.prompt, focus = false)
+        return Reply(200, ok().apply {
+            addProperty("id", id)
+            addProperty("project", project.name)
+            addProperty("path", request.path.toString())
+        })
+    }
+
+    private fun close(id: String): Reply {
+        val entry = ClaudeTabRegistry.getInstance().remove(id)
+            ?: return Reply(404, error("no open Claude tab with id $id; only tabs this plugin opened can be closed"))
+        ClaudeTabLauncher.close(entry)
+        return Reply(200, ok().apply { addProperty("id", id) })
+    }
+
+    private fun list(): Reply {
+        val tabs = JsonArray()
+        for (entry in ClaudeTabRegistry.getInstance().live()) {
+            tabs.add(JsonObject().apply {
+                addProperty("id", entry.id)
+                addProperty("project", entry.project.name)
+                addProperty("path", entry.path)
+            })
+        }
+        return Reply(200, ok().apply { add("tabs", tabs) })
     }
 
     private fun chooseProject(path: Path): Project? {
@@ -77,14 +112,16 @@ class ClaudeTabHttpHandler : HttpRequestHandler() {
             ?: projects.firstOrNull()
     }
 
+    private fun ok() = JsonObject().apply { addProperty("ok", true) }
+
     private fun error(message: String) = JsonObject().apply {
         addProperty("ok", false)
         addProperty("error", message)
     }
 
-    private fun respond(context: ChannelHandlerContext, status: Int, body: JsonObject) {
-        val bytes = body.toString().toByteArray(Charsets.UTF_8)
-        val response = DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.valueOf(status), Unpooled.wrappedBuffer(bytes))
+    private fun respond(context: ChannelHandlerContext, reply: Reply) {
+        val bytes = reply.body.toString().toByteArray(Charsets.UTF_8)
+        val response = DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.valueOf(reply.status), Unpooled.wrappedBuffer(bytes))
         response.headers()
             .set(HttpHeaderNames.CONTENT_TYPE, "application/json; charset=utf-8")
             .set(HttpHeaderNames.CONTENT_LENGTH, bytes.size)
