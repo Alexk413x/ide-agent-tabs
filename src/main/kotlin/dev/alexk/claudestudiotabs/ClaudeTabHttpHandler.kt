@@ -78,7 +78,7 @@ class ClaudeTabHttpHandler : HttpRequestHandler() {
 
     private fun open(request: OpenRequest): Reply {
         val project = chooseProject(request.path) ?: return Reply(409, error("no open project to host the tab"))
-        val id = ClaudeTabLauncher.open(project, request.path.toString(), request.prompt, focus = false)
+        val id = ClaudeTabLauncher.open(project, request.path.toString(), request.prompt, focus = false, request.args, request.env)
         return Reply(200, ok().apply {
             addProperty("id", id)
             addProperty("project", project.name)

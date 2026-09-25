@@ -1,5 +1,6 @@
 package dev.alexk.claudestudiotabs
 
+import com.google.gson.JsonArray
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.project.Project
@@ -14,13 +15,22 @@ import java.util.UUID
 const val PROMPT_ENV = "CLAUDE_STUDIO_TABS_PROMPT"
 const val TAB_ID_ENV = "CLAUDE_STUDIO_TABS_ID"
 const val STARTUP_ENV = "JEDITERM_SOURCE"
+const val ARGS_ENV = "CLAUDE_STUDIO_TABS_ARGS"
+val RESERVED_ENV = setOf(PROMPT_ENV, TAB_ID_ENV, STARTUP_ENV, ARGS_ENV)
 
 object ClaudeTabLauncher {
 
     @RequiresEdt
-    fun open(project: Project, directory: String, prompt: String?, focus: Boolean): String {
+    fun open(
+        project: Project,
+        directory: String,
+        prompt: String?,
+        focus: Boolean,
+        args: List<String> = emptyList(),
+        env: Map<String, String> = emptyMap(),
+    ): String {
         val id = UUID.randomUUID().toString()
-        val launch = claudeLaunch(shell(), prompt, id)
+        val launch = claudeLaunch(shell(), prompt, id, args = args, env = env)
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab = manager.createTabBuilder()
             .workingDirectory(directory)
@@ -71,13 +81,30 @@ class ClaudeLaunch(val command: List<String>, val env: Map<String, String>)
 // The terminal appends its own "-NoExit -ExecutionPolicy Bypass -File powershell-integration.ps1" after
 // the shell's arguments, so any "-Command" here would swallow them. The shell gets no arguments;
 // the integration script runs JEDITERM_SOURCE through Invoke-Expression once its setup is done.
-fun claudeLaunch(shell: String, prompt: String?, tabId: String, claude: String = "claude"): ClaudeLaunch {
-    val env = mutableMapOf(TAB_ID_ENV to tabId)
-    if (prompt == null) {
-        env[STARTUP_ENV] = claude
-    } else {
-        env[STARTUP_ENV] = "\$p = \$env:$PROMPT_ENV; Remove-Item env:$PROMPT_ENV; $claude \$p"
-        env[PROMPT_ENV] = prompt
+// The prompt and args travel in environment variables, never in that string, so nothing a caller sends is
+// parsed as PowerShell.
+fun claudeLaunch(
+    shell: String,
+    prompt: String?,
+    tabId: String,
+    claude: String = "claude",
+    args: List<String> = emptyList(),
+    env: Map<String, String> = emptyMap(),
+): ClaudeLaunch {
+    val launchEnv = env.toMutableMap()
+    launchEnv[TAB_ID_ENV] = tabId
+    val setup = mutableListOf<String>()
+    var command = claude
+    if (args.isNotEmpty()) {
+        launchEnv[ARGS_ENV] = JsonArray().apply { args.forEach(::add) }.toString()
+        setup += "\$a = @(\$env:$ARGS_ENV | ConvertFrom-Json); Remove-Item env:$ARGS_ENV"
+        command += " @a"
     }
-    return ClaudeLaunch(listOf(shell), env)
+    if (prompt != null) {
+        launchEnv[PROMPT_ENV] = prompt
+        setup += "\$p = \$env:$PROMPT_ENV; Remove-Item env:$PROMPT_ENV"
+        command += " \$p"
+    }
+    launchEnv[STARTUP_ENV] = (setup + command).joinToString("; ")
+    return ClaudeLaunch(listOf(shell), launchEnv)
 }
