@@ -8,15 +8,18 @@ import com.intellij.util.concurrency.annotations.RequiresEdt
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.UUID
 
 const val PROMPT_ENV = "CLAUDE_STUDIO_TABS_PROMPT"
+const val TAB_ID_ENV = "CLAUDE_STUDIO_TABS_ID"
 const val STARTUP_ENV = "JEDITERM_SOURCE"
 
 object ClaudeTabLauncher {
 
     @RequiresEdt
-    fun open(project: Project, directory: String, prompt: String?, focus: Boolean) {
-        val launch = claudeLaunch(shell(), prompt)
+    fun open(project: Project, directory: String, prompt: String?, focus: Boolean): String {
+        val id = UUID.randomUUID().toString()
+        val launch = claudeLaunch(shell(), prompt, id)
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab = manager.createTabBuilder()
             .workingDirectory(directory)
@@ -36,6 +39,13 @@ object ClaudeTabLauncher {
         } finally {
             file.putUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN, null)
         }
+        ClaudeTabRegistry.getInstance().add(ClaudeTabRegistry.Entry(id, project, file, directory))
+        return id
+    }
+
+    @RequiresEdt
+    fun close(entry: ClaudeTabRegistry.Entry) {
+        if (!entry.project.isDisposed) FileEditorManager.getInstance(entry.project).closeFile(entry.file)
     }
 
     private fun shell(): String {
@@ -59,8 +69,13 @@ class ClaudeLaunch(val command: List<String>, val env: Map<String, String>)
 // The terminal appends its own "-NoExit -ExecutionPolicy Bypass -File powershell-integration.ps1" after
 // the shell's arguments, so any "-Command" here would swallow them. The shell gets no arguments;
 // the integration script runs JEDITERM_SOURCE through Invoke-Expression once its setup is done.
-fun claudeLaunch(shell: String, prompt: String?, claude: String = "claude"): ClaudeLaunch {
-    if (prompt == null) return ClaudeLaunch(listOf(shell), mapOf(STARTUP_ENV to claude))
-    val script = "\$p = \$env:$PROMPT_ENV; Remove-Item env:$PROMPT_ENV; $claude \$p"
-    return ClaudeLaunch(listOf(shell), mapOf(STARTUP_ENV to script, PROMPT_ENV to prompt))
+fun claudeLaunch(shell: String, prompt: String?, tabId: String, claude: String = "claude"): ClaudeLaunch {
+    val env = mutableMapOf(TAB_ID_ENV to tabId)
+    if (prompt == null) {
+        env[STARTUP_ENV] = claude
+    } else {
+        env[STARTUP_ENV] = "\$p = \$env:$PROMPT_ENV; Remove-Item env:$PROMPT_ENV; $claude \$p"
+        env[PROMPT_ENV] = prompt
+    }
+    return ClaudeLaunch(listOf(shell), env)
 }

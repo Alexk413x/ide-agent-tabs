@@ -27,37 +27,67 @@ install the plugin compiles against. A new Android Studio version is a change to
 On startup the plugin writes `~/.claude-studio-tabs/endpoint.json`:
 
 ```json
-{"url":"http://127.0.0.1:63342/claude-studio-tabs/open","port":63342,"pid":12345}
+{"url":"http://127.0.0.1:63342/claude-studio-tabs/open",
+ "close":"http://127.0.0.1:63342/claude-studio-tabs/close",
+ "list":"http://127.0.0.1:63342/claude-studio-tabs/list",
+ "port":63342,"pid":12345}
 ```
 
-Send one request:
-
-```powershell
-$endpoint = Get-Content "$HOME\.claude-studio-tabs\endpoint.json" | ConvertFrom-Json
-$body = @{ path = 'C:\path\to\repo'; prompt = 'Your first message' } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri $endpoint.url -ContentType 'application/json' -Body $body -UserAgent 'claude-studio-tabs'
-```
+Every route takes a `POST` with `Content-Type: application/json` and answers JSON with `"ok": true` or
+`"ok": false` and an `"error"`.
 
 Set a User-Agent that does not start with `Mozilla/5.0`. The IDE's built-in server treats such a `POST`
 without an `Origin` header as a browser write and answers 404 before the plugin sees it.
 `Invoke-WebRequest` and `Invoke-RestMethod` send a `Mozilla/5.0` User-Agent by default; `curl` does not.
 
+### Open a tab
+
+```powershell
+$endpoint = Get-Content "$HOME\.claude-studio-tabs\endpoint.json" | ConvertFrom-Json
+$body = @{ path = 'C:\path\to\repo'; prompt = 'Your first message' } | ConvertTo-Json
+$tab = Invoke-RestMethod -Method Post -Uri $endpoint.url -ContentType 'application/json' -Body $body -UserAgent 'claude-studio-tabs'
+$tab.id
+```
+
 - `path` (required): an absolute path to an existing folder. The session starts there.
 - `prompt` (optional, up to 30,000 characters): passed as `claude "<prompt>"`, so it becomes the
   session's first message.
 
-The tab opens in the open project that contains `path`. If no open project contains it, the tab opens
-in the last focused project window.
+The reply carries the tab's `id`, the `project` window it opened in, and the `path`. The tab opens in
+the open project that contains `path`. If no open project contains it, the tab opens in the last
+focused project window. The button's tabs get an id too.
+
+### Close a tab
+
+```powershell
+$body = @{ id = $tab.id } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri $endpoint.close -ContentType 'application/json' -Body $body -UserAgent 'claude-studio-tabs'
+```
+
+Closing the editor tab ends its terminal session, including a running `claude`. Only tabs this plugin
+opened can be closed; any other id answers 404. Each session holds its own id in the
+`CLAUDE_STUDIO_TABS_ID` environment variable, so a session can close its own tab when its work is done.
+
+### List tabs
+
+```powershell
+Invoke-RestMethod -Method Post -Uri $endpoint.list -ContentType 'application/json' -Body '{}' -UserAgent 'claude-studio-tabs'
+```
+
+The reply's `tabs` array holds `id`, `project` and `path` for every open tab the plugin opened.
+
+### Status codes
 
 | Status | Meaning |
 |---|---|
-| 200 | Tab opened. The body names the project. |
-| 400 | Bad body, relative path, or missing folder. |
+| 200 | Done. |
+| 400 | Bad body, relative path, missing folder, or missing `id`. |
 | 403 | The request came from a non-loopback address or carried an `Origin` or `Referer` header. |
+| 404 | `close`: no open tab with that id. Also the built-in server's answer to a browser-like request. |
 | 405 | The method was not `POST`. |
-| 409 | No project is open. |
+| 409 | `open`: no project is open. |
 | 415 | `Content-Type` was not `application/json`. |
-| 503 | The IDE did not start the tab within 10 seconds, usually because a modal dialog is open. Nothing opens later. |
+| 503 | The IDE did not act within 10 seconds, usually because a modal dialog is open. Nothing happens later. |
 
 The `Origin`, `Referer` and `Content-Type` rules keep web pages from opening sessions: a browser cannot
 send a cross-origin JSON `POST` without a preflight, and it always sends `Origin` on the request.
