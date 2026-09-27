@@ -129,13 +129,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     list: () => [...tabs.values()].map(({ id, agent, project, path: dir }) => ({ id, agent, project, path: dir })),
   };
 
-  const status = vscode.window.createStatusBarItem('ideAgentTabs.newTab', vscode.StatusBarAlignment.Right, -1000);
+  const status = vscode.window.createStatusBarItem('ideAgentTabs.newTab', vscode.StatusBarAlignment.Right, 1);
   status.name = 'New Agent Tab';
   status.command = 'ideAgentTabs.newTab';
   const refreshStatus = () => {
     const profile = settings.defaultProfile();
     void vscode.commands.executeCommand('setContext', 'ideAgentTabs.buttonAgent', BUILTIN_ICONS.has(profile.name) ? profile.name : 'other');
-    status.text = `$(terminal) New ${profile.label}`;
+    status.text = `$(agent-tabs-new) New ${profile.label}`;
     const escape = (text: string) => text.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
     const all = settings.profiles();
     const installed = all.filter(p => isInstalled(p.command, searchPath(), isWindows));
