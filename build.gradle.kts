@@ -29,7 +29,7 @@ intellijPlatform {
     pluginConfiguration {
         ideaVersion {
             sinceBuild = "262"
-            untilBuild = "262.*"
+            untilBuild = provider { null }
         }
     }
     buildSearchableOptions = false
@@ -52,7 +52,7 @@ val updatePluginsXml = tasks.register("updatePluginsXml") {
             """
             <plugins>
               <plugin id="dev.alexk.claude-studio-tabs" url="$zipUrl" version="$pluginVersion">
-                <idea-version since-build="262" until-build="262.*"/>
+                <idea-version since-build="262"/>
                 <name>Claude Studio Tabs</name>
                 <vendor>Alexk413x</vendor>
                 <description>Opens a new Claude Code session in an editor tab.</description>
