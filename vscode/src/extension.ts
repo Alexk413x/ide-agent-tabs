@@ -200,7 +200,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (!picked) return;
     const setting = config().inspect<string>('defaultAgent');
     const target = setting?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
-    await config().update('defaultAgent', picked.profile.name, target);
+    try {
+      await config().update('defaultAgent', picked.profile.name, target);
+    } catch (e) {
+      log.warn(`Could not save ideAgentTabs.defaultAgent: ${(e as Error).message}`);
+      void vscode.window.showWarningMessage(`Could not save the default agent. Quit ${vscode.env.appName} completely and reopen it to finish updating Agent Tabs.`);
+    }
   };
 
   const chooseAgent = async () => {
