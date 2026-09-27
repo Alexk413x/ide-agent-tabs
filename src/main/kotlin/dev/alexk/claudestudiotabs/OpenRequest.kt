@@ -108,7 +108,7 @@ data class OpenRequest(
                 if (name.isBlank() || name.any { it == '=' || it.isWhitespace() || it == '\u0000' }) {
                     throw IllegalArgumentException("env name is not a valid variable name: '$name'")
                 }
-                if (RESERVED_ENV.any { it.equals(name, ignoreCase = true) }) {
+                if (isReservedEnv(name)) {
                     throw IllegalArgumentException("env name $name is reserved by the plugin")
                 }
                 if (value.length > MAX_PROMPT_CHARS || '\u0000' in value) {

@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -11,13 +12,13 @@ import java.util.concurrent.TimeUnit
 
 class ClaudeCommandTest {
 
-    private val pwsh: Path? = findOnPath(System.getenv("PATH"), "pwsh.exe")?.let { Path.of(it) }
+    private val pwsh: Path? = findOnPath(System.getenv("PATH"), if (File.separatorChar == '\\') "pwsh.exe" else "pwsh")?.let { Path.of(it) }
 
     @Test
     fun `finds an executable on PATH and skips blank, quoted and invalid entries`() {
         val dir = Files.createTempDirectory("cst-path")
         Files.createFile(dir.resolve("tool.exe"))
-        val path = listOf("", "  ", "C:\\no\\such\\dir", "bad<>|dir", "\"$dir\"").joinToString(";")
+        val path = listOf("", "  ", "C:\\no\\such\\dir", "bad<>|dir", "\"$dir\"").joinToString(File.pathSeparator)
         assertEquals(dir.resolve("tool.exe").toString(), findOnPath(path, "tool.exe"))
         assertEquals(null, findOnPath(path, "absent.exe"))
     }
@@ -31,19 +32,19 @@ class ClaudeCommandTest {
 
     @Test
     fun `shell gets no arguments so the terminal's integration arguments stay intact`() {
-        val launch = claudeLaunch("pwsh.exe", prompt = null, tabId = "tab-1")
+        val launch = powerShellLaunch("pwsh.exe", prompt = null, tabId = "tab-1")
         assertEquals(listOf("pwsh.exe"), launch.command)
         assertEquals(mapOf(STARTUP_ENV to "claude", TAB_ID_ENV to "tab-1"), launch.env)
     }
 
     @Test
     fun `every launch carries its tab id so the session can close its own tab`() {
-        assertEquals("tab-2", claudeLaunch("pwsh.exe", prompt = "hi", tabId = "tab-2").env[TAB_ID_ENV])
+        assertEquals("tab-2", powerShellLaunch("pwsh.exe", prompt = "hi", tabId = "tab-2").env[TAB_ID_ENV])
     }
 
     @Test
     fun `caller env reaches the shell and the plugin's own variables win`() {
-        val launch = claudeLaunch("pwsh.exe", prompt = null, tabId = "tab-4", env = mapOf("FOO" to "bar"))
+        val launch = powerShellLaunch("pwsh.exe", prompt = null, tabId = "tab-4", env = mapOf("FOO" to "bar"))
         assertEquals("bar", launch.env["FOO"])
         assertEquals("tab-4", launch.env[TAB_ID_ENV])
         assertEquals(null, launch.env[ARGS_ENV])
@@ -81,7 +82,7 @@ second line"""
         env: Map<String, String> = emptyMap(),
         listArgs: Boolean = false,
     ): String {
-        assumeTrue("pwsh.exe not on PATH", pwsh != null)
+        assumeTrue("pwsh not on PATH", pwsh != null)
         val integration = javaClass.classLoader.getResource("shell-integrations/powershell/powershell-integration.ps1")
         assertNotNull("terminal plugin's PowerShell integration script is not on the test classpath", integration)
         val dir = Files.createTempDirectory("cst-integration")
@@ -100,7 +101,7 @@ second line"""
             [Console]::OpenStandardOutput().Write(${'$'}bytes, 0, ${'$'}bytes.Length)
         """.trimIndent(), Charsets.UTF_8)
 
-        val launch = claudeLaunch(pwsh.toString(), prompt, tabId = "tab-3", claude = "& '$pwsh' -NoProfile -File '$echo'", args = args, env = env)
+        val launch = powerShellLaunch(pwsh.toString(), prompt, tabId = "tab-3", claude = "& '$pwsh' -NoProfile -File '$echo'", args = args, env = env)
         val command = launch.command + listOf("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString())
         val process = ProcessBuilder(command).apply { environment().putAll(launch.env) }.start()
         process.waitFor(60, TimeUnit.SECONDS)
