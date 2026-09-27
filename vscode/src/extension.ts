@@ -142,8 +142,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const missing = all.filter(p => !installed.includes(p));
     const links = installed.map(p => {
       const args = encodeURIComponent(JSON.stringify([p.name]));
-      return `- [${escape(p.label)}](command:ideAgentTabs.openAgent?${args})${p.name === profile.name ? ' (default)' : ''}`;
+      return `- [${escape(p.label)}](command:ideAgentTabs.openAgent?${args})`;
     });
+    for (const name of BUILTIN_ICONS) {
+      void vscode.commands.executeCommand('setContext', `ideAgentTabs.installed.${name}`, installed.some(p => p.name === name));
+    }
+    void vscode.commands.executeCommand('setContext', 'ideAgentTabs.customInstalled', installed.some(p => !BUILTIN_ICONS.has(p.name)));
     const lines = [
       installed.length > 0 ? 'Open an agent in an editor tab.' : 'No agent CLI found on PATH.',
       links.join('\n'),
@@ -156,38 +160,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   refreshStatus();
   status.show();
 
-  const syncDefaultSetting = async (name: string) => {
-    const setting = config().inspect<string>('defaultAgent');
-    const target =
-      setting?.workspaceFolderValue !== undefined || setting?.workspaceValue !== undefined
-        ? vscode.ConfigurationTarget.Workspace
-        : setting?.globalValue !== undefined
-          ? vscode.ConfigurationTarget.Global
-          : undefined;
-    if (target === undefined) return;
-    const value = BUILTIN_ICONS.has(name) ? name : '';
-    await config().update('defaultAgent', value, target).then(undefined, e => log.warn(`Could not save ideAgentTabs.defaultAgent: ${(e as Error).message}`));
-  };
-
-  const useAgent = async (profile: AgentProfile) => {
-    settings.setDefaultAgent(profile.name);
-    await syncDefaultSetting(profile.name);
-    refreshStatus();
-    openFromButton(profile);
-  };
-
   const chooseAgent = async () => {
-    const current = settings.defaultProfile().name;
     const items = settings
       .profiles()
       .filter(p => isInstalled(p.command, searchPath(), isWindows))
-      .map(p => ({ label: p.label, description: p.name === current ? 'default' : undefined, iconPath: icon(p), profile: p }));
+      .map(p => ({ label: p.label, iconPath: icon(p), profile: p }));
     if (items.length === 0) {
       void vscode.window.showInformationMessage('No agent CLI found on PATH.');
       return;
     }
-    const picked = await vscode.window.showQuickPick(items, { title: 'Open Agent', placeHolder: 'The agent you choose becomes the default' });
-    if (picked) await useAgent(picked.profile);
+    const picked = await vscode.window.showQuickPick(items, { title: 'Open Agent' });
+    if (picked) openFromButton(picked.profile);
   };
 
   context.subscriptions.push(
@@ -198,6 +181,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.registerCommand(`ideAgentTabs.newTab.${name}`, () => openFromButton(settings.defaultProfile())),
     ),
     vscode.commands.registerCommand('ideAgentTabs.newTabWith', chooseAgent),
+    ...[...BUILTIN_ICONS].map(name =>
+      vscode.commands.registerCommand(`ideAgentTabs.open.${name}`, () => {
+        const profile = settings.profile(name);
+        if (profile) openFromButton(profile);
+      }),
+    ),
     vscode.commands.registerCommand('ideAgentTabs.openAgent', (name: unknown) => {
       const profile = typeof name === 'string' ? settings.profile(name) : undefined;
       if (profile) openFromButton(profile);
