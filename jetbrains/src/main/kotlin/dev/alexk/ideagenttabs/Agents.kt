@@ -56,7 +56,7 @@ object Agents {
         profile.icon?.let { path ->
             return customButtonIcons.computeIfAbsent(path) {
                 val icon = icon(profile)
-                if (icon === neutralIcon) neutralButtonIcon else LayeredIcon(IconUtil.resizeSquared(icon, 12), badge)
+                if (icon === neutralIcon) neutralButtonIcon else LayeredIcon.layeredIcon(arrayOf(IconUtil.resizeSquared(icon, 12), badge))
             }
         }
         return builtinIcons[profile.name]?.let { IconLoader.getIcon(it.removeSuffix(".svg") + "_new.svg", Agents::class.java) }
