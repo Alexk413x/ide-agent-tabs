@@ -25,7 +25,8 @@ interface OpenOptions {
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const log = vscode.window.createOutputChannel('Agent Tabs', { log: true });
   const home = ideAgentTabsHome();
-  const settings = new AgentSettings(home, message => log.warn(message));
+  const config = () => vscode.workspace.getConfiguration('ideAgentTabs');
+  const settings = new AgentSettings(home, message => log.warn(message), () => config().get<string>('defaultAgent') || undefined);
   const scripts = launchScripts(context.asAbsolutePath(path.join('resources', 'launch')));
   const tabs = new Map<string, Tab>();
   const isWindows = process.platform === 'win32';
@@ -72,13 +73,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return { id, agent: tab.agent, project, path: dir };
   };
 
-  const openFromButton = (profile: AgentProfile) => {
-    const folders = fileFolders();
-    const active = vscode.window.activeTextEditor?.document.uri;
-    const activeFolder = active ? vscode.workspace.getWorkspaceFolder(active) : undefined;
-    const folder = activeFolder?.uri.scheme === 'file' ? activeFolder : folders[0];
+  const openInFolder = (folder: vscode.WorkspaceFolder | undefined, profile: AgentProfile) => {
     const dir = folder ? folderPath(folder) : os.homedir();
     openTab(dir, folder?.name ?? path.basename(dir), profile, { focus: true });
+  };
+
+  const openFromButton = (profile: AgentProfile) => {
+    const active = vscode.window.activeTextEditor?.document.uri;
+    const activeFolder = active ? vscode.workspace.getWorkspaceFolder(active) : undefined;
+    openInFolder(activeFolder?.uri.scheme === 'file' ? activeFolder : fileFolders()[0], profile);
+  };
+
+  const opensOnStartup = (folder: vscode.WorkspaceFolder) => {
+    const mode = config().get<string>('openOnStartup', 'claudeFolder');
+    if (mode === 'always') return true;
+    if (mode !== 'claudeFolder') return false;
+    try {
+      return fs.statSync(path.join(folderPath(folder), '.claude')).isDirectory();
+    } catch {
+      return false;
+    }
+  };
+
+  const openOnStartup = (folders: readonly vscode.WorkspaceFolder[]) => {
+    const folder = folders.find(f => f.uri.scheme === 'file' && opensOnStartup(f));
+    if (folder) openInFolder(folder, settings.defaultProfile());
   };
 
   const host: Host = {
@@ -110,7 +129,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     list: () => [...tabs.values()].map(({ id, agent, project, path: dir }) => ({ id, agent, project, path: dir })),
   };
 
-  const status = vscode.window.createStatusBarItem('ideAgentTabs.newTab', vscode.StatusBarAlignment.Left, 1000);
+  const status = vscode.window.createStatusBarItem('ideAgentTabs.newTab', vscode.StatusBarAlignment.Right, -1000);
   status.name = 'New Agent Tab';
   status.command = 'ideAgentTabs.newTab';
   const refreshStatus = () => {
@@ -127,6 +146,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   refreshStatus();
   status.show();
 
+  const syncDefaultSetting = async (name: string) => {
+    const setting = config().inspect<string>('defaultAgent');
+    const target =
+      setting?.workspaceFolderValue !== undefined || setting?.workspaceValue !== undefined
+        ? vscode.ConfigurationTarget.Workspace
+        : setting?.globalValue !== undefined
+          ? vscode.ConfigurationTarget.Global
+          : undefined;
+    if (target === undefined) return;
+    const value = BUILTIN_ICONS.has(name) ? name : '';
+    await config().update('defaultAgent', value, target).then(undefined, e => log.warn(`Could not save ideAgentTabs.defaultAgent: ${(e as Error).message}`));
+  };
+
   const chooseAgent = async () => {
     const current = settings.defaultProfile().name;
     const items = settings
@@ -140,6 +172,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const picked = await vscode.window.showQuickPick(items, { title: 'Open Agent', placeHolder: 'The agent you choose becomes the default' });
     if (!picked) return;
     settings.setDefaultAgent(picked.profile.name);
+    await syncDefaultSetting(picked.profile.name);
     refreshStatus();
     openFromButton(picked.profile);
   };
@@ -158,11 +191,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.onDidChangeWindowState(state => {
       if (state.focused) refreshStatus();
     }),
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('ideAgentTabs.defaultAgent')) refreshStatus();
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(e => openOnStartup(e.added)),
   );
 
-  if (vscode.workspace.getConfiguration('ideAgentTabs').get<boolean>('openOnStartup', true) && fileFolders().length > 0) {
-    openFromButton(settings.defaultProfile());
-  }
+  openOnStartup(fileFolders());
 
   const token = newToken();
   const server = createApiServer(token, host, settings);
