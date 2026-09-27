@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { launchScripts, terminalEnv, unixShell, windowsShell } from './launch';
-import { AgentProfile, AgentSettings, isInstalled, launchOf } from './profiles';
+import { AgentProfile, AgentSettings, CONFIG_FILE, isInstalled, launchOf } from './profiles';
 import { endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { closestBase } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
@@ -178,16 +178,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (settings.sharedDefault() !== name) settings.setDefaultAgent(name);
   };
 
-  // The setting is the one default; config.json mirrors it for the MCP server and the JetBrains plugin.
-  const adoptSharedDefault = async () => {
-    const setting = config().inspect<string>('defaultAgent');
-    const explicit = setting?.workspaceFolderValue ?? setting?.workspaceValue ?? setting?.globalValue;
+  // config.json holds the default for every IDE and the MCP server; the setting shows it and writes it back.
+  const followSharedDefault = async () => {
     const shared = settings.sharedDefault();
-    if (explicit === undefined && shared !== undefined && shared !== setting?.defaultValue && settings.profile(shared)) {
-      await config().update('defaultAgent', shared, vscode.ConfigurationTarget.Global);
-    } else {
+    if (shared === undefined || !settings.profile(shared)) {
       shareDefault();
+      return;
     }
+    if (config().get<string>('defaultAgent') === shared) return;
+    await config()
+      .update('defaultAgent', shared, vscode.ConfigurationTarget.Global)
+      .then(undefined, e => log.warn(`Could not update ideAgentTabs.defaultAgent: ${(e as Error).message}`));
   };
 
   const setDefaultAgent = async () => {
@@ -248,7 +249,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }),
     vscode.window.onDidChangeActiveColorTheme(() => refreshStatus()),
     vscode.window.onDidChangeWindowState(state => {
-      if (state.focused) refreshStatus();
+      if (!state.focused) return;
+      void followSharedDefault();
+      refreshStatus();
     }),
     vscode.workspace.onDidChangeConfiguration(e => {
       if (!e.affectsConfiguration('ideAgentTabs.defaultAgent')) return;
@@ -258,7 +261,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.onDidChangeWorkspaceFolders(e => openOnStartup(e.added)),
   );
 
-  await adoptSharedDefault().catch(e => log.warn(`Could not sync the default agent: ${(e as Error).message}`));
+  await followSharedDefault();
+  const sharedConfig = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(home), CONFIG_FILE));
+  context.subscriptions.push(
+    sharedConfig,
+    sharedConfig.onDidChange(() => void followSharedDefault()),
+    sharedConfig.onDidCreate(() => void followSharedDefault()),
+  );
   refreshStatus();
   openOnStartup(fileFolders());
 
