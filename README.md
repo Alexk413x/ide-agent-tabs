@@ -1,6 +1,6 @@
-# IDE Agent Tabs
+# Agent Tabs
 
-IDE Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI and Copilot CLI,
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI and Copilot CLI,
 in IDE editor tabs. You open a tab with one button. An agent opens, lists and closes tabs in any IDE
 that runs on the same computer.
 

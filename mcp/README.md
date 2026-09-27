@@ -1,8 +1,8 @@
-# IDE Agent Tabs MCP server
+# Agent Tabs MCP server
 
 This MCP server lets an agent open, list and close agent tabs. A tab runs an interactive agent CLI
 session, such as Claude Code, Codex, Gemini CLI or Copilot CLI. The tab opens in a running IDE that has
-the IDE Agent Tabs extension, or in a terminal app when no IDE is running.
+the Agent Tabs extension, or in a terminal app when no IDE is running.
 
 The server speaks MCP over stdio. It reads the registry and calls each IDE's HTTP API, as described in
 [docs/design.md](../docs/design.md). The Claude Code plugin registers it as `ide-agent-tabs` in

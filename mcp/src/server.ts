@@ -45,7 +45,7 @@ export function createServer(service: Service): McpServer {
     'list_tabs',
     {
       title: 'List agent tabs',
-      description: 'List open agent tabs that IDE Agent Tabs started, across all IDEs and terminals, or in one.',
+      description: 'List open agent tabs that Agent Tabs started, across all IDEs and terminals, or in one.',
       inputSchema: { ide: z.string().optional().describe(`${IDE_ID} Leave out to list every tab.`) },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },

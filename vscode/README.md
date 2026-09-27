@@ -1,6 +1,6 @@
-# IDE Agent Tabs for VS Code
+# Agent Tabs for VS Code
 
-IDE Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI and Copilot CLI, in
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI and Copilot CLI, in
 editor tabs. You open a tab with one button. Another agent opens, lists and closes tabs through a local
 HTTP API, the same API the JetBrains plugin serves.
 
@@ -25,10 +25,12 @@ npm run package
 
 ## Open a tab
 
-- Click **New Agent Tab** in the editor title bar, or the agent name in the status bar. The default agent
+- When a window with a folder opens, the default agent opens in an editor tab. To turn this off, set
+  `ideAgentTabs.openOnStartup` to `false`.
+- Click **New Agent Tab** in the editor title bar, or **New <agent>** at the left of the status bar. The default agent
   opens in a terminal tab in the editor area. The tab starts in the folder of the active editor, or in the
   first workspace folder.
-- To open a different agent, click the arrow next to **New Agent Tab**, or run **IDE Agent Tabs: New
+- To open a different agent, click the arrow next to **New Agent Tab**, or run **Agent Tabs: New
   Agent Tab With…** from the Command Palette. The list shows each agent whose command is on your `PATH`.
   The agent you choose becomes the default.
 - The status bar tooltip names the default agent.
