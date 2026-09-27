@@ -1,4 +1,4 @@
-package dev.alexk.claudestudiotabs
+package dev.alexk.ideagenttabs
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -76,14 +76,14 @@ class SourcedLaunchTest {
         assertEquals(written, Files.getLastModifiedTime(script))
         Files.writeString(script, "stale")
         launchScript(ShellKind.POSIX, dir.resolve("scripts"))
-        assertTrue(Files.readString(script).contains("__claude_studio_tabs"))
+        assertTrue(Files.readString(script).contains("__ide_agent_tabs"))
         assertEquals("claude.fish", launchScript(ShellKind.FISH, dir.resolve("scripts")).fileName.toString())
         assertFalse(Files.readString(script).contains('\r'))
     }
 
     @Test
     fun `plugin variables and the startup variables are reserved`() {
-        for (name in listOf(STARTUP_ENV, "jediterm_source_args", TAB_ID_ENV, "${ARG_ENV_PREFIX}0", "claude_studio_tabs_argc")) {
+        for (name in listOf(STARTUP_ENV, "jediterm_source_args", TAB_ID_ENV, "${ARG_ENV_PREFIX}0", "ide_agent_tabs_argc")) {
             assertTrue(name, isReservedEnv(name))
         }
         assertFalse(isReservedEnv("CLAUDE_CODE_USE_BEDROCK"))

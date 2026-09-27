@@ -1,4 +1,4 @@
-package dev.alexk.claudestudiotabs
+package dev.alexk.ideagenttabs
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

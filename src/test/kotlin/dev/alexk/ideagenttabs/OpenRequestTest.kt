@@ -1,4 +1,4 @@
-package dev.alexk.claudestudiotabs
+package dev.alexk.ideagenttabs
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -82,8 +82,8 @@ class OpenRequestTest {
             """"env":{"A B":"x"}""",
             """"env":{"":"x"}""",
             """"env":{"$STARTUP_ENV":"x"}""",
-            """"env":{"claude_studio_tabs_id":"x"}""",
-            """"env":{"CLAUDE_STUDIO_TABS_ARG_0":"x"}""",
+            """"env":{"ide_agent_tabs_id":"x"}""",
+            """"env":{"IDE_AGENT_TABS_ARG_0":"x"}""",
             """"env":{"JEDITERM_SOURCE_ARGS":"x"}""",
         )
         for (field in bad) {

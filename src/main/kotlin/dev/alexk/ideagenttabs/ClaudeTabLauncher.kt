@@ -1,4 +1,4 @@
-package dev.alexk.claudestudiotabs
+package dev.alexk.ideagenttabs
 
 import com.google.gson.JsonArray
 import com.intellij.openapi.application.PathManager
@@ -15,7 +15,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 
-const val PLUGIN_ENV_PREFIX = "CLAUDE_STUDIO_TABS_"
+const val PLUGIN_ENV_PREFIX = "IDE_AGENT_TABS_"
 const val PROMPT_ENV = "${PLUGIN_ENV_PREFIX}PROMPT"
 const val TAB_ID_ENV = "${PLUGIN_ENV_PREFIX}ID"
 const val ARGS_ENV = "${PLUGIN_ENV_PREFIX}ARGS"
@@ -104,7 +104,7 @@ object ClaudeTabLauncher {
         if (!entry.project.isDisposed) FileEditorManager.getInstance(entry.project).closeFile(entry.file)
     }
 
-    private val SCRIPT_DIR: Path get() = PathManager.getSystemDir().resolve("claude-studio-tabs")
+    private val SCRIPT_DIR: Path get() = PathManager.getSystemDir().resolve("ide-agent-tabs")
 }
 
 // The bash, zsh and fish integrations source JEDITERM_SOURCE as a file, so the script ships as a resource

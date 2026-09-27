@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.intellij.platform") version "2.19.0"
 }
 
-group = "dev.alexk.claudestudiotabs"
+group = "dev.alexk.ideagenttabs"
 version = providers.gradleProperty("pluginVersion").get()
 
 kotlin {
@@ -37,7 +37,7 @@ intellijPlatform {
 }
 
 val pluginRepositoryDir = providers.gradleProperty("pluginRepositoryDir")
-    .orElse(providers.systemProperty("user.home").map { "$it/.claude-studio-tabs/repository" })
+    .orElse(providers.systemProperty("user.home").map { "$it/.ide-agent-tabs/repository" })
 
 val updatePluginsXml = tasks.register("updatePluginsXml") {
     val out = layout.buildDirectory.file("repository/updatePlugins.xml")
@@ -47,13 +47,13 @@ val updatePluginsXml = tasks.register("updatePluginsXml") {
     inputs.property("version", pluginVersion)
     outputs.file(out)
     doLast {
-        val zipUrl = File(repoDir.get(), "claude-studio-tabs-$pluginVersion.zip").toPath().toUri()
+        val zipUrl = File(repoDir.get(), "ide-agent-tabs-$pluginVersion.zip").toPath().toUri()
         out.get().asFile.writeText(
             """
             <plugins>
-              <plugin id="dev.alexk.claude-studio-tabs" url="$zipUrl" version="$pluginVersion">
+              <plugin id="dev.alexk.ide-agent-tabs" url="$zipUrl" version="$pluginVersion">
                 <idea-version since-build="262"/>
-                <name>Claude Studio Tabs</name>
+                <name>IDE Agent Tabs</name>
                 <vendor>Alexk413x</vendor>
                 <description>Opens a new Claude Code session in an editor tab.</description>
               </plugin>
@@ -96,7 +96,7 @@ intellijPlatformTesting.runIde.register("runIdeWithClaude") {
         doFirst { sandboxProject.mkdirs() }
         args(sandboxProject.absolutePath)
         jvmArgs(
-            "-Dclaude.studio.tabs.endpoint.file=${layout.buildDirectory.file("sandbox-endpoint.json").get().asFile.absolutePath}",
+            "-Dide.agent.tabs.endpoint.file=${layout.buildDirectory.file("sandbox-endpoint.json").get().asFile.absolutePath}",
             "-Ddisable.android.first.run=true",
             "-Didea.trust.all.projects=true",
             "-Djb.consents.confirmation.enabled=false",
