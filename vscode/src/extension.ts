@@ -114,7 +114,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   status.name = 'New Agent Tab';
   status.command = 'ideAgentTabs.newTab';
   const refreshStatus = () => {
-    const label = settings.defaultProfile().label;
+    const profile = settings.defaultProfile();
+    const label = profile.label;
+    void vscode.commands.executeCommand('setContext', 'ideAgentTabs.buttonAgent', BUILTIN_ICONS.has(profile.name) ? profile.name : 'other');
     status.text = `$(terminal) ${label}`;
     const tooltip = new vscode.MarkdownString(
       `New Agent Tab: open **${label}**, the default agent, in an editor tab.\n\n[Choose another agent…](command:ideAgentTabs.newTabWith)`,
@@ -146,6 +148,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     log,
     status,
     vscode.commands.registerCommand('ideAgentTabs.newTab', () => openFromButton(settings.defaultProfile())),
+    ...[...BUILTIN_ICONS, 'other'].map(name =>
+      vscode.commands.registerCommand(`ideAgentTabs.newTab.${name}`, () => openFromButton(settings.defaultProfile())),
+    ),
     vscode.commands.registerCommand('ideAgentTabs.newTabWith', chooseAgent),
     vscode.window.onDidCloseTerminal(terminal => {
       for (const [id, tab] of tabs) if (tab.terminal === terminal) tabs.delete(id);
