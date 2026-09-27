@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "publisher": "alexk413x",
   "license": "MIT",
   "repository": {
@@ -41,27 +41,27 @@
       "properties": {
         "ideAgentTabs.defaultAgent": {
           "type": "string",
-          "default": "",
+          "default": "claude",
           "enum": [
-            "",
             "claude",
             "codex",
             "gemini",
-            "copilot"
+            "copilot",
+            ""
           ],
           "enumItemLabels": [
-            "Last picked",
             "Claude Code",
             "Codex",
             "Gemini CLI",
-            "Copilot CLI"
+            "Copilot CLI",
+            "Shared"
           ],
           "enumDescriptions": [
-            "The agent last picked from the agent menu in any IDE, saved in ~/.ide-agent-tabs/config.json.",
-            "Always open Claude Code.",
-            "Always open Codex.",
-            "Always open Gemini CLI.",
-            "Always open Copilot CLI."
+            "Open Claude Code.",
+            "Open Codex.",
+            "Open Gemini CLI.",
+            "Open Copilot CLI.",
+            "Open the defaultAgent in ~/.ide-agent-tabs/config.json, which other IDEs share. Use it for a custom agent from agents.json."
           ],
           "description": "The agent that the New Agent Tab button, the status bar item and startup open."
         },
@@ -147,6 +147,26 @@
           "light": "resources/icons/agentTab_new.svg",
           "dark": "resources/icons/agentTab_new_dark.svg"
         }
+      },
+      {
+        "command": "ideAgentTabs.open.claude",
+        "title": "Claude Code",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.open.codex",
+        "title": "Codex",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.open.gemini",
+        "title": "Gemini CLI",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.open.copilot",
+        "title": "Copilot CLI",
+        "category": "Agent Tabs"
       }
     ],
     "menus": {
@@ -177,7 +197,7 @@
           "group": "navigation@100"
         },
         {
-          "command": "ideAgentTabs.newTabWith",
+          "submenu": "ideAgentTabs.agents",
           "group": "navigation@101"
         }
       ],
@@ -201,9 +221,59 @@
         {
           "command": "ideAgentTabs.newTab.other",
           "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.claude",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.codex",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.gemini",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.copilot",
+          "when": "false"
+        }
+      ],
+      "ideAgentTabs.agents": [
+        {
+          "command": "ideAgentTabs.open.claude",
+          "when": "ideAgentTabs.installed.claude",
+          "group": "1_agents@0"
+        },
+        {
+          "command": "ideAgentTabs.open.codex",
+          "when": "ideAgentTabs.installed.codex",
+          "group": "1_agents@1"
+        },
+        {
+          "command": "ideAgentTabs.open.gemini",
+          "when": "ideAgentTabs.installed.gemini",
+          "group": "1_agents@2"
+        },
+        {
+          "command": "ideAgentTabs.open.copilot",
+          "when": "ideAgentTabs.installed.copilot",
+          "group": "1_agents@3"
+        },
+        {
+          "command": "ideAgentTabs.newTabWith",
+          "when": "ideAgentTabs.customInstalled",
+          "group": "2_more"
         }
       ]
-    }
+    },
+    "submenus": [
+      {
+        "id": "ideAgentTabs.agents",
+        "label": "New Agent Tab With…",
+        "icon": "$(chevron-down)"
+      }
+    ]
   },
   "scripts": {
     "build": "node esbuild.mjs",

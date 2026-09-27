@@ -29,22 +29,21 @@ npm run package
 - Click **New Agent Tab** in the editor title bar, or **New <agent>** at the right of the status bar. The default agent
   opens in a terminal tab in the editor area. The tab starts in the folder of the active editor, or in the
   first workspace folder.
-- To open a different agent, click the arrow next to **New Agent Tab**, or run **Agent Tabs: New
-  Agent Tab With…** from the Command Palette. The list shows each agent whose command is on your `PATH`.
-  The agent you choose becomes the default.
-- Hover over the status bar item to see a link for each installed agent. Click one to open it. The default agent doesn't change. The tooltip also names supported agents that aren't installed.
+- To open a different agent, click the arrow next to **New Agent Tab** and pick one from the menu. The
+  menu lists each agent whose command is on your `PATH`. Custom agents from `agents.json` are under
+  **New Agent Tab With…**, which the Command Palette also has.
+- Hover over the status bar item to see a link for each installed agent. Click one to open it. The
+  tooltip also names supported agents that aren't installed.
 
-The default agent lives in `~/.ide-agent-tabs/config.json`, so every IDE with this extension or the
-JetBrains plugin shares it.
+Opening an agent from a menu or a link doesn't change the default agent. To change it, use the
+`ideAgentTabs.defaultAgent` setting.
 
 ## Settings
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| `ideAgentTabs.defaultAgent` | `""` (the agent last picked in any IDE), `claude`, `codex`, `gemini`, `copilot` | `""` |
+| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `gemini`, `copilot`, or `""` for the `defaultAgent` in `~/.ide-agent-tabs/config.json`, which other IDEs share | `claude` |
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
-
-When `ideAgentTabs.defaultAgent` is set, picking another agent from the menu updates it.
 
 ## Agent profiles
 
