@@ -21,6 +21,7 @@ object Agents {
 
     private val builtinIcons = mapOf(
         "claude" to "/icons/agents/claude.svg",
+        "codex" to "/icons/agents/codex.svg",
         "gemini" to "/icons/agents/gemini.svg",
         "copilot" to "/icons/agents/copilot.svg",
     )

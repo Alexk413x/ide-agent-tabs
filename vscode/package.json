@@ -3,7 +3,7 @@
   "displayName": "IDE Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "alexk413x",
   "license": "MIT",
   "repository": {
