@@ -181,6 +181,35 @@ registry and calls the HTTP API.
 with an open project that contains `path`, preferring the focused one. Otherwise, use the most recently
 started IDE.
 
+## Terminals (Phase 1)
+
+Standalone terminal apps need no extension. The MCP server drives them directly and shows each one in
+`list_ides` next to the IDEs, with `ide` set to the terminal's name, such as `windows-terminal` or
+`ghostty`. A terminal tab starts the agent through the same launch scripts and environment variables as
+an IDE tab, so profiles, prompts and arguments behave the same.
+
+What each terminal allows differs. `list_ides` reports each terminal's capabilities, and `list_tabs` and
+`close_tab` answer only for terminals that can list or close tabs.
+
+| Terminal | OS | Open | List | Close | How |
+|---|---|---|---|---|---|
+| Windows Terminal | Windows | Tab | No | Best effort | `wt.exe -w 0 new-tab -d <dir> …`. No outside API to query tabs. Ending the process the server started may leave the tab open with an exit message. |
+| Ghostty 1.3+ | macOS | Tab | Yes | Yes | AppleScript: `new tab` with a surface configuration (working directory, command, environment variables); query `windows → tabs → terminals` by id; `close` and `focus` |
+| Ghostty | Linux | Window | No | Best effort | `ghostty +new-window` over D-Bus. Opening a tab from the command line isn't supported yet ([ghostty#12136](https://github.com/ghostty-org/ghostty/issues/12136)). |
+| WezTerm | All | Tab | Yes | Yes | `wezterm cli spawn`, `wezterm cli list`, `wezterm cli kill-pane` |
+| kitty | macOS, Linux | Tab | Yes | Yes | `kitty @ launch --type=tab`, `kitty @ ls`, `kitty @ close-window`; the user must turn on remote control |
+| tmux | macOS, Linux | Window | Yes | Yes | `tmux new-window`, `list-windows`, `kill-window` |
+| Terminal, iTerm2 | macOS | Tab | Partly | Partly | AppleScript. Later. |
+
+- Build order: Windows Terminal and Ghostty (macOS) first, because they are the owner's terminals. Then
+  WezTerm, kitty and tmux, whose command-line interfaces cover everything.
+- The MCP server tracks the tabs it opens in terminals in `~/.ide-agent-tabs/terminal-tabs.json`, with
+  the terminal's own tab or pane id where it has one, and the process id otherwise.
+- `open_tab` falls back to the user's preferred terminal when no IDE window contains `path` and no `ide`
+  is named. `~/.ide-agent-tabs/config.json` holds the choice as `"terminal": "ghostty"`.
+- The Visual Studio extension (Phase 3) opens its tabs through the Windows Terminal support.
+- Untested: every row. None of these terminals has been driven by this project yet.
+
 ## Messaging
 
 - Claude Code to Claude Code: Claude Code's native `ListAgents` and `SendMessage`. They work across tabs
@@ -346,7 +375,7 @@ Whether the IDE follows GitHub's download redirect is untested.
    1. Build without a local IDE, and the release workflow for the JetBrains plugin.
    2. `/new-tab` skill, moved from the user's personal commands into the plugin and changed to use the
       registry and token.
-   3. MCP server.
+   3. MCP server, with terminal support for Windows Terminal and Ghostty.
    4. Setup and update skills.
 2. VS Code extension.
 3. Visual Studio extension, opening Windows Terminal tabs.
