@@ -25,7 +25,7 @@
                 class="dev.alexk.ideagenttabs.NewAgentTabAction"
                 text="New Agent Tab"
                 description="Open the default agent in an editor tab, in the project root"
-                icon="/icons/agentTab.svg">
+                icon="/icons/agentTab_new.svg">
             <add-to-group group-id="ToolsMenu" anchor="first"/>
             <add-to-group group-id="MainToolbarRight" anchor="first"/>
         </action>

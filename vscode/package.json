@@ -3,7 +3,7 @@
   "displayName": "IDE Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "alexk413x",
   "license": "MIT",
   "repository": {
@@ -42,8 +42,8 @@
         "title": "New Agent Tab",
         "category": "IDE Agent Tabs",
         "icon": {
-          "light": "resources/icons/agentTab.svg",
-          "dark": "resources/icons/agentTab_dark.svg"
+          "light": "resources/icons/agentTab_new.svg",
+          "dark": "resources/icons/agentTab_new_dark.svg"
         }
       },
       {
@@ -51,17 +51,105 @@
         "title": "New Agent Tab With…",
         "category": "IDE Agent Tabs",
         "icon": "$(chevron-down)"
+      },
+      {
+        "command": "ideAgentTabs.newTab.claude",
+        "title": "New Claude Code Tab",
+        "category": "IDE Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/claude_new.svg",
+          "dark": "resources/icons/agents/claude_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.newTab.codex",
+        "title": "New Codex Tab",
+        "category": "IDE Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/codex_new.svg",
+          "dark": "resources/icons/agents/codex_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.newTab.gemini",
+        "title": "New Gemini CLI Tab",
+        "category": "IDE Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/gemini_new.svg",
+          "dark": "resources/icons/agents/gemini_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.newTab.copilot",
+        "title": "New Copilot CLI Tab",
+        "category": "IDE Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/copilot_new.svg",
+          "dark": "resources/icons/agents/copilot_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.newTab.other",
+        "title": "New Agent Tab",
+        "category": "IDE Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agentTab_new.svg",
+          "dark": "resources/icons/agentTab_new_dark.svg"
+        }
       }
     ],
     "menus": {
       "editor/title": [
         {
-          "command": "ideAgentTabs.newTab",
+          "command": "ideAgentTabs.newTab.claude",
+          "when": "ideAgentTabs.buttonAgent == claude",
+          "group": "navigation@100"
+        },
+        {
+          "command": "ideAgentTabs.newTab.codex",
+          "when": "ideAgentTabs.buttonAgent == codex",
+          "group": "navigation@100"
+        },
+        {
+          "command": "ideAgentTabs.newTab.gemini",
+          "when": "ideAgentTabs.buttonAgent == gemini",
+          "group": "navigation@100"
+        },
+        {
+          "command": "ideAgentTabs.newTab.copilot",
+          "when": "ideAgentTabs.buttonAgent == copilot",
+          "group": "navigation@100"
+        },
+        {
+          "command": "ideAgentTabs.newTab.other",
+          "when": "ideAgentTabs.buttonAgent == other",
           "group": "navigation@100"
         },
         {
           "command": "ideAgentTabs.newTabWith",
           "group": "navigation@101"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "ideAgentTabs.newTab.claude",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.codex",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.gemini",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.copilot",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.other",
+          "when": "false"
         }
       ]
     }

@@ -4,6 +4,7 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.ui.LayeredIcon
 import com.intellij.util.EnvironmentUtil
 import com.intellij.util.IconUtil
 import com.intellij.util.concurrency.annotations.RequiresEdt
@@ -26,7 +27,13 @@ object Agents {
         "copilot" to "/icons/agents/copilot.svg",
     )
 
+    private val neutralButtonIcon: Icon = IconLoader.getIcon("/icons/agentTab_new.svg", Agents::class.java)
+
+    private val badge: Icon = IconLoader.getIcon("/icons/newBadge.svg", Agents::class.java)
+
     private val customIcons = ConcurrentHashMap<String, Icon>()
+
+    private val customButtonIcons = ConcurrentHashMap<String, Icon>()
 
     private val searchPath: String
         get() = EnvironmentUtil.getValue("PATH") ?: System.getenv("PATH").orEmpty()
@@ -41,6 +48,17 @@ object Agents {
     fun icon(profile: AgentProfile): Icon {
         profile.icon?.let { return customIcons.computeIfAbsent(it, ::loadCustomIcon) }
         return builtinIcons[profile.name]?.let { IconLoader.getIcon(it, Agents::class.java) } ?: neutralIcon
+    }
+
+    fun buttonIcon(profile: AgentProfile): Icon {
+        profile.icon?.let { path ->
+            return customButtonIcons.computeIfAbsent(path) {
+                val icon = icon(profile)
+                if (icon === neutralIcon) neutralButtonIcon else LayeredIcon(IconUtil.resizeSquared(icon, 12), badge)
+            }
+        }
+        return builtinIcons[profile.name]?.let { IconLoader.getIcon(it.removeSuffix(".svg") + "_new.svg", Agents::class.java) }
+            ?: neutralButtonIcon
     }
 
     private fun loadCustomIcon(path: String): Icon = try {

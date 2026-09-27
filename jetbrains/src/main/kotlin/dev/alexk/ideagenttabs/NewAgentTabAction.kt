@@ -29,8 +29,10 @@ class NewAgentTabAction : DumbAwareAction(), CustomComponentAction {
 
     override fun update(e: AnActionEvent) {
         e.presentation.isEnabled = e.project != null
-        val label = Agents.settings.defaultProfile().label
-        e.presentation.description = "Open $label in an editor tab, in the project root. Right-click to choose another agent."
+        val profile = Agents.settings.defaultProfile()
+        e.presentation.icon = Agents.buttonIcon(profile)
+        e.presentation.text = "New ${profile.label} Tab"
+        e.presentation.description = "Open ${profile.label} in an editor tab, in the project root. Right-click to choose another agent."
     }
 
     override fun actionPerformed(e: AnActionEvent) {
