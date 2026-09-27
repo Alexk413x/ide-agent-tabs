@@ -11,9 +11,10 @@ This document is the contract every part builds against. Change it before you ch
 | Part | Status | Location |
 |---|---|---|
 | JetBrains plugin | Built. Moves to `jetbrains/` when the second part lands. | Repository root |
-| Protocol: registry and HTTP API | Phase 0 | This document |
+| Protocol: registry and HTTP API | Built (Phase 0) | This document |
 | Claude Code plugin: `delegate` skill | Built | `claude-plugin/`, marketplace in `.claude-plugin/` |
-| Claude Code plugin: MCP server, `/new-tab` skill, setup skill | Phase 1 | `claude-plugin/`, `mcp/` |
+| Release workflow | Phase 1 | `.github/workflows/` |
+| Claude Code plugin: MCP server, `/new-tab`, setup and update skills | Phase 1 | `claude-plugin/`, `mcp/` |
 | VS Code extension | Phase 2 | `vscode/` |
 | Visual Studio extension (Windows Terminal tabs first) | Phase 3 | `visualstudio/` |
 
@@ -265,6 +266,70 @@ The Codex plugin isn't declared as a plugin dependency. A dependency from anothe
 only when this marketplace lists it in `allowCrossMarketplaceDependenciesOn` and the user has already
 added OpenAI's marketplace. Otherwise the install is refused, which would break the one-step install.
 
+## Releases and updates (Phase 1)
+
+The repository is private. The Claude Code plugin updates straight from it. The IDE extensions update
+from a local folder that an update skill fills from GitHub Releases, because an IDE can't sign in to
+download a private release file.
+
+### What updates from where
+
+| Part | Update source | How it updates |
+|---|---|---|
+| Claude Code plugin | This repository, through the marketplace | `claude plugin update ide-agent-tabs@ide-agent-tabs`, or auto-update turned on for the marketplace in `/plugin` (off by default for a marketplace you add yourself) |
+| JetBrains plugin | `~/.ide-agent-tabs/repository/updatePlugins.xml` | The IDE's custom plugin repository, added once as a `file:///` URL. The IDE offers each new version. |
+| VS Code extension | GitHub Release `.vsix` | The update skill runs `code --install-extension <vsix> --force` |
+| Visual Studio extension | GitHub Release `.vsix` | The update skill runs `VSIXInstaller.exe` |
+
+### Release workflow
+
+A GitHub Actions workflow, `.github/workflows/release.yml`, builds and publishes each part. GitHub
+Actions runs on private repositories and bills against the account's monthly minutes. A Linux minute
+counts once, a Windows minute twice and a macOS minute ten times, so the workflow uses Linux except where
+a part needs Windows.
+
+- **Trigger:** a tag per part and version: `jetbrains-v0.3.0`, `vscode-v0.1.0`, `visualstudio-v0.1.0`. The
+  version in the tag must match the part's own version (`pluginVersion` in `gradle.properties` for
+  JetBrains); the workflow fails otherwise.
+- **JetBrains job (Linux):** set up JDK 25, install zsh and fish, run `./gradlew test buildPlugin`, and
+  run the Plugin Verifier. It attaches `ide-agent-tabs-<version>.zip` to a GitHub Release named after the
+  tag.
+- **PowerShell tests:** the Windows-only launch tests run in an optional Windows job, or locally before
+  tagging.
+- **Checksums:** every release also carries `SHA256SUMS`. The update skill refuses a file whose checksum
+  doesn't match.
+
+The build compiles against a local IDE today (`studioPath` in `gradle.properties`), which a runner
+doesn't have. Before the first release, the build must download its target IDE when `studioPath` isn't
+set. The plugin uses only platform and terminal APIs, so it can compile against IntelliJ IDEA 2026.2,
+and the Plugin Verifier then checks it against Android Studio. A local `studioPath` keeps working for
+development builds.
+
+### Update skill
+
+`/ide-agent-tabs:update` uses the GitHub CLI, signed in with read access to the repository:
+
+1. Find the newest release for each part with `gh release list`.
+2. Download the files with `gh release download`, and check them against `SHA256SUMS`.
+3. JetBrains: copy the zip into `~/.ide-agent-tabs/repository` and rewrite `updatePlugins.xml` with the
+   new version and a `file:///` URL. The IDE offers the update the next time it checks, or at once from
+   **Settings > Plugins > Installed > Check for Updates**. An update needs an IDE restart.
+4. VS Code and Visual Studio: install the downloaded `.vsix` with the editor's own command.
+5. Update the Claude Code plugin itself with `claude plugin update`.
+6. Report each part's old and new version, and any restart or reload the user must do.
+
+The `publishLocal` Gradle task writes the same folder layout, so a local development build and a
+downloaded release share one repository folder. The newest version wins.
+
+The setup skill adds the `file:///` repository URL to each JetBrains IDE once. It can edit the IDE's
+settings only while that IDE is closed; otherwise it tells the user which URL to add in **Settings >
+Plugins > ⚙ > Manage Plugin Repositories**.
+
+If the repository becomes public, each release can also carry an `updatePlugins.xml` with HTTPS URLs,
+and JetBrains IDEs can point at
+`https://github.com/Alexk413x/ide-agent-tabs/releases/latest/download/updatePlugins.xml` directly.
+Whether the IDE follows GitHub's download redirect is untested.
+
 ## Security
 
 - The token limits the API to processes that can read your registry files, which means your own user
@@ -275,8 +340,13 @@ added OpenAI's marketplace. Otherwise the install is refused, which would break 
 
 ## Phases
 
-0. Registry, token, `info` and `agents` routes, and agent profiles in the JetBrains plugin.
+0. Done: registry, token, `info` and `agents` routes, and agent profiles in the JetBrains plugin.
    Right-click agent menu.
-1. Claude Code plugin with the MCP server, `/new-tab` and setup skills, and GitHub Releases.
+1. Releases and the Claude Code plugin, in this order:
+   1. Build without a local IDE, and the release workflow for the JetBrains plugin.
+   2. `/new-tab` skill, moved from the user's personal commands into the plugin and changed to use the
+      registry and token.
+   3. MCP server.
+   4. Setup and update skills.
 2. VS Code extension.
 3. Visual Studio extension, opening Windows Terminal tabs.
