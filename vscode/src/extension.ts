@@ -145,7 +145,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return `- [${escape(p.label)}](command:ideAgentTabs.openAgent?${args})${p.name === profile.name ? ' (default)' : ''}`;
     });
     const lines = [
-      installed.length > 0 ? 'Open an agent in an editor tab. The agent you open becomes the default.' : 'No agent CLI found on PATH.',
+      installed.length > 0 ? 'Open an agent in an editor tab.' : 'No agent CLI found on PATH.',
       links.join('\n'),
       missing.length > 0 ? `Not installed: ${missing.map(p => escape(p.label)).join(', ')}` : '',
     ];
@@ -198,9 +198,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.registerCommand(`ideAgentTabs.newTab.${name}`, () => openFromButton(settings.defaultProfile())),
     ),
     vscode.commands.registerCommand('ideAgentTabs.newTabWith', chooseAgent),
-    vscode.commands.registerCommand('ideAgentTabs.openAgent', async (name: unknown) => {
+    vscode.commands.registerCommand('ideAgentTabs.openAgent', (name: unknown) => {
       const profile = typeof name === 'string' ? settings.profile(name) : undefined;
-      if (profile) await useAgent(profile);
+      if (profile) openFromButton(profile);
     }),
     vscode.window.onDidCloseTerminal(terminal => {
       for (const [id, tab] of tabs) if (tab.terminal === terminal) tabs.delete(id);
