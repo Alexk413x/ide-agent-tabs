@@ -4,7 +4,7 @@
     <vendor>Alexk413x</vendor>
     <description><![CDATA[
     Opens AI coding-agent sessions (Claude Code, Codex, Gemini CLI, Copilot CLI and others) in editor tabs:
-    from a toolbar button, the Tools menu, or a loopback-only HTTP request another agent can send.
+    from a toolbar button, the status bar, the Tools menu, or a loopback-only HTTP request another agent can send.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -13,6 +13,13 @@
     <extensions defaultExtensionNs="com.intellij">
         <httpRequestHandler implementation="dev.alexk.ideagenttabs.AgentTabHttpHandler"/>
         <postStartupActivity implementation="dev.alexk.ideagenttabs.EndpointFileActivity"/>
+        <postStartupActivity implementation="dev.alexk.ideagenttabs.OpenOnStartupActivity"/>
+        <applicationConfigurable parentId="tools"
+                                 instance="dev.alexk.ideagenttabs.AgentTabsConfigurable"
+                                 id="dev.alexk.ideagenttabs.settings"
+                                 displayName="Agent Tabs"/>
+        <statusBarWidgetFactory id="AgentTabs.StatusBar"
+                                implementation="dev.alexk.ideagenttabs.AgentStatusBarWidgetFactory"/>
     </extensions>
 
     <projectListeners>
@@ -33,8 +40,12 @@
                class="dev.alexk.ideagenttabs.AgentMenuGroup"
                popup="true"
                text="New Agent Tab With"
-               description="Open an installed agent in an editor tab and make it the default">
+               description="Open an installed agent in an editor tab">
             <add-to-group group-id="ToolsMenu" anchor="after" relative-to-action="IdeAgentTabs.NewAgentTab"/>
         </group>
+        <action id="IdeAgentTabs.SetDefaultAgent"
+                class="dev.alexk.ideagenttabs.SetDefaultAgentAction"
+                text="Set Default Agent…"
+                description="Choose the agent that New Agent Tab and the status bar item open"/>
     </actions>
 </idea-plugin>
