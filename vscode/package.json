@@ -1,0 +1,82 @@
+{
+  "name": "ide-agent-tabs",
+  "displayName": "IDE Agent Tabs",
+  "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
+  "version": "0.1.0",
+  "publisher": "alexk413x",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Alexk413x/ide-agent-tabs.git",
+    "directory": "vscode"
+  },
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "agent",
+    "claude",
+    "codex",
+    "gemini",
+    "copilot",
+    "terminal"
+  ],
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": false
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "ideAgentTabs.newTab",
+        "title": "New Agent Tab",
+        "category": "IDE Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agentTab.svg",
+          "dark": "resources/icons/agentTab_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.newTabWith",
+        "title": "New Agent Tab With…",
+        "category": "IDE Agent Tabs",
+        "icon": "$(chevron-down)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "ideAgentTabs.newTab",
+          "group": "navigation@100"
+        },
+        {
+          "command": "ideAgentTabs.newTabWith",
+          "group": "navigation@101"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "typecheck": "tsc -p . --noEmit",
+    "pretest": "tsc -p tsconfig.test.json",
+    "test": "node --test \"out/test/**/*.test.js\"",
+    "package": "npm run typecheck && npm run build && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "@types/vscode": "~1.100.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "typescript": "~5.9.0"
+  }
+}
