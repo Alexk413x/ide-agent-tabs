@@ -1,4 +1,4 @@
-package dev.alexk.claudestudiotabs
+package dev.alexk.ideagenttabs
 
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -23,7 +23,7 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-const val ENDPOINT_BASE = "/claude-studio-tabs"
+const val ENDPOINT_BASE = "/ide-agent-tabs"
 const val OPEN_PATH = "$ENDPOINT_BASE/open"
 const val CLOSE_PATH = "$ENDPOINT_BASE/close"
 const val LIST_PATH = "$ENDPOINT_BASE/list"

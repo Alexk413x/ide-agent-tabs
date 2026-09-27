@@ -1,4 +1,4 @@
-package dev.alexk.claudestudiotabs
+package dev.alexk.ideagenttabs
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service

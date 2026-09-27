@@ -1,4 +1,4 @@
-package dev.alexk.claudestudiotabs
+package dev.alexk.ideagenttabs
 
 import com.google.gson.JsonObject
 import com.intellij.openapi.Disposable
@@ -12,8 +12,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 
-val ENDPOINT_FILE: Path = System.getProperty("claude.studio.tabs.endpoint.file")?.let { Path.of(it) }
-    ?: Path.of(System.getProperty("user.home"), ".claude-studio-tabs", "endpoint.json")
+val ENDPOINT_FILE: Path = System.getProperty("ide.agent.tabs.endpoint.file")?.let { Path.of(it) }
+    ?: Path.of(System.getProperty("user.home"), ".ide-agent-tabs", "endpoint.json")
 
 @Service(Service.Level.APP)
 class EndpointFile : Disposable {

@@ -1,4 +1,4 @@
-package dev.alexk.claudestudiotabs;
+package dev.alexk.ideagenttabs;
 
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.terminal.frontend.editor.TerminalViewVirtualFile;

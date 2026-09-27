@@ -1,9 +1,9 @@
-# Claude Studio Tabs
+# IDE Agent Tabs
 
 A plugin for Android Studio and other JetBrains IDEs that opens a new Claude Code session in an editor
 tab.
 
-- Click **New Claude Tab** in the main toolbar or the **Tools** menu to start a session in the project
+- Click **New Agent Tab** in the main toolbar or the **Tools** menu to start a session in the project
   root.
 - Other programs, such as another Claude session, can open, list and close tabs through a local HTTP
   endpoint. The IDE does not take focus.
@@ -25,18 +25,18 @@ The plugin starts `claude` in these shells:
 ## Install
 
 1. Build the plugin (see [Build from source](#build-from-source)), or get the
-   `claude-studio-tabs-<version>.zip` file from someone who did.
+   `ide-agent-tabs-<version>.zip` file from someone who did.
 2. In the IDE, open **Settings > Plugins**, click **⚙**, and choose **Install Plugin from Disk**.
 3. Select the zip file, then restart the IDE.
 
 ## Open a tab from another program
 
-When the IDE starts, the plugin writes the endpoint's addresses to `~/.claude-studio-tabs/endpoint.json`:
+When the IDE starts, the plugin writes the endpoint's addresses to `~/.ide-agent-tabs/endpoint.json`:
 
 ```json
-{"url":"http://127.0.0.1:63342/claude-studio-tabs/open",
- "close":"http://127.0.0.1:63342/claude-studio-tabs/close",
- "list":"http://127.0.0.1:63342/claude-studio-tabs/list",
+{"url":"http://127.0.0.1:63342/ide-agent-tabs/open",
+ "close":"http://127.0.0.1:63342/ide-agent-tabs/close",
+ "list":"http://127.0.0.1:63342/ide-agent-tabs/list",
  "port":63342,"pid":12345}
 ```
 
@@ -46,7 +46,7 @@ Send each request as a `POST` with `Content-Type: application/json`. Every reply
 macOS and Linux (uses `jq`):
 
 ```sh
-url=$(jq -r .url ~/.claude-studio-tabs/endpoint.json)
+url=$(jq -r .url ~/.ide-agent-tabs/endpoint.json)
 curl -s "$url" -H 'Content-Type: application/json' \
   -d '{"path": "/path/to/repo", "prompt": "Your first message"}'
 ```
@@ -54,9 +54,9 @@ curl -s "$url" -H 'Content-Type: application/json' \
 Windows PowerShell:
 
 ```powershell
-$endpoint = Get-Content "$HOME\.claude-studio-tabs\endpoint.json" | ConvertFrom-Json
+$endpoint = Get-Content "$HOME\.ide-agent-tabs\endpoint.json" | ConvertFrom-Json
 $body = @{ path = 'C:\path\to\repo'; prompt = 'Your first message' } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri $endpoint.url -ContentType 'application/json' -Body $body -UserAgent 'claude-studio-tabs'
+Invoke-RestMethod -Method Post -Uri $endpoint.url -ContentType 'application/json' -Body $body -UserAgent 'ide-agent-tabs'
 ```
 
 In PowerShell, always pass `-UserAgent`. PowerShell's default User-Agent starts with `Mozilla/5.0`, and
@@ -71,7 +71,7 @@ the IDE refuses a browser-like `POST` before the plugin sees it. `curl` doesn't 
 | `path` | Yes | Absolute path to an existing folder. The session starts there. |
 | `prompt` | No | The session's first message. Up to 30,000 characters. |
 | `args` | No | Extra `claude` arguments, such as `["--plugin-dir", "/path/to/plugin"]`. Up to 64 strings. |
-| `env` | No | Environment variables for the session, such as `{"MY_SETTING": "value"}`. Up to 64. Names that start with `CLAUDE_STUDIO_TABS_` or `JEDITERM_SOURCE` are refused. |
+| `env` | No | Environment variables for the session, such as `{"MY_SETTING": "value"}`. Up to 64. Names that start with `IDE_AGENT_TABS_` or `JEDITERM_SOURCE` are refused. |
 
 The reply holds the tab's `id`, the `project` window it opened in, and the `path`. The tab opens in the
 open project that contains `path`, or in the last focused project window if none does.
@@ -79,7 +79,7 @@ open project that contains `path`, or in the last focused project window if none
 ### Close
 
 `POST {"id": "<tab id>"}` to `close`. Closing the tab ends its session. You can close only tabs this
-plugin opened. Each session can read its own id from the `CLAUDE_STUDIO_TABS_ID` environment variable,
+plugin opened. Each session can read its own id from the `IDE_AGENT_TABS_ID` environment variable,
 so a session can close its own tab when it finishes.
 
 ### List
@@ -123,7 +123,7 @@ The zip is in `build/distributions`.
 ### Local update repository
 
 `./gradlew publishLocal` copies the zip and an `updatePlugins.xml` file into
-`~/.claude-studio-tabs/repository`. Add that file's `file:///` URL once in **Settings > Plugins > ⚙ >
+`~/.ide-agent-tabs/repository`. Add that file's `file:///` URL once in **Settings > Plugins > ⚙ >
 Manage Plugin Repositories**. After that, raise `pluginVersion` in `gradle.properties` and run
 `publishLocal` again, and the IDE offers the update. Set `pluginRepositoryDir` to publish somewhere
 else.
