@@ -10,7 +10,6 @@ import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import java.io.File
 import java.nio.file.Files
-import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
@@ -18,6 +17,8 @@ import java.util.UUID
 const val PLUGIN_ENV_PREFIX = "IDE_AGENT_TABS_"
 const val PROMPT_ENV = "${PLUGIN_ENV_PREFIX}PROMPT"
 const val TAB_ID_ENV = "${PLUGIN_ENV_PREFIX}ID"
+const val AGENT_ENV = "${PLUGIN_ENV_PREFIX}AGENT"
+const val COMMAND_ENV = "${PLUGIN_ENV_PREFIX}COMMAND"
 const val ARGS_ENV = "${PLUGIN_ENV_PREFIX}ARGS"
 const val ARG_COUNT_ENV = "${PLUGIN_ENV_PREFIX}ARGC"
 const val ARG_ENV_PREFIX = "${PLUGIN_ENV_PREFIX}ARG_"
@@ -55,12 +56,13 @@ fun unixShell(loginShell: String?, isMac: Boolean): Shell {
     }
 }
 
-object ClaudeTabLauncher {
+object AgentTabLauncher {
 
     @RequiresEdt
     fun open(
         project: Project,
         directory: String,
+        profile: AgentProfile,
         prompt: String?,
         focus: Boolean,
         args: List<String> = emptyList(),
@@ -72,16 +74,17 @@ object ClaudeTabLauncher {
         } else {
             unixShell(System.getenv("SHELL"), SystemInfo.isMac)
         }
+        val agent = profile.launch(prompt, args, env)
         val launch = when (shell.kind) {
-            ShellKind.POWERSHELL -> powerShellLaunch(shell.path, prompt, id, args = args, env = env)
-            else -> sourcedLaunch(shell, launchScript(shell.kind, SCRIPT_DIR), prompt, id, args, env)
+            ShellKind.POWERSHELL -> powerShellLaunch(shell.path, agent, id)
+            else -> sourcedLaunch(shell, launchScript(shell.kind, SCRIPT_DIR), agent, id)
         }
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab = manager.createTabBuilder()
             .workingDirectory(directory)
             .shellCommand(launch.command)
             .envVariables(launch.env)
-            .tabName("Claude")
+            .tabName(profile.label)
             .requestFocus(false)
             .createTab()
 
@@ -95,12 +98,12 @@ object ClaudeTabLauncher {
         } finally {
             file.putUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN, null)
         }
-        ClaudeTabRegistry.getInstance().add(ClaudeTabRegistry.Entry(id, project, file, directory))
+        AgentTabRegistry.getInstance().add(AgentTabRegistry.Entry(id, profile.name, project, file, directory))
         return id
     }
 
     @RequiresEdt
-    fun close(entry: ClaudeTabRegistry.Entry) {
+    fun close(entry: AgentTabRegistry.Entry) {
         if (!entry.project.isDisposed) FileEditorManager.getInstance(entry.project).closeFile(entry.file)
     }
 
@@ -111,8 +114,8 @@ object ClaudeTabLauncher {
 // and is copied out. It is rewritten only when it differs, so a shell starting in another tab never reads
 // a half-written file.
 fun launchScript(kind: ShellKind, dir: Path): Path {
-    val name = if (kind == ShellKind.FISH) "claude.fish" else "claude.sh"
-    val content = ClaudeLaunch::class.java.getResourceAsStream("/launch/$name")!!.use { it.readAllBytes() }
+    val name = if (kind == ShellKind.FISH) "agent.fish" else "agent.sh"
+    val content = ShellLaunch::class.java.getResourceAsStream("/launch/$name")!!.use { it.readAllBytes() }
     val target = dir.resolve(name)
     if (Files.isRegularFile(target) && Files.readAllBytes(target).contentEquals(content)) return target
     Files.createDirectories(dir)
@@ -122,66 +125,46 @@ fun launchScript(kind: ShellKind, dir: Path): Path {
     return target
 }
 
-// The Microsoft Store pwsh.exe under WindowsApps is an app execution alias that the JVM cannot follow, so
-// PathEnvironmentVariableUtil.findInPath and a following Files.exists miss it and the tab starts Windows
-// PowerShell 5.1. Checking the link itself finds it.
-fun findOnPath(path: String, executable: String): String? =
-    path.split(File.pathSeparatorChar)
-        .map { it.trim().trim('"') }
-        .filter { it.isNotEmpty() }
-        .firstNotNullOfOrNull { dir ->
-            runCatching { Path.of(dir, executable) }.getOrNull()?.takeIf { Files.exists(it, LinkOption.NOFOLLOW_LINKS) }?.toString()
-        }
+class ShellLaunch(val command: List<String>, val env: Map<String, String>)
 
-class ClaudeLaunch(val command: List<String>, val env: Map<String, String>)
+private fun launchEnv(agent: AgentLaunch, tabId: String): MutableMap<String, String> =
+    agent.env.toMutableMap().apply {
+        this[TAB_ID_ENV] = tabId
+        this[AGENT_ENV] = agent.agent
+        this[COMMAND_ENV] = agent.command
+    }
 
 // The terminal appends its own "-NoExit -ExecutionPolicy Bypass -File powershell-integration.ps1" after
 // the shell's arguments, so any "-Command" here would swallow them. The shell gets no arguments;
 // the integration script runs JEDITERM_SOURCE through Invoke-Expression once its setup is done.
-// The prompt and args travel in environment variables, never in that string, so nothing a caller sends is
-// parsed as PowerShell.
-fun powerShellLaunch(
-    shell: String,
-    prompt: String?,
-    tabId: String,
-    claude: String = "claude",
-    args: List<String> = emptyList(),
-    env: Map<String, String> = emptyMap(),
-): ClaudeLaunch {
-    val launchEnv = env.toMutableMap()
-    launchEnv[TAB_ID_ENV] = tabId
-    val setup = mutableListOf<String>()
-    var command = claude
-    if (args.isNotEmpty()) {
-        launchEnv[ARGS_ENV] = JsonArray().apply { args.forEach(::add) }.toString()
+// The command, prompt and args travel in environment variables, never in that string, so nothing a caller
+// sends is parsed as PowerShell.
+fun powerShellLaunch(shell: String, agent: AgentLaunch, tabId: String): ShellLaunch {
+    val env = launchEnv(agent, tabId)
+    val setup = mutableListOf("\$c = \$env:$COMMAND_ENV; Remove-Item env:$COMMAND_ENV")
+    var command = "& \$c"
+    if (agent.args.isNotEmpty()) {
+        env[ARGS_ENV] = JsonArray().apply { agent.args.forEach(::add) }.toString()
         setup += "\$a = @(\$env:$ARGS_ENV | ConvertFrom-Json); Remove-Item env:$ARGS_ENV"
         command += " @a"
     }
-    if (prompt != null) {
-        launchEnv[PROMPT_ENV] = prompt
+    if (agent.prompt != null) {
+        env[PROMPT_ENV] = agent.prompt
         setup += "\$p = \$env:$PROMPT_ENV; Remove-Item env:$PROMPT_ENV"
         command += " \$p"
     }
-    launchEnv[STARTUP_ENV] = (setup + command).joinToString("; ")
-    return ClaudeLaunch(listOf(shell), launchEnv)
+    env[STARTUP_ENV] = (setup + command).joinToString("; ")
+    return ShellLaunch(listOf(shell), env)
 }
 
 // bash, zsh and fish have no JSON parser, so unlike the PowerShell launch each arg travels in its own variable.
-fun sourcedLaunch(
-    shell: Shell,
-    script: Path,
-    prompt: String?,
-    tabId: String,
-    args: List<String> = emptyList(),
-    env: Map<String, String> = emptyMap(),
-): ClaudeLaunch {
-    val launchEnv = env.toMutableMap()
-    launchEnv[TAB_ID_ENV] = tabId
-    if (args.isNotEmpty()) {
-        launchEnv[ARG_COUNT_ENV] = args.size.toString()
-        args.forEachIndexed { i, arg -> launchEnv["$ARG_ENV_PREFIX$i"] = arg }
+fun sourcedLaunch(shell: Shell, script: Path, agent: AgentLaunch, tabId: String): ShellLaunch {
+    val env = launchEnv(agent, tabId)
+    if (agent.args.isNotEmpty()) {
+        env[ARG_COUNT_ENV] = agent.args.size.toString()
+        agent.args.forEachIndexed { i, arg -> env["$ARG_ENV_PREFIX$i"] = arg }
     }
-    if (prompt != null) launchEnv[PROMPT_ENV] = prompt
-    launchEnv[STARTUP_ENV] = script.toString()
-    return ClaudeLaunch(listOf(shell.path) + shell.flags, launchEnv)
+    if (agent.prompt != null) env[PROMPT_ENV] = agent.prompt
+    env[STARTUP_ENV] = script.toString()
+    return ShellLaunch(listOf(shell.path) + shell.flags, env)
 }

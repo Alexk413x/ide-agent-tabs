@@ -1,21 +1,24 @@
 # IDE Agent Tabs
 
-A plugin for Android Studio and other JetBrains IDEs that opens a new Claude Code session in an editor
-tab.
+A plugin for Android Studio and other JetBrains IDEs that opens AI coding-agent sessions, such as Claude
+Code, Codex, Gemini CLI and Copilot CLI, in editor tabs.
 
-- Click **New Agent Tab** in the main toolbar or the **Tools** menu to start a session in the project
-  root.
-- Other programs, such as another Claude session, can open, list and close tabs through a local HTTP
-  endpoint. The IDE does not take focus.
+- Click **New Agent Tab** in the main toolbar or the **Tools** menu to start the default agent in the
+  project root.
+- Right-click **New Agent Tab** in the main toolbar, or open **Tools > New Agent Tab With**, to choose
+  another installed agent. The one you choose becomes the default.
+- Other programs, such as another agent session, can open, list and close tabs through a local HTTP
+  API. The IDE does not take focus.
 
 ## Requirements
 
 - Android Studio 2026.2 or later, or another JetBrains IDE at build 262 or later.
-- [Claude Code](https://docs.claude.com/en/docs/claude-code) installed, with `claude` on your `PATH`.
+- At least one agent CLI on your `PATH`, such as [Claude Code](https://docs.claude.com/en/docs/claude-code)
+  (`claude`).
 - Terminal shell integration turned on. It is on by default: **Settings > Tools > Terminal > Shell
   integration**.
 
-The plugin starts `claude` in these shells:
+The plugin starts the agent in these shells:
 
 | OS | Shell |
 |---|---|
@@ -29,34 +32,89 @@ The plugin starts `claude` in these shells:
 2. In the IDE, open **Settings > Plugins**, click **⚙**, and choose **Install Plugin from Disk**.
 3. Select the zip file, then restart the IDE.
 
-## Open a tab from another program
+## Agents
 
-When the IDE starts, the plugin writes the endpoint's addresses to `~/.ide-agent-tabs/endpoint.json`:
+The plugin knows these agents:
+
+| Name | Label | Command | First prompt |
+|---|---|---|---|
+| `claude` | Claude Code | `claude` | positional |
+| `codex` | Codex | `codex` | positional |
+| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
+| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
+
+The right-click menu lists only agents whose command is on the IDE's `PATH`. On Windows, the plugin
+also looks for `.exe`, `.cmd`, `.bat` and `.ps1` files.
+
+To add an agent or change a built-in one, create `~/.ide-agent-tabs/agents.json`. A profile with the
+same name as a built-in one replaces it.
 
 ```json
-{"url":"http://127.0.0.1:63342/ide-agent-tabs/open",
- "close":"http://127.0.0.1:63342/ide-agent-tabs/close",
- "list":"http://127.0.0.1:63342/ide-agent-tabs/list",
- "port":63342,"pid":12345}
+{
+  "opencode-local": {
+    "label": "OpenCode (LM Studio)",
+    "command": "opencode",
+    "args": ["--model", "lmstudio/qwen3-coder"],
+    "promptFlag": "--prompt",
+    "env": {},
+    "icon": "icons/opencode.svg"
+  }
+}
 ```
 
-Send each request as a `POST` with `Content-Type: application/json`. Every reply is JSON with
+| Field | Required | Description |
+|---|---|---|
+| `command` | Yes | The executable, found on the shell's `PATH`, or an absolute path. |
+| `label` | No | The name in menus. The default is the profile name. |
+| `args` | No | Arguments that go before the caller's `args`. |
+| `promptFlag` | No | The flag before the first prompt. Leave it out when the prompt is positional. |
+| `env` | No | Environment variables for the session. The caller's `env` wins on a clash. |
+| `icon` | No | An SVG file for menus, as an absolute path or relative to `~/.ide-agent-tabs`. |
+
+If `agents.json` isn't valid, the plugin logs a warning to `idea.log` and uses only the built-in
+agents.
+
+The default agent is in `~/.ide-agent-tabs/config.json`. Choosing an agent from a menu writes it:
+
+```json
+{ "defaultAgent": "claude" }
+```
+
+## Open a tab from another program
+
+When the IDE starts, the plugin writes a registry file to
+`~/.ide-agent-tabs/endpoints/jetbrains-<pid>.json`, and deletes it when the IDE closes:
+
+```json
+{"protocol":1,"ide":"jetbrains","product":"Android Studio","version":"2026.2.2","pid":12345,
+ "url":"http://127.0.0.1:63342/ide-agent-tabs","token":"<64 hex characters>"}
+```
+
+Each running IDE writes its own file. A file can stay behind after a crash, so skip any file whose
+`pid` isn't running.
+
+Send each request as a `POST` to `<url>/<route>` with `Content-Type: application/json` and
+`Authorization: Bearer <token>`. The token changes each time the IDE starts. Every reply is JSON with
 `"ok": true`, or `"ok": false` and an `"error"`.
 
-macOS and Linux (uses `jq`):
+macOS and Linux (uses `jq`, and picks the newest registry file):
 
 ```sh
-url=$(jq -r .url ~/.ide-agent-tabs/endpoint.json)
-curl -s "$url" -H 'Content-Type: application/json' \
+entry=$(ls -t ~/.ide-agent-tabs/endpoints/jetbrains-*.json | head -n 1)
+url=$(jq -r .url "$entry")
+token=$(jq -r .token "$entry")
+curl -s "$url/open" -H 'Content-Type: application/json' -H "Authorization: Bearer $token" \
   -d '{"path": "/path/to/repo", "prompt": "Your first message"}'
 ```
 
 Windows PowerShell:
 
 ```powershell
-$endpoint = Get-Content "$HOME\.ide-agent-tabs\endpoint.json" | ConvertFrom-Json
+$entry = Get-ChildItem "$HOME\.ide-agent-tabs\endpoints\jetbrains-*.json" |
+  Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content -Raw | ConvertFrom-Json
 $body = @{ path = 'C:\path\to\repo'; prompt = 'Your first message' } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri $endpoint.url -ContentType 'application/json' -Body $body -UserAgent 'ide-agent-tabs'
+Invoke-RestMethod -Method Post -Uri "$($entry.url)/open" -ContentType 'application/json' `
+  -Headers @{ Authorization = "Bearer $($entry.token)" } -Body $body -UserAgent 'ide-agent-tabs'
 ```
 
 In PowerShell, always pass `-UserAgent`. PowerShell's default User-Agent starts with `Mozilla/5.0`, and
@@ -64,35 +122,48 @@ the IDE refuses a browser-like `POST` before the plugin sees it. `curl` doesn't 
 
 ### Open
 
-`POST` to `url`. The body takes these fields:
+`POST` to `open`. The body takes these fields:
 
 | Field | Required | Description |
 |---|---|---|
 | `path` | Yes | Absolute path to an existing folder. The session starts there. |
+| `agent` | No | An agent name from `agents`. The default is the default agent. |
 | `prompt` | No | The session's first message. Up to 30,000 characters. |
-| `args` | No | Extra `claude` arguments, such as `["--plugin-dir", "/path/to/plugin"]`. Up to 64 strings. |
+| `args` | No | Extra agent arguments, such as `["--plugin-dir", "/path/to/plugin"]`. Up to 64 strings. They go after the profile's `args` and before the prompt. |
 | `env` | No | Environment variables for the session, such as `{"MY_SETTING": "value"}`. Up to 64. Names that start with `IDE_AGENT_TABS_` or `JEDITERM_SOURCE` are refused. |
 
-The reply holds the tab's `id`, the `project` window it opened in, and the `path`. The tab opens in the
-open project that contains `path`, or in the last focused project window if none does.
+The reply holds the tab's `id`, the `agent`, the `project` window it opened in, and the `path`. The tab
+opens in the open project that contains `path`, or in the last focused project window if none does.
 
 ### Close
 
 `POST {"id": "<tab id>"}` to `close`. Closing the tab ends its session. You can close only tabs this
 plugin opened. Each session can read its own id from the `IDE_AGENT_TABS_ID` environment variable,
-so a session can close its own tab when it finishes.
+so a session can close its own tab when it finishes. `IDE_AGENT_TABS_AGENT` holds the agent name.
 
 ### List
 
-`POST {}` to `list`. The reply's `tabs` array holds the `id`, `project` and `path` of each open tab
-the plugin opened.
+`POST {}` to `list`. The reply's `tabs` array holds the `id`, `agent`, `project` and `path` of each
+open tab the plugin opened.
+
+### Agents
+
+`POST {}` to `agents`. The reply holds the `default` agent name, and an `agents` array with the
+`name`, `label`, `command` and `installed` of each agent.
+
+### Info
+
+`POST {}` to `info`. The reply holds the IDE's `ide`, `product`, `version` and `pid`, and a `projects`
+array with the `name`, `path` and `focused` of each open project. `focused` is `true` for the project
+in the last focused window.
 
 ### Status codes
 
 | Status | Meaning |
 |---|---|
 | 200 | Done. |
-| 400 | Bad body, relative path, missing folder, or missing `id`. |
+| 400 | Bad body, relative path, missing folder, missing `id`, or unknown `agent`. |
+| 401 | Missing or wrong token. |
 | 403 | The request came from outside this computer, or carried an `Origin` or `Referer` header. |
 | 404 | `close`: no open tab has that id. Also the IDE's reply to a browser-like request. |
 | 405 | The method wasn't `POST`. |
@@ -100,8 +171,9 @@ the plugin opened.
 | 415 | `Content-Type` wasn't `application/json`. |
 | 503 | The IDE didn't respond within 10 seconds, usually because a dialog is open. Nothing opens later. |
 
-The endpoint accepts requests only from this computer. The `Origin`, `Referer` and `Content-Type` rules
-stop web pages from opening sessions.
+The API accepts requests only from this computer, and only with the token. On macOS and Linux, only
+your user account can read the registry folder. The `Origin`, `Referer` and `Content-Type` rules stop
+web pages from opening sessions.
 
 ## Build from source
 
@@ -131,8 +203,9 @@ else.
 ### Sandbox IDE
 
 `./gradlew runIdeWithClaude` starts a separate IDE with this plugin and the Claude Code plugin from
-`claudeCodePluginPath`. The sandbox writes its endpoint file to `build/sandbox-endpoint.json`, so it
-never replaces your real IDE's file.
+`claudeCodePluginPath`. The sandbox uses `build/sandbox-home` in place of `~/.ide-agent-tabs`, so its
+registry file and settings never mix with your real IDE's. The Java system property
+`ide.agent.tabs.home` sets this folder.
 
 ## License
 
