@@ -32,9 +32,10 @@ npm run package
 - To open a different agent, click the arrow next to **New Agent Tab** and pick one from the menu. The
   menu lists each agent whose command is on your `PATH`. Custom agents from `agents.json` are under
   **New Agent Tab With…**, which the Command Palette also has.
-- Hover over the status bar item to see a link for each installed agent. Click one to open it. The
+- Hover over the status bar item to see a link, with its logo, for each installed agent. Click one to open it. The
   tooltip also names supported agents that aren't installed.
-- The arrow menu and the status bar tooltip both have a **Settings** link to this extension's settings.
+- The arrow menu and the status bar tooltip both have **Set Default Agent…**, which saves your choice in
+  the `ideAgentTabs.defaultAgent` setting, and a **Settings** link to this extension's settings.
 
 Opening an agent from a menu or a link doesn't change the default agent. To change it, use the
 `ideAgentTabs.defaultAgent` setting.

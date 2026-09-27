@@ -135,14 +135,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const refreshStatus = () => {
     const profile = settings.defaultProfile();
     void vscode.commands.executeCommand('setContext', 'ideAgentTabs.buttonAgent', BUILTIN_ICONS.has(profile.name) ? profile.name : 'other');
-    status.text = `$(agent-tabs-new) New ${profile.label}`;
+    status.text = `$(agent-tabs) New ${profile.label}`;
     const escape = (text: string) => text.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
     const all = settings.profiles();
     const installed = all.filter(p => isInstalled(p.command, searchPath(), isWindows));
     const missing = all.filter(p => !installed.includes(p));
+    const dark = [vscode.ColorThemeKind.Dark, vscode.ColorThemeKind.HighContrast].includes(vscode.window.activeColorTheme.kind);
+    const iconFor = (p: AgentProfile) => {
+      const path = icon(p);
+      if (path instanceof vscode.Uri) return path;
+      if (path instanceof vscode.ThemeIcon || typeof path === 'string') return undefined;
+      const uri = dark ? path.dark : path.light;
+      return uri instanceof vscode.Uri ? uri : undefined;
+    };
     const links = installed.map(p => {
+      const logo = iconFor(p);
       const args = encodeURIComponent(JSON.stringify([p.name]));
-      return `- [${escape(p.label)}](command:ideAgentTabs.openAgent?${args})`;
+      return `${logo ? `![](${logo.toString()}|width=16,height=16) ` : ''}[${escape(p.label)}](command:ideAgentTabs.openAgent?${args})`;
     });
     for (const name of BUILTIN_ICONS) {
       void vscode.commands.executeCommand('setContext', `ideAgentTabs.installed.${name}`, installed.some(p => p.name === name));
@@ -150,17 +159,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void vscode.commands.executeCommand('setContext', 'ideAgentTabs.customInstalled', installed.some(p => !BUILTIN_ICONS.has(p.name)));
     const lines = [
       installed.length > 0 ? 'Open an agent in an editor tab.' : 'No agent CLI found on PATH.',
-      links.join('\n'),
+      links.join('  \n'),
       missing.length > 0 ? `Not installed: ${missing.map(p => escape(p.label)).join(', ')}` : '',
-      '[$(gear) Settings](command:ideAgentTabs.openSettings)',
+      '[$(star-empty) Set Default Agent…](command:ideAgentTabs.setDefaultAgent) · [$(gear) Settings](command:ideAgentTabs.openSettings)',
     ];
     const tooltip = new vscode.MarkdownString(lines.filter(Boolean).join('\n\n'));
-    tooltip.isTrusted = { enabledCommands: ['ideAgentTabs.openAgent', 'ideAgentTabs.openSettings'] };
+    tooltip.isTrusted = { enabledCommands: ['ideAgentTabs.openAgent', 'ideAgentTabs.setDefaultAgent', 'ideAgentTabs.openSettings'] };
     tooltip.supportThemeIcons = true;
     status.tooltip = tooltip;
   };
   refreshStatus();
   status.show();
+
+  const setDefaultAgent = async () => {
+    const current = settings.defaultProfile().name;
+    const items = settings
+      .profiles()
+      .filter(p => isInstalled(p.command, searchPath(), isWindows))
+      .map(p => ({ label: p.label, description: p.name === current ? 'current default' : undefined, iconPath: icon(p), profile: p }));
+    const picked = await vscode.window.showQuickPick(items, { title: 'Set Default Agent' });
+    if (!picked) return;
+    const setting = config().inspect<string>('defaultAgent');
+    const target = setting?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+    await config().update('defaultAgent', picked.profile.name, target);
+  };
 
   const chooseAgent = async () => {
     const items = settings
@@ -183,6 +205,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.registerCommand(`ideAgentTabs.newTab.${name}`, () => openFromButton(settings.defaultProfile())),
     ),
     vscode.commands.registerCommand('ideAgentTabs.newTabWith', chooseAgent),
+    vscode.commands.registerCommand('ideAgentTabs.setDefaultAgent', setDefaultAgent),
     vscode.commands.registerCommand('ideAgentTabs.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`),
     ),
@@ -199,6 +222,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.onDidCloseTerminal(terminal => {
       for (const [id, tab] of tabs) if (tab.terminal === terminal) tabs.delete(id);
     }),
+    vscode.window.onDidChangeActiveColorTheme(() => refreshStatus()),
     vscode.window.onDidChangeWindowState(state => {
       if (state.focused) refreshStatus();
     }),
