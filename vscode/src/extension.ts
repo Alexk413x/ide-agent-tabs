@@ -135,7 +135,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const refreshStatus = () => {
     const profile = settings.defaultProfile();
     void vscode.commands.executeCommand('setContext', 'ideAgentTabs.buttonAgent', BUILTIN_ICONS.has(profile.name) ? profile.name : 'other');
-    status.text = `$(agent-tabs) New ${profile.label}`;
+    status.text = `$(agent-tabs) ${profile.label}`;
     const escape = (text: string) => text.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
     const all = settings.profiles();
     const installed = all.filter(p => isInstalled(p.command, searchPath(), isWindows));
@@ -151,7 +151,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const links = installed.map(p => {
       const logo = iconFor(p);
       const args = encodeURIComponent(JSON.stringify([p.name]));
-      return `${logo ? `![](${logo.toString()}|width=16,height=16) ` : ''}[${escape(p.label)}](command:ideAgentTabs.openAgent?${args})`;
+      const img = logo ? `<img src="${logo.toString()}" width="16" height="16" align="absmiddle"> ` : '';
+      return `${img}[${escape(p.label)}](command:ideAgentTabs.openAgent?${args})`;
     });
     for (const name of BUILTIN_ICONS) {
       void vscode.commands.executeCommand('setContext', `ideAgentTabs.installed.${name}`, installed.some(p => p.name === name));
@@ -166,10 +167,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const tooltip = new vscode.MarkdownString(lines.filter(Boolean).join('\n\n'));
     tooltip.isTrusted = { enabledCommands: ['ideAgentTabs.openAgent', 'ideAgentTabs.setDefaultAgent', 'ideAgentTabs.openSettings'] };
     tooltip.supportThemeIcons = true;
+    tooltip.supportHtml = true;
     status.tooltip = tooltip;
   };
   refreshStatus();
   status.show();
+
+  const shareDefault = () => {
+    const name = settings.defaultProfile().name;
+    if (settings.sharedDefault() !== name) settings.setDefaultAgent(name);
+  };
+
+  // The setting is the one default; config.json mirrors it for the MCP server and the JetBrains plugin.
+  const adoptSharedDefault = async () => {
+    const setting = config().inspect<string>('defaultAgent');
+    const explicit = setting?.workspaceFolderValue ?? setting?.workspaceValue ?? setting?.globalValue;
+    const shared = settings.sharedDefault();
+    if (explicit === undefined && shared !== undefined && shared !== setting?.defaultValue && settings.profile(shared)) {
+      await config().update('defaultAgent', shared, vscode.ConfigurationTarget.Global);
+    } else {
+      shareDefault();
+    }
+  };
 
   const setDefaultAgent = async () => {
     const current = settings.defaultProfile().name;
@@ -227,11 +246,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (state.focused) refreshStatus();
     }),
     vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('ideAgentTabs.defaultAgent')) refreshStatus();
+      if (!e.affectsConfiguration('ideAgentTabs.defaultAgent')) return;
+      shareDefault();
+      refreshStatus();
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(e => openOnStartup(e.added)),
   );
 
+  await adoptSharedDefault().catch(e => log.warn(`Could not sync the default agent: ${(e as Error).message}`));
+  refreshStatus();
   openOnStartup(fileFolders());
 
   const token = newToken();
