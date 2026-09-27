@@ -34,6 +34,7 @@ npm run package
   **New Agent Tab With…**, which the Command Palette also has.
 - Hover over the status bar item to see a link for each installed agent. Click one to open it. The
   tooltip also names supported agents that aren't installed.
+- The arrow menu and the status bar tooltip both have a **Settings** link to this extension's settings.
 
 Opening an agent from a menu or a link doesn't change the default agent. To change it, use the
 `ideAgentTabs.defaultAgent` setting.

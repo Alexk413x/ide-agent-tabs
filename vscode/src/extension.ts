@@ -152,9 +152,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       installed.length > 0 ? 'Open an agent in an editor tab.' : 'No agent CLI found on PATH.',
       links.join('\n'),
       missing.length > 0 ? `Not installed: ${missing.map(p => escape(p.label)).join(', ')}` : '',
+      '[$(gear) Settings](command:ideAgentTabs.openSettings)',
     ];
     const tooltip = new vscode.MarkdownString(lines.filter(Boolean).join('\n\n'));
-    tooltip.isTrusted = { enabledCommands: ['ideAgentTabs.openAgent'] };
+    tooltip.isTrusted = { enabledCommands: ['ideAgentTabs.openAgent', 'ideAgentTabs.openSettings'] };
+    tooltip.supportThemeIcons = true;
     status.tooltip = tooltip;
   };
   refreshStatus();
@@ -181,6 +183,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.registerCommand(`ideAgentTabs.newTab.${name}`, () => openFromButton(settings.defaultProfile())),
     ),
     vscode.commands.registerCommand('ideAgentTabs.newTabWith', chooseAgent),
+    vscode.commands.registerCommand('ideAgentTabs.openSettings', () =>
+      vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`),
+    ),
     ...[...BUILTIN_ICONS].map(name =>
       vscode.commands.registerCommand(`ideAgentTabs.open.${name}`, () => {
         const profile = settings.profile(name);
