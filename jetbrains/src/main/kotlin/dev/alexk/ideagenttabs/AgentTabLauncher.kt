@@ -76,7 +76,7 @@ object AgentTabLauncher {
         }
         val agent = profile.launch(prompt, args, env)
         val launch = when (shell.kind) {
-            ShellKind.POWERSHELL -> powerShellLaunch(shell.path, agent, id)
+            ShellKind.POWERSHELL -> powerShellLaunch(shell.path, launchScript(shell.kind, SCRIPT_DIR), agent, id)
             else -> sourcedLaunch(shell, launchScript(shell.kind, SCRIPT_DIR), agent, id)
         }
         val manager = TerminalToolWindowTabsManager.getInstance(project)
@@ -110,11 +110,15 @@ object AgentTabLauncher {
     private val SCRIPT_DIR: Path get() = PathManager.getSystemDir().resolve("ide-agent-tabs")
 }
 
-// The bash, zsh and fish integrations source JEDITERM_SOURCE as a file, so the script ships as a resource
-// and is copied out. It is rewritten only when it differs, so a shell starting in another tab never reads
-// a half-written file.
+// Every shell integration runs JEDITERM_SOURCE as a file when it names one, so the script ships as a
+// resource and is copied out. It is rewritten only when it differs, so a shell starting in another tab
+// never reads a half-written file.
 fun launchScript(kind: ShellKind, dir: Path): Path {
-    val name = if (kind == ShellKind.FISH) "agent.fish" else "agent.sh"
+    val name = when (kind) {
+        ShellKind.POWERSHELL -> "agent.ps1"
+        ShellKind.FISH -> "agent.fish"
+        ShellKind.POSIX -> "agent.sh"
+    }
     val content = ShellLaunch::class.java.getResourceAsStream("/launch/$name")!!.use { it.readAllBytes() }
     val target = dir.resolve(name)
     if (Files.isRegularFile(target) && Files.readAllBytes(target).contentEquals(content)) return target
@@ -135,25 +139,13 @@ private fun launchEnv(agent: AgentLaunch, tabId: String): MutableMap<String, Str
     }
 
 // The terminal appends its own "-NoExit -ExecutionPolicy Bypass -File powershell-integration.ps1" after
-// the shell's arguments, so any "-Command" here would swallow them. The shell gets no arguments;
-// the integration script runs JEDITERM_SOURCE through Invoke-Expression once its setup is done.
-// The command, prompt and args travel in environment variables, never in that string, so nothing a caller
-// sends is parsed as PowerShell.
-fun powerShellLaunch(shell: String, agent: AgentLaunch, tabId: String): ShellLaunch {
+// the shell's arguments, so any "-Command" here would swallow them. The shell gets no arguments; the
+// integration script runs the JEDITERM_SOURCE file once its setup is done.
+fun powerShellLaunch(shell: String, script: Path, agent: AgentLaunch, tabId: String): ShellLaunch {
     val env = launchEnv(agent, tabId)
-    val setup = mutableListOf("\$c = \$env:$COMMAND_ENV; Remove-Item env:$COMMAND_ENV")
-    var command = "& \$c"
-    if (agent.args.isNotEmpty()) {
-        env[ARGS_ENV] = JsonArray().apply { agent.args.forEach(::add) }.toString()
-        setup += "\$a = @(\$env:$ARGS_ENV | ConvertFrom-Json); Remove-Item env:$ARGS_ENV"
-        command += " @a"
-    }
-    if (agent.prompt != null) {
-        env[PROMPT_ENV] = agent.prompt
-        setup += "\$p = \$env:$PROMPT_ENV; Remove-Item env:$PROMPT_ENV"
-        command += " \$p"
-    }
-    env[STARTUP_ENV] = (setup + command).joinToString("; ")
+    if (agent.args.isNotEmpty()) env[ARGS_ENV] = JsonArray().apply { agent.args.forEach(::add) }.toString()
+    if (agent.prompt != null) env[PROMPT_ENV] = agent.prompt
+    env[STARTUP_ENV] = script.toString()
     return ShellLaunch(listOf(shell), env)
 }
 

@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  jetbrains:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jetbrains
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+          cache-dependency-path: |
+            jetbrains/*.gradle.kts
+            jetbrains/gradle.properties
+            jetbrains/gradle/wrapper/gradle-wrapper.properties
+      - run: sudo apt-get update && sudo apt-get install -y zsh fish
+      - run: ./gradlew test buildPlugin --console=plain
+
+  # hashFiles() isn't available in a job-level `if`, so this job reports which Node parts exist.
+  parts:
+    runs-on: ubuntu-latest
+    outputs:
+      mcp: ${{ steps.find.outputs.mcp }}
+      vscode: ${{ steps.find.outputs.vscode }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: find
+        run: |
+          echo "mcp=${{ hashFiles('mcp/package.json') != '' }}" >> "$GITHUB_OUTPUT"
+          echo "vscode=${{ hashFiles('vscode/package.json') != '' }}" >> "$GITHUB_OUTPUT"
+
+  mcp:
+    needs: parts
+    if: needs.parts.outputs.mcp == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  vscode:
+    needs: parts
+    if: needs.parts.outputs.vscode == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: vscode/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
