@@ -10,12 +10,12 @@ This document is the contract every part builds against. Change it before you ch
 
 | Part | Status | Location |
 |---|---|---|
-| JetBrains plugin | Built. Moves to `jetbrains/` when the second part lands. | Repository root |
+| JetBrains plugin | Built | `jetbrains/` |
 | Protocol: registry and HTTP API | Built (Phase 0) | This document |
 | Claude Code plugin: `delegate` skill | Built | `claude-plugin/`, marketplace in `.claude-plugin/` |
-| Release workflow | Phase 1 | `.github/workflows/` |
-| Claude Code plugin: MCP server, `/new-tab`, setup and update skills | Phase 1 | `claude-plugin/`, `mcp/` |
-| VS Code extension | Phase 2 | `vscode/` |
+| CI and release workflows | Built | `.github/workflows/` |
+| Claude Code plugin: MCP server, `new-tab`, `setup` and `update` skills | Built | `claude-plugin/`, `mcp/` |
+| VS Code extension (also Antigravity and other VS Code-based editors) | Built | `vscode/` |
 | Visual Studio extension (Windows Terminal tabs first) | Phase 3 | `visualstudio/` |
 
 Messaging between agents is out of scope. Claude Code sessions message each other with Claude Code's
@@ -24,7 +24,8 @@ own `ListAgents` and `SendMessage`. For other CLIs, see [Messaging](#messaging).
 ## Registry
 
 Each IDE process writes one file to `~/.ide-agent-tabs/endpoints/`. A VS Code extension writes one file
-per window. Name the file `<ide>-<pid>.json`, or `<ide>-<pid>-<window>.json` for VS Code.
+per window. Name the file `<ide>-<pid>.json`, or `vscode-<pid>-<8 hex characters>.json` for VS Code.
+The file name without `.json` is the IDE's id in the MCP tools.
 
 ```json
 {
@@ -48,8 +49,9 @@ per window. Name the file `<ide>-<pid>.json`, or `<ide>-<pid>-<window>.json` for
 - Readers ignore a file whose `pid` isn't a running process, and may delete it.
 - A reader that sees a `protocol` value it doesn't know skips that file.
 
-Set the Java system property `ide.agent.tabs.home` (JetBrains) to use a folder other than
-`~/.ide-agent-tabs`. The sandbox IDE uses this so it never mixes with real IDEs.
+To use a folder other than `~/.ide-agent-tabs`, set the environment variable `IDE_AGENT_TABS_HOME` (VS Code
+extension and MCP server) or the Java system property `ide.agent.tabs.home` (JetBrains). Tests and the
+sandbox IDE use this so they never mix with real IDEs.
 
 ## HTTP API
 
@@ -89,6 +91,7 @@ does.
 | 404 | `close`: no open tab with that id. |
 | 405 | Not a `POST`. |
 | 409 | `open`: no project or folder is open. |
+| 413 | The body is over 16 MB (VS Code extension). |
 | 415 | `Content-Type` isn't `application/json`. |
 | 503 | The IDE didn't act within 10 seconds, usually because a dialog is open. Nothing happens later. |
 
@@ -154,6 +157,17 @@ and a fixed launch script reads them:
 The arguments are the profile's `args`, then the caller's `args`, then the `promptFlag` if there is a
 prompt. The prompt comes last.
 
+- Terminal tabs can't use environment variables, because a new Windows Terminal tab inherits the running
+  terminal's environment, not the caller's. The MCP server writes a launch spec file instead (owner-only,
+  under `~/.ide-agent-tabs/launch/`) holding the same values, and passes only its path to a fixed
+  launcher, which reads and deletes it.
+- Windows allows at most 32,767 characters in one environment variable, so a very large `args` list can
+  fail to start on Windows.
+- Parse `IDE_AGENT_TABS_ARGS` with a JSON parser that keeps strings as strings. PowerShell 7's
+  `ConvertFrom-Json` turns a string such as `2024-01-01T00:00:00Z` into a date.
+- Windows PowerShell 5.1 strips embedded double quotes from arguments it passes to native programs.
+  Launchers that may run under 5.1 must escape them.
+
 ## Button
 
 Every IDE shows a **New Agent Tab** button.
@@ -177,23 +191,29 @@ registry and calls the HTTP API.
 | `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`. |
 | `close_tab` | Closes a tab by `id`. With no `id`, closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
 
-`open_tab` routing: use the IDE named by `ide`, as `<ide>-<pid>` from `list_ides`. Otherwise, use the IDE
-with an open project that contains `path`, preferring the focused one. Otherwise, use the most recently
-started IDE.
+`open_tab` routing, first match wins:
+
+1. The IDE or terminal named by `ide`, using its id from `list_ides`.
+2. The IDE with an open project that contains `path`, preferring the focused window.
+3. The most recently started IDE.
+4. When no IDE is running: the preferred terminal from `config.json`, then the platform's default
+   terminal (Windows Terminal on Windows, Ghostty on macOS when installed).
+
+The reply includes a `reason` that says which rule chose the target.
 
 ## Terminals (Phase 1)
 
 Standalone terminal apps need no extension. The MCP server drives them directly and shows each one in
 `list_ides` next to the IDEs, with `ide` set to the terminal's name, such as `windows-terminal` or
-`ghostty`. A terminal tab starts the agent through the same launch scripts and environment variables as
-an IDE tab, so profiles, prompts and arguments behave the same.
+`ghostty`. A terminal tab starts the agent with the same profiles and argument order as an IDE tab, but
+through a launch spec file (see [How a tab starts the agent](#how-a-tab-starts-the-agent)).
 
 What each terminal allows differs. `list_ides` reports each terminal's capabilities, and `list_tabs` and
 `close_tab` answer only for terminals that can list or close tabs.
 
 | Terminal | OS | Open | List | Close | How |
 |---|---|---|---|---|---|
-| Windows Terminal | Windows | Tab | No | Best effort | `wt.exe -w 0 new-tab -d <dir> …`. No outside API to query tabs. Ending the process the server started may leave the tab open with an exit message. |
+| Windows Terminal | Windows | Tab | Tracked | Best effort | `wt.exe -w 0 new-tab -d <dir> …`. No outside API to query tabs, so `list_tabs` shows only the tabs this server opened, while their launcher runs. Ending the launcher may leave the tab open with an exit message. |
 | Ghostty 1.3+ | macOS | Tab | Yes | Yes | AppleScript: `new tab` with a surface configuration (working directory, command, environment variables); query `windows → tabs → terminals` by id; `close` and `focus` |
 | Ghostty | Linux | Window | No | Best effort | `ghostty +new-window` over D-Bus. Opening a tab from the command line isn't supported yet ([ghostty#12136](https://github.com/ghostty-org/ghostty/issues/12136)). |
 | WezTerm | All | Tab | Yes | Yes | `wezterm cli spawn`, `wezterm cli list`, `wezterm cli kill-pane` |
@@ -205,8 +225,8 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
   WezTerm, kitty and tmux, whose command-line interfaces cover everything.
 - The MCP server tracks the tabs it opens in terminals in `~/.ide-agent-tabs/terminal-tabs.json`, with
   the terminal's own tab or pane id where it has one, and the process id otherwise.
-- `open_tab` falls back to the user's preferred terminal when no IDE window contains `path` and no `ide`
-  is named. `~/.ide-agent-tabs/config.json` holds the choice as `"terminal": "ghostty"`.
+- `open_tab` uses a terminal when the caller names one, or when no IDE is running. The preferred one is
+  `"terminal"` in `~/.ide-agent-tabs/config.json`, such as `"terminal": "ghostty"`.
 - The Visual Studio extension (Phase 3) opens its tabs through the Windows Terminal support.
 - Untested: every row. None of these terminals has been driven by this project yet.
 
@@ -317,9 +337,10 @@ Actions runs on private repositories and bills against the account's monthly min
 counts once, a Windows minute twice and a macOS minute ten times, so the workflow uses Linux except where
 a part needs Windows.
 
-- **Trigger:** a tag per part and version: `jetbrains-v0.3.0`, `vscode-v0.1.0`, `visualstudio-v0.1.0`. The
-  version in the tag must match the part's own version (`pluginVersion` in `gradle.properties` for
-  JetBrains); the workflow fails otherwise.
+- **Trigger:** a tag per part and version: `jetbrains-v0.3.0`, `vscode-v0.1.0`, `mcp-v0.1.0`. The version
+  in the tag must match the part's own version (`pluginVersion` in `jetbrains/gradle.properties`, or
+  `version` in `vscode/package.json` or `mcp/package.json`); the workflow fails otherwise. Visual Studio
+  gets a tag when it exists.
 - **JetBrains job (Linux):** set up JDK 25, install zsh and fish, run `./gradlew test buildPlugin`, and
   run the Plugin Verifier. It attaches `ide-agent-tabs-<version>.zip` to a GitHub Release named after the
   tag.
@@ -328,11 +349,12 @@ a part needs Windows.
 - **Checksums:** every release also carries `SHA256SUMS`. The update skill refuses a file whose checksum
   doesn't match.
 
-The build compiles against a local IDE today (`studioPath` in `gradle.properties`), which a runner
-doesn't have. Before the first release, the build must download its target IDE when `studioPath` isn't
-set. The plugin uses only platform and terminal APIs, so it can compile against IntelliJ IDEA 2026.2,
-and the Plugin Verifier then checks it against Android Studio. A local `studioPath` keeps working for
-development builds.
+The build compiles against a local IDE when `studioPath` is set in `~/.gradle/gradle.properties`, and
+downloads IntelliJ IDEA 2026.2.2 otherwise, as on a runner. The Plugin Verifier checks IntelliJ IDEA
+2026.2.2 and Android Studio 2026.2.2.
+
+The plugin needs build 262.10315 or later (IntelliJ IDEA and Android Studio 2026.2.2). Earlier 2026.2
+builds have a different `TerminalViewVirtualFile` constructor, so opening a tab would fail there.
 
 ### Update skill
 
@@ -371,11 +393,8 @@ Whether the IDE follows GitHub's download redirect is untested.
 
 0. Done: registry, token, `info` and `agents` routes, and agent profiles in the JetBrains plugin.
    Right-click agent menu.
-1. Releases and the Claude Code plugin, in this order:
-   1. Build without a local IDE, and the release workflow for the JetBrains plugin.
-   2. `/new-tab` skill, moved from the user's personal commands into the plugin and changed to use the
-      registry and token.
-   3. MCP server, with terminal support for Windows Terminal and Ghostty.
-   4. Setup and update skills.
-2. VS Code extension.
+1. Built: the build without a local IDE, CI and release workflows, the `new-tab`, `setup` and `update`
+   skills, and the MCP server with Windows Terminal and Ghostty (macOS) support. Not yet run on GitHub
+   or tested on macOS.
+2. Built: the VS Code extension, tested in VS Code 1.118 and Antigravity 1.107.
 3. Visual Studio extension, opening Windows Terminal tabs.
