@@ -185,13 +185,13 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
         return all.firstOrNull { it.name == configuredDefault() } ?: all.first { it.name == DEFAULT_AGENT }
     }
 
-    fun setDefaultAgent(name: String) {
-        try {
-            val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null
-            writeAtomically(configFile, withDefaultAgent(existing, name))
-        } catch (e: Exception) {
-            warn("Could not save the default agent to $configFile: ${e.message}")
-        }
+    fun setDefaultAgent(name: String): Boolean = try {
+        val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null
+        writeAtomically(configFile, withDefaultAgent(existing, name))
+        true
+    } catch (e: Exception) {
+        warn("Could not save the default agent to $configFile: ${e.message}")
+        false
     }
 
     private fun configuredDefault(): String? {

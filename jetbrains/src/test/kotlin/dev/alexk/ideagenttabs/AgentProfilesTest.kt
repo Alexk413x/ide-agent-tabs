@@ -150,7 +150,7 @@ class AgentProfilesTest {
     @Test
     fun `saving the default agent keeps the other settings`() {
         val config = home.resolve(CONFIG_FILE)
-        settings.setDefaultAgent("codex")
+        assertTrue(settings.setDefaultAgent("codex"))
         assertEquals("codex", readDefaultAgent(Files.readString(config)))
         assertEquals("codex", settings.defaultProfile().name)
 
@@ -167,8 +167,15 @@ class AgentProfilesTest {
     fun `saving the default agent leaves a broken config alone`() {
         val config = home.resolve(CONFIG_FILE)
         Files.writeString(config, "{broken")
-        settings.setDefaultAgent("codex")
+        assertFalse(settings.setDefaultAgent("codex"))
         assertEquals("{broken", Files.readString(config))
+        assertEquals(1, warnings.size)
+    }
+
+    @Test
+    fun `saving the default agent reports a config file it cannot write`() {
+        Files.createDirectory(home.resolve(CONFIG_FILE))
+        assertFalse(settings.setDefaultAgent("codex"))
         assertEquals(1, warnings.size)
     }
 
