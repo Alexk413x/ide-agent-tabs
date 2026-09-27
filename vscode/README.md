@@ -48,7 +48,8 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
 
 The editor title button, the status bar item and startup all use `ideAgentTabs.defaultAgent`. The
-extension copies it to `~/.ide-agent-tabs/config.json`, where the MCP server and the JetBrains plugin read it.
+setting stays in sync with `defaultAgent` in `~/.ide-agent-tabs/config.json`, so a change in the JetBrains
+plugin or any other window shows up here too, and the MCP server uses the same default.
 
 ## Agent profiles
 
