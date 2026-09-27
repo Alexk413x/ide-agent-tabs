@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "alexk413x",
   "license": "MIT",
   "repository": {
@@ -167,6 +167,12 @@
         "command": "ideAgentTabs.open.copilot",
         "title": "Copilot CLI",
         "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.openSettings",
+        "title": "Settings",
+        "category": "Agent Tabs",
+        "icon": "$(gear)"
       }
     ],
     "menus": {
@@ -264,6 +270,10 @@
           "command": "ideAgentTabs.newTabWith",
           "when": "ideAgentTabs.customInstalled",
           "group": "2_more"
+        },
+        {
+          "command": "ideAgentTabs.openSettings",
+          "group": "3_settings"
         }
       ]
     },
@@ -271,7 +281,10 @@
       {
         "id": "ideAgentTabs.agents",
         "label": "New Agent Tab With…",
-        "icon": "$(chevron-down)"
+        "icon": {
+          "light": "resources/icons/agentTab_menu.svg",
+          "dark": "resources/icons/agentTab_menu_dark.svg"
+        }
       }
     ]
   },
