@@ -61,6 +61,18 @@ class OpenRequestTest {
     }
 
     @Test
+    fun `parses an optional agent`() {
+        val path = dir.toString().replace("\\", "\\\\")
+        assertEquals("codex", OpenRequest.parse("""{"path":"$path","agent":"codex"}""").agent)
+        assertNull(OpenRequest.parse("""{"path":"$path"}""").agent)
+        assertNull(OpenRequest.parse("""{"path":"$path","agent":null}""").agent)
+        for (bad in listOf(""""agent":1""", """"agent":"  """", """"agent":["codex"]""")) {
+            val body = """{"path":"$path",$bad}"""
+            assertThrows(body, IllegalArgumentException::class.java) { OpenRequest.parse(body) }
+        }
+    }
+
+    @Test
     fun `args and env are optional`() {
         val request = OpenRequest.parse(body(dir.toString()))
         assertEquals(emptyList<String>(), request.args)

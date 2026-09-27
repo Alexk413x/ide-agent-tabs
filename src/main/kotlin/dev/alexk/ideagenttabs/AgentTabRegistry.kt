@@ -9,9 +9,9 @@ import com.intellij.openapi.vfs.VirtualFile
 import java.util.concurrent.ConcurrentHashMap
 
 @Service(Service.Level.APP)
-class ClaudeTabRegistry {
+class AgentTabRegistry {
 
-    class Entry(val id: String, val project: Project, val file: VirtualFile, val path: String)
+    class Entry(val id: String, val agent: String, val project: Project, val file: VirtualFile, val path: String)
 
     private val entries = ConcurrentHashMap<String, Entry>()
 
@@ -31,12 +31,12 @@ class ClaudeTabRegistry {
     }
 
     companion object {
-        fun getInstance(): ClaudeTabRegistry = service()
+        fun getInstance(): AgentTabRegistry = service()
     }
 }
 
-class ClaudeTabClosedListener : FileEditorManagerListener {
+class AgentTabClosedListener : FileEditorManagerListener {
     override fun fileClosed(source: FileEditorManager, file: VirtualFile) {
-        ClaudeTabRegistry.getInstance().removeFile(file)
+        AgentTabRegistry.getInstance().removeFile(file)
     }
 }

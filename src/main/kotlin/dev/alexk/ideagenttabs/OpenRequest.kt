@@ -6,6 +6,7 @@ import com.google.gson.JsonSyntaxException
 import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 
 const val MAX_PROMPT_CHARS = 30_000
 const val MAX_ENTRIES = 64
@@ -15,13 +16,21 @@ class Refusal(val status: Int, val message: String)
 // Pure module: no IDE or Netty types, so the admission rules test without a running IDE.
 object Admission {
 
-    fun check(remote: InetAddress?, method: String, header: (String) -> String?): Refusal? = when {
+    fun check(remote: InetAddress?, method: String, token: String, header: (String) -> String?): Refusal? = when {
         remote == null || !remote.isLoopbackAddress -> Refusal(403, "loopback requests only")
         method != "POST" -> Refusal(405, "use POST")
         header("Origin") != null || header("Referer") != null -> Refusal(403, "browser requests are refused")
+        !bearerMatches(header("Authorization"), token) -> Refusal(401, "missing or wrong token; send Authorization: Bearer <token>")
         header("Content-Type")?.substringBefore(';')?.trim()?.lowercase() != "application/json" ->
             Refusal(415, "Content-Type must be application/json")
         else -> null
+    }
+
+    fun bearerMatches(authorization: String?, token: String): Boolean {
+        if (token.isEmpty()) return false
+        val parts = authorization?.trim()?.split(' ', limit = 2) ?: return false
+        if (parts.size != 2 || !parts[0].equals("Bearer", ignoreCase = true)) return false
+        return MessageDigest.isEqual(parts[1].trim().toByteArray(Charsets.UTF_8), token.toByteArray(Charsets.UTF_8))
     }
 }
 
@@ -79,13 +88,14 @@ data class OpenRequest(
     val prompt: String?,
     val args: List<String> = emptyList(),
     val env: Map<String, String> = emptyMap(),
+    val agent: String? = null,
 ) {
 
     companion object {
 
         fun parse(body: String): OpenRequest {
             val obj = parseObject(body)
-            return of(obj.string("path"), obj.string("prompt"), obj.stringList("args"), obj.stringMap("env"))
+            return of(obj.string("path"), obj.string("prompt"), obj.stringList("args"), obj.stringMap("env"), obj.string("agent"))
         }
 
         fun of(
@@ -93,6 +103,7 @@ data class OpenRequest(
             prompt: String?,
             args: List<String> = emptyList(),
             env: Map<String, String> = emptyMap(),
+            agent: String? = null,
         ): OpenRequest {
             if (path.isNullOrBlank()) throw IllegalArgumentException("path is required")
             val dir = Path.of(path)
@@ -103,19 +114,9 @@ data class OpenRequest(
             }
             if (args.size > MAX_ENTRIES) throw IllegalArgumentException("args exceeds $MAX_ENTRIES entries")
             if (args.any { it.length > MAX_PROMPT_CHARS }) throw IllegalArgumentException("an arg exceeds $MAX_PROMPT_CHARS characters")
-            if (env.size > MAX_ENTRIES) throw IllegalArgumentException("env exceeds $MAX_ENTRIES entries")
-            for ((name, value) in env) {
-                if (name.isBlank() || name.any { it == '=' || it.isWhitespace() || it == '\u0000' }) {
-                    throw IllegalArgumentException("env name is not a valid variable name: '$name'")
-                }
-                if (isReservedEnv(name)) {
-                    throw IllegalArgumentException("env name $name is reserved by the plugin")
-                }
-                if (value.length > MAX_PROMPT_CHARS || '\u0000' in value) {
-                    throw IllegalArgumentException("env $name is longer than $MAX_PROMPT_CHARS characters or holds a NUL")
-                }
-            }
-            return OpenRequest(dir.normalize(), prompt?.takeIf { it.isNotBlank() }, args, env)
+            checkEnv(env, "env")
+            if (agent != null && agent.isBlank()) throw IllegalArgumentException("agent must not be blank")
+            return OpenRequest(dir.normalize(), prompt?.takeIf { it.isNotBlank() }, args, env, agent)
         }
     }
 }

@@ -1,5 +1,7 @@
 # Sourced by the terminal's fish integration through JEDITERM_SOURCE.
 function __ide_agent_tabs
+    set -l c $IDE_AGENT_TABS_COMMAND
+    set -e IDE_AGENT_TABS_COMMAND
     set -l a
     set -l n 0
     set -q IDE_AGENT_TABS_ARGC; and set n $IDE_AGENT_TABS_ARGC
@@ -15,7 +17,7 @@ function __ide_agent_tabs
         set -a a "$IDE_AGENT_TABS_PROMPT"
         set -e IDE_AGENT_TABS_PROMPT
     end
-    claude $a
+    $c $a
 end
 __ide_agent_tabs
 functions -e __ide_agent_tabs

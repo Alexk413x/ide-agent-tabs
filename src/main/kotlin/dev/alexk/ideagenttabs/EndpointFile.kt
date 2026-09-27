@@ -1,7 +1,8 @@
 package dev.alexk.ideagenttabs
 
-import com.google.gson.JsonObject
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationInfo
+import com.intellij.openapi.application.ApplicationNamesInfo
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
@@ -10,45 +11,42 @@ import com.intellij.openapi.startup.ProjectActivity
 import org.jetbrains.ide.BuiltInServerManager
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
-
-val ENDPOINT_FILE: Path = System.getProperty("ide.agent.tabs.endpoint.file")?.let { Path.of(it) }
-    ?: Path.of(System.getProperty("user.home"), ".ide-agent-tabs", "endpoint.json")
 
 @Service(Service.Level.APP)
 class EndpointFile : Disposable {
 
+    val token: String = newToken()
+
     private val pid = ProcessHandle.current().pid()
 
     @Volatile
-    private var written = false
+    private var file: Path? = null
 
+    @Synchronized
     fun write() {
-        if (written) return
+        if (file != null) return
         val port = BuiltInServerManager.getInstance().waitForStart().port
-        val body = JsonObject().apply {
-            addProperty("url", "http://127.0.0.1:$port$OPEN_PATH")
-            addProperty("close", "http://127.0.0.1:$port$CLOSE_PATH")
-            addProperty("list", "http://127.0.0.1:$port$LIST_PATH")
-            addProperty("port", port)
-            addProperty("pid", pid)
-        }
+        val entry = endpointJson(
+            product = ApplicationNamesInfo.getInstance().fullProductName,
+            version = ApplicationInfo.getInstance().fullVersion,
+            pid = pid,
+            url = "http://127.0.0.1:$port$ENDPOINT_BASE",
+            token = token,
+        )
+        val target = ideAgentTabsHome().resolve("endpoints").resolve("jetbrains-$pid.json")
         try {
-            Files.createDirectories(ENDPOINT_FILE.parent)
-            val temp = Files.createTempFile(ENDPOINT_FILE.parent, "endpoint", ".tmp")
-            Files.writeString(temp, body.toString())
-            Files.move(temp, ENDPOINT_FILE, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
-            written = true
+            file = writeAtomically(target, entry.toString(), private = true)
         } catch (e: Exception) {
-            LOG.warn("Could not write $ENDPOINT_FILE", e)
+            LOG.warn("Could not write $target", e)
         }
     }
 
     override fun dispose() {
-        if (!written) return
+        val written = file ?: return
         try {
-            if (Files.readString(ENDPOINT_FILE).contains("\"pid\":$pid")) Files.delete(ENDPOINT_FILE)
-        } catch (_: Exception) {
+            Files.deleteIfExists(written)
+        } catch (e: Exception) {
+            LOG.warn("Could not delete $written", e)
         }
     }
 

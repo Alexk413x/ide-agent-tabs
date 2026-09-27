@@ -55,7 +55,7 @@ val updatePluginsXml = tasks.register("updatePluginsXml") {
                 <idea-version since-build="262"/>
                 <name>IDE Agent Tabs</name>
                 <vendor>Alexk413x</vendor>
-                <description>Opens a new Claude Code session in an editor tab.</description>
+                <description>Opens AI coding-agent sessions in editor tabs.</description>
               </plugin>
             </plugins>
             """.trimIndent() + "\n"
@@ -96,7 +96,7 @@ intellijPlatformTesting.runIde.register("runIdeWithClaude") {
         doFirst { sandboxProject.mkdirs() }
         args(sandboxProject.absolutePath)
         jvmArgs(
-            "-Dide.agent.tabs.endpoint.file=${layout.buildDirectory.file("sandbox-endpoint.json").get().asFile.absolutePath}",
+            "-Dide.agent.tabs.home=${layout.buildDirectory.dir("sandbox-home").get().asFile.absolutePath}",
             "-Ddisable.android.first.run=true",
             "-Didea.trust.all.projects=true",
             "-Djb.consents.confirmation.enabled=false",

@@ -46,30 +46,39 @@ class SourcedLaunchTest {
         assertEquals(emptyList<String>(), unixShell("/usr/local/bin/pwsh", isMac = true).flags)
     }
 
+    private val claude = AgentProfile("claude", "Claude Code", "claude")
+
     @Test
-    fun `sourced launch points the shell at the script and passes each arg in its own variable`() {
-        val script = dir.resolve("claude.sh")
-        val launch = sourcedLaunch(unixShell("/bin/zsh", isMac = true), script, "hi", "tab-1", listOf("--a", ""), mapOf("FOO" to "bar"))
+    fun `sourced launch points the shell at the script and passes the command and each arg in its own variable`() {
+        val script = dir.resolve("agent.sh")
+        val gemini = AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i")
+        val launch = sourcedLaunch(unixShell("/bin/zsh", isMac = true), script, gemini.launch("hi", listOf("--a", ""), mapOf("FOO" to "bar")), "tab-1")
         assertEquals(listOf("/bin/zsh", "-l", "-i"), launch.command)
         assertEquals(
             mapOf(
                 STARTUP_ENV to script.toString(),
                 TAB_ID_ENV to "tab-1",
+                AGENT_ENV to "gemini",
+                COMMAND_ENV to "gemini",
                 PROMPT_ENV to "hi",
-                ARG_COUNT_ENV to "2",
+                ARG_COUNT_ENV to "3",
                 "${ARG_ENV_PREFIX}0" to "--a",
                 "${ARG_ENV_PREFIX}1" to "",
+                "${ARG_ENV_PREFIX}2" to "-i",
                 "FOO" to "bar",
             ),
             launch.env,
         )
-        assertEquals(mapOf(STARTUP_ENV to script.toString(), TAB_ID_ENV to "tab-2"), sourcedLaunch(unixShell("/bin/bash", false), script, null, "tab-2").env)
+        assertEquals(
+            mapOf(STARTUP_ENV to script.toString(), TAB_ID_ENV to "tab-2", AGENT_ENV to "claude", COMMAND_ENV to "claude"),
+            sourcedLaunch(unixShell("/bin/bash", false), script, claude.launch(null), "tab-2").env,
+        )
     }
 
     @Test
     fun `launch script is written once and rewritten when it differs`() {
         val script = launchScript(ShellKind.POSIX, dir.resolve("scripts"))
-        assertEquals("claude.sh", script.fileName.toString())
+        assertEquals("agent.sh", script.fileName.toString())
         val written = Files.getLastModifiedTime(script)
         Thread.sleep(20)
         launchScript(ShellKind.POSIX, dir.resolve("scripts"))
@@ -77,7 +86,7 @@ class SourcedLaunchTest {
         Files.writeString(script, "stale")
         launchScript(ShellKind.POSIX, dir.resolve("scripts"))
         assertTrue(Files.readString(script).contains("__ide_agent_tabs"))
-        assertEquals("claude.fish", launchScript(ShellKind.FISH, dir.resolve("scripts")).fileName.toString())
+        assertEquals("agent.fish", launchScript(ShellKind.FISH, dir.resolve("scripts")).fileName.toString())
         assertFalse(Files.readString(script).contains('\r'))
     }
 
@@ -90,49 +99,49 @@ class SourcedLaunchTest {
     }
 
     @Test
-    fun `bash runs claude through the real integration script`() = checkShell("bash")
+    fun `bash runs the agent through the real integration script`() = checkShell("bash")
 
     @Test
-    fun `zsh runs claude through the real integration script`() = checkShell("zsh")
+    fun `zsh runs the agent through the real integration script`() = checkShell("zsh")
 
     @Test
-    fun `fish runs claude through the real integration script`() = checkShell("fish")
+    fun `fish runs the agent through the real integration script`() = checkShell("fish")
 
     private fun checkShell(name: String) {
         assumeTrue("POSIX shells are tested on macOS and Linux", !isWindows)
         val shell = findOnPath(System.getenv("PATH").orEmpty(), name)
         assumeTrue("$name not on PATH", shell != null)
+        val agent = AgentProfile("test", "Test", "cst-agent")
+        val spaced = AgentProfile("spaced", "Spaced", dir.resolve("my bin/cst agent").toString(), listOf("--model", "m b"), promptFlag = "-i")
         for (isMac in listOf(false, true)) {
             val unix = unixShell(shell!!, isMac)
-            assertEquals("0||unset|", run(unix, prompt = null))
+            assertEquals("0||unset|test|", run(unix, agent.launch(null)))
             val prompt = """Say "hi" & run $(whoami); `tick` 'quote' --flag é ✓ 🙂
 second line"""
-            assertEquals("1|$prompt\u001f|unset|", run(unix, prompt))
+            assertEquals("1|$prompt\u001f|unset|test|", run(unix, agent.launch(prompt)))
             val args = listOf("--plugin-dir", "/a b/c", """say "hi" $(whoami) `t` *""", "", "é ✓")
-            val out = run(unix, "the prompt", args, mapOf("CST_TEST_VAR" to "value with spaces"))
-            assertEquals("6|" + (args + "the prompt").joinToString("") { "$it\u001f" } + "|unset|value with spaces", out)
+            val out = run(unix, agent.launch("the prompt", args, mapOf("CST_TEST_VAR" to "value with spaces")))
+            assertEquals("6|" + (args + "the prompt").joinToString("") { "$it\u001f" } + "|unset|test|value with spaces", out)
+            assertEquals("4|--model\u001fm b\u001f-i\u001fhi\u001f|unset|spaced|", run(unix, spaced.launch("hi")))
         }
     }
 
-    private fun run(
-        shell: Shell,
-        prompt: String?,
-        args: List<String> = emptyList(),
-        env: Map<String, String> = emptyMap(),
-    ): String {
-        val bin = Files.createDirectories(dir.resolve("bin"))
+    private fun run(shell: Shell, agent: AgentLaunch): String {
         val out = dir.resolve("out")
         Files.deleteIfExists(out)
-        val claude = bin.resolve("claude")
-        Files.writeString(claude, """
+        val fake = """
             #!/bin/sh
             out=""; for x in "$@"; do out="${'$'}out${'$'}x$(printf '\037')"; done
-            printf '%s|%s|%s|%s' "$#" "${'$'}out" "${'$'}{$PROMPT_ENV-${'$'}{${ARG_ENV_PREFIX}0-${'$'}{$ARG_COUNT_ENV-unset}}}" "${'$'}CST_TEST_VAR" > "${'$'}CST_OUT"
-        """.trimIndent() + "\n")
-        Files.setPosixFilePermissions(claude, PosixFilePermissions.fromString("rwxr-xr-x"))
+            printf '%s|%s|%s|%s|%s' "$#" "${'$'}out" "${'$'}{$PROMPT_ENV-${'$'}{${ARG_ENV_PREFIX}0-${'$'}{$ARG_COUNT_ENV-${'$'}{$COMMAND_ENV-unset}}}}" "${'$'}$AGENT_ENV" "${'$'}CST_TEST_VAR" > "${'$'}CST_OUT"
+        """.trimIndent() + "\n"
+        val bin = Files.createDirectories(dir.resolve("bin"))
+        for (target in listOf(bin.resolve("cst-agent"), Files.createDirectories(dir.resolve("my bin")).resolve("cst agent"))) {
+            Files.writeString(target, fake)
+            Files.setPosixFilePermissions(target, PosixFilePermissions.fromString("rwxr-xr-x"))
+        }
 
         val integration = copyIntegrations()
-        val launch = sourcedLaunch(shell, launchScript(shell.kind, dir.resolve("scripts")), prompt, "tab-1", args, env)
+        val launch = sourcedLaunch(shell, launchScript(shell.kind, dir.resolve("scripts")), agent, "tab-1")
         // Mirrors LocalShellIntegrationInjector: bash gets --rcfile first and trades -l for LOGIN_SHELL,
         // zsh gets ZDOTDIR, fish gets --init-command.
         val injectedEnv = mutableMapOf<String, String>()
@@ -158,7 +167,7 @@ second line"""
             redirectError(ProcessBuilder.Redirect.DISCARD)
         }.start()
         assertTrue("$shell did not exit", process.waitFor(60, TimeUnit.SECONDS))
-        return if (Files.exists(out)) Files.readString(out) else "claude did not run"
+        return if (Files.exists(out)) Files.readString(out) else "the agent did not run"
     }
 
     private fun copyIntegrations(): Path {

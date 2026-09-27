@@ -3,31 +3,38 @@
     <name>IDE Agent Tabs</name>
     <vendor>Alexk413x</vendor>
     <description><![CDATA[
-    Opens a new Claude Code session in an editor tab: from a toolbar button, the Tools menu,
-    or a loopback-only HTTP request another Claude session can send.
+    Opens AI coding-agent sessions (Claude Code, Codex, Gemini CLI, Copilot CLI and others) in editor tabs:
+    from a toolbar button, the Tools menu, or a loopback-only HTTP request another agent can send.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.terminal</depends>
 
     <extensions defaultExtensionNs="com.intellij">
-        <httpRequestHandler implementation="dev.alexk.ideagenttabs.ClaudeTabHttpHandler"/>
+        <httpRequestHandler implementation="dev.alexk.ideagenttabs.AgentTabHttpHandler"/>
         <postStartupActivity implementation="dev.alexk.ideagenttabs.EndpointFileActivity"/>
     </extensions>
 
     <projectListeners>
-        <listener class="dev.alexk.ideagenttabs.ClaudeTabClosedListener"
+        <listener class="dev.alexk.ideagenttabs.AgentTabClosedListener"
                   topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
     </projectListeners>
 
     <actions>
         <action id="IdeAgentTabs.NewAgentTab"
-                class="dev.alexk.ideagenttabs.NewClaudeTabAction"
+                class="dev.alexk.ideagenttabs.NewAgentTabAction"
                 text="New Agent Tab"
-                description="Open a new Claude Code session in an editor tab, in the project root"
+                description="Open the default agent in an editor tab, in the project root"
                 icon="/icons/agentTab.svg">
             <add-to-group group-id="ToolsMenu" anchor="first"/>
             <add-to-group group-id="MainToolbarRight" anchor="first"/>
         </action>
+        <group id="IdeAgentTabs.AgentMenu"
+               class="dev.alexk.ideagenttabs.AgentMenuGroup"
+               popup="true"
+               text="New Agent Tab With"
+               description="Open an installed agent in an editor tab and make it the default">
+            <add-to-group group-id="ToolsMenu" anchor="after" relative-to-action="IdeAgentTabs.NewAgentTab"/>
+        </group>
     </actions>
 </idea-plugin>

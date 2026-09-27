@@ -10,7 +10,7 @@ import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
-class ClaudeCommandTest {
+class PowerShellLaunchTest {
 
     private val pwsh: Path? = findOnPath(System.getenv("PATH"), if (File.separatorChar == '\\') "pwsh.exe" else "pwsh")?.let { Path.of(it) }
 
@@ -30,50 +30,80 @@ class ClaudeCommandTest {
         assertEquals(windowsApps.resolve("pwsh.exe").toString(), findOnPath(windowsApps.toString(), "pwsh.exe"))
     }
 
+    private val claude = AgentProfile("claude", "Claude Code", "claude")
+
     @Test
     fun `shell gets no arguments so the terminal's integration arguments stay intact`() {
-        val launch = powerShellLaunch("pwsh.exe", prompt = null, tabId = "tab-1")
+        val launch = powerShellLaunch("pwsh.exe", claude.launch(null), tabId = "tab-1")
         assertEquals(listOf("pwsh.exe"), launch.command)
-        assertEquals(mapOf(STARTUP_ENV to "claude", TAB_ID_ENV to "tab-1"), launch.env)
+        assertEquals(
+            mapOf(
+                STARTUP_ENV to "\$c = \$env:$COMMAND_ENV; Remove-Item env:$COMMAND_ENV; & \$c",
+                COMMAND_ENV to "claude",
+                AGENT_ENV to "claude",
+                TAB_ID_ENV to "tab-1",
+            ),
+            launch.env,
+        )
+    }
+
+    @Test
+    fun `caller text never reaches the startup string`() {
+        val profile = AgentProfile("x", "X", "C:\\a b\\x;y.exe", args = listOf("\$(whoami)"), promptFlag = "-p")
+        val launch = powerShellLaunch("pwsh.exe", profile.launch("'; Remove-Item C:\\ #", listOf("`t")), tabId = "tab-9")
+        assertEquals(
+            "\$c = \$env:$COMMAND_ENV; Remove-Item env:$COMMAND_ENV; " +
+                "\$a = @(\$env:$ARGS_ENV | ConvertFrom-Json); Remove-Item env:$ARGS_ENV; " +
+                "\$p = \$env:$PROMPT_ENV; Remove-Item env:$PROMPT_ENV; & \$c @a \$p",
+            launch.env[STARTUP_ENV],
+        )
+        assertEquals("""["$(whoami)","`t","-p"]""", launch.env[ARGS_ENV])
+        assertEquals("C:\\a b\\x;y.exe", launch.env[COMMAND_ENV])
     }
 
     @Test
     fun `every launch carries its tab id so the session can close its own tab`() {
-        assertEquals("tab-2", powerShellLaunch("pwsh.exe", prompt = "hi", tabId = "tab-2").env[TAB_ID_ENV])
+        assertEquals("tab-2", powerShellLaunch("pwsh.exe", claude.launch("hi"), tabId = "tab-2").env[TAB_ID_ENV])
     }
 
     @Test
     fun `caller env reaches the shell and the plugin's own variables win`() {
-        val launch = powerShellLaunch("pwsh.exe", prompt = null, tabId = "tab-4", env = mapOf("FOO" to "bar"))
+        val launch = powerShellLaunch("pwsh.exe", claude.launch(null, callerEnv = mapOf("FOO" to "bar")), tabId = "tab-4")
         assertEquals("bar", launch.env["FOO"])
         assertEquals("tab-4", launch.env[TAB_ID_ENV])
         assertEquals(null, launch.env[ARGS_ENV])
     }
 
     @Test
-    fun `plain launch runs claude through the real integration script`() {
-        assertEquals("0||null", runThroughIntegration(prompt = null))
+    fun `plain launch runs the agent through the real integration script`() {
+        assertEquals("0||null|test", runThroughIntegration(prompt = null))
     }
 
     @Test
     fun `prompt reaches a native program as one intact argument through the real integration script`() {
         val prompt = """Say "hi" & run $(whoami); `tick` 'quote' --flag é ✓ 🙂
 second line"""
-        assertEquals("1|$prompt|null", runThroughIntegration(prompt))
+        assertEquals("1|$prompt|null|test", runThroughIntegration(prompt))
     }
 
     @Test
     fun `args reach a native program intact and before the prompt, and env reaches the session`() {
         val args = listOf("--plugin-dir", "C:\\Program Files\\a b", """say "hi" $(whoami) `t` 'q'""", "é ✓")
         val out = runThroughIntegration("the prompt", args, mapOf("CST_TEST_VAR" to "value with spaces"), listArgs = true)
-        val expected = (args + "the prompt").joinToString("\u001f") + "|value with spaces|null"
+        val expected = (args + "the prompt").joinToString("\u001f") + "|value with spaces|null|test"
         assertEquals(expected, out)
+    }
+
+    @Test
+    fun `the prompt flag goes right before the prompt`() {
+        val out = runThroughIntegration("the prompt", listOf("--yolo"), listArgs = true, promptFlag = "--prompt")
+        assertEquals(listOf("--yolo", "--prompt", "the prompt").joinToString("\u001f") + "||null|test", out)
     }
 
     @Test
     fun `a single arg stays one argument`() {
         val out = runThroughIntegration(prompt = null, args = listOf("--verbose"), listArgs = true)
-        assertEquals("--verbose||null", out)
+        assertEquals("--verbose||null|test", out)
     }
 
     private fun runThroughIntegration(
@@ -81,6 +111,7 @@ second line"""
         args: List<String> = emptyList(),
         env: Map<String, String> = emptyMap(),
         listArgs: Boolean = false,
+        promptFlag: String? = null,
     ): String {
         assumeTrue("pwsh not on PATH", pwsh != null)
         val integration = javaClass.classLoader.getResource("shell-integrations/powershell/powershell-integration.ps1")
@@ -95,13 +126,15 @@ second line"""
         } else {
             "${'$'}(${'$'}args.Count)|${'$'}(${'$'}args[0])"
         }
+        val leftover = "${'$'}env:$PROMPT_ENV ?? ${'$'}env:$ARGS_ENV ?? ${'$'}env:$COMMAND_ENV ?? 'null'"
         Files.writeString(echo, """
-            ${'$'}text = "$head|${'$'}(${'$'}env:$PROMPT_ENV ?? ${'$'}env:$ARGS_ENV ?? 'null')"
+            ${'$'}text = "$head|${'$'}($leftover)|${'$'}(${'$'}env:$AGENT_ENV)"
             ${'$'}bytes = [Text.Encoding]::UTF8.GetBytes(${'$'}text)
             [Console]::OpenStandardOutput().Write(${'$'}bytes, 0, ${'$'}bytes.Length)
         """.trimIndent(), Charsets.UTF_8)
 
-        val launch = powerShellLaunch(pwsh.toString(), prompt, tabId = "tab-3", claude = "& '$pwsh' -NoProfile -File '$echo'", args = args, env = env)
+        val profile = AgentProfile("test", "Test", pwsh.toString(), listOf("-NoProfile", "-File", echo.toString()), promptFlag)
+        val launch = powerShellLaunch(pwsh.toString(), profile.launch(prompt, args, env), tabId = "tab-3")
         val command = launch.command + listOf("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString())
         val process = ProcessBuilder(command).apply { environment().putAll(launch.env) }.start()
         process.waitFor(60, TimeUnit.SECONDS)
