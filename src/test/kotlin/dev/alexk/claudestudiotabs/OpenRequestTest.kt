@@ -3,7 +3,9 @@ package dev.alexk.claudestudiotabs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assume.assumeTrue
 import org.junit.Test
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -81,6 +83,8 @@ class OpenRequestTest {
             """"env":{"":"x"}""",
             """"env":{"$STARTUP_ENV":"x"}""",
             """"env":{"claude_studio_tabs_id":"x"}""",
+            """"env":{"CLAUDE_STUDIO_TABS_ARG_0":"x"}""",
+            """"env":{"JEDITERM_SOURCE_ARGS":"x"}""",
         )
         for (field in bad) {
             val body = """{"path":"$path",$field}"""
@@ -109,12 +113,17 @@ class OpenRequestTest {
 
     @Test
     fun `closest base picks the deepest containing project`() {
-        val a = Path.of("C:\\work")
-        val b = Path.of("C:\\work\\repo")
-        val c = Path.of("D:\\other")
-        assertEquals(1, closestBase(Path.of("C:\\work\\repo\\sub"), listOf(a, b, c)))
-        assertEquals(0, closestBase(Path.of("C:\\work\\x"), listOf(a, b, null)))
-        assertEquals(1, closestBase(Path.of("c:\\WORK\\Repo"), listOf(a, b)))
-        assertNull(closestBase(Path.of("E:\\none"), listOf(a, b, c)))
+        val a = dir.resolve("work")
+        val b = a.resolve("repo")
+        val c = dir.resolve("other")
+        assertEquals(1, closestBase(b.resolve("sub"), listOf(a, b, c)))
+        assertEquals(0, closestBase(a.resolve("x"), listOf(a, b, null)))
+        assertNull(closestBase(dir.resolve("none"), listOf(a, b, c)))
+    }
+
+    @Test
+    fun `closest base ignores case on Windows`() {
+        assumeTrue("Windows paths", File.separatorChar == '\\')
+        assertEquals(1, closestBase(Path.of("c:\\WORK\\Repo"), listOf(Path.of("C:\\work"), Path.of("C:\\work\\repo"))))
     }
 }
