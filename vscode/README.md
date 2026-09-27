@@ -32,7 +32,7 @@ npm run package
 - To open a different agent, click the arrow next to **New Agent Tab**, or run **Agent Tabs: New
   Agent Tab With…** from the Command Palette. The list shows each agent whose command is on your `PATH`.
   The agent you choose becomes the default.
-- The status bar tooltip names the default agent.
+- Hover over the status bar item to see a link for each installed agent. Click one to open it and make it the default. The tooltip also names supported agents that aren't installed.
 
 The default agent lives in `~/.ide-agent-tabs/config.json`, so every IDE with this extension or the
 JetBrains plugin shares it.
