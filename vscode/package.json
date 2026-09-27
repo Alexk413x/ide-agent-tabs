@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "publisher": "alexk413x",
   "license": "MIT",
   "repository": {
@@ -46,24 +46,21 @@
             "claude",
             "codex",
             "gemini",
-            "copilot",
-            ""
+            "copilot"
           ],
           "enumItemLabels": [
             "Claude Code",
             "Codex",
             "Gemini CLI",
-            "Copilot CLI",
-            "Shared"
+            "Copilot CLI"
           ],
           "enumDescriptions": [
-            "Open Claude Code.",
-            "Open Codex.",
-            "Open Gemini CLI.",
-            "Open Copilot CLI.",
-            "Open the defaultAgent in ~/.ide-agent-tabs/config.json, which other IDEs share. Use it for a custom agent from agents.json."
+            "Claude Code.",
+            "Codex.",
+            "Gemini CLI.",
+            "Copilot CLI."
           ],
-          "description": "The agent that the New Agent Tab button, the status bar item and startup open."
+          "description": "The agent that the editor title button, the status bar item and startup open."
         },
         "ideAgentTabs.openOnStartup": {
           "type": "string",

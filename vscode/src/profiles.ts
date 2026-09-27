@@ -149,7 +149,7 @@ export class AgentSettings {
   defaultProfile(): AgentProfile {
     const all = this.profiles();
     const preferred = this.preferred();
-    const configured = this.configuredDefault();
+    const configured = this.sharedDefault();
     return all.find(p => p.name === preferred) ?? all.find(p => p.name === configured) ?? all.find(p => p.name === DEFAULT_AGENT)!;
   }
 
@@ -167,7 +167,7 @@ export class AgentSettings {
     }
   }
 
-  private configuredDefault(): string | undefined {
+  sharedDefault(): string | undefined {
     const current = stamp(this.configFile);
     if (this.defaultCache && this.defaultCache.stamp === current) return this.defaultCache.value;
     let value: string | undefined;
