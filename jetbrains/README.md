@@ -1,4 +1,4 @@
-# IDE Agent Tabs for JetBrains IDEs
+# Agent Tabs for JetBrains IDEs
 
 A plugin for Android Studio and other JetBrains IDEs that opens AI coding-agent sessions, such as Claude
 Code, Codex, Gemini CLI and Copilot CLI, in editor tabs.

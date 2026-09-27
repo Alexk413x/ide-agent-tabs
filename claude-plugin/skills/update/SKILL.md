@@ -1,10 +1,10 @@
 ---
 name: update
-description: Update IDE Agent Tabs everywhere on this machine - the Claude Code plugin, the JetBrains plugin and the VS Code-family extensions - from the newest GitHub releases. Use when the user asks to update, upgrade or check the version of IDE Agent Tabs.
+description: Update Agent Tabs everywhere on this machine - the Claude Code plugin, the JetBrains plugin and the VS Code-family extensions - from the newest GitHub releases. Use when the user asks to update, upgrade or check the version of Agent Tabs.
 argument-hint: "[--check]"
 ---
 
-Update every installed part of IDE Agent Tabs to its newest release. With `--check`, only report
+Update every installed part of Agent Tabs to its newest release. With `--check`, only report
 installed and available versions; change nothing.
 
 Arguments: `$ARGUMENTS`

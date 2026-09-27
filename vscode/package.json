@@ -1,9 +1,9 @@
 {
   "name": "ide-agent-tabs",
-  "displayName": "IDE Agent Tabs",
+  "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "alexk413x",
   "license": "MIT",
   "repository": {
@@ -36,11 +36,21 @@
     "onStartupFinished"
   ],
   "contributes": {
+    "configuration": {
+      "title": "Agent Tabs",
+      "properties": {
+        "ideAgentTabs.openOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the default agent in an editor tab when a window with a folder opens."
+        }
+      }
+    },
     "commands": [
       {
         "command": "ideAgentTabs.newTab",
         "title": "New Agent Tab",
-        "category": "IDE Agent Tabs",
+        "category": "Agent Tabs",
         "icon": {
           "light": "resources/icons/agentTab_new.svg",
           "dark": "resources/icons/agentTab_new_dark.svg"
@@ -49,13 +59,13 @@
       {
         "command": "ideAgentTabs.newTabWith",
         "title": "New Agent Tab With…",
-        "category": "IDE Agent Tabs",
+        "category": "Agent Tabs",
         "icon": "$(chevron-down)"
       },
       {
         "command": "ideAgentTabs.newTab.claude",
         "title": "New Claude Code Tab",
-        "category": "IDE Agent Tabs",
+        "category": "Agent Tabs",
         "icon": {
           "light": "resources/icons/agents/claude_new.svg",
           "dark": "resources/icons/agents/claude_new_dark.svg"
@@ -64,7 +74,7 @@
       {
         "command": "ideAgentTabs.newTab.codex",
         "title": "New Codex Tab",
-        "category": "IDE Agent Tabs",
+        "category": "Agent Tabs",
         "icon": {
           "light": "resources/icons/agents/codex_new.svg",
           "dark": "resources/icons/agents/codex_new_dark.svg"
@@ -73,7 +83,7 @@
       {
         "command": "ideAgentTabs.newTab.gemini",
         "title": "New Gemini CLI Tab",
-        "category": "IDE Agent Tabs",
+        "category": "Agent Tabs",
         "icon": {
           "light": "resources/icons/agents/gemini_new.svg",
           "dark": "resources/icons/agents/gemini_new_dark.svg"
@@ -82,7 +92,7 @@
       {
         "command": "ideAgentTabs.newTab.copilot",
         "title": "New Copilot CLI Tab",
-        "category": "IDE Agent Tabs",
+        "category": "Agent Tabs",
         "icon": {
           "light": "resources/icons/agents/copilot_new.svg",
           "dark": "resources/icons/agents/copilot_new_dark.svg"
@@ -91,7 +101,7 @@
       {
         "command": "ideAgentTabs.newTab.other",
         "title": "New Agent Tab",
-        "category": "IDE Agent Tabs",
+        "category": "Agent Tabs",
         "icon": {
           "light": "resources/icons/agentTab_new.svg",
           "dark": "resources/icons/agentTab_new_dark.svg"

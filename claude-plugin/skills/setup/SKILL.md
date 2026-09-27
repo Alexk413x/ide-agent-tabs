@@ -1,10 +1,10 @@
 ---
 name: setup
-description: Set up IDE Agent Tabs on this machine - check prerequisites, install the IDE extensions (JetBrains, VS Code, Antigravity and other VS Code-based editors), pick a default agent and terminal, and optionally add OpenAI's Codex plugin. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check IDE Agent Tabs.
+description: Set up Agent Tabs on this machine - check prerequisites, install the IDE extensions (JetBrains, VS Code, Antigravity and other VS Code-based editors), pick a default agent and terminal, and optionally add OpenAI's Codex plugin. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
 argument-hint: "[--check]"
 ---
 
-Set up IDE Agent Tabs, one step at a time. With `--check`, only report what's installed and what's
+Set up Agent Tabs, one step at a time. With `--check`, only report what's installed and what's
 missing; change nothing.
 
 Arguments: `$ARGUMENTS`
@@ -55,14 +55,14 @@ Then set up the local plugin repository:
    <plugins>
      <plugin id="dev.alexk.ide-agent-tabs" url="file:///<absolute path to the zip>" version="<version>">
        <idea-version since-build="262.10315"/>
-       <name>IDE Agent Tabs</name>
+       <name>Agent Tabs</name>
        <vendor>Alexk413x</vendor>
      </plugin>
    </plugins>
    ```
 
 3. For each IDE, tell the user to add `file:///<home>/.ide-agent-tabs/repository/updatePlugins.xml` once
-   in **Settings > Plugins > ⚙ > Manage Plugin Repositories**, then install **IDE Agent Tabs** from
+   in **Settings > Plugins > ⚙ > Manage Plugin Repositories**, then install **Agent Tabs** from
    **Marketplace** (it lists the custom repository's plugins), or use **Install Plugin from Disk** with
    the zip. Then restart the IDE.
 4. If the old **Claude Studio Tabs** plugin (`dev.alexk.claude-studio-tabs`) is installed, tell the user

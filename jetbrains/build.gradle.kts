@@ -69,7 +69,7 @@ val updatePluginsXml = tasks.register("updatePluginsXml") {
             <plugins>
               <plugin id="dev.alexk.ide-agent-tabs" url="$zipUrl" version="$pluginVersion">
                 <idea-version since-build="262.10315"/>
-                <name>IDE Agent Tabs</name>
+                <name>Agent Tabs</name>
                 <vendor>Alexk413x</vendor>
                 <description>Opens AI coding-agent sessions in editor tabs.</description>
               </plugin>

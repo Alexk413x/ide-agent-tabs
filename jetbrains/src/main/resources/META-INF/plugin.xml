@@ -1,6 +1,6 @@
 <idea-plugin>
     <id>dev.alexk.ide-agent-tabs</id>
-    <name>IDE Agent Tabs</name>
+    <name>Agent Tabs</name>
     <vendor>Alexk413x</vendor>
     <description><![CDATA[
     Opens AI coding-agent sessions (Claude Code, Codex, Gemini CLI, Copilot CLI and others) in editor tabs:

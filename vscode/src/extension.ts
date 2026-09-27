@@ -23,7 +23,7 @@ interface OpenOptions {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const log = vscode.window.createOutputChannel('IDE Agent Tabs', { log: true });
+  const log = vscode.window.createOutputChannel('Agent Tabs', { log: true });
   const home = ideAgentTabsHome();
   const settings = new AgentSettings(home, message => log.warn(message));
   const scripts = launchScripts(context.asAbsolutePath(path.join('resources', 'launch')));
@@ -110,14 +110,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     list: () => [...tabs.values()].map(({ id, agent, project, path: dir }) => ({ id, agent, project, path: dir })),
   };
 
-  const status = vscode.window.createStatusBarItem('ideAgentTabs.newTab', vscode.StatusBarAlignment.Right, 100);
+  const status = vscode.window.createStatusBarItem('ideAgentTabs.newTab', vscode.StatusBarAlignment.Left, 1000);
   status.name = 'New Agent Tab';
   status.command = 'ideAgentTabs.newTab';
   const refreshStatus = () => {
     const profile = settings.defaultProfile();
     const label = profile.label;
     void vscode.commands.executeCommand('setContext', 'ideAgentTabs.buttonAgent', BUILTIN_ICONS.has(profile.name) ? profile.name : 'other');
-    status.text = `$(terminal) ${label}`;
+    status.text = `$(terminal) New ${label}`;
     const tooltip = new vscode.MarkdownString(
       `New Agent Tab: open **${label}**, the default agent, in an editor tab.\n\n[Choose another agent…](command:ideAgentTabs.newTabWith)`,
     );
@@ -159,6 +159,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (state.focused) refreshStatus();
     }),
   );
+
+  if (vscode.workspace.getConfiguration('ideAgentTabs').get<boolean>('openOnStartup', true) && fileFolders().length > 0) {
+    openFromButton(settings.defaultProfile());
+  }
 
   const token = newToken();
   const server = createApiServer(token, host, settings);
