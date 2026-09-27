@@ -134,13 +134,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   status.command = 'ideAgentTabs.newTab';
   const refreshStatus = () => {
     const profile = settings.defaultProfile();
-    const label = profile.label;
     void vscode.commands.executeCommand('setContext', 'ideAgentTabs.buttonAgent', BUILTIN_ICONS.has(profile.name) ? profile.name : 'other');
-    status.text = `$(terminal) New ${label}`;
-    const tooltip = new vscode.MarkdownString(
-      `New Agent Tab: open **${label}**, the default agent, in an editor tab.\n\n[Choose another agent…](command:ideAgentTabs.newTabWith)`,
-    );
-    tooltip.isTrusted = { enabledCommands: ['ideAgentTabs.newTabWith'] };
+    status.text = `$(terminal) New ${profile.label}`;
+    const escape = (text: string) => text.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
+    const all = settings.profiles();
+    const installed = all.filter(p => isInstalled(p.command, searchPath(), isWindows));
+    const missing = all.filter(p => !installed.includes(p));
+    const links = installed.map(p => {
+      const args = encodeURIComponent(JSON.stringify([p.name]));
+      return `- [${escape(p.label)}](command:ideAgentTabs.openAgent?${args})${p.name === profile.name ? ' (default)' : ''}`;
+    });
+    const lines = [
+      installed.length > 0 ? 'Open an agent in an editor tab. The agent you open becomes the default.' : 'No agent CLI found on PATH.',
+      links.join('\n'),
+      missing.length > 0 ? `Not installed: ${missing.map(p => escape(p.label)).join(', ')}` : '',
+    ];
+    const tooltip = new vscode.MarkdownString(lines.filter(Boolean).join('\n\n'));
+    tooltip.isTrusted = { enabledCommands: ['ideAgentTabs.openAgent'] };
     status.tooltip = tooltip;
   };
   refreshStatus();
@@ -159,6 +169,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await config().update('defaultAgent', value, target).then(undefined, e => log.warn(`Could not save ideAgentTabs.defaultAgent: ${(e as Error).message}`));
   };
 
+  const useAgent = async (profile: AgentProfile) => {
+    settings.setDefaultAgent(profile.name);
+    await syncDefaultSetting(profile.name);
+    refreshStatus();
+    openFromButton(profile);
+  };
+
   const chooseAgent = async () => {
     const current = settings.defaultProfile().name;
     const items = settings
@@ -170,11 +187,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return;
     }
     const picked = await vscode.window.showQuickPick(items, { title: 'Open Agent', placeHolder: 'The agent you choose becomes the default' });
-    if (!picked) return;
-    settings.setDefaultAgent(picked.profile.name);
-    await syncDefaultSetting(picked.profile.name);
-    refreshStatus();
-    openFromButton(picked.profile);
+    if (picked) await useAgent(picked.profile);
   };
 
   context.subscriptions.push(
@@ -185,6 +198,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.registerCommand(`ideAgentTabs.newTab.${name}`, () => openFromButton(settings.defaultProfile())),
     ),
     vscode.commands.registerCommand('ideAgentTabs.newTabWith', chooseAgent),
+    vscode.commands.registerCommand('ideAgentTabs.openAgent', async (name: unknown) => {
+      const profile = typeof name === 'string' ? settings.profile(name) : undefined;
+      if (profile) await useAgent(profile);
+    }),
     vscode.window.onDidCloseTerminal(terminal => {
       for (const [id, tab] of tabs) if (tab.terminal === terminal) tabs.delete(id);
     }),
