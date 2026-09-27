@@ -1,49 +1,37 @@
 # Claude Studio Tabs
 
-An Android Studio plugin that opens a new Claude Code session in an editor tab. It never reuses a tab
-and never types into one.
+A plugin for Android Studio and other JetBrains IDEs that opens a new Claude Code session in an editor
+tab.
 
-- **New Claude Tab** (main toolbar and Tools menu) opens a session in the project root.
-- **A loopback HTTP endpoint** lets another process, such as a Claude session, open a session in any folder
-  and hand it a first message. The IDE does not take focus.
+- Click **New Claude Tab** in the main toolbar or the **Tools** menu to start a session in the project
+  root.
+- Other programs, such as another Claude session, can open, list and close tabs through a local HTTP
+  endpoint. The IDE does not take focus.
 
-Targets Android Studio build 262 (2026.2). Windows only: the session runs `claude` inside `pwsh`
-(or Windows PowerShell when `pwsh` is not on `PATH`).
+## Requirements
 
-## Build and install
+- Android Studio 2026.2 or later, or another JetBrains IDE at build 262 or later.
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) installed, with `claude` on your `PATH`.
+- Terminal shell integration turned on. It is on by default: **Settings > Tools > Terminal > Shell
+  integration**.
 
-```powershell
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"
-.\gradlew.bat test buildPlugin
-```
+The plugin starts `claude` in these shells:
 
-Install `build\distributions\claude-studio-tabs-<version>.zip` with **Settings > Plugins > ⚙ > Install
-Plugin from Disk**, then restart the IDE. `studioPath` in `gradle.properties` names the Android Studio
-install the plugin compiles against. A new Android Studio version is a change to `studioPath` and
-`untilBuild`, then a rebuild.
+| OS | Shell |
+|---|---|
+| Windows | PowerShell 7 (`pwsh`), or Windows PowerShell when `pwsh` isn't installed |
+| macOS, Linux | Your login shell (`$SHELL`) when it is bash, zsh, fish or `pwsh`; otherwise bash |
 
-## Updates
+## Install
 
-The plugin updates from a private plugin repository on this machine, `~/.claude-studio-tabs/repository`.
+1. Build the plugin (see [Build from source](#build-from-source)), or get the
+   `claude-studio-tabs-<version>.zip` file from someone who did.
+2. In the IDE, open **Settings > Plugins**, click **⚙**, and choose **Install Plugin from Disk**.
+3. Select the zip file, then restart the IDE.
 
-One-time setup: in **Settings > Plugins > ⚙ > Manage Plugin Repositories**, add
-`file:///C:/Users/you/.claude-studio-tabs/repository/updatePlugins.xml`.
+## Open a tab from another program
 
-To release a build, raise `pluginVersion` in `gradle.properties`, then run:
-
-```powershell
-.\gradlew.bat publishLocal
-```
-
-`publishLocal` builds the zip, copies it into the repository and writes `updatePlugins.xml`. The IDE
-offers the update the next time it checks, or at once from **Settings > Plugins > Installed >
-Check for Updates**. Installing an update needs an IDE restart. Set `pluginRepositoryDir` in
-`gradle.properties` to publish somewhere else.
-
-## Endpoint
-
-On startup the plugin writes `~/.claude-studio-tabs/endpoint.json` (the sandbox from `runIdeWithClaude`
-writes `build/sandbox-endpoint.json` instead, so it never replaces the real IDE's file):
+When the IDE starts, the plugin writes the endpoint's addresses to `~/.claude-studio-tabs/endpoint.json`:
 
 ```json
 {"url":"http://127.0.0.1:63342/claude-studio-tabs/open",
@@ -52,62 +40,52 @@ writes `build/sandbox-endpoint.json` instead, so it never replaces the real IDE'
  "port":63342,"pid":12345}
 ```
 
-Every route takes a `POST` with `Content-Type: application/json` and answers JSON with `"ok": true` or
-`"ok": false` and an `"error"`.
+Send each request as a `POST` with `Content-Type: application/json`. Every reply is JSON with
+`"ok": true`, or `"ok": false` and an `"error"`.
 
-Set a User-Agent that does not start with `Mozilla/5.0`. The IDE's built-in server treats such a `POST`
-without an `Origin` header as a browser write and answers 404 before the plugin sees it.
-`Invoke-WebRequest` and `Invoke-RestMethod` send a `Mozilla/5.0` User-Agent by default; `curl` does not.
+macOS and Linux (uses `jq`):
 
-### Open a tab
+```sh
+url=$(jq -r .url ~/.claude-studio-tabs/endpoint.json)
+curl -s "$url" -H 'Content-Type: application/json' \
+  -d '{"path": "/path/to/repo", "prompt": "Your first message"}'
+```
+
+Windows PowerShell:
 
 ```powershell
 $endpoint = Get-Content "$HOME\.claude-studio-tabs\endpoint.json" | ConvertFrom-Json
 $body = @{ path = 'C:\path\to\repo'; prompt = 'Your first message' } | ConvertTo-Json
-$tab = Invoke-RestMethod -Method Post -Uri $endpoint.url -ContentType 'application/json' -Body $body -UserAgent 'claude-studio-tabs'
-$tab.id
+Invoke-RestMethod -Method Post -Uri $endpoint.url -ContentType 'application/json' -Body $body -UserAgent 'claude-studio-tabs'
 ```
 
-- `path` (required): an absolute path to an existing folder. The session starts there.
-- `prompt` (optional, up to 30,000 characters): passed as `claude "<prompt>"`, so it becomes the
-  session's first message.
-- `args` (optional, an array of up to 64 strings): extra `claude` arguments, placed before the prompt,
-  for example `["--plugin-dir", "C:\\path\\to\\plugin"]`. Each string reaches `claude` as one argument.
-- `env` (optional, an object of up to 64 string values): environment variables set for the tab's shell
-  and the session. Names that the plugin sets itself (`CLAUDE_STUDIO_TABS_*`, `JEDITERM_SOURCE`) are
-  refused.
+In PowerShell, always pass `-UserAgent`. PowerShell's default User-Agent starts with `Mozilla/5.0`, and
+the IDE refuses a browser-like `POST` before the plugin sees it. `curl` doesn't have this problem.
 
-```powershell
-$body = @{
-    path   = 'C:\path\to\repo'
-    prompt = 'Your first message'
-    args   = @('--plugin-dir', 'C:\path\to\plugin')
-    env    = @{ MY_SETTING = 'value' }
-} | ConvertTo-Json
-```
+### Open
 
-The reply carries the tab's `id`, the `project` window it opened in, and the `path`. The tab opens in
-the open project that contains `path`. If no open project contains it, the tab opens in the last
-focused project window. The button's tabs get an id too.
+`POST` to `url`. The body takes these fields:
 
-### Close a tab
+| Field | Required | Description |
+|---|---|---|
+| `path` | Yes | Absolute path to an existing folder. The session starts there. |
+| `prompt` | No | The session's first message. Up to 30,000 characters. |
+| `args` | No | Extra `claude` arguments, such as `["--plugin-dir", "/path/to/plugin"]`. Up to 64 strings. |
+| `env` | No | Environment variables for the session, such as `{"MY_SETTING": "value"}`. Up to 64. Names that start with `CLAUDE_STUDIO_TABS_` or `JEDITERM_SOURCE` are refused. |
 
-```powershell
-$body = @{ id = $tab.id } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri $endpoint.close -ContentType 'application/json' -Body $body -UserAgent 'claude-studio-tabs'
-```
+The reply holds the tab's `id`, the `project` window it opened in, and the `path`. The tab opens in the
+open project that contains `path`, or in the last focused project window if none does.
 
-Closing the editor tab ends its terminal session, including a running `claude`. Only tabs this plugin
-opened can be closed; any other id answers 404. Each session holds its own id in the
-`CLAUDE_STUDIO_TABS_ID` environment variable, so a session can close its own tab when its work is done.
+### Close
 
-### List tabs
+`POST {"id": "<tab id>"}` to `close`. Closing the tab ends its session. You can close only tabs this
+plugin opened. Each session can read its own id from the `CLAUDE_STUDIO_TABS_ID` environment variable,
+so a session can close its own tab when it finishes.
 
-```powershell
-Invoke-RestMethod -Method Post -Uri $endpoint.list -ContentType 'application/json' -Body '{}' -UserAgent 'claude-studio-tabs'
-```
+### List
 
-The reply's `tabs` array holds `id`, `project` and `path` for every open tab the plugin opened.
+`POST {}` to `list`. The reply's `tabs` array holds the `id`, `project` and `path` of each open tab
+the plugin opened.
 
 ### Status codes
 
@@ -115,12 +93,47 @@ The reply's `tabs` array holds `id`, `project` and `path` for every open tab the
 |---|---|
 | 200 | Done. |
 | 400 | Bad body, relative path, missing folder, or missing `id`. |
-| 403 | The request came from a non-loopback address or carried an `Origin` or `Referer` header. |
-| 404 | `close`: no open tab with that id. Also the built-in server's answer to a browser-like request. |
-| 405 | The method was not `POST`. |
+| 403 | The request came from outside this computer, or carried an `Origin` or `Referer` header. |
+| 404 | `close`: no open tab has that id. Also the IDE's reply to a browser-like request. |
+| 405 | The method wasn't `POST`. |
 | 409 | `open`: no project is open. |
-| 415 | `Content-Type` was not `application/json`. |
-| 503 | The IDE did not act within 10 seconds, usually because a modal dialog is open. Nothing happens later. |
+| 415 | `Content-Type` wasn't `application/json`. |
+| 503 | The IDE didn't respond within 10 seconds, usually because a dialog is open. Nothing opens later. |
 
-The `Origin`, `Referer` and `Content-Type` rules keep web pages from opening sessions: a browser cannot
-send a cross-origin JSON `POST` without a preflight, and it always sends `Origin` on the request.
+The endpoint accepts requests only from this computer. The `Origin`, `Referer` and `Content-Type` rules
+stop web pages from opening sessions.
+
+## Build from source
+
+You need JDK 25. The Java runtime bundled with Android Studio works.
+
+1. Point `studioPath` at your IDE install. The value in `gradle.properties` is a Windows path, so on
+   another machine set it in `~/.gradle/gradle.properties` instead, for example
+   `studioPath=/Applications/Android Studio.app/Contents`.
+2. Build and test:
+
+   ```sh
+   ./gradlew test buildPlugin
+   ```
+
+   On Windows, run `.\gradlew.bat test buildPlugin`.
+
+The zip is in `build/distributions`.
+
+### Local update repository
+
+`./gradlew publishLocal` copies the zip and an `updatePlugins.xml` file into
+`~/.claude-studio-tabs/repository`. Add that file's `file:///` URL once in **Settings > Plugins > ⚙ >
+Manage Plugin Repositories**. After that, raise `pluginVersion` in `gradle.properties` and run
+`publishLocal` again, and the IDE offers the update. Set `pluginRepositoryDir` to publish somewhere
+else.
+
+### Sandbox IDE
+
+`./gradlew runIdeWithClaude` starts a separate IDE with this plugin and the Claude Code plugin from
+`claudeCodePluginPath`. The sandbox writes its endpoint file to `build/sandbox-endpoint.json`, so it
+never replaces your real IDE's file.
+
+## License
+
+[MIT](LICENSE)
