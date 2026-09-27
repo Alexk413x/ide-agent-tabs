@@ -12,6 +12,7 @@ This document is the contract every part builds against. Change it before you ch
 |---|---|---|
 | JetBrains plugin | Built. Moves to `jetbrains/` when the second part lands. | Repository root |
 | Protocol: registry and HTTP API | Phase 0 | This document |
+| Claude Code plugin: `delegate` skill | Built | `claude-plugin/`, marketplace in `.claude-plugin/` |
 | Claude Code plugin: MCP server, `/new-tab` skill, setup skill | Phase 1 | `claude-plugin/`, `mcp/` |
 | VS Code extension | Phase 2 | `vscode/` |
 | Visual Studio extension (Windows Terminal tabs first) | Phase 3 | `visualstudio/` |
@@ -187,6 +188,60 @@ started IDE.
   [mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail), with Claude Code, Codex and
   Gemini CLI polling one mailbox.
 
+## Delegation
+
+Tabs are for interactive sessions. Delegation is for one-shot work: an agent hands a task, review or
+question to another agent CLI in headless mode and reads the answer back. The Claude Code plugin ships a
+`delegate` skill for this (`/ide-agent-tabs:delegate`).
+
+### What already exists
+
+- **Codex:** OpenAI's [Codex plugin for Claude Code](https://github.com/openai/codex-plugin-cc)
+  (Apache-2.0) adds `/codex:review`, `/codex:adversarial-review`, `/codex:rescue`, and background-job
+  commands. It drives Codex's app server, not `codex exec`. The `delegate` skill hands Codex work to this
+  plugin when it's installed, and falls back to `codex exec` when it isn't.
+- **Several CLIs from one MCP server:** [pal-mcp-server](https://github.com/BeehiveInnovations/pal-mcp-server)
+  (Apache-2.0) has a `clink` tool that runs Gemini CLI, Codex or Claude Code as child processes. It's an
+  option if the `delegate` skill outgrows plain shell calls.
+- Codex no longer has an MCP server mode (`codex mcp-server` is gone in 0.154), so shelling out is the
+  simplest route today.
+
+### Rules the skill follows
+
+- **Prompt in a file, never on the command line.** Each run gets a folder under
+  `$TMPDIR/ide-agent-tabs/delegate/` holding `prompt.md`, the final answer, the event log and
+  `meta.json` (agent, mode, folder, session id).
+- **Read-only by default.** Reviews, questions and second opinions can't change files, so they can run
+  next to the calling session. Write tasks run in a separate git worktree (`codex exec --worktree`), or
+  only after the user agrees to changes in the current tree. The skill never turns off an agent's
+  sandbox or approvals unless the user asks.
+- **Long runs go to the background.** Agents often take minutes; a trivial `codex exec` took 106 seconds
+  on the build machine. The skill uses the Bash tool's `run_in_background` and waits for the exit
+  notification. Claude Code's foreground Bash calls stop after 10 minutes.
+- **Success needs an answer file.** A zero exit code isn't enough, because some CLIs exit 0 after doing
+  nothing. The final-answer file must exist and be non-empty.
+- **No hard-coded models.** Model ids change often and depend on the user's login and plan. The skill
+  passes a model only when the user names one.
+- **Check the installed CLI's help first.** Flags change between releases, so the skill confirms them
+  with `--help` once per session.
+
+### Headless commands
+
+| Agent | Run once | Answer | Follow-up | Tested |
+|---|---|---|---|---|
+| Codex | `codex exec -s read-only -C <dir> -o <answer> --json - < prompt.md` | `-o` file | `codex exec resume <thread_id> - < followup.md`; the id is in the `thread.started` event | Yes, 0.154.0 |
+| Claude | `claude -p --output-format json --permission-mode plan < prompt.md` | `.result` | `--resume <session_id>` | Flags checked in help |
+| Gemini CLI | `gemini -p "<instruction>" --output-format json < prompt.md` | `.response` | Unreliable in headless mode | No |
+| Copilot CLI | `copilot -p …` | Output | `--resume` has open Windows bugs | No |
+| OpenCode | `opencode run … --format json` | JSON events | `opencode run -c` | No |
+
+### Later
+
+- A delegated run could open as a tab instead, so the user can watch it: `open_tab` with the same prompt,
+  then read the result through the messaging layer.
+- If shell calls prove fragile, move delegation into the MCP server as a `delegate` tool, or adopt
+  pal-mcp-server's `clink`.
+
 ## Install (Phase 1)
 
 The repository is a Claude Code plugin marketplace. One set of commands sets up everything:
@@ -196,8 +251,19 @@ claude plugin marketplace add Alexk413x/ide-agent-tabs
 claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
 
-Then, in a session, run `/ide-agent-tabs:setup`. The setup skill finds installed IDEs and installs each
-extension from the private GitHub Releases. JetBrains IDEs must be closed for a command-line install.
+Then, in a session, run `/ide-agent-tabs:setup`. The setup skill:
+
+- finds installed IDEs and installs each extension from the private GitHub Releases (JetBrains IDEs must
+  be closed for a command-line install);
+- finds installed agent CLIs and reports which profiles work;
+- offers to add OpenAI's Codex plugin (`claude plugin marketplace add openai/codex-plugin-cc`, then
+  `claude plugin install codex@openai-codex`) when Codex is installed.
+
+Installing the plugin at user scope makes its skills available in every session and every IDE.
+
+The Codex plugin isn't declared as a plugin dependency. A dependency from another marketplace installs
+only when this marketplace lists it in `allowCrossMarketplaceDependenciesOn` and the user has already
+added OpenAI's marketplace. Otherwise the install is refused, which would break the one-step install.
 
 ## Security
 
