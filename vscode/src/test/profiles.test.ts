@@ -148,6 +148,18 @@ test('default agent comes from config and falls back to claude', () => {
   assert.equal(warnings.length, 1);
 });
 
+test('a preferred agent wins over config unless it has no profile', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-agents-'));
+  let preferred: string | undefined = 'codex';
+  const settings = new AgentSettings(home, () => {}, () => preferred);
+  fs.writeFileSync(path.join(home, CONFIG_FILE), '{"defaultAgent": "gemini"}');
+  assert.equal(settings.defaultProfile().name, 'codex');
+  preferred = 'nope';
+  assert.equal(settings.defaultProfile().name, 'gemini');
+  preferred = undefined;
+  assert.equal(settings.defaultProfile().name, 'gemini');
+});
+
 test('saving the default agent keeps the other settings', () => {
   const { settings, home } = fixture();
   const config = path.join(home, CONFIG_FILE);

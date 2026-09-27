@@ -113,7 +113,11 @@ export class AgentSettings {
   private profilesCache?: { stamp: Stamp; value: AgentProfile[] };
   private defaultCache?: { stamp: Stamp; value: string | undefined };
 
-  constructor(readonly home: string, private readonly warn: (message: string) => void) {}
+  constructor(
+    readonly home: string,
+    private readonly warn: (message: string) => void,
+    private readonly preferred: () => string | undefined = () => undefined,
+  ) {}
 
   private get agentsFile() {
     return path.join(this.home, AGENTS_FILE);
@@ -144,8 +148,9 @@ export class AgentSettings {
 
   defaultProfile(): AgentProfile {
     const all = this.profiles();
+    const preferred = this.preferred();
     const configured = this.configuredDefault();
-    return all.find(p => p.name === configured) ?? all.find(p => p.name === DEFAULT_AGENT)!;
+    return all.find(p => p.name === preferred) ?? all.find(p => p.name === configured) ?? all.find(p => p.name === DEFAULT_AGENT)!;
   }
 
   setDefaultAgent(name: string): void {

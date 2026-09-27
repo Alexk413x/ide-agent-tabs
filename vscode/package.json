@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "alexk413x",
   "license": "MIT",
   "repository": {
@@ -33,16 +33,57 @@
     "virtualWorkspaces": false
   },
   "activationEvents": [
-    "onStartupFinished"
+    "*"
   ],
   "contributes": {
     "configuration": {
       "title": "Agent Tabs",
       "properties": {
+        "ideAgentTabs.defaultAgent": {
+          "type": "string",
+          "default": "",
+          "enum": [
+            "",
+            "claude",
+            "codex",
+            "gemini",
+            "copilot"
+          ],
+          "enumItemLabels": [
+            "Last picked",
+            "Claude Code",
+            "Codex",
+            "Gemini CLI",
+            "Copilot CLI"
+          ],
+          "enumDescriptions": [
+            "The agent last picked from the agent menu in any IDE, saved in ~/.ide-agent-tabs/config.json.",
+            "Always open Claude Code.",
+            "Always open Codex.",
+            "Always open Gemini CLI.",
+            "Always open Copilot CLI."
+          ],
+          "description": "The agent that the New Agent Tab button, the status bar item and startup open."
+        },
         "ideAgentTabs.openOnStartup": {
-          "type": "boolean",
-          "default": true,
-          "description": "Open the default agent in an editor tab when a window with a folder opens."
+          "type": "string",
+          "default": "claudeFolder",
+          "enum": [
+            "claudeFolder",
+            "always",
+            "never"
+          ],
+          "enumItemLabels": [
+            "When the project has a .claude folder",
+            "Always",
+            "Never"
+          ],
+          "enumDescriptions": [
+            "Open the default agent when a window or added folder has a .claude folder at its root.",
+            "Open the default agent when a window with a folder opens, or a folder is added.",
+            "Don't open an agent tab on startup."
+          ],
+          "description": "When to open the default agent in an editor tab without a click."
         }
       }
     },

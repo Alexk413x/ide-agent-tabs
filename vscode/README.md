@@ -25,9 +25,8 @@ npm run package
 
 ## Open a tab
 
-- When a window with a folder opens, the default agent opens in an editor tab. To turn this off, set
-  `ideAgentTabs.openOnStartup` to `false`.
-- Click **New Agent Tab** in the editor title bar, or **New <agent>** at the left of the status bar. The default agent
+- When a window opens a project with a `.claude` folder, the default agent opens in an editor tab.
+- Click **New Agent Tab** in the editor title bar, or **New <agent>** at the right of the status bar. The default agent
   opens in a terminal tab in the editor area. The tab starts in the folder of the active editor, or in the
   first workspace folder.
 - To open a different agent, click the arrow next to **New Agent Tab**, or run **Agent Tabs: New
@@ -37,6 +36,15 @@ npm run package
 
 The default agent lives in `~/.ide-agent-tabs/config.json`, so every IDE with this extension or the
 JetBrains plugin shares it.
+
+## Settings
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| `ideAgentTabs.defaultAgent` | `""` (the agent last picked in any IDE), `claude`, `codex`, `gemini`, `copilot` | `""` |
+| `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
+
+When `ideAgentTabs.defaultAgent` is set, picking another agent from the menu updates it.
 
 ## Agent profiles
 
