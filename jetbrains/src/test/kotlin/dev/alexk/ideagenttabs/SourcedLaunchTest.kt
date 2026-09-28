@@ -120,7 +120,7 @@ class SourcedLaunchTest {
 second line"""
             assertEquals("1|$prompt\u001f|unset|test|", run(unix, agent.launch(prompt)))
             val args = listOf("--plugin-dir", "/a b/c", """say "hi" $(whoami) `t` *""", "", "é ✓")
-            val out = run(unix, agent.launch("the prompt", args, mapOf("CST_TEST_VAR" to "value with spaces")))
+            val out = run(unix, agent.launch("the prompt", args, mapOf("IAT_TEST_VAR" to "value with spaces")))
             assertEquals("6|" + (args + "the prompt").joinToString("") { "$it\u001f" } + "|unset|test|value with spaces", out)
             assertEquals("4|--model\u001fm b\u001f-i\u001fhi\u001f|unset|spaced|", run(unix, spaced.launch("hi")))
         }
@@ -132,7 +132,7 @@ second line"""
         val fake = """
             #!/bin/sh
             out=""; for x in "$@"; do out="${'$'}out${'$'}x$(printf '\037')"; done
-            printf '%s|%s|%s|%s|%s' "$#" "${'$'}out" "${'$'}{$PROMPT_ENV-${'$'}{${ARG_ENV_PREFIX}0-${'$'}{$ARG_COUNT_ENV-${'$'}{$COMMAND_ENV-unset}}}}" "${'$'}$AGENT_ENV" "${'$'}CST_TEST_VAR" > "${'$'}CST_OUT"
+            printf '%s|%s|%s|%s|%s' "$#" "${'$'}out" "${'$'}{$PROMPT_ENV-${'$'}{${ARG_ENV_PREFIX}0-${'$'}{$ARG_COUNT_ENV-${'$'}{$COMMAND_ENV-unset}}}}" "${'$'}$AGENT_ENV" "${'$'}IAT_TEST_VAR" > "${'$'}IAT_OUT"
         """.trimIndent() + "\n"
         val bin = Files.createDirectories(dir.resolve("bin"))
         for (target in listOf(bin.resolve("cst-agent"), Files.createDirectories(dir.resolve("my bin")).resolve("cst agent"))) {
@@ -161,7 +161,7 @@ second line"""
             environment().putAll(launch.env)
             environment().putAll(injectedEnv)
             environment()["PATH"] = "$bin${File.pathSeparator}${System.getenv("PATH")}"
-            environment()["CST_OUT"] = out.toString()
+            environment()["IAT_OUT"] = out.toString()
             redirectInput(ProcessBuilder.Redirect.from(File("/dev/null")))
             redirectOutput(ProcessBuilder.Redirect.DISCARD)
             redirectError(ProcessBuilder.Redirect.DISCARD)

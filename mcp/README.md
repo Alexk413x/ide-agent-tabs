@@ -101,7 +101,6 @@ identify the calling Claude Code session, such as `CLAUDECODE`.
 
 - The server drives Ghostty through AppleScript, which Ghostty 1.3 added. The first call asks you to allow
   the calling app to control Ghostty, in **System Settings > Privacy & Security > Automation**.
-- Untested: no Mac was available to build this. Unit tests cover the AppleScript and command generation.
 
 ### Ghostty on Linux
 
@@ -112,8 +111,6 @@ identify the calling Claude Code session, such as `CLAUDECODE`.
   while that shell runs, and `close_tab` sends the shell `SIGHUP`, which ends the agent and closes the
   window.
 - The server finds Ghostty as `ghostty` on `PATH`.
-- Partly tested: in WSL Ubuntu, Ghostty 1.3.1 accepts these flags, but it needs OpenGL 4.3 and WSLg
-  offers 4.1, so no window opened. The same start, pid and `SIGHUP` path passed with kitty.
 
 ### WezTerm
 
@@ -130,11 +127,9 @@ identify the calling Claude Code session, such as `CLAUDECODE`.
 - If no WezTerm GUI runs, the server starts one with `wezterm start` and records the pane id once the new
   GUI's socket answers. If that takes more than 10 seconds, `list_tabs` shows the tab for 60 seconds and
   `close_tab` can't close it.
-- The latest stable WezTerm release is 20240203. The server uses only commands that release has.
+- The most recent stable WezTerm release is 20240203. The server uses only commands that release has.
 - The server finds `wezterm` on `PATH`, then in `%ProgramFiles%\WezTerm` on Windows or
   `/Applications/WezTerm.app` and `~/Applications/WezTerm.app` on macOS.
-- Tested with the 20260917 nightly on Windows 11 and the 20260802 nightly in WSL Ubuntu, with and without
-  a GUI already running.
 
 ### kitty
 
@@ -154,7 +149,6 @@ identify the calling Claude Code session, such as `CLAUDECODE`.
   `list_ides` reports the capabilities of the mode a new tab would use.
 - The server finds `kitty` on `PATH`, then in `/Applications/kitty.app`, `~/Applications/kitty.app` and
   `~/.local/kitty.app/bin`. It uses the `kitten` next to it.
-- Tested with kitty 0.49.1 in WSL Ubuntu, with and without remote control.
 
 ### tmux
 
@@ -170,7 +164,6 @@ identify the calling Claude Code session, such as `CLAUDECODE`.
   there; the launch script changes to it.
 - You need tmux 3.0 or later, for `new-window -e`. The server finds `tmux` on `PATH`, then in
   `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` and `/home/linuxbrew/.linuxbrew/bin`.
-- Tested with tmux 3.6 and bash in WSL Ubuntu, with and without an attached client.
 
 ### Adding a terminal
 
@@ -179,6 +172,17 @@ and `currentCapabilities` when what it can do depends on its setup. Add the driv
 `TERMINAL_DRIVERS`, and to the platform order in `src/terminals/index.ts`. Shared pieces live in
 `shell.ts` (login shell, env mode and argv mode commands, path checks, titles) and `processes.ts`
 (environment, detached start, pid tracking).
+
+### Tested on
+
+- WezTerm: the 20260917 nightly on Windows 11, and the 20260802 nightly in WSL Ubuntu, with and without a
+  GUI already running.
+- kitty: 0.49.1 in WSL Ubuntu, with and without remote control.
+- tmux: 3.6 with bash in WSL Ubuntu, with and without an attached client.
+- Ghostty on Linux: partly. In WSL Ubuntu, Ghostty 1.3.1 accepts the flags, but it needs OpenGL 4.3 and
+  WSLg offers 4.1, so no window opens. The same start, pid and `SIGHUP` path passes with kitty.
+- Ghostty on macOS: untested. Unit tests cover the AppleScript and command generation.
+- No driver is tested on a real Mac.
 
 ## Build and test
 
@@ -190,9 +194,10 @@ npm test
 npm run build
 ```
 
-`npm run build` type-checks the code and bundles it into `claude-plugin/dist/mcp-server.mjs`, with the
-launch scripts in `claude-plugin/dist/launch/` and the bundled packages' licenses in
-`claude-plugin/dist/THIRD_PARTY_NOTICES.txt`. Commit the `dist/` folder: the plugin runs it without
+`npm run build` type-checks the code and bundles it into `claude-plugin/dist/mcp-server.mjs` and
+`claude-plugin/dist/sync-ides.mjs`. It copies the launch scripts to `claude-plugin/dist/launch/` and
+writes the bundled packages' licenses to `claude-plugin/dist/THIRD_PARTY_NOTICES.txt`. It leaves the IDE
+builds in `claude-plugin/dist/ide/` in place. Commit the `dist/` folder: the plugin runs it without
 `node_modules`.
 
 The launcher tests run the real launch scripts with `pwsh`, Windows PowerShell and bash when they're

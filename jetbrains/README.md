@@ -1,7 +1,7 @@
 # Agent Tabs for JetBrains IDEs
 
-A plugin for Android Studio and other JetBrains IDEs that opens AI coding-agent sessions, such as Claude
-Code, Codex, Gemini CLI and Copilot CLI, in editor tabs.
+A plugin for IntelliJ IDEA, Android Studio and other JetBrains IDEs that opens AI coding-agent sessions,
+such as Claude Code, Codex, Gemini CLI and Copilot CLI, in editor tabs.
 
 - Click **New Agent Tab** in the main toolbar or the **Tools** menu, or press **Ctrl+Alt+A** (**⌘⌥A** on
   macOS), to start the default agent in the project root.
@@ -14,7 +14,7 @@ Code, Codex, Gemini CLI and Copilot CLI, in editor tabs.
 
 ## Requirements
 
-- Android Studio 2026.2 or later, or another JetBrains IDE at build 262 or later.
+- IntelliJ IDEA, Android Studio or another JetBrains IDE at build 262.10315 or later (2026.2.2).
 - At least one agent CLI on your `PATH`, such as [Claude Code](https://docs.claude.com/en/docs/claude-code)
   (`claude`).
 - Terminal shell integration turned on. It is on by default: **Settings > Tools > Terminal > Shell
@@ -29,10 +29,28 @@ The plugin starts the agent in these shells:
 
 ## Install
 
-1. Download `ide-agent-tabs-<version>.zip` from a `jetbrains-v<version>` release on the repository's
-   GitHub Releases page, or build it (see [Build from source](#build-from-source)).
+Install the Agent Tabs Claude Code plugin, then run its setup skill. The Claude Code plugin carries this
+plugin and keeps it up to date through a local plugin repository:
+
+```sh
+claude plugin marketplace add Alexk413x/ide-agent-tabs
+claude plugin install ide-agent-tabs@ide-agent-tabs
+```
+
+In a Claude Code session, run `/ide-agent-tabs:setup`. For each JetBrains IDE, the skill gives you two
+one-time steps: add a local plugin repository in **Settings > Plugins > ⚙ > Manage Plugin
+Repositories**, then install **Agent Tabs** from the **Marketplace** tab. Each later version arrives as a
+normal plugin update.
+
+To install by hand instead:
+
+1. Get the plugin zip. Download `ide-agent-tabs-<version>.zip` from a `jetbrains-v<version>` release on
+   the repository's GitHub Releases page, or use `claude-plugin/dist/ide/ide-agent-tabs-jetbrains.zip`
+   from the repository. You can also build it (see [Build from source](#build-from-source)).
 2. In the IDE, open **Settings > Plugins**, click **⚙**, and choose **Install Plugin from Disk**.
 3. Select the zip file, then restart the IDE.
+
+A plugin installed by hand doesn't update by itself.
 
 ## Agents
 
@@ -53,10 +71,10 @@ same name as a built-in one replaces it.
 
 ```json
 {
-  "opencode-local": {
-    "label": "OpenCode (LM Studio)",
+  "opencode": {
+    "label": "OpenCode",
     "command": "opencode",
-    "args": ["--model", "lmstudio/qwen3-coder"],
+    "args": ["--model", "<provider>/<model>"],
     "promptFlag": "--prompt",
     "env": {},
     "icon": "icons/opencode.svg"
@@ -111,7 +129,7 @@ When the IDE starts, the plugin writes a registry file to
 `~/.ide-agent-tabs/endpoints/jetbrains-<pid>.json`, and deletes it when the IDE closes:
 
 ```json
-{"protocol":1,"ide":"jetbrains","product":"Android Studio","version":"2026.2.2","pid":12345,
+{"protocol":1,"ide":"jetbrains","product":"IntelliJ IDEA","version":"2026.2.2","pid":12345,
  "url":"http://127.0.0.1:63342/ide-agent-tabs","token":"<64 hex characters>"}
 ```
 

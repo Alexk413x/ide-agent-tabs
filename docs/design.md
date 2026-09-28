@@ -15,7 +15,7 @@ This document is the contract every part builds against. Change it before you ch
 | Claude Code plugin: `delegate` skill | Built | `claude-plugin/`, marketplace in `.claude-plugin/` |
 | CI and release workflows | Built | `.github/workflows/` |
 | Claude Code plugin: MCP server, `new-tab`, `setup` and `update` skills | Built | `claude-plugin/`, `mcp/` |
-| VS Code extension (also Antigravity and other VS Code-based editors) | Built | `vscode/` |
+| VS Code extension (VS Code and editors built on it) | Built | `vscode/` |
 | Visual Studio extension (Windows Terminal tabs first) | Phase 3 | `visualstudio/` |
 
 Messaging between agents is out of scope. Claude Code sessions message each other with Claude Code's
@@ -31,7 +31,7 @@ The file name without `.json` is the IDE's id in the MCP tools.
 {
   "protocol": 1,
   "ide": "jetbrains",
-  "product": "Android Studio",
+  "product": "IntelliJ IDEA",
   "version": "2026.2.2",
   "pid": 12345,
   "url": "http://127.0.0.1:63342/ide-agent-tabs",
@@ -58,8 +58,7 @@ sandbox IDE use this so they never mix with real IDEs.
 Every route takes a `POST` with `Content-Type: application/json` and an `Authorization: Bearer <token>`
 header. Every reply is JSON with `"ok": true`, or `"ok": false` and an `"error"`.
 
-The server also keeps the loopback rules from version 0.2: it refuses non-loopback addresses and any
-request with an `Origin` or `Referer` header.
+The server refuses non-loopback addresses and any request with an `Origin` or `Referer` header.
 
 | Route | Body | Reply |
 |---|---|---|
@@ -106,18 +105,17 @@ A profile says how to start one agent CLI. Every IDE uses the same built-in prof
 | `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 | `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
 
-The `claude` and `codex` rows are checked against each CLI's help. The `gemini` and `copilot` rows come
-from their docs and are untested, because neither CLI is installed on the build machine. A profile in
-`agents.json` with the same name overrides a built-in one.
+The `claude` and `codex` rows match each CLI's help. The `gemini` and `copilot` rows come from each
+CLI's docs and are untested. A profile in `agents.json` with the same name overrides a built-in one.
 
 You add or override profiles in `~/.ide-agent-tabs/agents.json`:
 
 ```json
 {
-  "opencode-local": {
-    "label": "OpenCode (LM Studio)",
+  "opencode": {
+    "label": "OpenCode",
     "command": "opencode",
-    "args": ["--model", "lmstudio/qwen3-coder"],
+    "args": ["--model", "<provider>/<model>"],
     "promptFlag": "--prompt",
     "env": {}
   }
@@ -170,13 +168,16 @@ prompt. The prompt comes last.
 
 ## Button
 
-Every IDE shows a **New Agent Tab** button.
+Every IDE shows a **New Agent Tab** button, and binds **Ctrl+Alt+A** (**⌘⌥A** on macOS) to it.
 
 - Click it to open a tab running the default agent in the current project or folder.
-- Right-click it to list every profile whose command is installed, each with its logo. Choose one to
-  open a tab running that agent and to make it the default.
+- To open another agent, open the agent menu: right-click the button in a JetBrains IDE, or click the
+  arrow next to it in VS Code. The menu lists each installed agent with its logo, and a **Settings**
+  item. Choosing an agent opens a tab and leaves the default unchanged.
+- To change the default, use **Settings > Tools > Agent Tabs** in a JetBrains IDE, or the
+  `ideAgentTabs.defaultAgent` setting in VS Code.
 
-The default lives in `~/.ide-agent-tabs/config.json`, so all IDEs share it.
+The default lives in `~/.ide-agent-tabs/config.json`, so all IDEs and the MCP server share it.
 
 ## MCP server (Phase 1)
 
@@ -248,7 +249,7 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
   kitty appends `-<pid>` to the socket path. The server uses `KITTY_LISTEN_ON` when it's set, and
   otherwise the newest `kitty-agent-tabs-*` socket that answers `kitten @ ls`. `list_ides` reports kitty's
   capabilities for the mode a new tab would use.
-- WezTerm's latest stable release is 20240203, and most users run nightly builds. The driver uses only
+- WezTerm's most recent stable release is 20240203, and most users run nightly builds. The driver uses only
   `cli spawn`, `cli list`, `cli kill-pane` and `start`, which both have. It records the GUI socket with
   each pane id, so a restarted GUI doesn't match old ids. When the server starts the GUI itself, it
   records the pane id once the new GUI's socket answers, within 10 seconds. Otherwise `list_tabs` shows
@@ -257,10 +258,6 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
   its reply: run `tmux attach -t agents`. The server records the tmux socket and server pid with each
   window id, so a restarted tmux server doesn't match old ids.
 - The Visual Studio extension (Phase 3) opens its tabs through the Windows Terminal support.
-- Tested live: WezTerm on Windows 11 and in WSL Ubuntu; kitty 0.49.1 with and without remote control,
-  and tmux 3.6 with and without an attached client, in WSL Ubuntu; open, list and close through the MCP
-  server for tmux, kitty and WezTerm. Ghostty on Linux accepts its flags, but WSLg's OpenGL 4.1 is below
-  Ghostty's 4.3, so no window opened. Untested: Ghostty on macOS, and every driver on a real Mac.
 
 ## Messaging
 
@@ -285,8 +282,7 @@ question to another agent CLI in headless mode and reads the answer back. The Cl
 - **Several CLIs from one MCP server:** [pal-mcp-server](https://github.com/BeehiveInnovations/pal-mcp-server)
   (Apache-2.0) has a `clink` tool that runs Gemini CLI, Codex or Claude Code as child processes. It's an
   option if the `delegate` skill outgrows plain shell calls.
-- Codex no longer has an MCP server mode (`codex mcp-server` is gone in 0.154), so shelling out is the
-  simplest route today.
+- Codex 0.154 has no MCP server mode (`codex mcp-server`), so the skill runs the CLI directly.
 
 ### Rules the skill follows
 
@@ -297,8 +293,8 @@ question to another agent CLI in headless mode and reads the answer back. The Cl
   next to the calling session. Write tasks run in a separate git worktree (`codex exec --worktree`), or
   only after the user agrees to changes in the current tree. The skill never turns off an agent's
   sandbox or approvals unless the user asks.
-- **Long runs go to the background.** Agents often take minutes; a trivial `codex exec` took 106 seconds
-  on the build machine. The skill uses the Bash tool's `run_in_background` and waits for the exit
+- **Long runs go to the background.** Agents often take minutes. In one test, a trivial `codex exec` took
+  106 seconds. The skill uses the Bash tool's `run_in_background` and waits for the exit
   notification. Claude Code's foreground Bash calls stop after 10 minutes.
 - **Success needs an answer file.** A zero exit code isn't enough, because some CLIs exit 0 after doing
   nothing. The final-answer file must exist and be non-empty.
@@ -326,92 +322,132 @@ question to another agent CLI in headless mode and reads the answer back. The Cl
 
 ## Install (Phase 1)
 
-The repository is a Claude Code plugin marketplace. One set of commands sets up everything:
+The repository is a Claude Code plugin marketplace. Two commands install the plugin:
 
 ```sh
 claude plugin marketplace add Alexk413x/ide-agent-tabs
 claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
 
-Then, in a session, run `/ide-agent-tabs:setup`. The setup skill:
+Installing the plugin at user scope makes its skills available in every session and every IDE.
 
-- finds installed IDEs and installs each extension from the private GitHub Releases (JetBrains IDEs must
-  be closed for a command-line install);
-- finds installed agent CLIs and reports which profiles work;
+Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before each change, and:
+
+- checks for Node.js 20 or later;
+- finds VS Code and editors built on it with `sync-ides.mjs --status`, and installs the bundled `.vsix`
+  into the editors the user picks with `sync-ides.mjs --install <cli>…`;
+- finds JetBrains IDEs through their `product-info.json`, and skips any build older than 262.10315;
+- creates the local JetBrains plugin repository with `sync-ides.mjs --install --jetbrains`, and gives the
+  user two one-time steps for each JetBrains IDE: add the repository's `file:///` URL in **Settings >
+  Plugins > ⚙ > Manage Plugin Repositories**, then install **Agent Tabs** from the **Marketplace** tab
+  and restart the IDE;
+- reports which agent CLIs are installed, and writes the default agent and the preferred terminal to
+  `~/.ide-agent-tabs/config.json`;
 - offers to add OpenAI's Codex plugin (`claude plugin marketplace add openai/codex-plugin-cc`, then
   `claude plugin install codex@openai-codex`) when Codex is installed.
 
-Installing the plugin at user scope makes its skills available in every session and every IDE.
+The setup skill never edits an IDE's settings files, and never installs a JetBrains plugin from the
+command line.
 
 The Codex plugin isn't declared as a plugin dependency. A dependency from another marketplace installs
 only when this marketplace lists it in `allowCrossMarketplaceDependenciesOn` and the user has already
 added OpenAI's marketplace. Otherwise the install is refused, which would break the one-step install.
 
-## Releases and updates (Phase 1)
+## Distribution and updates (Phase 1)
 
-The repository is private. The Claude Code plugin updates straight from it. The IDE extensions update
-from a local folder that an update skill fills from GitHub Releases, because an IDE can't sign in to
-download a private release file.
+The Claude Code plugin carries the IDE extensions. The IDEs install them from files on the local disk,
+so no IDE downloads anything.
+
+### Bundled files
+
+`claude-plugin/dist/` is generated. Commit it with the plugin, because the plugin runs it as is.
+
+| File | Holds | Built by |
+|---|---|---|
+| `mcp-server.mjs`, `launch/`, `THIRD_PARTY_NOTICES.txt` | The MCP server, the terminal launch scripts and bundled licenses | `mcp/build.mjs` |
+| `sync-ides.mjs` | The IDE sync script, from `mcp/src/sync.ts` | `mcp/build.mjs` |
+| `ide/ide-agent-tabs.vsix` | The VS Code extension | `scripts/pack-ides.mjs` |
+| `ide/ide-agent-tabs-jetbrains.zip` | The JetBrains plugin | `scripts/pack-ides.mjs` |
+| `ide/versions.json` | The bundled version of each, such as `{"vscode": "0.1.17", "jetbrains": "0.4.1"}` | `scripts/pack-ides.mjs` |
+
+`scripts/pack-ides.mjs` runs `gradlew buildPlugin` with a JDK 25 or later, and `npm run package` in
+`vscode/`. It finds the JDK through `JAVA_HOME`, the JetBrains Runtime bundled with an installed IDE, or
+common JDK folders. Run it after you raise `pluginVersion` in `jetbrains/gradle.properties` or `version`
+in `vscode/package.json`.
 
 ### What updates from where
 
 | Part | Update source | How it updates |
 |---|---|---|
 | Claude Code plugin | This repository, through the marketplace | `claude plugin update ide-agent-tabs@ide-agent-tabs`, or auto-update turned on for the marketplace in `/plugin` (off by default for a marketplace you add yourself) |
-| JetBrains plugin | `~/.ide-agent-tabs/repository/updatePlugins.xml` | The IDE's custom plugin repository, added once as a `file:///` URL. The IDE offers each new version. |
-| VS Code extension | GitHub Release `.vsix` | The update skill runs `code --install-extension <vsix> --force` |
-| Visual Studio extension | GitHub Release `.vsix` | The update skill runs `VSIXInstaller.exe` |
+| VS Code extension | `dist/ide/ide-agent-tabs.vsix` in the installed plugin | The session start hook runs `<cli> --install-extension <vsix> --force` in each editor that has an older version. |
+| JetBrains plugin | `~/.ide-agent-tabs/repository/updatePlugins.xml` | The session start hook puts the bundled zip there. The IDE offers the update from its custom plugin repository. |
 
-### Release workflow
+### Session start hook
 
-A GitHub Actions workflow, `.github/workflows/release.yml`, builds and publishes each part. GitHub
-Actions runs on private repositories and bills against the account's monthly minutes. A Linux minute
-counts once, a Windows minute twice and a macOS minute ten times, so the workflow uses Linux except where
-a part needs Windows.
+`claude-plugin/hooks/hooks.json` runs `node dist/sync-ides.mjs --hook` when a Claude Code session starts,
+with a 60-second timeout. The hook:
 
-- **Trigger:** a tag per part and version: `jetbrains-v0.3.0`, `vscode-v0.1.0`, `mcp-v0.1.0`. The version
-  in the tag must match the part's own version (`pluginVersion` in `jetbrains/gradle.properties`, or
-  `version` in `vscode/package.json` or `mcp/package.json`); the workflow fails otherwise. Visual Studio
-  gets a tag when it exists.
-- **JetBrains job (Linux):** set up JDK 25, install zsh and fish, run `./gradlew test buildPlugin`, and
-  run the Plugin Verifier. It attaches `ide-agent-tabs-<version>.zip` to a GitHub Release named after the
-  tag.
-- **PowerShell tests:** the Windows-only launch tests run in an optional Windows job, or locally before
-  tagging.
-- **Checksums:** every release also carries `SHA256SUMS`. The update skill refuses a file whose checksum
-  doesn't match.
+1. Compares `dist/ide/versions.json` with `~/.ide-agent-tabs/synced.json`, and stops when the versions
+   match the last sync. After a failed sync, it tries again at later sessions, up to three attempts for
+   the same versions.
+2. Creates `~/.ide-agent-tabs/sync.lock`, so two sessions don't sync at once. It treats a lock older than
+   five minutes as stale.
+3. Finds each editor command-line tool: `code`, `code-insiders`, `cursor`, `windsurf`, `codium` and
+   `antigravity-ide`, on `PATH` or in the usual install folders. For each, it lists the installed
+   extensions, and installs the bundled `.vsix` only where an older version of Agent Tabs is installed.
+   It never installs the extension into an editor that doesn't have it.
+4. If `~/.ide-agent-tabs/repository/` exists, copies the zip there as `ide-agent-tabs-<version>.zip`,
+   rewrites `updatePlugins.xml` with a `file:///` URL, and deletes older zips. It never replaces a newer
+   version that is already in the folder.
+5. Writes `synced.json`, appends any errors to `~/.ide-agent-tabs/sync.log`, and prints a message for the
+   session when it updated something.
 
-The build compiles against a local IDE when `studioPath` is set in `~/.gradle/gradle.properties`, and
-downloads IntelliJ IDEA 2026.2.2 otherwise, as on a runner. The Plugin Verifier checks IntelliJ IDEA
-2026.2.2 and Android Studio 2026.2.2.
+The hook always exits with code 0, so a failed sync never blocks a session.
 
-The plugin needs build 262.10315 or later (IntelliJ IDEA and Android Studio 2026.2.2). Earlier 2026.2
-builds have a different `TerminalViewVirtualFile` constructor, so opening a tab would fail there.
+The JetBrains IDE offers the update at its next update check, or at once from **Settings > Plugins >
+Installed > Check for Updates**. A JetBrains update needs an IDE restart. A VS Code update needs a window
+reload.
+
+The `publishLocal` Gradle task writes the same repository layout, so a development build and the bundled
+plugin share one folder. After `publishLocal` writes a higher version, the hook leaves it in place until
+the bundled version passes it.
 
 ### Update skill
 
-`/ide-agent-tabs:update` uses the GitHub CLI, signed in with read access to the repository:
+`/ide-agent-tabs:update`:
 
-1. Find the newest release for each part with `gh release list`.
-2. Download the files with `gh release download`, and check them against `SHA256SUMS`.
-3. JetBrains: copy the zip into `~/.ide-agent-tabs/repository` and rewrite `updatePlugins.xml` with the
-   new version and a `file:///` URL. The IDE offers the update the next time it checks, or at once from
-   **Settings > Plugins > Installed > Check for Updates**. An update needs an IDE restart.
-4. VS Code and Visual Studio: install the downloaded `.vsix` with the editor's own command.
-5. Update the Claude Code plugin itself with `claude plugin update`.
-6. Report each part's old and new version, and any restart or reload the user must do.
+1. Runs `claude plugin marketplace update ide-agent-tabs`, `claude plugin list` and
+   `sync-ides.mjs --status`, and reports the installed and available versions.
+2. If a newer plugin version exists, runs `claude plugin update ide-agent-tabs@ide-agent-tabs`, then asks
+   the user to run `/reload-plugins` and the skill again. The loaded skill's paths point to the old
+   version's files.
+3. Runs `sync-ides.mjs --hook` to bring each set-up IDE to the bundled versions.
+4. Reports each part's old and new version, and the reload or restart each IDE needs.
 
-The `publishLocal` Gradle task writes the same folder layout, so a local development build and a
-downloaded release share one repository folder. The newest version wins.
+An IDE that was never set up needs the setup skill, not the update skill.
 
-The setup skill adds the `file:///` repository URL to each JetBrains IDE once. It can edit the IDE's
-settings only while that IDE is closed; otherwise it tells the user which URL to add in **Settings >
-Plugins > ⚙ > Manage Plugin Repositories**.
+### GitHub Releases
 
-If the repository becomes public, each release can also carry an `updatePlugins.xml` with HTTPS URLs,
-and JetBrains IDEs can point at
-`https://github.com/Alexk413x/ide-agent-tabs/releases/latest/download/updatePlugins.xml` directly.
-Whether the IDE follows GitHub's download redirect is untested.
+The release workflow, `.github/workflows/release.yml`, publishes each IDE extension to GitHub Releases
+for people who install by hand.
+
+- **Trigger:** a tag per part and version, such as `jetbrains-v0.4.1` or `vscode-v0.1.17`. The version in
+  the tag must match the part's own version (`pluginVersion` in `jetbrains/gradle.properties`, or
+  `version` in `vscode/package.json`). The workflow fails otherwise.
+- **JetBrains:** a Linux job sets up JDK 25, installs zsh and fish, and runs
+  `./gradlew test buildPlugin verifyPlugin`. A Windows job runs the tests, including the PowerShell launch
+  tests.
+- **VS Code:** a Linux job runs `npm test` and `npm run build`, and packages the `.vsix`.
+- **Publish:** the workflow attaches `ide-agent-tabs-<version>.zip` or `ide-agent-tabs-<version>.vsix`,
+  and a `SHA256SUMS` file, to a GitHub Release named after the tag.
+
+The build compiles against a local IDE when `studioPath` is set in `~/.gradle/gradle.properties`, and
+downloads IntelliJ IDEA 2026.2.2 otherwise, as the release workflow does. The Plugin Verifier checks
+IntelliJ IDEA 2026.2.2 and Android Studio 2026.2.2.2.
+
+The plugin needs build 262.10315 or later (IntelliJ IDEA and Android Studio 2026.2.2). Earlier 2026.2
+builds have a different `TerminalViewVirtualFile` constructor, so opening a tab would fail there.
 
 ## Security
 
@@ -421,12 +457,29 @@ Whether the IDE follows GitHub's download redirect is untested.
   This is by design: it is the same power as running the agent yourself.
 - The server never passes caller text through a shell parser.
 
+## Tested on
+
+| Part | Tested | Untested |
+|---|---|---|
+| VS Code extension | VS Code 1.118 and Antigravity 1.107 on Windows; the bash launcher through WSL | zsh, fish, macOS, remote workspaces |
+| JetBrains plugin | Plugin Verifier against IntelliJ IDEA 2026.2.2 and Android Studio 2026.2.2.2 | — |
+| WezTerm | Nightly 20260917 on Windows 11 and nightly 20260802 in WSL Ubuntu, with and without a GUI running | macOS |
+| kitty | 0.49.1 in WSL Ubuntu, with and without remote control | macOS |
+| tmux | 3.6 with bash in WSL Ubuntu, with and without an attached client | macOS |
+| Ghostty on Linux | 1.3.1 in WSL Ubuntu accepts the flags. No window opens, because Ghostty needs OpenGL 4.3 and WSLg offers 4.1. | A working window |
+| Ghostty on macOS | Unit tests of the AppleScript and command generation | A live run |
+| Agent profiles | `claude` and `codex` flags checked against each CLI's help | `gemini` and `copilot` |
+
+Open, list and close through the MCP server pass for tmux, kitty and WezTerm. No part is tested on a real
+Mac. For the headless delegation commands, see the **Tested** column in
+[Headless commands](#headless-commands).
+
 ## Phases
 
 0. Done: registry, token, `info` and `agents` routes, and agent profiles in the JetBrains plugin.
    Right-click agent menu.
 1. Built: the build without a local IDE, CI and release workflows, the `new-tab`, `setup` and `update`
-   skills, and the MCP server with Windows Terminal and Ghostty (macOS) support. Not yet run on GitHub
-   or tested on macOS.
-2. Built: the VS Code extension, tested in VS Code 1.118 and Antigravity 1.107.
+   skills, the IDE extensions bundled in the Claude Code plugin, and the MCP server with its terminal
+   drivers.
+2. Built: the VS Code extension.
 3. Visual Studio extension, opening Windows Terminal tabs.
