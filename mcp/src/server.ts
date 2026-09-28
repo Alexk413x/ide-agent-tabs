@@ -5,7 +5,7 @@ import { MAX_ENTRIES, MAX_PROMPT_CHARS } from './profiles.js';
 import type { Service } from './service.js';
 
 export const SERVER_NAME = 'ide-agent-tabs';
-export const SERVER_VERSION = '0.1.0';
+export const SERVER_VERSION = '0.3.0';
 
 async function answer(work: () => Promise<unknown>): Promise<CallToolResult> {
   try {
