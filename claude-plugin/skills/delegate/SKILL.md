@@ -11,7 +11,15 @@ Arguments: `$ARGUMENTS`
 
 ## 1. Pick the agent
 
-- Use the agent named in the arguments. If none is named, ask which one, and list the installed ones.
+- Use the agent named in the arguments.
+- If none is named and the `jev_route` tool is listed, call it with a `task` of two or three sentences:
+  what to do, how large it is, and what it touches. Leave out secrets, because the text goes to
+  TypeSafe's API.
+  - On `band: "sure"`, use the tier it returns, and tell the user which tier Jev picked and with what
+    probability. A tier is `<profile>` or `<profile>:<model>`.
+  - Otherwise, show the top two tiers with their probabilities, and ask which one to use.
+  - If it returns an error, such as no tiers configured, ask as in the next item.
+- If none is named and `jev_route` isn't listed, ask which agent to use, and list the installed ones.
 - Check that the CLI is installed: `command -v <cli>` in Bash, or `Get-Command <cli>` in PowerShell. If
   it isn't, say so and stop.
 - For Codex, prefer OpenAI's Codex plugin when its commands are available: `/codex:review` for reviews
@@ -57,7 +65,8 @@ Pick the command for the agent and mode. `<dir>` is the absolute path of the rep
 | OpenCode | Check `opencode run --help` for the prompt, model and `--format json` flags | Check `opencode run --help` | Its output | `opencode run -c` continues the last session |
 
 Add `--skip-git-repo-check` to Codex when `<dir>` isn't a git repository. Leave the model flag off unless
-the user names a model: each CLI's default follows the user's own login and plan.
+the user names a model, or the chosen tier is `<profile>:<model>`: each CLI's default follows the user's
+own login and plan.
 
 Agents often take several minutes, and Codex can take a minute or two just to start. Run the command
 with the Bash tool's `run_in_background` option unless you expect it to finish in under a minute. You get

@@ -1,3 +1,5 @@
+import { JEV_OFF, parseJevSettings, type JevSettings } from './jev/settings.js';
+
 export const DEFAULT_AGENT = 'claude';
 export const AGENTS_FILE = 'agents.json';
 export const CONFIG_FILE = 'config.json';
@@ -172,10 +174,15 @@ export function readPreferredTerminal(text: string): string | undefined {
   return typeof value === 'string' && !isBlank(value) ? value : undefined;
 }
 
+export function readJevSettings(text: string): JevSettings {
+  return parseJevSettings(field(parseJsonObject(text, CONFIG_FILE), 'jev'));
+}
+
 export interface AgentSettings {
   profiles: AgentProfile[];
   defaultAgent: AgentProfile;
   preferredTerminal?: string;
+  jev: JevSettings;
   warnings: string[];
 }
 
@@ -196,15 +203,25 @@ export function resolveSettings(
   }
   let configured: string | undefined;
   let preferredTerminal: string | undefined;
+  let jev = JEV_OFF;
   if (configText !== undefined) {
+    let readable = true;
     try {
       configured = readDefaultAgent(configText);
       preferredTerminal = readPreferredTerminal(configText);
     } catch (e) {
+      readable = false;
       warnings.push(`Ignoring ${configPath}: ${(e as Error).message}`);
+    }
+    if (readable) {
+      try {
+        jev = readJevSettings(configText);
+      } catch (e) {
+        warnings.push(`Ignoring jev in ${configPath}, so Jev is off: ${(e as Error).message}`);
+      }
     }
   }
   const defaultAgent =
     profiles.find((p) => p.name === configured) ?? profiles.find((p) => p.name === DEFAULT_AGENT)!;
-  return { profiles, defaultAgent, ...(preferredTerminal ? { preferredTerminal } : {}), warnings };
+  return { profiles, defaultAgent, ...(preferredTerminal ? { preferredTerminal } : {}), jev, warnings };
 }

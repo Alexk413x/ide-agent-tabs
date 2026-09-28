@@ -38,6 +38,28 @@ unchanged.
 The server skips an IDE that doesn't answer `info`, so an IDE stuck behind a modal dialog doesn't block the
 route.
 
+### Jev tools
+
+With `"jev": {"enabled": true}` in `config.json`, the server also lists tools that ask TypeSafe's Jev
+model for a typed judgment, and sends clients instructions on when to use them. With Jev off, the
+server lists none of them and makes no network call. Everything a caller puts in a Jev request goes to
+TypeSafe's API.
+
+| Tool | Input | Returns |
+|---|---|---|
+| `jev_status` | none | Where the key came from (`env`, `credential-store` or `missing`), the last model seen, and today's calls, input tokens and estimated cost |
+| `jev_ask` | `state`, `questions` in the API's form | `model`, `answers`, `usage`, `cost_usd` |
+| `jev_choose` | `instruction`, `options`, and optional `state`, `no_match` | `choice`, `probabilities`, `confidence`, `band` (`sure`, `unsure` or `no-match`), `runner_up` |
+| `jev_check` | `state`, `conditions` | The probability of yes for each condition |
+| `jev_rank` | `query`, `items`, and optional `top` | The items by relevance, each with its probability |
+| `jev_route` | `task` | The tier from `jev.tiers` whose agent is installed, the runner-up, the probabilities and `band` |
+
+The server reads the API key from `TYPESAFE_API_KEY`, or from the operating system's credential store
+under service `typesafe`, account `api_key`. Each call appends a line without request contents to
+`jev/ledger.jsonl`. `node mcp-server.mjs jev <status|ask|choose|check|rank|route>` takes the same
+request as JSON on stdin. See [Jev judgments](../docs/design.md#jev-judgments-phase-4-optional) for
+the settings, the key lookup and the ledger.
+
 ## Config files
 
 All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another folder.
@@ -46,7 +68,8 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 |---|---|
 | `endpoints/*.json` | One registry entry per running IDE. The server skips entries with an unknown `protocol` or a URL that isn't on the loopback address, and deletes entries whose process has ended. |
 | `agents.json` | Your own agent profiles. The rules match the JetBrains plugin exactly. |
-| `config.json` | `defaultAgent`, and `terminal`, the preferred terminal when no IDE is running. |
+| `config.json` | `defaultAgent`; `terminal`, the preferred terminal when no IDE is running; and `jev`, the Jev settings. |
+| `jev/ledger.jsonl` | One line per Jev call: time, tool, agent, tab, model, question count, input tokens and result. |
 | `terminal-tabs.json` | The terminal tabs this server opened. The server writes it; don't edit it. |
 | `launch/` | Short-lived launch files. Each is deleted as soon as its tab starts. |
 | `mcp/` | A copy of the server for other agent CLIs. See [Other agents](#other-agents). |
