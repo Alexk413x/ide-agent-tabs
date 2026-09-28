@@ -32,10 +32,13 @@ test('the POSIX spec is NUL-separated fields and round-trips', () => {
   const bytes = posixSpec(spec);
   assert.equal(bytes.at(-1), 0);
   assert.ok(bytes.toString('utf8').startsWith('ide-agent-tabs-spec-1\0tab-9\0x\0/w/app\0'));
-  const { pidFile: _pid, ...withoutPid } = spec;
-  assert.deepEqual(parsePosixSpec(bytes), withoutPid);
+  assert.ok(bytes.toString('utf8').endsWith('\0/h/launch/tab-9.pid\0'));
+  assert.deepEqual(parsePosixSpec(bytes), spec);
   const bare = launchSpec('t', '/w', launchOf({ ...profile, args: [], env: {} }));
   assert.deepEqual(parsePosixSpec(posixSpec(bare)), bare);
+  assert.ok(posixSpec(bare).toString('utf8').endsWith('\x000\0'));
+  const { prompt: _p, ...noPrompt } = spec;
+  assert.deepEqual(parsePosixSpec(posixSpec(noPrompt)), noPrompt);
   assert.throws(() => posixSpec({ ...bare, command: 'a\0b' }));
 });
 

@@ -87,7 +87,7 @@ second line"""
     @Test
     fun `args reach a native program intact and before the prompt, and env reaches the session`() {
         val args = listOf("--plugin-dir", "C:\\Program Files\\a b", """say "hi" $(whoami) `t` 'q'""", "é ✓")
-        val out = runThroughIntegration("the prompt", args, mapOf("CST_TEST_VAR" to "value with spaces"), listArgs = true)
+        val out = runThroughIntegration("the prompt", args, mapOf("IAT_TEST_VAR" to "value with spaces"), listArgs = true)
         val expected = (args + "the prompt").joinToString("\u001f") + "|value with spaces|null|test"
         assertEquals(expected, out)
     }
@@ -136,7 +136,7 @@ second line"""
 
         val echo = dir.resolve("echo.ps1")
         val head = if (listArgs) {
-            "${'$'}(${'$'}args -join [char]0x1f)|${'$'}(${'$'}env:CST_TEST_VAR)"
+            "${'$'}(${'$'}args -join [char]0x1f)|${'$'}(${'$'}env:IAT_TEST_VAR)"
         } else {
             "${'$'}(${'$'}args.Count)|${'$'}(${'$'}args[0])"
         }

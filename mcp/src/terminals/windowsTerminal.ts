@@ -1,15 +1,16 @@
-import { spawn } from 'node:child_process';
 import { promises as fs, lstatSync } from 'node:fs';
 import path from 'node:path';
 import { writeNewPrivateFile } from '../files.js';
 import { findOnPath } from '../installed.js';
 import { run } from '../process.js';
 import { powerShellSpec, type LaunchSpec } from '../spec.js';
+import { readPid, startDetached, STARTUP_GRACE_MS, terminalEnvironment } from './processes.js';
+import { checkArgvPaths, tabTitle } from './shell.js';
 import type { TerminalDriver, TerminalTab } from './types.js';
 
 export const WINDOWS_TERMINAL = 'windows-terminal';
 export const LAUNCHER_PS1 = 'agent-launch.ps1';
-const STARTUP_GRACE_MS = 60_000;
+const WT_SETTLE_MS = 10_000;
 const SHELL_IMAGES = new Set(['pwsh.exe', 'powershell.exe']);
 
 export function findPowerShell(pathVar: string): string {
@@ -31,18 +32,16 @@ export function findWindowsTerminal(pathVar: string, localAppData: string | unde
 
 // wt reads ';' in its command line as a subcommand separator, so no argument may hold one.
 export function wtTitle(label: string): string {
-  const clean = label.replace(/[;\p{Cc}]/gu, ' ').trim();
-  return clean === '' ? 'Agent' : clean;
+  return tabTitle(label.replace(/;/g, ' '));
+}
+
+export function powerShellArgv(shell: string, launcher: string, spec: string): string[] {
+  return [shell, '-NoLogo', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', launcher, spec];
 }
 
 export function wtArgs(o: { title: string; shell: string; launcher: string; spec: string }): string[] {
-  for (const p of [o.shell, o.launcher, o.spec]) {
-    if (p.includes(';')) throw new Error(`Windows Terminal can't start a path that holds ';': ${p}`);
-  }
-  return [
-    '-w', '0', 'new-tab', '--title', wtTitle(o.title),
-    o.shell, '-NoLogo', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', o.launcher, o.spec,
-  ];
+  checkArgvPaths('Windows Terminal', [o.shell, o.launcher, o.spec], ';');
+  return ['-w', '0', 'new-tab', '--title', wtTitle(o.title), ...powerShellArgv(o.shell, o.launcher, o.spec)];
 }
 
 export function parseTasklist(csv: string): Map<number, string> {
@@ -53,57 +52,6 @@ export function parseTasklist(csv: string): Map<number, string> {
     if (cells.length >= 2 && Number.isSafeInteger(pid)) images.set(pid, cells[0]!.toLowerCase());
   }
   return images;
-}
-
-const SESSION_ENV = new Set([
-  'CLAUDECODE',
-  'CLAUDE_CODE_ENTRYPOINT',
-  'CLAUDE_CODE_SSE_PORT',
-  'CLAUDE_CODE_SESSION_ID',
-  'CLAUDE_CODE_CHILD_SESSION',
-  'CLAUDE_CODE_BRIDGE_SESSION_ID',
-  'CLAUDE_CODE_MESSAGING_SOCKET',
-  'CLAUDE_CODE_MESSAGING_TOKEN',
-  'CLAUDE_CODE_SESSION_ATTENDED',
-  'CLAUDE_CODE_EXECPATH',
-  'CLAUDE_PID',
-  'CLAUDE_EFFORT',
-  'CLAUDE_PLUGIN_ROOT',
-  'CLAUDE_PLUGIN_DATA',
-  'IDE_AGENT_TABS_ID',
-  'IDE_AGENT_TABS_AGENT',
-]);
-
-// When Windows Terminal isn't running, wt.exe starts it with this environment and every later tab in that
-// window inherits it, so variables that identify the calling agent session are dropped.
-export function wtEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return Object.fromEntries(Object.entries(env).filter(([name]) => !SESSION_ENV.has(name.toUpperCase())));
-}
-
-function startDetached(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'ignore', windowsHide: true, detached: true, env });
-    const timer = setTimeout(() => {
-      child.unref();
-      resolve();
-    }, 10_000);
-    child.on('error', (e) => {
-      clearTimeout(timer);
-      reject(e);
-    });
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`wt.exe exited with code ${code}`));
-    });
-  });
-}
-
-async function readPid(file: string | undefined): Promise<number | undefined> {
-  if (!file) return undefined;
-  const text = await fs.readFile(file, 'utf8').catch(() => undefined);
-  const pid = Number(text?.trim());
-  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
 }
 
 async function shellImages(): Promise<Map<number, string>> {
@@ -129,7 +77,7 @@ export const windowsTerminal: TerminalDriver = {
     const args = wtArgs({ title, shell: findPowerShell(ctx.pathVar), launcher: path.join(ctx.scriptsDir, LAUNCHER_PS1), spec: specFile });
     await writeNewPrivateFile(specFile, powerShellSpec({ ...spec, pidFile }));
     try {
-      await startDetached(wt, args, wtEnvironment(ctx.env));
+      await startDetached(wt, args, terminalEnvironment(ctx.env), WT_SETTLE_MS);
     } catch (e) {
       await fs.rm(specFile, { force: true });
       throw e;

@@ -11,7 +11,7 @@ export async function writeNewPrivateFile(file: string, content: string | Buffer
   await fs.writeFile(file, content, { flag: 'wx', mode: 0o600 });
 }
 
-export async function writeAtomically(file: string, content: string): Promise<void> {
+export async function writeAtomically(file: string, content: string | Buffer): Promise<void> {
   await ensurePrivateDir(path.dirname(file));
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {

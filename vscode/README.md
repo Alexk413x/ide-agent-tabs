@@ -4,18 +4,43 @@ Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CL
 editor tabs. You open a tab with one button. Another agent opens, lists and closes tabs through a local
 HTTP API, the same API the JetBrains plugin serves.
 
-The extension runs in VS Code 1.100 or later, and in editors built on it, such as Antigravity.
+The extension runs in VS Code 1.100 or later, and in editors built on it, such as Cursor, Windsurf,
+VSCodium and Antigravity.
 
 ## Install
 
-Build the `.vsix` file, or download it from a release, then install it from the command line:
+Install the Agent Tabs Claude Code plugin, then run its setup skill. The Claude Code plugin carries this
+extension, installs it in the editors you pick, and updates it when the plugin updates:
 
 ```sh
-code --install-extension ide-agent-tabs-0.1.0.vsix
-antigravity-ide --install-extension ide-agent-tabs-0.1.0.vsix
+claude plugin marketplace add Alexk413x/ide-agent-tabs
+claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
 
-To build it yourself, you need Node.js 20 or later:
+In a Claude Code session, run `/ide-agent-tabs:setup`.
+
+To install by hand instead, get the `.vsix` file from a `vscode-v<version>` release on the repository's
+GitHub Releases page, or use `claude-plugin/dist/ide/ide-agent-tabs.vsix` from the repository. Then
+install it with your editor's command-line tool:
+
+```sh
+<cli> --install-extension ide-agent-tabs-<version>.vsix
+```
+
+Common command-line tools:
+
+| Editor | Command |
+| --- | --- |
+| VS Code | `code` |
+| VS Code Insiders | `code-insiders` |
+| Cursor | `cursor` |
+| Windsurf | `windsurf` |
+| VSCodium | `codium` |
+| Antigravity | `antigravity-ide` |
+
+Without the Claude Code plugin, an extension installed by hand doesn't update by itself.
+
+To build the `.vsix` yourself, you need Node.js 20 or later:
 
 ```sh
 npm ci
@@ -58,10 +83,10 @@ one, edit `~/.ide-agent-tabs/agents.json`:
 
 ```json
 {
-  "opencode-local": {
-    "label": "OpenCode (LM Studio)",
+  "opencode": {
+    "label": "OpenCode",
     "command": "opencode",
-    "args": ["--model", "lmstudio/qwen3-coder"],
+    "args": ["--model", "<provider>/<model>"],
     "promptFlag": "--prompt",
     "icon": "icons/opencode.svg"
   }

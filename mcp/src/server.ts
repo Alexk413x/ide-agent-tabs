@@ -1,11 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import type { Jev } from './jev/service.js';
+import { JEV_INSTRUCTIONS, JEV_TOOLS } from './jev/tools.js';
 import { MAX_ENTRIES, MAX_PROMPT_CHARS } from './profiles.js';
 import type { Service } from './service.js';
 
 export const SERVER_NAME = 'ide-agent-tabs';
-export const SERVER_VERSION = '0.1.0';
+export const SERVER_VERSION = '0.4.0';
 
 async function answer(work: () => Promise<unknown>): Promise<CallToolResult> {
   try {
@@ -15,10 +17,11 @@ async function answer(work: () => Promise<unknown>): Promise<CallToolResult> {
   }
 }
 
-const IDE_ID = 'An id from list_ides: an IDE such as jetbrains-12345, or a terminal such as windows-terminal or ghostty.';
+const IDE_ID =
+  'An id from list_ides: an IDE such as jetbrains-12345, or a terminal: windows-terminal, ghostty, kitty, wezterm or tmux.';
 
-export function createServer(service: Service): McpServer {
-  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+export function createServer(service: Service, jev?: Jev): McpServer {
+  const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, jev ? { instructions: JEV_INSTRUCTIONS } : {});
 
   server.registerTool(
     'list_ides',
@@ -59,7 +62,7 @@ export function createServer(service: Service): McpServer {
       description:
         'Open a new tab running an interactive agent CLI session (Claude Code, Codex, Gemini CLI, Copilot CLI or a custom profile) in an IDE or a terminal. ' +
         'Without ide, it opens in the IDE whose open project contains path, else the most recently started IDE, else a terminal. ' +
-        'Returns the tab id, where it opened, and the agent.',
+        'Returns the tab id, where it opened, and the agent, plus a note to pass on when the user must act, such as attaching to tmux.',
       inputSchema: {
         path: z.string().describe('Absolute path of an existing folder. The session starts there.'),
         agent: z.string().optional().describe('Profile name from list_agents. Defaults to the configured default agent.'),
@@ -91,6 +94,19 @@ export function createServer(service: Service): McpServer {
     },
     ({ id }) => answer(() => service.closeTab(id)),
   );
+
+  for (const t of jev ? JEV_TOOLS : []) {
+    server.registerTool(
+      t.name,
+      {
+        title: t.title,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        annotations: { readOnlyHint: true, openWorldHint: t.openWorld },
+      },
+      (input) => answer(() => t.run(jev!, input)),
+    );
+  }
 
   return server;
 }

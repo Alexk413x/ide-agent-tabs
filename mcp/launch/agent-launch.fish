@@ -32,8 +32,13 @@ function __ide_agent_tabs_launch
         set i (math $i + 1)
         set n (math $n - 1)
     end
+    set -l p (math $i + 1)
     if test "$f[$i]" = 1
-        set -a a $f[(math $i + 1)]
+        set -a a $f[$p]
+        set p (math $p + 1)
+    end
+    if test (count $f) -ge $p; and test -n "$f[$p]"
+        echo $fish_pid > $f[$p]
     end
     cd $cwd; or return 1
     $c $a

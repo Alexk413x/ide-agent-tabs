@@ -5,7 +5,6 @@ on:
     tags:
       - 'jetbrains-v*'
       - 'vscode-v*'
-      - 'mcp-v*'
 
 permissions:
   contents: read
@@ -26,7 +25,7 @@ jobs:
           version="${TAG#"$part"-v}"
           case "$part" in
             jetbrains) actual=$(sed -n 's/^pluginVersion=//p' jetbrains/gradle.properties) ;;
-            vscode|mcp) actual=$(node -p "require('./$part/package.json').version") ;;
+            vscode) actual=$(node -p "require('./vscode/package.json').version") ;;
             *) echo "::error::Unknown part in tag $TAG"; exit 1 ;;
           esac
           if [ "$version" != "$actual" ]; then
@@ -91,33 +90,28 @@ jobs:
             jetbrains/gradle/wrapper/gradle-wrapper.properties
       - run: .\gradlew.bat test --console=plain
 
-  node:
+  vscode:
     needs: version
-    if: needs.version.outputs.part == 'vscode' || needs.version.outputs.part == 'mcp'
+    if: needs.version.outputs.part == 'vscode'
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ${{ needs.version.outputs.part }}
+        working-directory: vscode
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: ${{ needs.version.outputs.part }}/package-lock.json
+          cache-dependency-path: vscode/package-lock.json
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - if: needs.version.outputs.part == 'vscode'
-        env:
+      - env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir -p "$RUNNER_TEMP/release"
           npx --yes @vscode/vsce package --no-dependencies --out "$RUNNER_TEMP/release/ide-agent-tabs-$VERSION.vsix"
-      - if: needs.version.outputs.part == 'mcp'
-        run: |
-          mkdir -p "$RUNNER_TEMP/release"
-          npm pack --pack-destination "$RUNNER_TEMP/release"
       - run: cd "$RUNNER_TEMP/release" && sha256sum -- * > SHA256SUMS
       - uses: actions/upload-artifact@v7
         with:
@@ -126,7 +120,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [version, jetbrains, jetbrains-windows, node]
+    needs: [version, jetbrains, jetbrains-windows, vscode]
     if: >-
       always() && needs.version.result == 'success'
       && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
