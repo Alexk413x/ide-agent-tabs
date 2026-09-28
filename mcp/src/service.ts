@@ -18,7 +18,7 @@ import { chooseIde, chooseTerminal, type IdeCandidate, type Project } from './ro
 import { launchSpec } from './spec.js';
 import { TabStore } from './tabStore.js';
 import { defaultTerminalName } from './terminals/index.js';
-import type { TerminalContext, TerminalDriver, TerminalTab } from './terminals/types.js';
+import type { OpenedTab, TerminalContext, TerminalDriver, TerminalTab } from './terminals/types.js';
 
 export interface ServiceDeps {
   home: string;
@@ -110,7 +110,10 @@ export class Service {
 
   async listIdes() {
     const [{ endpoints, warnings }, settings, drivers] = await Promise.all([this.registry(), this.settings(), this.availableDrivers()]);
-    const { infos, errors } = await this.infos(endpoints);
+    const [{ infos, errors }, capabilities] = await Promise.all([
+      this.infos(endpoints),
+      Promise.all(drivers.map((d) => d.currentCapabilities?.(this.ctx).catch(() => d.capabilities) ?? d.capabilities)),
+    ]);
     return {
       ides: infos.map((i) => ({
         id: i.endpoint.id,
@@ -121,10 +124,10 @@ export class Service {
         startedAt: new Date(i.endpoint.startedAt).toISOString(),
         projects: i.projects,
       })),
-      terminals: drivers.map((d) => ({
+      terminals: drivers.map((d, i) => ({
         id: d.name,
         name: d.label,
-        capabilities: d.capabilities,
+        capabilities: capabilities[i],
         preferred: settings.preferredTerminal === d.name,
       })),
       ...(errors.length ? { errors } : {}),
@@ -174,18 +177,13 @@ export class Service {
     if (choice) return this.openInIde(infos.find((i) => i.endpoint.id === choice.id)!.endpoint, request, choice.reason);
 
     const settings = await this.settings();
-    const available = await this.availableDrivers();
-    const platformDefault = defaultTerminalName(this.deps.platform);
-    const terminal = chooseTerminal(
-      settings.preferredTerminal,
-      available.some((d) => d.name === platformDefault) ? platformDefault : undefined,
-      available.map((d) => d.name),
-    );
+    const available = (await this.availableDrivers()).map((d) => d.name);
+    const terminal = chooseTerminal(settings.preferredTerminal, defaultTerminalName(this.deps.platform, available), available);
     if ('error' in terminal) {
       const detail = errors.length ? ` IDE errors: ${errors.map((e) => e.error).join('; ')}` : '';
       throw new ToolError(`${terminal.error}.${detail}`);
     }
-    return this.openInTerminal(available.find((d) => d.name === terminal.name)!, request, terminal.reason);
+    return this.openInTerminal(this.deps.drivers.find((d) => d.name === terminal.name)!, request, terminal.reason);
   }
 
   private async openInIde(endpoint: Endpoint, request: OpenRequest, reason: string) {
@@ -216,14 +214,23 @@ export class Service {
       launchOf(profile, request.prompt, request.args, request.env),
     );
     await removeStaleFiles(path.join(this.deps.home, 'launch'), ['.json', '.spec'], SPEC_MAX_AGE_MS);
-    let tab: TerminalTab;
+    let opened: OpenedTab;
     try {
-      tab = await driver.open(this.ctx, spec, profile.label);
+      opened = await driver.open(this.ctx, spec, profile.label);
     } catch (e) {
       throw new ToolError(`${driver.label}: ${errorText(e)}`);
     }
+    const { note, ...tab } = opened;
     await this.store.add(tab);
-    return { id: tab.id, ide: driver.name, product: driver.label, agent: profile.name, path: request.path, reason };
+    return {
+      id: tab.id,
+      ide: driver.name,
+      product: driver.label,
+      agent: profile.name,
+      path: request.path,
+      reason,
+      ...(note !== undefined ? { note } : {}),
+    };
   }
 
   private async terminalTabs(only?: TerminalDriver) {

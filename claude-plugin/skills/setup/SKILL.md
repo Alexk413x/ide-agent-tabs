@@ -87,8 +87,20 @@ Tell the user to reload open windows (**Developer: Reload Window**).
 1. Call the MCP tool `list_agents` and show which agent CLIs are installed.
 2. Ask which agent the **New Agent Tab** button should open by default, and write it to
    `~/.ide-agent-tabs/config.json` as `"defaultAgent"`. Keep any other keys in that file.
-3. Ask which terminal app `open_tab` should use when no IDE fits: `windows-terminal` on Windows,
-   `ghostty` on macOS or Linux. Write it as `"terminal"`.
+3. Ask which terminal app `open_tab` should use when no IDE fits. `list_ides` shows the ones installed
+   here. Write the choice as `"terminal"`. Without one, the server uses the first installed terminal in
+   this order:
+   - Windows: `windows-terminal`, `wezterm`.
+   - macOS and Linux: `ghostty`, `kitty`, `wezterm`, `tmux`.
+
+   If the user picks `kitty`, tell them to add these two lines to `kitty.conf` (usually
+   `~/.config/kitty/kitty.conf`) and restart kitty, so it can open tabs. Without them, each agent opens
+   in a new kitty window that `close_tab` can only close on a best-effort basis.
+   - Linux: `allow_remote_control socket-only` and `listen_on unix:${XDG_RUNTIME_DIR}/kitty-agent-tabs`
+   - macOS: `allow_remote_control socket-only` and `listen_on unix:${TMPDIR}/kitty-agent-tabs`
+
+   If the user picks `tmux`, tell them that tabs open in their most recently attached session, or in a
+   detached session named `agents` that they open with `tmux attach -t agents`.
 4. To add a custom agent, such as one that runs a local LM Studio model, add a profile to
    `~/.ide-agent-tabs/agents.json`. The format is in the repository's `docs/design.md` under
    "Agent profiles".
