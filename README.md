@@ -42,7 +42,7 @@ the new plugin as a normal plugin update.
 ## Design
 
 [docs/design.md](docs/design.md) describes the registry, the HTTP API, agent profiles, distribution
-and the plan for each part. Change the design before you change the protocol.
+and possible future work. Change the design before you change the protocol.
 
 ## License
 
