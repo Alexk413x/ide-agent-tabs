@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up Agent Tabs on this machine - check Node.js, install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and terminal, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
+description: Set up Agent Tabs on this machine - check Node.js, install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and terminal, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin and turn on Jev judgments. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
 argument-hint: "[--check]"
 ---
 
@@ -161,7 +161,46 @@ claude plugin install codex@openai-codex
 
 Then run `/reload-plugins`.
 
-## 9. Check it works
+## 9. Jev (optional)
+
+Jev is TypeSafe's "System One" model. With Jev on, the MCP server adds `jev_` tools that let every
+agent it serves ask Jev for a pick, a yes or no, or a ranking instead of spending a model turn. Each
+request goes to TypeSafe's API and needs a TypeSafe API key. Ask whether the user wants it. If not,
+skip this step.
+
+1. Ask before you change `~/.ide-agent-tabs/config.json`. Then set `"jev": {"enabled": true}` in it,
+   and keep every other key.
+2. Offer to add tiers for `jev_route`, which the `delegate` skill uses to pick an agent. Each key is
+   `<profile>` or `<profile>:<model>`, and each value says what that tier is for:
+
+   ```json
+   "jev": {
+     "enabled": true,
+     "tiers": {
+       "claude:haiku": "Short lookups, renames and one-file edits",
+       "claude:opus": "Design judgment and changes across many files",
+       "codex": "A second opinion or an independent review"
+     }
+   }
+   ```
+
+   Write only the tiers the user agrees to, for agents that `list_agents` shows as installed.
+3. Check that the server finds a key:
+
+   ```sh
+   echo '{}' | node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status
+   ```
+
+   The reply's `key` is `env`, `credential-store` or `missing`. This check sends nothing to TypeSafe.
+4. If `key` is `missing`, show the `key_error` text. Never ask the user to paste the key into this
+   conversation or into a command. Tell them to do one of these themselves:
+   - Set `TYPESAFE_API_KEY` in the environment that agent CLIs start from.
+   - Store the key in the operating system's credential store under service `typesafe`, account
+     `api_key`. On Windows, that's the generic credential `typesafe` with user name `api_key`. Python's
+     `keyring` writes this entry, so a key that cartographer already uses works here too.
+5. Tell the user to restart open agent sessions, so the server lists the Jev tools.
+
+## 10. Check it works
 
 1. Call `list_ides`. Every IDE with the extension installed and a window open appears.
 2. Offer to open a test tab with `open_tab` in the current folder, then close it with `close_tab`.

@@ -22,10 +22,11 @@ Then, in a Claude Code session, run `/ide-agent-tabs:setup` to install the IDE e
 | Path | What it is |
 |---|---|
 | `.claude-plugin/plugin.json` | The plugin manifest. |
-| `.mcp.json` | Registers the `ide-agent-tabs` MCP server, which runs `dist/mcp-server.mjs`. Its tools are `list_ides`, `list_agents`, `list_tabs`, `open_tab` and `close_tab`. |
+| `.mcp.json` | Registers the `ide-agent-tabs` MCP server, which runs `dist/mcp-server.mjs`. Its tools are `list_ides`, `list_agents`, `list_tabs`, `open_tab` and `close_tab`. With Jev turned on, it also lists `jev_status`, `jev_ask`, `jev_choose`, `jev_check`, `jev_rank` and `jev_route`. |
 | `skills/new-tab/` | `/ide-agent-tabs:new-tab` opens, lists and closes agent tabs. |
-| `skills/delegate/` | `/ide-agent-tabs:delegate` hands a task, review or question to another agent CLI in headless mode. |
-| `skills/setup/` | `/ide-agent-tabs:setup` installs the IDE extensions and picks a default agent and terminal. |
+| `skills/delegate/` | `/ide-agent-tabs:delegate` hands a task, review or question to another agent CLI in headless mode. With Jev on and no agent named, it asks `jev_route` which tier takes the task. |
+| `skills/setup/` | `/ide-agent-tabs:setup` installs the IDE extensions, picks a default agent and terminal, and can turn on Jev. |
+| `skills/jev/` | Tells Claude Code when to ask Jev for a pick, a yes or no, or a ranking instead of spending a model turn, and how to write the question. |
 | `skills/update/` | `/ide-agent-tabs:update` updates the plugin and the IDE extensions. |
 | `hooks/hooks.json` | A `SessionStart` hook that runs `dist/sync-ides.mjs --hook`. When the bundled IDE versions change, it updates the extension in each editor that has it, and the local JetBrains plugin repository. When the bundled MCP server changes, it refreshes the copy in `~/.ide-agent-tabs/mcp/` that other agent CLIs run. |
 | `dist/ide/` | The bundled IDE extensions: `ide-agent-tabs.vsix`, `ide-agent-tabs-jetbrains.zip` and `versions.json`. |
