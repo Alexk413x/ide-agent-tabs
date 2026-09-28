@@ -16,6 +16,18 @@ claude plugin install ide-agent-tabs@ide-agent-tabs
 Then, in a Claude Code session, run `/ide-agent-tabs:setup`. The setup skill finds your IDEs and
 installs each extension, and reports which agent CLIs it finds.
 
+The plugin carries the IDE extensions and keeps them up to date. When you update the plugin, the next
+Claude Code session updates the extension in each editor that has it. Each JetBrains IDE then offers
+the new plugin as a normal plugin update.
+
+## Requirements
+
+- Claude Code.
+- Node.js 20 or later.
+- An IDE: a JetBrains IDE at build 262.10315 or later, such as Android Studio 2026.2.2, or VS Code
+  1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium and Antigravity.
+- At least one agent CLI, such as Claude Code, Codex, Gemini CLI or Copilot CLI.
+
 ## Parts
 
 | Part | Folder | What it does |

@@ -1,17 +1,13 @@
 import { existsSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { agentTabsHome } from './home.js';
 import { ideCaller } from './ideClient.js';
 import { createServer } from './server.js';
 import { Service } from './service.js';
 import { TERMINAL_DRIVERS } from './terminals/index.js';
 import { LAUNCHER_PS1 } from './terminals/windowsTerminal.js';
-
-export function agentTabsHome(env: NodeJS.ProcessEnv = process.env): string {
-  return env.IDE_AGENT_TABS_HOME || path.join(os.homedir(), '.ide-agent-tabs');
-}
 
 function scriptsDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));

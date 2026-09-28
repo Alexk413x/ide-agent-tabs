@@ -6,9 +6,9 @@ export interface RunResult {
   stderr: string;
 }
 
-export function run(command: string, args: string[], options: { input?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<RunResult> {
+export function run(command: string, args: string[], options: { input?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv; windowsVerbatimArguments?: boolean } = {}): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false, env: options.env ?? process.env });
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false, env: options.env ?? process.env, windowsVerbatimArguments: options.windowsVerbatimArguments });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
