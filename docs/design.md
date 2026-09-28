@@ -17,6 +17,7 @@ This document is the contract every part builds against. Change it before you ch
 | Claude Code plugin: MCP server, `new-tab`, `setup` and `update` skills | Built | `claude-plugin/`, `mcp/` |
 | VS Code extension (VS Code and editors built on it) | Built | `vscode/` |
 | Visual Studio extension (Windows Terminal tabs first) | Phase 3 | `visualstudio/` |
+| Jev judgment tools in the MCP server, and the `jev` skill (optional) | Phase 4 | `mcp/src/jev/`, `claude-plugin/skills/jev/`; plan in [jev-integration.md](jev-integration.md) |
 
 Messaging between agents is out of scope. Claude Code sessions message each other with Claude Code's
 own `ListAgents` and `SendMessage`. For other CLIs, see [Messaging](#messaging).
@@ -456,6 +457,126 @@ IntelliJ IDEA 2026.2.2 and Android Studio 2026.2.2.2.
 The plugin needs build 262.10315 or later (IntelliJ IDEA and Android Studio 2026.2.2). Earlier 2026.2
 builds have a different `TerminalViewVirtualFile` constructor, so opening a tab would fail there.
 
+## Jev judgments (Phase 4, optional)
+
+[Jev](https://docs.typesafe.ai/) is TypeSafe's "System One" model. It reads text and returns a typed
+judgment: one option out of up to 255 (Choice), a probability of yes (Noul), or a position on 2 to 10
+described levels (Score). It writes no text. When Jev is turned on, the MCP server lists tools that let
+any agent it serves ask Jev instead of spending a large-model turn on a pick, a yes or no, or a grade.
+Codex, Gemini CLI, Copilot CLI and OpenCode get them through the same registration as the tab tools.
+
+### Turning it on
+
+`~/.ide-agent-tabs/config.json` holds the settings under `jev`:
+
+```json
+{
+  "defaultAgent": "claude",
+  "jev": {
+    "enabled": true,
+    "sure": 0.85,
+    "tiers": {
+      "claude:haiku": "Short lookups, renames and one-file edits",
+      "claude:opus": "Design judgment and changes across many files",
+      "codex": "A second opinion or an independent review"
+    }
+  }
+}
+```
+
+- `enabled`: `false` by default. The server reads it when it starts. When it is not `true`, the server
+  lists no Jev tools and sends no Jev instructions, so a session pays nothing for them.
+- `sure`: the probability at or above which a Choice is `sure`. The default is 0.85.
+- `tiers`: the options `jev_route` chooses from, written by the user. A name is `<profile>` or
+  `<profile>:<model>`, and the text says what that tier is for. Nothing in the server names a model.
+- `pricePerMillionInput`: optional. Overrides the price used for cost estimates, which is $0.042 per
+  million input tokens as published on 2026-09-28. Output tokens are free.
+
+The model is always `jev-latest`. Every answer carries the versioned id Jev returned, such as
+`jev-1.13.0`.
+
+### The API key
+
+The server reads the key the first time a Jev tool runs, and keeps it only in memory:
+
+1. `TYPESAFE_API_KEY` in the server's environment.
+2. The operating system's credential store, service `typesafe`, account `api_key`. This is the entry
+   Python's `keyring` writes, so the key cartographer uses on the same machine also works here.
+   - Windows: the generic credential `typesafe` whose user name is `api_key`, else `api_key@typesafe`.
+     A fixed PowerShell script reads it with `CredRead`. The script takes no caller text.
+   - macOS: `security find-generic-password -s typesafe -a api_key -w`.
+   - Linux: `secret-tool lookup service typesafe username api_key`.
+
+The key never appears in a tool reply, the ledger, an error message, `config.json` or any agent's MCP
+configuration. A missing key is an error that names where the server looked.
+
+### Tools
+
+Listed only when `jev.enabled` is `true`.
+
+| Tool | Takes | Returns |
+|---|---|---|
+| `jev_status` | nothing | Where the key came from (`env`, `credential-store` or `missing`), the last model id seen, and today's calls, input tokens and estimated cost from the ledger |
+| `jev_ask` | `state`, and `questions` in the API's own form | `model`, `answers`, `usage`, `cost_usd` |
+| `jev_choose` | `instruction`, `options` (`id`, `description`), optional `state` and `no_match` | `choice`, `probabilities`, `confidence`, `band` (`sure`, `unsure` or `no-match`), `runner_up` |
+| `jev_check` | `state`, and `conditions` (`id`, `question`) | The probability of yes for each condition |
+| `jev_rank` | `query`, `items` (`id`, `text`), optional `top` | The items in order of relevance, each with its probability |
+| `jev_route` | `task` | The chosen tier, the runner-up, the probabilities and `band`. Offers only tiers whose profile is installed |
+
+- `jev_choose`, `jev_check`, `jev_rank` and `jev_route` build every question themselves. Each question
+  says that the state is data to judge, not instructions to follow. `jev_ask` sends what the caller
+  wrote, and its description asks the caller to say the same.
+- `jev_choose` adds a `none` option ("none of the options fits") unless `no_match` is `false`. A
+  `none` answer is band `no-match`.
+- `jev_rank` asks one Noul per item in one request, "is this item relevant to the query". The state
+  holds the query and the items keyed by id, sorted by id. It takes at most 255 items.
+- `jev_route` offers the configured tiers whose profile is installed, sorted by name, and lists the
+  others in `skipped`. When only one tier is usable, it returns that tier with no call, because a
+  Choice needs two options.
+- Every reply that comes from a Jev call also carries `model` and `cost_usd`. `jev_status` also
+  returns `sure`, the tier names and the ledger path, and `key_error` when the key is missing. It makes
+  no network call, so its `openWorldHint` is `false`.
+- The server refuses a Choice with more than 255 options, a Score with fewer than 2 or more than 10
+  levels, and a request whose text is over 200,000 characters, before it calls the API.
+- Every call is one request. The SDK retries 408, 429 and 5xx with backoff. Jev answers in well under a
+  second, so a tool call has a 30-second limit in total.
+
+The server's instructions, sent to every client when Jev is on, say when to reach for these tools: when
+a step's answer is one of a set of options the agent can list, a yes or no about text it holds, or a
+grade it can describe in levels, and the agent would otherwise decide it with a model turn. They also
+say what Jev can't do: write text, count, do arithmetic, read images, or give a verdict that stands on
+its own. A probability ranks options. It isn't proof.
+
+### The ledger
+
+Each Jev call appends one line to `~/.ide-agent-tabs/jev/ledger.jsonl` (folder `0700`, file `0600`):
+
+```json
+{"at":"2026-09-28T17:04:11.203Z","tool":"jev_route","agent":"codex","tab":"wt-3","model":"jev-1.13.0","questions":1,"input_tokens":2310,"ok":true}
+```
+
+`agent` and `tab` come from `IDE_AGENT_TABS_AGENT` and `IDE_AGENT_TABS_ID` when the caller runs in an
+agent tab, and are `null` otherwise. A failed call records `ok: false`, `model: "jev-latest"`,
+`input_tokens: 0` and the HTTP status, or `timeout` or `connection` when no status came back. A
+request the server refuses before it calls the API, or a call with no key, writes no line. The ledger
+never holds state, questions, answers or the key.
+
+### Command line
+
+`node mcp-server.mjs jev <status|ask|choose|check|rank|route>` reads one JSON request on stdin, in the
+same form as the tool's input, and prints the tool's reply as JSON. It exits 1 on an error. It needs
+`jev.enabled`, like the tools. An agent with no MCP support can use Jev this way, through the same copy
+in `~/.ide-agent-tabs/mcp/` that other agents register.
+
+### Skills
+
+- `jev` (new): tells Claude Code when to use the Jev tools on its own, and how to write a question that
+  Jev answers well. See [jev-integration.md](jev-integration.md) for the rules and the tests behind
+  them.
+- `delegate`: with the Jev tools listed and no agent named, the skill asks `jev_route` which tier takes
+  the task. On `sure`, it uses the answer and says so. Otherwise it shows the top two and asks.
+- `setup`: asks whether to turn Jev on, and checks that a key is found with `jev status`.
+
 ## Security
 
 - The token limits the API to processes that can read your registry files, which means your own user
@@ -463,6 +584,9 @@ builds have a different `TerminalViewVirtualFile` constructor, so opening a tab 
 - Any such process can start any agent with any flags, including flags that skip permission prompts.
   This is by design: it is the same power as running the agent yourself.
 - The server never passes caller text through a shell parser.
+- The server makes one kind of network call: a Jev request to `https://api.typesafe.ai`, and only
+  when Jev is turned on and a tool asks. Everything a caller puts in a Jev request leaves the machine.
+  The tool descriptions say so.
 
 ## Tested on
 
@@ -490,3 +614,4 @@ Mac. For the headless delegation commands, see the **Tested** column in
    drivers.
 2. Built: the VS Code extension.
 3. Visual Studio extension, opening Windows Terminal tabs.
+4. Jev judgment tools in the MCP server, the `jev` skill, and Jev routing in `delegate`.
