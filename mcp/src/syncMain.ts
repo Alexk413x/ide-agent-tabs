@@ -2,14 +2,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { agentTabsHome } from './home.js';
+import { agentsReport, registerAgents, unregisterAgents } from './register.js';
 import { appendLog, syncHook, syncInstall, syncStatus, type SyncContext } from './sync.js';
 
 const print = (text: string) => new Promise<void>((resolve) => process.stdout.write(text, () => resolve()));
 
-const USAGE = 'Usage: sync-ides.mjs --hook | --status | --install [--jetbrains] [<editor cli>...]';
+const USAGE =
+  'Usage: sync-ides.mjs --hook | --status | --install [--jetbrains] [<editor cli>...] | --agents | --register <agent>... | --unregister <agent>...';
+
+const dist = path.dirname(fileURLToPath(import.meta.url));
 
 const ctx: SyncContext = {
-  bundleDir: path.join(path.dirname(fileURLToPath(import.meta.url)), 'ide'),
+  bundleDir: path.join(dist, 'ide'),
+  serverDir: dist,
   home: agentTabsHome(),
   platform: process.platform,
   env: process.env,
@@ -41,6 +46,15 @@ async function main(args: string[]): Promise<number> {
       rest.filter((a) => a !== '--jetbrains'),
       rest.includes('--jetbrains'),
     );
+    await print(`${JSON.stringify(report, null, 2)}\n`);
+    return report.errors.length > 0 ? 1 : 0;
+  }
+  if (mode === '--agents') {
+    await print(`${JSON.stringify(await agentsReport(ctx), null, 2)}\n`);
+    return 0;
+  }
+  if ((mode === '--register' || mode === '--unregister') && rest.length > 0) {
+    const report = mode === '--register' ? await registerAgents(ctx, rest) : await unregisterAgents(ctx, rest);
     await print(`${JSON.stringify(report, null, 2)}\n`);
     return report.errors.length > 0 ? 1 : 0;
   }

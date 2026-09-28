@@ -29,8 +29,21 @@ test('Windows Terminal gets only fixed strings and our own paths', () => {
 
 test('a Windows Terminal started by the server does not inherit the calling session', () => {
   assert.deepEqual(
-    terminalEnvironment({ PATH: 'p', ClaudeCode: '1', CLAUDE_CODE_SSE_PORT: '1', CLAUDE_CODE_USE_BEDROCK: '1', IDE_AGENT_TABS_ID: 't', IDE_AGENT_TABS_HOME: 'h' }),
-    { PATH: 'p', CLAUDE_CODE_USE_BEDROCK: '1', IDE_AGENT_TABS_HOME: 'h' },
+    terminalEnvironment({
+      PATH: 'p',
+      ClaudeCode: '1',
+      CLAUDE_CODE_SSE_PORT: '1',
+      CLAUDE_CODE_USE_BEDROCK: '1',
+      IDE_AGENT_TABS_ID: 't',
+      IDE_AGENT_TABS_HOME: 'h',
+      CODEX_SANDBOX: 'seatbelt',
+      CODEX_SANDBOX_NETWORK_DISABLED: '1',
+      CODEX_HOME: 'c',
+      GEMINI_CLI: '1',
+      OPENCODE_SESSION_ID: 's',
+      COPILOT_HOME: 'g',
+    }),
+    { PATH: 'p', CLAUDE_CODE_USE_BEDROCK: '1', IDE_AGENT_TABS_HOME: 'h', CODEX_HOME: 'c', COPILOT_HOME: 'g' },
   );
 });
 

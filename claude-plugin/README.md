@@ -27,7 +27,7 @@ Then, in a Claude Code session, run `/ide-agent-tabs:setup` to install the IDE e
 | `skills/delegate/` | `/ide-agent-tabs:delegate` hands a task, review or question to another agent CLI in headless mode. |
 | `skills/setup/` | `/ide-agent-tabs:setup` installs the IDE extensions and picks a default agent and terminal. |
 | `skills/update/` | `/ide-agent-tabs:update` updates the plugin and the IDE extensions. |
-| `hooks/hooks.json` | A `SessionStart` hook that runs `dist/sync-ides.mjs --hook`. When the bundled IDE versions change, it updates the extension in each editor that has it, and the local JetBrains plugin repository. |
+| `hooks/hooks.json` | A `SessionStart` hook that runs `dist/sync-ides.mjs --hook`. When the bundled IDE versions change, it updates the extension in each editor that has it, and the local JetBrains plugin repository. When the bundled MCP server changes, it refreshes the copy in `~/.ide-agent-tabs/mcp/` that other agent CLIs run. |
 | `dist/ide/` | The bundled IDE extensions: `ide-agent-tabs.vsix`, `ide-agent-tabs-jetbrains.zip` and `versions.json`. |
 
 ## Generated files
