@@ -26,7 +26,8 @@ npm run package
 ## Open a tab
 
 - When a window opens a project with a `.claude` folder, the default agent opens in an editor tab.
-- Click **New Agent Tab** in the editor title bar, or the agent name at the right of the status bar. The default agent
+- Click **New Agent Tab** in the editor title bar or the agent name at the right of the status bar, or press
+  **Ctrl+Alt+A** (**⌘⌥A** on macOS). The default agent
   opens in a terminal tab in the editor area. The tab starts in the folder of the active editor, or in the
   first workspace folder.
 - To open a different agent, click the arrow next to **New Agent Tab** and pick one from the menu. The
@@ -34,8 +35,7 @@ npm run package
   **New Agent Tab With…**, which the Command Palette also has.
 - Hover over the status bar item to see a link, with its logo, for each installed agent. Click one to open it. The
   tooltip also names supported agents that aren't installed.
-- The arrow menu and the status bar tooltip both have **Set Default Agent…**, which saves your choice in
-  the `ideAgentTabs.defaultAgent` setting, and a **Settings** link to this extension's settings.
+- The arrow menu and the status bar tooltip both have a **Settings** link to this extension's settings.
 
 Opening an agent from a menu or a link doesn't change the default agent. To change it, use the
 `ideAgentTabs.defaultAgent` setting.

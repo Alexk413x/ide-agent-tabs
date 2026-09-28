@@ -2,7 +2,6 @@ package dev.alexk.ideagenttabs
 
 import com.intellij.ide.DataManager
 import com.intellij.openapi.actionSystem.ActionGroup
-import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionToolbar
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
@@ -49,8 +48,7 @@ class AgentMenuGroup : ActionGroup(), DumbAware {
 
     override fun getChildren(e: AnActionEvent?): Array<AnAction> {
         val agents = Agents.installedProfiles().map { OpenAgentTabAction(it) }
-        val setDefault = ActionManager.getInstance().getAction(SET_DEFAULT_AGENT_ACTION)
-        return (agents + listOfNotNull(Separator.getInstance(), setDefault, OpenSettingsAction())).toTypedArray()
+        return (agents + listOf(Separator.getInstance(), OpenSettingsAction())).toTypedArray()
     }
 }
 
@@ -66,22 +64,6 @@ private class OpenAgentTabAction(private val profile: AgentProfile) :
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
         Agents.open(project, profile)
-    }
-}
-
-const val SET_DEFAULT_AGENT_ACTION = "IdeAgentTabs.SetDefaultAgent"
-
-class SetDefaultAgentAction : DumbAwareAction() {
-
-    override fun getActionUpdateThread() = ActionUpdateThread.BGT
-
-    override fun update(e: AnActionEvent) {
-        e.presentation.isEnabled = e.project != null
-    }
-
-    override fun actionPerformed(e: AnActionEvent) {
-        val project = e.project ?: return
-        showDefaultAgentChooser(project, null) { it.showCenteredInCurrentWindow(project) }
     }
 }
 

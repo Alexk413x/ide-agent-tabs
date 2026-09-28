@@ -3,12 +3,11 @@
 A plugin for Android Studio and other JetBrains IDEs that opens AI coding-agent sessions, such as Claude
 Code, Codex, Gemini CLI and Copilot CLI, in editor tabs.
 
-- Click **New Agent Tab** in the main toolbar or the **Tools** menu, or the agent name in the status
-  bar, to start the default agent in the project root.
-- Right-click **New Agent Tab** in the main toolbar or the status bar item, or open **Tools > New Agent
-  Tab With**, to open another installed agent. Opening an agent from a menu doesn't change the default.
-- Choose **Set Default Agent…** in any of these menus, or open **Settings > Tools > Agent Tabs**, to
-  change the default agent.
+- Click **New Agent Tab** in the main toolbar or the **Tools** menu, or press **Ctrl+Alt+A** (**⌘⌥A** on
+  macOS), to start the default agent in the project root.
+- Right-click **New Agent Tab** in the main toolbar, or open **Tools > New Agent Tab With**, to open
+  another installed agent. Opening an agent from a menu doesn't change the default.
+- Open **Settings > Tools > Agent Tabs** to change the default agent.
 - The default agent can open by itself when a project opens. See [Open on startup](#open-on-startup).
 - Other programs, such as another agent session, can open, list and close tabs through a local HTTP
   API. The IDE does not take focus.
@@ -78,7 +77,7 @@ If `agents.json` isn't valid, the plugin logs a warning to `idea.log` and uses o
 agents.
 
 The default agent is in `~/.ide-agent-tabs/config.json`. Every IDE with Agent Tabs reads it, so a change
-in one IDE applies to all of them. **Set Default Agent…** and the settings page write it:
+in one IDE applies to all of them. The settings page writes it:
 
 ```json
 { "defaultAgent": "claude" }
@@ -90,7 +89,7 @@ Open **Settings > Tools > Agent Tabs**.
 
 | Setting | Description |
 |---|---|
-| Default agent | The agent that **New Agent Tab** and the status bar item open. Saved in `~/.ide-agent-tabs/config.json`. |
+| Default agent | The agent that **New Agent Tab** opens. Saved in `~/.ide-agent-tabs/config.json`. |
 | Open on startup | When to open the default agent as a project opens. See [Open on startup](#open-on-startup). |
 
 ### Open on startup
@@ -105,16 +104,6 @@ Choose one of these values:
 | Never | Never. |
 
 Each IDE keeps its own **Open on startup** value. It isn't shared through `config.json`.
-
-### Status bar
-
-The status bar shows an icon and the default agent's name, such as **Claude Code**.
-
-- Click it to open the default agent.
-- Right-click it to open another installed agent, or to choose **Set Default Agent…** or **Settings…**.
-
-The name updates when you change the default in this IDE, and when you switch back to this IDE after
-another IDE changes it. To hide the item, right-click the status bar and clear **Agent Tabs**.
 
 ## Open a tab from another program
 
