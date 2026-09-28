@@ -1,17 +1,24 @@
 import { build } from 'esbuild';
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(root, '..', 'claude-plugin', 'dist');
 
-rmSync(dist, { recursive: true, force: true });
+// dist/ide holds the IDE builds from scripts/pack-ides.mjs, which this build doesn't make, so it stays.
+for (const name of existsSync(dist) ? readdirSync(dist) : []) {
+  if (name !== 'ide') rmSync(path.join(dist, name), { recursive: true, force: true });
+}
 mkdirSync(path.join(dist, 'launch'), { recursive: true });
 
 const result = await build({
-  entryPoints: [path.join(root, 'src', 'main.ts')],
-  outfile: path.join(dist, 'mcp-server.mjs'),
+  entryPoints: {
+    'mcp-server': path.join(root, 'src', 'main.ts'),
+    'sync-ides': path.join(root, 'src', 'syncMain.ts'),
+  },
+  outdir: dist,
+  outExtension: { '.js': '.mjs' },
   bundle: true,
   platform: 'node',
   format: 'esm',
