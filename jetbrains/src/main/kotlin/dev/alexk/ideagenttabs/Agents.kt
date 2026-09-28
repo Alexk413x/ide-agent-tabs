@@ -1,6 +1,5 @@
 package dev.alexk.ideagenttabs
 
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.IconLoader
@@ -9,7 +8,6 @@ import com.intellij.ui.LayeredIcon
 import com.intellij.util.EnvironmentUtil
 import com.intellij.util.IconUtil
 import com.intellij.util.concurrency.annotations.RequiresEdt
-import com.intellij.util.messages.Topic
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.Icon
@@ -77,24 +75,11 @@ object Agents {
         neutralIcon
     }
 
-    fun setDefaultAgent(profile: AgentProfile): Boolean {
-        val saved = settings.setDefaultAgent(profile.name)
-        ApplicationManager.getApplication().messageBus.syncPublisher(DefaultAgentListener.TOPIC).defaultAgentChanged()
-        return saved
-    }
+    fun setDefaultAgent(profile: AgentProfile): Boolean = settings.setDefaultAgent(profile.name)
 
     @RequiresEdt
     fun open(project: Project, profile: AgentProfile) {
         val directory = project.basePath ?: System.getProperty("user.home")
         AgentTabLauncher.open(project, directory, profile, prompt = null, focus = true)
-    }
-}
-
-fun interface DefaultAgentListener {
-    fun defaultAgentChanged()
-
-    companion object {
-        @Topic.AppLevel
-        val TOPIC = Topic.create("Agent Tabs default agent", DefaultAgentListener::class.java)
     }
 }

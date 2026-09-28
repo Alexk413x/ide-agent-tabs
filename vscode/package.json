@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "publisher": "alexk413x",
   "license": "MIT",
   "repository": {
@@ -170,11 +170,43 @@
         "title": "Settings",
         "category": "Agent Tabs",
         "icon": "$(gear)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ideAgentTabs.newTab",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a"
       },
       {
-        "command": "ideAgentTabs.setDefaultAgent",
-        "title": "Set Default Agent…",
-        "category": "Agent Tabs"
+        "command": "ideAgentTabs.newTab.claude",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == claude"
+      },
+      {
+        "command": "ideAgentTabs.newTab.codex",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == codex"
+      },
+      {
+        "command": "ideAgentTabs.newTab.gemini",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == gemini"
+      },
+      {
+        "command": "ideAgentTabs.newTab.copilot",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == copilot"
+      },
+      {
+        "command": "ideAgentTabs.newTab.other",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == other"
       }
     ],
     "menus": {
@@ -182,31 +214,31 @@
         {
           "command": "ideAgentTabs.newTab.claude",
           "when": "ideAgentTabs.buttonAgent == claude",
-          "group": "navigation@100"
+          "group": "navigation@-0.2"
         },
         {
           "command": "ideAgentTabs.newTab.codex",
           "when": "ideAgentTabs.buttonAgent == codex",
-          "group": "navigation@100"
+          "group": "navigation@-0.2"
         },
         {
           "command": "ideAgentTabs.newTab.gemini",
           "when": "ideAgentTabs.buttonAgent == gemini",
-          "group": "navigation@100"
+          "group": "navigation@-0.2"
         },
         {
           "command": "ideAgentTabs.newTab.copilot",
           "when": "ideAgentTabs.buttonAgent == copilot",
-          "group": "navigation@100"
+          "group": "navigation@-0.2"
         },
         {
           "command": "ideAgentTabs.newTab.other",
           "when": "ideAgentTabs.buttonAgent == other",
-          "group": "navigation@100"
+          "group": "navigation@-0.2"
         },
         {
           "submenu": "ideAgentTabs.agents",
-          "group": "navigation@101"
+          "group": "navigation@-0.1"
         }
       ],
       "commandPalette": [
@@ -274,12 +306,8 @@
           "group": "2_more"
         },
         {
-          "command": "ideAgentTabs.setDefaultAgent",
-          "group": "3_settings@1"
-        },
-        {
           "command": "ideAgentTabs.openSettings",
-          "group": "3_settings@2"
+          "group": "3_settings"
         }
       ]
     },

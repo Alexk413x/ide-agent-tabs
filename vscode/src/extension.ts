@@ -159,13 +159,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     void vscode.commands.executeCommand('setContext', 'ideAgentTabs.customInstalled', installed.some(p => !BUILTIN_ICONS.has(p.name)));
     const lines = [
-      installed.length > 0 ? 'Open an agent in an editor tab.' : 'No agent CLI found on PATH.',
+      installed.length > 0 ? `Open an agent in an editor tab. New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No agent CLI found on PATH.',
       links.join('  \n'),
       missing.length > 0 ? `Not installed: ${missing.map(p => escape(p.label)).join(', ')}` : '',
-      '[$(star-empty) Set Default Agent…](command:ideAgentTabs.setDefaultAgent) · [$(gear) Settings](command:ideAgentTabs.openSettings)',
+      '[$(gear) Settings](command:ideAgentTabs.openSettings)',
     ];
     const tooltip = new vscode.MarkdownString(lines.filter(Boolean).join('\n\n'));
-    tooltip.isTrusted = { enabledCommands: ['ideAgentTabs.openAgent', 'ideAgentTabs.setDefaultAgent', 'ideAgentTabs.openSettings'] };
+    tooltip.isTrusted = { enabledCommands: ['ideAgentTabs.openAgent', 'ideAgentTabs.openSettings'] };
     tooltip.supportThemeIcons = true;
     tooltip.supportHtml = true;
     status.tooltip = tooltip;
@@ -191,24 +191,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       .then(undefined, e => log.warn(`Could not update ideAgentTabs.defaultAgent: ${(e as Error).message}`));
   };
 
-  const setDefaultAgent = async () => {
-    const current = settings.defaultProfile().name;
-    const items = settings
-      .profiles()
-      .filter(p => isInstalled(p.command, searchPath(), isWindows))
-      .map(p => ({ label: p.label, description: p.name === current ? 'current default' : undefined, iconPath: icon(p), profile: p }));
-    const picked = await vscode.window.showQuickPick(items, { title: 'Set Default Agent' });
-    if (!picked) return;
-    const setting = config().inspect<string>('defaultAgent');
-    const target = setting?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
-    try {
-      await config().update('defaultAgent', picked.profile.name, target);
-    } catch (e) {
-      log.warn(`Could not save ideAgentTabs.defaultAgent: ${(e as Error).message}`);
-      void vscode.window.showWarningMessage(`Could not save the default agent. Quit ${vscode.env.appName} completely and reopen it to finish updating Agent Tabs.`);
-    }
-  };
-
   const chooseAgent = async () => {
     const items = settings
       .profiles()
@@ -230,7 +212,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.registerCommand(`ideAgentTabs.newTab.${name}`, () => openFromButton(settings.defaultProfile())),
     ),
     vscode.commands.registerCommand('ideAgentTabs.newTabWith', chooseAgent),
-    vscode.commands.registerCommand('ideAgentTabs.setDefaultAgent', setDefaultAgent),
     vscode.commands.registerCommand('ideAgentTabs.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`),
     ),
