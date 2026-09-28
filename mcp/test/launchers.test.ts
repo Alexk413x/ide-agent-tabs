@@ -7,6 +7,7 @@ import { findOnPath } from '../src/installed.js';
 import { run } from '../src/process.js';
 import { launchOf, type AgentProfile } from '../src/profiles.js';
 import { launchSpec, posixSpec, powerShellSpec } from '../src/spec.js';
+import { argvModeCommand } from '../src/terminals/shell.js';
 
 const launchDir = path.join(import.meta.dirname, '..', 'launch');
 const work = tempDir('iat launch ');
@@ -64,9 +65,16 @@ for (const shell of ['pwsh.exe', 'powershell.exe']) {
   });
 }
 
-test('the POSIX launcher passes the prompt and args intact (bash)', async (t) => {
+function findBash(): string | undefined {
   const bash = process.platform === 'win32' ? findOnPath(process.env.PATH ?? '', 'bash.exe') : '/bin/bash';
-  if (!bash || (process.platform === 'win32' && /System32/i.test(bash))) {
+  return bash && !(process.platform === 'win32' && /System32/i.test(bash)) ? bash : undefined;
+}
+
+const bashEnv = { ...process.env, MSYS_NO_PATHCONV: '1', MSYS2_ARG_CONV_EXCL: '*' };
+
+test('the POSIX launcher passes the prompt and args intact (bash)', async (t) => {
+  const bash = findBash();
+  if (!bash) {
     t.skip('no bash found');
     return;
   }
@@ -76,13 +84,7 @@ test('the POSIX launcher passes the prompt and args intact (bash)', async (t) =>
     const launch = launchOf(profile, withPrompt ? prompt : undefined, callerArgs, { PROBE_OUT: out, IAT_EXTRA: 'value with spaces & $(x)' });
     writeFileSync(specFile, posixSpec(launchSpec('tab-1', work, launch)));
     const result = await run(bash, ['--noprofile', '--norc', '-c', '. "$IDE_AGENT_TABS_LAUNCHER"'], {
-      env: {
-        ...process.env,
-        IDE_AGENT_TABS_LAUNCHER: path.join(launchDir, 'agent-launch.sh'),
-        IDE_AGENT_TABS_SPEC: specFile,
-        MSYS_NO_PATHCONV: '1',
-        MSYS2_ARG_CONV_EXCL: '*',
-      },
+      env: { ...bashEnv, IDE_AGENT_TABS_LAUNCHER: path.join(launchDir, 'agent-launch.sh'), IDE_AGENT_TABS_SPEC: specFile },
     });
     assert.equal(result.code, 0, result.stderr);
     const got = readProbe(out);
@@ -90,4 +92,26 @@ test('the POSIX launcher passes the prompt and args intact (bash)', async (t) =>
     assert.deepEqual(got, expected(out, withPrompt));
     assert.ok(!existsSync(specFile), 'the launcher deletes its spec');
   }
+});
+
+test('the POSIX launcher runs in argv mode and writes its shell pid (bash)', async (t) => {
+  const bash = findBash();
+  if (!bash) {
+    t.skip('no bash found');
+    return;
+  }
+  const out = path.join(work, 'argv.json');
+  const specFile = path.join(work, 'argv.spec');
+  const pidFile = path.join(work, 'argv.pid');
+  const launch = launchOf(profile, prompt, callerArgs, { PROBE_OUT: out, IAT_EXTRA: 'value with spaces & $(x)' });
+  writeFileSync(specFile, posixSpec(launchSpec('tab-1', work, launch, pidFile)));
+  const [, , , , script, ...positional] = argvModeCommand({ path: '/bin/bash', kind: 'posix' }, path.join(launchDir, 'agent-launch.sh'), specFile);
+  const once = script!.replace(/; exec .*$/, () => '; printf %s "$$"');
+  const result = await run(bash, ['--noprofile', '--norc', '-c', once, ...positional], { env: bashEnv });
+  assert.equal(result.code, 0, result.stderr);
+  const got = readProbe(out);
+  delete got.cwd;
+  assert.deepEqual(got, expected(out, true));
+  assert.ok(!existsSync(specFile), 'the launcher deletes its spec');
+  assert.equal(readFileSync(pidFile, 'utf8').trim(), result.stdout);
 });

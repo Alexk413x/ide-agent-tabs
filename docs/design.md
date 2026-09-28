@@ -196,8 +196,9 @@ registry and calls the HTTP API.
 1. The IDE or terminal named by `ide`, using its id from `list_ides`.
 2. The IDE with an open project that contains `path`, preferring the focused window.
 3. The most recently started IDE.
-4. When no IDE is running: the preferred terminal from `config.json`, then the platform's default
-   terminal (Windows Terminal on Windows, Ghostty on macOS when installed).
+4. When no IDE is running: the preferred terminal from `config.json`, then the first installed terminal
+   in the platform's order: Windows Terminal, then WezTerm on Windows; Ghostty, kitty, WezTerm, then tmux
+   on macOS and Linux.
 
 The reply includes a `reason` that says which rule chose the target.
 
@@ -213,22 +214,53 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
 
 | Terminal | OS | Open | List | Close | How |
 |---|---|---|---|---|---|
-| Windows Terminal | Windows | Tab | Tracked | Best effort | `wt.exe -w 0 new-tab -d <dir> …`. No outside API to query tabs, so `list_tabs` shows only the tabs this server opened, while their launcher runs. Ending the launcher may leave the tab open with an exit message. |
-| Ghostty 1.3+ | macOS | Tab | Yes | Yes | AppleScript: `new tab` with a surface configuration (working directory, command, environment variables); query `windows → tabs → terminals` by id; `close` and `focus` |
-| Ghostty | Linux | Window | No | Best effort | `ghostty +new-window` over D-Bus. Opening a tab from the command line isn't supported yet ([ghostty#12136](https://github.com/ghostty-org/ghostty/issues/12136)). |
-| WezTerm | All | Tab | Yes | Yes | `wezterm cli spawn`, `wezterm cli list`, `wezterm cli kill-pane` |
-| kitty | macOS, Linux | Tab | Yes | Yes | `kitty @ launch --type=tab`, `kitty @ ls`, `kitty @ close-window`; the user must turn on remote control |
-| tmux | macOS, Linux | Window | Yes | Yes | `tmux new-window`, `list-windows`, `kill-window` |
+| Windows Terminal | Windows | Tab | Tracked | Best effort | `wt.exe -w 0 new-tab` with `pwsh` and `agent-launch.ps1`. No outside API to query tabs, so `list_tabs` shows only the tabs this server opened, while their launcher's shell runs. `close_tab` ends that shell, which may leave the tab open with an exit message. |
+| Ghostty 1.3+ | macOS | Tab | Yes | Yes | AppleScript: `new tab` with a surface configuration (command and environment variables); query `terminals` by id; `close`. |
+| Ghostty | Linux | Window | Tracked | Best effort | A new process per agent: `ghostty --gtk-single-instance=false --working-directory=<dir> --confirm-close-surface=false --wait-after-command=false -e <shell> -l -i -c …`. Ghostty can't open a tab in a running instance from outside ([ghostty#12136](https://github.com/ghostty-org/ghostty/issues/12136)). The launcher writes its shell's pid; `list_tabs` checks that the shell runs, and `close_tab` sends it `SIGHUP`. |
+| WezTerm | Windows, macOS, Linux | Tab | Yes | Yes | `wezterm cli --no-auto-start spawn --cwd <dir> -- …` prints the pane id; `cli list --format json`; `cli kill-pane --pane-id`. `WEZTERM_UNIX_SOCKET` names the newest running GUI's `gui-sock-<pid>` ([wezterm#4456](https://github.com/wezterm/wezterm/issues/4456)). With no GUI running, `wezterm start` opens one. |
+| kitty | macOS, Linux | Tab | Yes | Yes | With remote control on: `kitten @ --to <socket> launch --type=tab`, `ls` and `close-window --match id:<n>`. Without it: a new `kitty` process per agent, tracked like Ghostty on Linux (Window, Tracked, Best effort). |
+| tmux 3.0+ | macOS, Linux | Tab | Yes | Yes | `tmux new-window -e … -- …` in the most recently attached session, else in the detached session `agents`; `list-windows -a`; `kill-window`. |
 | Terminal, iTerm2 | macOS | Tab | Partly | Partly | AppleScript. Later. |
 
-- Build order: Windows Terminal and Ghostty (macOS) first, because they are the owner's terminals. Then
-  WezTerm, kitty and tmux, whose command-line interfaces cover everything.
 - The MCP server tracks the tabs it opens in terminals in `~/.ide-agent-tabs/terminal-tabs.json`, with
-  the terminal's own tab or pane id where it has one, and the process id otherwise.
+  the terminal's own tab, pane or window id where it has one, and the shell's pid file otherwise.
 - `open_tab` uses a terminal when the caller names one, or when no IDE is running. The preferred one is
   `"terminal"` in `~/.ide-agent-tabs/config.json`, such as `"terminal": "ghostty"`.
+- A new tab gets the launcher and spec paths in one of two ways. In env mode, the terminal sets
+  `IDE_AGENT_TABS_LAUNCHER` and `IDE_AGENT_TABS_SPEC` in the tab (Ghostty, kitty, tmux). In argv mode, they
+  are positional arguments of the login shell, whose fixed `-c` script sets `IDE_AGENT_TABS_SPEC` and
+  sources the launcher (WezTerm, whose new panes get the GUI's environment, not the caller's). Argv mode
+  with fish needs fish 3.2 or later.
+- A command line holds only fixed flags, the server's own paths, the folder and a cleaned title. The
+  server refuses a path that holds a control character, and a path with `;` for Windows Terminal and tmux,
+  which split commands at `;`. tmux gets no `-c <dir>`, because it expands formats such as `#(…)` there;
+  the launcher changes to the folder instead.
+- A terminal the server starts gets the server's environment without the variables that identify the
+  calling agent session, such as `CLAUDECODE`.
+- The POSIX launchers write the shell's pid to `launch/<id>.pid` when the spec names a pid file. The
+  shell then replaces itself with an interactive login shell, so the pid stays the same after the agent
+  exits.
+- kitty has no remote control by default and no default socket. To turn it on, add these lines to
+  `kitty.conf` and restart kitty:
+  - Linux: `allow_remote_control socket-only` and `listen_on unix:${XDG_RUNTIME_DIR}/kitty-agent-tabs`
+  - macOS: `allow_remote_control socket-only` and `listen_on unix:${TMPDIR}/kitty-agent-tabs`
+
+  kitty appends `-<pid>` to the socket path. The server uses `KITTY_LISTEN_ON` when it's set, and
+  otherwise the newest `kitty-agent-tabs-*` socket that answers `kitten @ ls`. `list_ides` reports kitty's
+  capabilities for the mode a new tab would use.
+- WezTerm's latest stable release is 20240203, and most users run nightly builds. The driver uses only
+  `cli spawn`, `cli list`, `cli kill-pane` and `start`, which both have. It records the GUI socket with
+  each pane id, so a restarted GUI doesn't match old ids. When the server starts the GUI itself, it
+  records the pane id once the new GUI's socket answers, within 10 seconds. Otherwise `list_tabs` shows
+  the tab for 60 seconds and `close_tab` can't close it.
+- tmux: the server uses the default tmux server. When no client is attached, `open_tab` adds a `note` to
+  its reply: run `tmux attach -t agents`. The server records the tmux socket and server pid with each
+  window id, so a restarted tmux server doesn't match old ids.
 - The Visual Studio extension (Phase 3) opens its tabs through the Windows Terminal support.
-- Untested: every row. None of these terminals has been driven by this project yet.
+- Tested live: WezTerm on Windows 11 and in WSL Ubuntu; kitty 0.49.1 with and without remote control,
+  and tmux 3.6 with and without an attached client, in WSL Ubuntu; open, list and close through the MCP
+  server for tmux, kitty and WezTerm. Ghostty on Linux accepts its flags, but WSLg's OpenGL 4.1 is below
+  Ghostty's 4.3, so no window opened. Untested: Ghostty on macOS, and every driver on a real Mac.
 
 ## Messaging
 

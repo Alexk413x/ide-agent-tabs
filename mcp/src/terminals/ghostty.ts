@@ -2,39 +2,33 @@ import { promises as fs, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { writeNewPrivateFile } from '../files.js';
+import { findOnPath } from '../installed.js';
 import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, type LaunchSpec } from '../spec.js';
-import type { TerminalDriver, TerminalTab } from './types.js';
+import { GUI_SETTLE_MS, hangUp, pidTabsAlive, startDetached, terminalEnvironment } from './processes.js';
+import { checkArgvPaths, launcherName, loginShell, surfaceArgv, surfaceCommand, type LoginShell } from './shell.js';
+import type { OpenedTab, TerminalCapabilities, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
 
 export const GHOSTTY = 'ghostty';
-export const LAUNCHER_SH = 'agent-launch.sh';
-export const LAUNCHER_FISH = 'agent-launch.fish';
-const DEFAULT_SHELL = '/bin/zsh';
-const SAFE_PATH = /^\/[A-Za-z0-9._/+-]+$/;
 
-export interface LoginShell {
-  path: string;
-  kind: 'posix' | 'fish';
+export function ghosttyCapabilities(platform: NodeJS.Platform): TerminalCapabilities {
+  return platform === 'linux'
+    ? { open: 'window', list: 'tracked', close: 'best-effort' }
+    : { open: 'tab', list: 'yes', close: 'yes' };
 }
 
-export function loginShell(shellEnv: string | undefined): LoginShell {
-  if (shellEnv && SAFE_PATH.test(shellEnv)) {
-    const name = path.posix.basename(shellEnv);
-    if (name === 'bash' || name === 'zsh') return { path: shellEnv, kind: 'posix' };
-    if (name === 'fish') return { path: shellEnv, kind: 'fish' };
-  }
-  return { path: DEFAULT_SHELL, kind: 'posix' };
-}
-
-// Ghostty runs a surface's command through /bin/sh -c. The shell path is checked against SAFE_PATH, and
-// everything else the launch needs reaches it through the surface's environment variables.
-export function surfaceCommand(shell: LoginShell): string {
-  if (!SAFE_PATH.test(shell.path)) throw new Error(`unsafe shell path: ${shell.path}`);
-  const inner =
-    shell.kind === 'fish'
-      ? `source "$IDE_AGENT_TABS_LAUNCHER"; exec ${shell.path} -l -i`
-      : `. "$IDE_AGENT_TABS_LAUNCHER"; exec ${shell.path} -l -i`;
-  return `${shell.path} -l -i -c '${inner}'`;
+// Ghostty on Linux can't open a tab in a running instance from outside (ghostty#12136), so each agent gets a
+// new Ghostty process with one window, tracked through its shell's pid.
+export function ghosttyLinuxArgs(cwd: string, shell: LoginShell): string[] {
+  checkArgvPaths('Ghostty', [cwd]);
+  return [
+    '--gtk-single-instance=false',
+    `--working-directory=${cwd}`,
+    '--confirm-close-surface=false',
+    '--wait-after-command=false',
+    '-e',
+    ...surfaceArgv(shell),
+  ];
 }
 
 export function appleScriptString(value: string): string {
@@ -107,20 +101,38 @@ function ghosttyApp(home: string): string | undefined {
   return ['/Applications/Ghostty.app', path.join(home, 'Applications', 'Ghostty.app')].find((p) => existsSync(p));
 }
 
+async function openOnLinux(ctx: TerminalContext, spec: LaunchSpec, shell: LoginShell, specFile: string, launcher: string): Promise<OpenedTab> {
+  const exe = findOnPath(ctx.pathVar, 'ghostty');
+  if (!exe) throw new Error('ghostty was not found on PATH');
+  const pidFile = path.join(path.dirname(specFile), `${spec.id}.pid`);
+  const args = ghosttyLinuxArgs(spec.cwd, shell);
+  const env = { ...terminalEnvironment(ctx.env), IDE_AGENT_TABS_LAUNCHER: launcher, IDE_AGENT_TABS_SPEC: specFile };
+  await writeNewPrivateFile(specFile, posixSpec({ ...spec, pidFile }));
+  try {
+    await startDetached(exe, args, env, GUI_SETTLE_MS);
+  } catch (e) {
+    await fs.rm(specFile, { force: true });
+    throw e;
+  }
+  return { id: spec.id, terminal: GHOSTTY, agent: spec.agent, path: spec.cwd, createdAt: Date.now(), pidFile };
+}
+
 export const ghostty: TerminalDriver = {
   name: GHOSTTY,
   label: 'Ghostty',
-  capabilities: { open: 'tab', list: 'yes', close: 'yes' },
+  capabilities: ghosttyCapabilities(process.platform),
 
-  async available() {
+  async available(ctx) {
+    if (process.platform === 'linux') return findOnPath(ctx.pathVar, 'ghostty') !== undefined;
     return process.platform === 'darwin' && ghosttyApp(os.homedir()) !== undefined;
   },
 
   async open(ctx, spec: LaunchSpec) {
     checkPosixEnvNames(spec.env);
-    const shell = loginShell(ctx.env.SHELL);
+    const shell = loginShell(ctx.env.SHELL, process.platform);
     const specFile = path.join(ctx.home, 'launch', `${spec.id}.spec`);
-    const launcher = path.join(ctx.scriptsDir, shell.kind === 'fish' ? LAUNCHER_FISH : LAUNCHER_SH);
+    const launcher = path.join(ctx.scriptsDir, launcherName(shell));
+    if (process.platform === 'linux') return openOnLinux(ctx, spec, shell, specFile, launcher);
     const script = openScript(surfaceCommand(shell), {
       IDE_AGENT_TABS_LAUNCHER: launcher,
       IDE_AGENT_TABS_SPEC: specFile,
@@ -145,11 +157,16 @@ export const ghostty: TerminalDriver = {
   },
 
   async alive(_ctx, tabs) {
+    const alive = await pidTabsAlive(tabs.filter((t) => t.pidFile));
+    const scripted = tabs.filter((t) => t.terminalId);
+    if (scripted.length === 0) return alive;
     const ids = new Set((await osascript(listScript())).split(/\r?\n/).filter((l) => l !== ''));
-    return new Set(tabs.filter((t) => t.terminalId && ids.has(t.terminalId)).map((t) => t.id));
+    for (const t of scripted) if (ids.has(t.terminalId!)) alive.add(t.id);
+    return alive;
   },
 
   async close(_ctx, tab: TerminalTab) {
+    if (tab.pidFile) return hangUp(tab);
     if (!tab.terminalId) throw new Error(`tab ${tab.id} has no Ghostty terminal id`);
     if ((await osascript(closeScript(tab.terminalId))).trim() !== 'closed') {
       throw new Error(`Ghostty has no terminal ${tab.terminalId}; the tab is already closed`);
