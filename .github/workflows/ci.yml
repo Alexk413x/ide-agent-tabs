@@ -45,7 +45,11 @@ jobs:
   mcp:
     needs: parts
     if: needs.parts.outputs.mcp == 'true'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: mcp
@@ -59,11 +63,36 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - if: matrix.os == 'ubuntu-latest'
+        working-directory: .
+        shell: bash
+        run: |
+          if [ -n "$(git status --porcelain -- claude-plugin/dist)" ]; then
+            echo "::error::claude-plugin/dist is out of date. Run 'npm run build' in mcp/ and commit claude-plugin/dist."
+            git status --porcelain -- claude-plugin/dist
+            exit 1
+          fi
+      - if: matrix.os == 'ubuntu-latest'
+        working-directory: .
+        shell: bash
+        run: |
+          jetbrains_version=$(sed -n 's/^pluginVersion=//p' jetbrains/gradle.properties)
+          vscode_version=$(node -p "require('./vscode/package.json').version")
+          bundled_jetbrains=$(node -p "require('./claude-plugin/dist/ide/versions.json').jetbrains")
+          bundled_vscode=$(node -p "require('./claude-plugin/dist/ide/versions.json').vscode")
+          if [ "$bundled_jetbrains" != "$jetbrains_version" ] || [ "$bundled_vscode" != "$vscode_version" ]; then
+            echo "::error::claude-plugin/dist/ide/versions.json (jetbrains $bundled_jetbrains, vscode $bundled_vscode) doesn't match jetbrains/gradle.properties ($jetbrains_version) and vscode/package.json ($vscode_version). Run 'node scripts/pack-ides.mjs' and commit the result."
+            exit 1
+          fi
 
   vscode:
     needs: parts
     if: needs.parts.outputs.vscode == 'true'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: vscode
