@@ -11,13 +11,12 @@ This document is the contract every part builds against. Change it before you ch
 | Part | Status | Location |
 |---|---|---|
 | JetBrains plugin | Built | `jetbrains/` |
-| Protocol: registry and HTTP API | Built (Phase 0) | This document |
+| Protocol: registry and HTTP API | Built | This document |
 | Claude Code plugin: `delegate` skill | Built | `claude-plugin/`, marketplace in `.claude-plugin/` |
 | CI and release workflows | Built | `.github/workflows/` |
 | Claude Code plugin: MCP server, `new-tab`, `setup` and `update` skills | Built | `claude-plugin/`, `mcp/` |
 | VS Code extension (VS Code and editors built on it) | Built | `vscode/` |
-| Visual Studio extension (Windows Terminal tabs first) | Phase 3 | `visualstudio/` |
-| Jev judgment tools in the MCP server, and the `jev` skill (optional) | Phase 4 | `mcp/src/jev/`, `claude-plugin/skills/jev/`; plan in [jev-integration.md](jev-integration.md) |
+| Jev judgment tools in the MCP server, and the `jev` skill (optional) | Built | `mcp/src/jev/`, `claude-plugin/skills/jev/`; later steps in [jev-integration.md](jev-integration.md) |
 
 Messaging between agents is out of scope. Claude Code sessions message each other with Claude Code's
 own `ListAgents` and `SendMessage`. For other CLIs, see [Messaging](#messaging).
@@ -180,7 +179,7 @@ Every IDE shows a **New Agent Tab** button, and binds **Ctrl+Alt+A** (**⌘⌥A*
 
 The default lives in `~/.ide-agent-tabs/config.json`, so all IDEs and the MCP server share it.
 
-## MCP server (Phase 1)
+## MCP server
 
 A stdio MCP server, written in TypeScript and bundled into one file for Node 20 or later. It reads the
 registry and calls the HTTP API.
@@ -204,7 +203,7 @@ registry and calls the HTTP API.
 
 The reply includes a `reason` that says which rule chose the target.
 
-## Terminals (Phase 1)
+## Terminals
 
 Standalone terminal apps need no extension. The MCP server drives them directly and shows each one in
 `list_ides` next to the IDEs, with `ide` set to the terminal's name, such as `windows-terminal` or
@@ -222,7 +221,6 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
 | WezTerm | Windows, macOS, Linux | Tab | Yes | Yes | `wezterm cli --no-auto-start spawn --cwd <dir> -- …` prints the pane id; `cli list --format json`; `cli kill-pane --pane-id`. `WEZTERM_UNIX_SOCKET` names the newest running GUI's `gui-sock-<pid>` ([wezterm#4456](https://github.com/wezterm/wezterm/issues/4456)). With no GUI running, `wezterm start` opens one. |
 | kitty | macOS, Linux | Tab | Yes | Yes | With remote control on: `kitten @ --to <socket> launch --type=tab`, `ls` and `close-window --match id:<n>`. Without it: a new `kitty` process per agent, tracked like Ghostty on Linux (Window, Tracked, Best effort). |
 | tmux 3.0+ | macOS, Linux | Tab | Yes | Yes | `tmux new-window -e … -- …` in the most recently attached session, else in the detached session `agents`; `list-windows -a`; `kill-window`. |
-| Terminal, iTerm2 | macOS | Tab | Partly | Partly | AppleScript. Later. |
 
 - The MCP server tracks the tabs it opens in terminals in `~/.ide-agent-tabs/terminal-tabs.json`, with
   the terminal's own tab, pane or window id where it has one, and the shell's pid file otherwise.
@@ -258,15 +256,13 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
 - tmux: the server uses the default tmux server. When no client is attached, `open_tab` adds a `note` to
   its reply: run `tmux attach -t agents`. The server records the tmux socket and server pid with each
   window id, so a restarted tmux server doesn't match old ids.
-- The Visual Studio extension (Phase 3) opens its tabs through the Windows Terminal support.
 
 ## Messaging
 
 - Claude Code to Claude Code: Claude Code's native `ListAgents` and `SendMessage`. They work across tabs
   and IDEs on the same machine, but not between WSL and native Windows.
-- Other CLIs: not decided. The first experiment is a shared MCP mailbox,
-  [mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail), with Claude Code, Codex and
-  Gemini CLI polling one mailbox.
+- Other CLIs: no messaging. An agent hands one-shot work to another CLI with the `delegate` skill, and
+  starts an interactive session in a tab with `open_tab`.
 
 ## Delegation
 
@@ -321,7 +317,7 @@ question to another agent CLI in headless mode and reads the answer back. The Cl
 - If shell calls prove fragile, move delegation into the MCP server as a `delegate` tool, or adopt
   pal-mcp-server's `clink`.
 
-## Install (Phase 1)
+## Install
 
 The repository is a Claude Code plugin marketplace. Two commands install the plugin:
 
@@ -356,7 +352,7 @@ The Codex plugin isn't declared as a plugin dependency. A dependency from anothe
 only when this marketplace lists it in `allowCrossMarketplaceDependenciesOn` and the user has already
 added OpenAI's marketplace. Otherwise the install is refused, which would break the one-step install.
 
-## Distribution and updates (Phase 1)
+## Distribution and updates
 
 The Claude Code plugin carries the IDE extensions. The IDEs install them from files on the local disk,
 so no IDE downloads anything.
@@ -457,7 +453,7 @@ IntelliJ IDEA 2026.2.2 and Android Studio 2026.2.2.2.
 The plugin needs build 262.10315 or later (IntelliJ IDEA and Android Studio 2026.2.2). Earlier 2026.2
 builds have a different `TerminalViewVirtualFile` constructor, so opening a tab would fail there.
 
-## Jev judgments (Phase 4, optional)
+## Jev judgments (optional)
 
 [Jev](https://docs.typesafe.ai/) is TypeSafe's "System One" model. It reads text and returns a typed
 judgment: one option out of up to 255 (Choice), a probability of yes (Noul), or a position on 2 to 10
@@ -605,13 +601,14 @@ Open, list and close through the MCP server pass for tmux, kitty and WezTerm. No
 Mac. For the headless delegation commands, see the **Tested** column in
 [Headless commands](#headless-commands).
 
-## Phases
+## Possible future work
 
-0. Done: registry, token, `info` and `agents` routes, and agent profiles in the JetBrains plugin.
-   Right-click agent menu.
-1. Built: the build without a local IDE, CI and release workflows, the `new-tab`, `setup` and `update`
-   skills, the IDE extensions bundled in the Claude Code plugin, and the MCP server with its terminal
-   drivers.
-2. Built: the VS Code extension.
-3. Visual Studio extension, opening Windows Terminal tabs.
-4. Jev judgment tools in the MCP server, the `jev` skill, and Jev routing in `delegate`.
+None of these is scheduled.
+
+- **Visual Studio extension:** the **New Agent Tab** button and editor tabs in Visual Studio on Windows.
+  Until then, the MCP server opens tabs for Visual Studio users in Windows Terminal.
+- **Terminal and iTerm2 on macOS:** terminal drivers through AppleScript.
+- **Messaging between other agent CLIs:** for example, a shared MCP mailbox such as
+  [mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail).
+- **Jev steps J3 to J5:** a routing bench, a guard hook and a cost report. See
+  [jev-integration.md](jev-integration.md#phases).

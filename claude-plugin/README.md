@@ -41,5 +41,5 @@ commit it:
 - `scripts/pack-ides.mjs` writes `dist/ide/`. It builds the JetBrains plugin and the VS Code extension
   from `jetbrains/` and `vscode/`.
 
-[docs/design.md](../docs/design.md#distribution-and-updates-phase-1) describes how the plugin
+[docs/design.md](../docs/design.md#distribution-and-updates) describes how the plugin
 distributes and updates the IDE extensions.

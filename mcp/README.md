@@ -57,7 +57,7 @@ TypeSafe's API.
 The server reads the API key from `TYPESAFE_API_KEY`, or from the operating system's credential store
 under service `typesafe`, account `api_key`. Each call appends a line without request contents to
 `jev/ledger.jsonl`. `node mcp-server.mjs jev <status|ask|choose|check|rank|route>` takes the same
-request as JSON on stdin. See [Jev judgments](../docs/design.md#jev-judgments-phase-4-optional) for
+request as JSON on stdin. See [Jev judgments](../docs/design.md#jev-judgments-optional) for
 the settings, the key lookup and the ledger.
 
 ## Config files
