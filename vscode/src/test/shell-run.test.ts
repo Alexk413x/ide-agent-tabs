@@ -23,7 +23,7 @@ interface Run {
 function run(shell: ShellPlan, env: Record<string, string | null>, stdin: string, extraEnv: Record<string, string> = {}): Promise<Run> {
   const out = path.join(dir, `out-${Math.random().toString(16).slice(2)}`);
   const alive = `${out}.alive`;
-  const childEnv: Record<string, string> = { ...(process.env as Record<string, string>), CST_OUT: out, CST_ALIVE: alive, ...extraEnv };
+  const childEnv: Record<string, string> = { ...(process.env as Record<string, string>), IAT_OUT: out, IAT_ALIVE: alive, ...extraEnv };
   for (const [name, value] of Object.entries(env)) {
     if (value === null) delete childEnv[name];
     else childEnv[name] = value;
@@ -51,13 +51,13 @@ describe('PowerShell launcher delivers every argument byte for byte', { skip: pw
     probe,
     [
       "$left = $env:IDE_AGENT_TABS_PROMPT ?? $env:IDE_AGENT_TABS_ARGS ?? $env:IDE_AGENT_TABS_COMMAND ?? 'null'",
-      '$o = [ordered]@{ args = @($args); left = $left; agent = $env:IDE_AGENT_TABS_AGENT; id = $env:IDE_AGENT_TABS_ID; v = $env:CST_TEST_VAR }',
-      '[IO.File]::WriteAllText($env:CST_OUT, (ConvertTo-Json -InputObject $o -Compress), [Text.UTF8Encoding]::new($false))',
+      '$o = [ordered]@{ args = @($args); left = $left; agent = $env:IDE_AGENT_TABS_AGENT; id = $env:IDE_AGENT_TABS_ID; v = $env:IAT_TEST_VAR }',
+      '[IO.File]::WriteAllText($env:IAT_OUT, (ConvertTo-Json -InputObject $o -Compress), [Text.UTF8Encoding]::new($false))',
     ].join('\n'),
   );
   const alive =
     "$c = if ($null -eq $env:IDE_AGENT_TABS_COMMAND) { 'unset' } else { $env:IDE_AGENT_TABS_COMMAND }\n" +
-    "[IO.File]::WriteAllText($env:CST_ALIVE, 'alive|' + $env:IDE_AGENT_TABS_ID + '|' + $c)\nexit\n";
+    "[IO.File]::WriteAllText($env:IAT_ALIVE, 'alive|' + $env:IDE_AGENT_TABS_ID + '|' + $c)\nexit\n";
   const scripts = launchScripts(scriptDir);
   const probeProfile = (promptFlag?: string) => profile('test', 'Test', pwsh!, { args: ['-NoProfile', '-File', probe], promptFlag });
 
@@ -80,7 +80,7 @@ describe('PowerShell launcher delivers every argument byte for byte', { skip: pw
 
   test('args arrive intact and before the prompt, and env reaches the session', async () => {
     const args = ['--plugin-dir', 'C:\\Program Files\\a b', `say "hi" $(whoami) \`t\` 'q'`, 'é ✓', '2024-01-01T00:00:00Z', 'C:\\trailing\\', '@a'];
-    const out = await runPwsh(probeProfile(), 'the prompt', args, { CST_TEST_VAR: 'value with spaces' });
+    const out = await runPwsh(probeProfile(), 'the prompt', args, { IAT_TEST_VAR: 'value with spaces' });
     assert.deepEqual(out, { args: [...args, 'the prompt'], left: 'null', agent: 'test', id: 'tab-3', v: 'value with spaces' });
   });
 
@@ -88,7 +88,7 @@ describe('PowerShell launcher delivers every argument byte for byte', { skip: pw
     const probeJs = path.join(dir, 'probe.js');
     fs.writeFileSync(
       probeJs,
-      "const e = process.env; require('fs').writeFileSync(e.CST_OUT, JSON.stringify({ args: process.argv.slice(2), " +
+      "const e = process.env; require('fs').writeFileSync(e.IAT_OUT, JSON.stringify({ args: process.argv.slice(2), " +
         "left: e.IDE_AGENT_TABS_PROMPT ?? e.IDE_AGENT_TABS_ARGS ?? e.IDE_AGENT_TABS_COMMAND ?? 'null', agent: e.IDE_AGENT_TABS_AGENT }));",
     );
     const node = profile('node', 'Node', process.execPath, { args: [probeJs], promptFlag: '-p' });
@@ -124,7 +124,7 @@ describe('bash launcher delivers every argument and stays interactive', { skip: 
   const fake = [
     '#!/bin/sh',
     'out=""; for x in "$@"; do out="$out$x$(printf \'\\037\')"; done',
-    'printf \'%s|%s|%s|%s|%s|%s\' "$#" "$out" "${IDE_AGENT_TABS_PROMPT-${IDE_AGENT_TABS_ARG_0-${IDE_AGENT_TABS_ARGC-${IDE_AGENT_TABS_COMMAND-unset}}}}" "$IDE_AGENT_TABS_AGENT" "$CST_TEST_VAR" "$CST_RC" > "$CST_OUT"',
+    'printf \'%s|%s|%s|%s|%s|%s\' "$#" "$out" "${IDE_AGENT_TABS_PROMPT-${IDE_AGENT_TABS_ARG_0-${IDE_AGENT_TABS_ARGC-${IDE_AGENT_TABS_COMMAND-unset}}}}" "$IDE_AGENT_TABS_AGENT" "$IAT_TEST_VAR" "$IAT_RC" > "$IAT_OUT"',
     '',
   ].join('\n');
   const home = path.join(dir, 'home');
@@ -134,12 +134,12 @@ describe('bash launcher delivers every argument and stays interactive', { skip: 
     fs.writeFileSync(target, fake);
     fs.chmodSync(target, 0o755);
   }
-  fs.writeFileSync(path.join(home, '.bashrc'), 'export CST_RC=rc\n');
+  fs.writeFileSync(path.join(home, '.bashrc'), 'export IAT_RC=rc\n');
   fs.writeFileSync(path.join(home, '.bash_profile'), '. "$HOME/.bashrc"\n');
   const scripts = { powershell: '', posix: `${local(scriptDir)}/agent.sh`, fish: `${local(scriptDir)}/agent.fish` };
   const agent = profile('test', 'Test', local(path.join(dir, 'cst-agent')));
   const spaced = profile('spaced', 'Spaced', local(path.join(dir, 'my bin', 'cst agent')), { args: ['--model', 'm b'], promptFlag: '-i' });
-  const alive = 'printf \'alive|%s|%s|%s\' "$IDE_AGENT_TABS_ID" "${IDE_AGENT_TABS_COMMAND-${IDE_AGENT_TABS_PROMPT-unset}}" "$CST_RC" > "$CST_ALIVE"\nexit\n';
+  const alive = 'printf \'alive|%s|%s|%s\' "$IDE_AGENT_TABS_ID" "${IDE_AGENT_TABS_COMMAND-${IDE_AGENT_TABS_PROMPT-unset}}" "$IAT_RC" > "$IAT_ALIVE"\nexit\n';
 
   async function runBash(isMac: boolean, p: AgentProfile, prompt?: string, args: string[] = [], env: Record<string, string> = {}) {
     const plan = unixShell('/bin/bash', isMac, scripts);
@@ -149,7 +149,7 @@ describe('bash launcher delivers every argument and stays interactive', { skip: 
     if (isWindows) {
       shell = { ...plan, path: 'wsl.exe', args: ['--exec', '/usr/bin/env', `HOME=${toWsl(home)}`, plan.path, ...plan.args] };
       const names = Object.keys(launchEnv).filter(k => launchEnv[k] !== null);
-      extra = { WSLENV: [...names, 'CST_OUT/p', 'CST_ALIVE/p'].join(':') };
+      extra = { WSLENV: [...names, 'IAT_OUT/p', 'IAT_ALIVE/p'].join(':') };
     }
     const result = await run(shell, launchEnv, alive, extra);
     assert.equal(result.alive, 'alive|tab-1|unset|rc', 'the shell stays open with the tab id and the rc file loaded');
@@ -163,7 +163,7 @@ describe('bash launcher delivers every argument and stays interactive', { skip: 
       assert.equal(await runBash(isMac, agent, NASTY_PROMPT), `1|${NASTY_PROMPT}\u001f|unset|test||rc`);
       const args = ['--plugin-dir', '/a b/c', 'say "hi" $(whoami) `t` *', '', 'é ✓'];
       assert.equal(
-        await runBash(isMac, agent, 'the prompt', args, { CST_TEST_VAR: 'value with spaces' }),
+        await runBash(isMac, agent, 'the prompt', args, { IAT_TEST_VAR: 'value with spaces' }),
         `6|${[...args, 'the prompt'].map(a => `${a}\u001f`).join('')}|unset|test|value with spaces|rc`,
       );
       assert.equal(await runBash(isMac, spaced, 'hi'), '4|--model\u001fm b\u001f-i\u001fhi\u001f|unset|spaced||rc');

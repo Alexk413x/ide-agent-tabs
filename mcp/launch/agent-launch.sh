@@ -34,7 +34,13 @@ __ide_agent_tabs_launch() {
         shift
         n=$((n - 1))
     done
-    [ "$1" = 1 ] && a+=("$2")
+    if [ "$1" = 1 ]; then
+        a+=("$2")
+        shift 2
+    else
+        shift
+    fi
+    [ -n "${1-}" ] && printf '%s\n' "$$" > "$1"
     cd -- "$cwd" || return 1
     # bash 3.2 (macOS) treats an empty "${a[@]}" as unset under set -u.
     "$c" ${a[@]+"${a[@]}"}

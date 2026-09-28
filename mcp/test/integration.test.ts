@@ -9,7 +9,7 @@ import { tempDir } from './tempDir.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ideCaller } from '../src/ideClient.js';
-import { createServer } from '../src/server.js';
+import { createServer, SERVER_VERSION } from '../src/server.js';
 import { Service } from '../src/service.js';
 import type { LaunchSpec } from '../src/spec.js';
 import type { TerminalDriver, TerminalTab } from '../src/terminals/types.js';
@@ -277,4 +277,10 @@ test('with no IDE running, open_tab uses the preferred terminal, or explains why
     writeFileSync(live, saved);
   }
   assert.ok(existsSync(live));
+});
+
+test('the server reports the version of its package and of the Claude Code plugin', () => {
+  const version = (file: string) => JSON.parse(readFileSync(path.join(import.meta.dirname, file), 'utf8')).version;
+  assert.equal(SERVER_VERSION, version('../package.json'));
+  assert.equal(SERVER_VERSION, version('../../claude-plugin/.claude-plugin/plugin.json'));
 });

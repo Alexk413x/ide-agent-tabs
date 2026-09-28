@@ -43,6 +43,7 @@ export function powerShellSpec(spec: LaunchSpec): string {
   });
 }
 
+// The pid file is an optional last field; the launchers treat any field after the prompt as the pid file.
 export function posixSpec(spec: LaunchSpec): Buffer {
   const env = Object.entries(spec.env);
   const fields = [
@@ -56,6 +57,7 @@ export function posixSpec(spec: LaunchSpec): Buffer {
     String(spec.args.length),
     ...spec.args,
     ...(spec.prompt !== undefined ? ['1', spec.prompt] : ['0']),
+    ...(spec.pidFile !== undefined ? [spec.pidFile] : []),
   ];
   if (fields.some((f) => f.includes('\0'))) throw new Error('launch spec fields must not hold a NUL');
   return Buffer.from(fields.map((f) => `${f}\0`).join(''), 'utf8');
@@ -79,7 +81,17 @@ export function parsePosixSpec(bytes: Buffer): LaunchSpec {
   const args: string[] = [];
   for (let n = Number(next()); n > 0; n--) args.push(next());
   const prompt = next() === '1' ? next() : undefined;
-  return { id, agent, cwd, command, args, ...(prompt !== undefined ? { prompt } : {}), env: Object.fromEntries(env) };
+  const pidFile = i < fields.length ? next() : undefined;
+  return {
+    id,
+    agent,
+    cwd,
+    command,
+    args,
+    ...(prompt !== undefined ? { prompt } : {}),
+    env: Object.fromEntries(env),
+    ...(pidFile !== undefined ? { pidFile } : {}),
+  };
 }
 
 const POSIX_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;

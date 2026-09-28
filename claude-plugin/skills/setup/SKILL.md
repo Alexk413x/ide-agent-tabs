@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up Agent Tabs on this machine - check prerequisites, install the IDE extensions (JetBrains, VS Code, Antigravity and other VS Code-based editors), pick a default agent and terminal, and optionally add OpenAI's Codex plugin. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
+description: Set up Agent Tabs on this machine - check Node.js, install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and terminal, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin and turn on Jev judgments. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
 argument-hint: "[--check]"
 ---
 
@@ -12,88 +12,144 @@ Arguments: `$ARGUMENTS`
 Ask before each change. Show the exact command you will run. At the end, give a short table of what's
 done, what's skipped, and anything the user must do by hand, such as restarting an IDE.
 
-## 1. Prerequisites
+This plugin carries the IDE extensions in `${CLAUDE_PLUGIN_ROOT}/dist/ide/`. You don't download
+anything. `${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs` installs them and reports on them.
 
-| Check | Command | If it fails |
-|---|---|---|
-| Node.js 20 or later (runs the MCP server) | `node --version` | Ask the user to install Node.js LTS. The MCP tools stay unavailable until then. |
-| GitHub CLI, signed in (downloads private releases) | `gh auth status` | Ask the user to run `! gh auth login`. |
-| Repository access | `gh release list -R Alexk413x/ide-agent-tabs --limit 5` | The user needs read access to the repository. |
+## 1. Prerequisite
 
-## 2. Download the newest releases
+Run `node --version`. The MCP server and `sync-ides.mjs` need Node.js 20 or later. If Node.js is
+missing or older, ask the user to install the current Node.js LTS, and stop. Nothing else is required.
 
-For each part below, find the newest release tag (`jetbrains-v*`, `vscode-v*`) and download it into
-`~/.ide-agent-tabs/downloads/<tag>/`:
+## 2. Find the IDEs
 
-```sh
-gh release download <tag> -R Alexk413x/ide-agent-tabs -D ~/.ide-agent-tabs/downloads/<tag> --clobber
-```
+1. Find VS Code and editors built on it, such as Cursor, Windsurf, VSCodium and Antigravity:
 
-Check each file against the release's `SHA256SUMS` (`sha256sum -c` in Bash, or `Get-FileHash` in
-PowerShell). Stop if a checksum doesn't match.
-
-If there are no releases yet, ask whether the user has a local build: a JetBrains zip from
-`jetbrains/build/distributions/` or a `.vsix` from `vscode/`. Use those files instead.
-
-## 3. JetBrains IDEs
-
-Find installed JetBrains IDEs, including Android Studio:
-
-- Windows: `C:\Program Files\Android\Android Studio*`, `C:\Program Files\JetBrains\*`,
-  `%LOCALAPPDATA%\Programs\*`, and the JetBrains Toolbox apps folder.
-- macOS: `/Applications/*.app` and `~/Applications/*.app` that contain `Contents/Resources/product-info.json`.
-- Linux: `~/.local/share/JetBrains/Toolbox/apps/*`, `/opt/*`, and `/snap/*`.
-
-Read each IDE's `product-info.json` to get its name and build number. The plugin needs build 262.10315 or later (2026.2.2).
-
-Then set up the local plugin repository:
-
-1. Copy the zip to `~/.ide-agent-tabs/repository/`.
-2. Write `~/.ide-agent-tabs/repository/updatePlugins.xml`:
-
-   ```xml
-   <plugins>
-     <plugin id="dev.alexk.ide-agent-tabs" url="file:///<absolute path to the zip>" version="<version>">
-       <idea-version since-build="262.10315"/>
-       <name>Agent Tabs</name>
-       <vendor>Alexk413x</vendor>
-     </plugin>
-   </plugins>
+   ```sh
+   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --status
    ```
 
-3. For each IDE, tell the user to add `file:///<home>/.ide-agent-tabs/repository/updatePlugins.xml` once
-   in **Settings > Plugins > ⚙ > Manage Plugin Repositories**, then install **Agent Tabs** from
-   **Marketplace** (it lists the custom repository's plugins), or use **Install Plugin from Disk** with
-   the zip. Then restart the IDE.
-4. If the old **Claude Studio Tabs** plugin (`dev.alexk.claude-studio-tabs`) is installed, tell the user
-   to uninstall it first. Both plugins would add a toolbar button.
+   The JSON lists each editor's command-line tool (`cli`, `path`) and the extension version installed
+   there (`installed`, or `null`). It also shows the bundled versions and the JetBrains repository.
+   The script looks for `code`, `code-insiders`, `cursor`, `windsurf`, `codium` and `antigravity-ide`
+   on `PATH` and in the usual install folders. If the user has an editor it misses, ask for the path to
+   its command-line tool.
 
-## 4. VS Code and VS Code-based editors
+2. Find JetBrains IDEs, including Android Studio. Look for folders that contain `product-info.json`
+   (on macOS, `Contents/Resources/product-info.json`):
 
-Find each editor's command-line tool: `code`, `code-insiders`, `cursor`, `windsurf`, and
-`antigravity-ide`. Antigravity's tool is often not on `PATH`; on Windows it's at
-`%LOCALAPPDATA%\Programs\Antigravity IDE\bin\antigravity-ide.cmd`.
+   - Windows: `C:\Program Files\Android\Android Studio*`, `C:\Program Files\JetBrains\*`,
+     `%LOCALAPPDATA%\Programs\*` (Toolbox 2.x installs IDEs here), and
+     `%LOCALAPPDATA%\JetBrains\Toolbox\apps\*`.
+   - macOS: `/Applications/*.app` and `~/Applications/*.app`.
+   - Linux: `~/.local/share/JetBrains/Toolbox/apps/*`, `/opt/*`, `/usr/share/*`, `/usr/local/*`,
+     `/snap/*/current`, and Flatpak apps in `/var/lib/flatpak/app/*/current/active/files` and
+     `~/.local/share/flatpak/app/*/current/active/files`.
 
-For each one found:
+   Read each IDE's `product-info.json` for its `name` and `buildNumber`. The plugin needs build
+   262.10315 or later (2026.2.2). List an older IDE as too old; don't set it up.
+
+3. Show one list of every IDE found, with the installed Agent Tabs version where there is one. Ask
+   once which ones to set up. The default is all of them.
+
+Stop here with `--check`.
+
+## 3. VS Code and editors built on it
+
+Install the extension into the editors the user chose. Pass each `cli` name, or the `path` for a tool
+that isn't on `PATH`:
 
 ```sh
-<cli> --install-extension ~/.ide-agent-tabs/downloads/<tag>/ide-agent-tabs-<version>.vsix --force
+node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --install <cli> [<cli>...]
 ```
 
-Tell the user to reload open windows (**Developer: Reload Window**).
+The JSON report lists each editor with `ok`, or an `error`. Tell the user to reload open windows
+(**Developer: Reload Window**).
 
-## 5. Agents and defaults
+## 4. JetBrains IDEs
+
+1. Create the local plugin repository:
+
+   ```sh
+   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --install --jetbrains
+   ```
+
+   The report's `jetbrains.url` is the `file:///` URL of `updatePlugins.xml` in
+   `~/.ide-agent-tabs/repository/`.
+
+2. Give the user these one-time steps for each JetBrains IDE they chose:
+   1. Open **Settings > Plugins**, click **⚙**, and choose **Manage Plugin Repositories**.
+   2. Add the `jetbrains.url` from the report, and click **OK**.
+   3. On the **Marketplace** tab, find **Agent Tabs** and click **Install**.
+   4. Restart the IDE.
+
+3. Tell the user that later versions arrive as normal JetBrains plugin updates. The IDE offers each one
+   at its next update check, or at once from **Settings > Plugins > Installed > Check for Updates**.
+
+## 5. Default agent
 
 1. Call the MCP tool `list_agents` and show which agent CLIs are installed.
-2. Ask which agent the **New Agent Tab** button should open by default, and write it to
-   `~/.ide-agent-tabs/config.json` as `"defaultAgent"`. Keep any other keys in that file.
-3. Ask which terminal app `open_tab` should use when no IDE fits: `windows-terminal` on Windows,
-   `ghostty` on macOS or Linux. Write it as `"terminal"`.
-4. To add a custom agent, such as one that runs a local LM Studio model, add a profile to
-   `~/.ide-agent-tabs/agents.json`. The format is in the repository's `docs/design.md` under
-   "Agent profiles".
+2. Ask which agent the **New Agent Tab** button opens by default. The default is `claude`, or the only
+   installed agent. Write it to `~/.ide-agent-tabs/config.json` as `"defaultAgent"`. Keep any other
+   keys in that file.
+3. To add a custom agent, such as another agent CLI or a CLI set to a specific model, add a profile to
+   `~/.ide-agent-tabs/agents.json`. See
+   [Agent profiles](https://github.com/Alexk413x/ide-agent-tabs/blob/main/docs/design.md#agent-profiles)
+   for the format.
 
-## 6. Codex plugin (optional)
+## 6. Other agents
+
+Codex, Gemini CLI, Copilot CLI and OpenCode can use Agent Tabs too. With it, they can list IDEs and
+open, list and close agent tabs.
+
+1. Run:
+
+   ```sh
+   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --agents
+   ```
+
+   The JSON lists each agent with `installed`, `registered`, the server `path` it's registered with, and
+   `stable`, which is `true` when that path is the copy in `~/.ide-agent-tabs/mcp/`. Claude Code isn't
+   listed, because it gets the server from this plugin.
+
+2. Show the installed agents and whether each can already use Agent Tabs. Treat an agent with
+   `registered` but not `stable` as one that needs registering again. If no agent is installed, skip
+   this step.
+
+3. Ask once which agents to register. The default is every installed agent that isn't registered with
+   the stable copy. Then run:
+
+   ```sh
+   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --register <agent> [<agent>...]
+   ```
+
+   The JSON report lists each agent with `ok`, or an `error`. For a config file the script can't edit
+   safely, such as a JSON file with comments, the error says so; show the user the entry to add by hand
+   from the "Other agents" section of the MCP server README.
+
+4. Tell the user to restart open sessions of those agents, so they load the server.
+
+## 7. Terminal
+
+Ask whether the user wants agent tabs outside IDEs, in a terminal app. If not, skip this step.
+
+`list_ides` shows the terminal apps installed here. Ask which one `open_tab` uses when no IDE fits, and
+write the choice to `~/.ide-agent-tabs/config.json` as `"terminal"`. Without one, the server uses the
+first installed terminal in this order:
+
+- Windows: `windows-terminal`, `wezterm`.
+- macOS and Linux: `ghostty`, `kitty`, `wezterm`, `tmux`.
+
+If the user picks `kitty`, tell them to add these two lines to `kitty.conf` (usually
+`~/.config/kitty/kitty.conf`) and restart kitty, so it can open tabs. Without them, each agent opens
+in a new kitty window that `close_tab` can only close on a best-effort basis.
+
+- Linux: `allow_remote_control socket-only` and `listen_on unix:${XDG_RUNTIME_DIR}/kitty-agent-tabs`
+- macOS: `allow_remote_control socket-only` and `listen_on unix:${TMPDIR}/kitty-agent-tabs`
+
+If the user picks `tmux`, tell them that tabs open in their most recently attached session, or in a
+detached session named `agents` that they open with `tmux attach -t agents`.
+
+## 8. Codex plugin (optional)
 
 If `codex` is installed, offer OpenAI's Codex plugin for Claude Code. It gives `/codex:review` and
 `/codex:rescue`, and the `delegate` skill uses it when present:
@@ -105,7 +161,50 @@ claude plugin install codex@openai-codex
 
 Then run `/reload-plugins`.
 
-## 7. Check it works
+## 9. Jev (optional)
 
-1. Call `list_ides`. Every IDE with the extension installed and a window open should appear.
+Jev is TypeSafe's "System One" model. With Jev on, the MCP server adds `jev_` tools that let every
+agent it serves ask Jev for a pick, a yes or no, or a ranking instead of spending a model turn. Each
+request goes to TypeSafe's API and needs a TypeSafe API key. Ask whether the user wants it. If not,
+skip this step.
+
+1. Ask before you change `~/.ide-agent-tabs/config.json`. Then set `"jev": {"enabled": true}` in it,
+   and keep every other key.
+2. Offer to add tiers for `jev_route`, which the `delegate` skill uses to pick an agent. Each key is
+   `<profile>` or `<profile>:<model>`, and each value says what that tier is for:
+
+   ```json
+   "jev": {
+     "enabled": true,
+     "tiers": {
+       "claude:haiku": "Short lookups, renames and one-file edits",
+       "claude:opus": "Design judgment and changes across many files",
+       "codex": "A second opinion or an independent review"
+     }
+   }
+   ```
+
+   Write only the tiers the user agrees to, for agents that `list_agents` shows as installed.
+3. Check that the server finds a key:
+
+   ```sh
+   echo '{}' | node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status
+   ```
+
+   The reply's `key` is `env`, `credential-store` or `missing`. This check sends nothing to TypeSafe.
+4. If `key` is `missing`, show the `key_error` text. Never ask the user to paste the key into this
+   conversation or into a command. Tell them to do one of these themselves:
+   - Set `TYPESAFE_API_KEY` in the environment that agent CLIs start from.
+   - Store the key in the operating system's credential store under service `typesafe`, account
+     `api_key`. On Windows, that's the generic credential `typesafe` with user name `api_key`. Python's
+     `keyring` writes this entry, so a key that cartographer already uses works here too.
+5. Tell the user to restart open agent sessions, so the server lists the Jev tools.
+
+## 10. Check it works
+
+1. Call `list_ides`. Every IDE with the extension installed and a window open appears.
 2. Offer to open a test tab with `open_tab` in the current folder, then close it with `close_tab`.
+
+Tell the user that the plugin keeps the IDE extensions up to date. When a Claude Code session starts
+after a plugin update, it updates the extension in each editor that has it, puts the new JetBrains
+plugin in the local repository, and refreshes the server copy that other agents use.
