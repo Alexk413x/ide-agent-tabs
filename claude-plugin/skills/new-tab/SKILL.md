@@ -5,7 +5,7 @@ argument-hint: "[agent] [folder] [-- first message]"
 ---
 
 Open, list or close agent tabs through the `ide-agent-tabs` MCP server. The tab can be in any running IDE
-(JetBrains, VS Code, Antigravity) or in a terminal app.
+(JetBrains IDEs, VS Code and VS Code-based editors) or in a terminal app.
 
 Arguments: `$ARGUMENTS`
 

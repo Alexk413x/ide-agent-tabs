@@ -91,7 +91,7 @@ The JSON report lists each editor with `ok`, or an `error`. Tell the user to rel
 2. Ask which agent the **New Agent Tab** button opens by default. The default is `claude`, or the only
    installed agent. Write it to `~/.ide-agent-tabs/config.json` as `"defaultAgent"`. Keep any other
    keys in that file.
-3. To add a custom agent, such as one that runs a local LM Studio model, add a profile to
+3. To add a custom agent, such as another agent CLI or a CLI set to a specific model, add a profile to
    `~/.ide-agent-tabs/agents.json`. See
    [Agent profiles](https://github.com/Alexk413x/ide-agent-tabs/blob/main/docs/design.md#agent-profiles)
    for the format.
