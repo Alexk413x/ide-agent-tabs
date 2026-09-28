@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up Agent Tabs on this machine - check Node.js, install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and terminal, and optionally add OpenAI's Codex plugin. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
+description: Set up Agent Tabs on this machine - check Node.js, install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and terminal, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
 argument-hint: "[--check]"
 ---
 
@@ -96,7 +96,39 @@ The JSON report lists each editor with `ok`, or an `error`. Tell the user to rel
    [Agent profiles](https://github.com/Alexk413x/ide-agent-tabs/blob/main/docs/design.md#agent-profiles)
    for the format.
 
-## 6. Terminal
+## 6. Other agents
+
+Codex, Gemini CLI, Copilot CLI and OpenCode can use Agent Tabs too. With it, they can list IDEs and
+open, list and close agent tabs.
+
+1. Run:
+
+   ```sh
+   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --agents
+   ```
+
+   The JSON lists each agent with `installed`, `registered`, the server `path` it's registered with, and
+   `stable`, which is `true` when that path is the copy in `~/.ide-agent-tabs/mcp/`. Claude Code isn't
+   listed, because it gets the server from this plugin.
+
+2. Show the installed agents and whether each can already use Agent Tabs. Treat an agent with
+   `registered` but not `stable` as one that needs registering again. If no agent is installed, skip
+   this step.
+
+3. Ask once which agents to register. The default is every installed agent that isn't registered with
+   the stable copy. Then run:
+
+   ```sh
+   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --register <agent> [<agent>...]
+   ```
+
+   The JSON report lists each agent with `ok`, or an `error`. For a config file the script can't edit
+   safely, such as a JSON file with comments, the error says so; show the user the entry to add by hand
+   from the "Other agents" section of the MCP server README.
+
+4. Tell the user to restart open sessions of those agents, so they load the server.
+
+## 7. Terminal
 
 Ask whether the user wants agent tabs outside IDEs, in a terminal app. If not, skip this step.
 
@@ -117,7 +149,7 @@ in a new kitty window that `close_tab` can only close on a best-effort basis.
 If the user picks `tmux`, tell them that tabs open in their most recently attached session, or in a
 detached session named `agents` that they open with `tmux attach -t agents`.
 
-## 7. Codex plugin (optional)
+## 8. Codex plugin (optional)
 
 If `codex` is installed, offer OpenAI's Codex plugin for Claude Code. It gives `/codex:review` and
 `/codex:rescue`, and the `delegate` skill uses it when present:
@@ -129,11 +161,11 @@ claude plugin install codex@openai-codex
 
 Then run `/reload-plugins`.
 
-## 8. Check it works
+## 9. Check it works
 
 1. Call `list_ides`. Every IDE with the extension installed and a window open appears.
 2. Offer to open a test tab with `open_tab` in the current folder, then close it with `close_tab`.
 
 Tell the user that the plugin keeps the IDE extensions up to date. When a Claude Code session starts
-after a plugin update, it updates the extension in each editor that has it, and puts the new JetBrains
-plugin in the local repository.
+after a plugin update, it updates the extension in each editor that has it, puts the new JetBrains
+plugin in the local repository, and refreshes the server copy that other agents use.

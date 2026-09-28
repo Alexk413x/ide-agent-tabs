@@ -237,7 +237,7 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
   which split commands at `;`. tmux gets no `-c <dir>`, because it expands formats such as `#(…)` there;
   the launcher changes to the folder instead.
 - A terminal the server starts gets the server's environment without the variables that identify the
-  calling agent session, such as `CLAUDECODE`.
+  calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 - The POSIX launchers write the shell's pid to `launch/<id>.pid` when the spec names a pid file. The
   shell then replaces itself with an interactive login shell, so the pid stays the same after the agent
   exits.
@@ -343,6 +343,8 @@ Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before eac
   and restart the IDE;
 - reports which agent CLIs are installed, and writes the default agent and the preferred terminal to
   `~/.ide-agent-tabs/config.json`;
+- registers the MCP server with the other agent CLIs the user picks (Codex, Gemini CLI, Copilot CLI,
+  OpenCode) with `sync-ides.mjs --register <agent>…`;
 - offers to add OpenAI's Codex plugin (`claude plugin marketplace add openai/codex-plugin-cc`, then
   `claude plugin install codex@openai-codex`) when Codex is installed.
 
@@ -382,6 +384,7 @@ in `vscode/package.json`.
 | Claude Code plugin | This repository, through the marketplace | `claude plugin update ide-agent-tabs@ide-agent-tabs`, or auto-update turned on for the marketplace in `/plugin` (off by default for a marketplace you add yourself) |
 | VS Code extension | `dist/ide/ide-agent-tabs.vsix` in the installed plugin | The session start hook runs `<cli> --install-extension <vsix> --force` in each editor that has an older version. |
 | JetBrains plugin | `~/.ide-agent-tabs/repository/updatePlugins.xml` | The session start hook puts the bundled zip there. The IDE offers the update from its custom plugin repository. |
+| MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Gemini CLI, Copilot CLI and OpenCode run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. |
 
 ### Session start hook
 
@@ -389,8 +392,9 @@ in `vscode/package.json`.
 with a 60-second timeout. The hook:
 
 1. Compares `dist/ide/versions.json` with `~/.ide-agent-tabs/synced.json`, and stops when the versions
-   match the last sync. After a failed sync, it tries again at later sessions, up to three attempts for
-   the same versions.
+   match the last sync and the server copy needs no refresh (step 5). After a failed IDE sync, it tries
+   again at later sessions, up to three attempts for the same versions. Steps 3 and 4 run only when the
+   versions changed or a retry is due.
 2. Creates `~/.ide-agent-tabs/sync.lock`, so two sessions don't sync at once. It treats a lock older than
    five minutes as stale.
 3. Finds each editor command-line tool: `code`, `code-insiders`, `cursor`, `windsurf`, `codium` and
@@ -400,7 +404,10 @@ with a 60-second timeout. The hook:
 4. If `~/.ide-agent-tabs/repository/` exists, copies the zip there as `ide-agent-tabs-<version>.zip`,
    rewrites `updatePlugins.xml` with a `file:///` URL, and deletes older zips. It never replaces a newer
    version that is already in the folder.
-5. Writes `synced.json`, appends any errors to `~/.ide-agent-tabs/sync.log`, and prints a message for the
+5. If `~/.ide-agent-tabs/mcp/` exists and the bundled server's hash differs from the one in
+   `synced.json`, copies the server there, one file at a time through a temporary file and a rename. A
+   file in use fails the copy, and the next session tries again.
+6. Writes `synced.json`, appends any errors to `~/.ide-agent-tabs/sync.log`, and prints a message for the
    session when it updated something.
 
 The hook always exits with code 0, so a failed sync never blocks a session.

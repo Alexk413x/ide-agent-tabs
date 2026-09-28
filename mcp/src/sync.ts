@@ -2,7 +2,8 @@ import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { ensurePrivateDir, readTextIfExists, writeAtomically } from './files.js';
 import { findOnPath } from './installed.js';
-import { run } from './process.js';
+import { run, type RunResult } from './process.js';
+import { refreshServerCopy, serverCopyDir, serverHash } from './serverCopy.js';
 
 export const EXTENSION_ID = 'alexk413x.ide-agent-tabs';
 export const JETBRAINS_PLUGIN_ID = 'dev.alexk.ide-agent-tabs';
@@ -24,6 +25,7 @@ export interface Versions {
 export interface SyncState extends Versions {
   syncedAt: string;
   failures: number;
+  server?: string;
 }
 
 export interface Bundle {
@@ -34,6 +36,7 @@ export interface Bundle {
 
 export interface SyncContext {
   bundleDir: string;
+  serverDir: string;
   home: string;
   platform: NodeJS.Platform;
   env: NodeJS.ProcessEnv;
@@ -135,15 +138,18 @@ function cliFileNames(cli: string, platform: NodeJS.Platform): string[] {
   return platform === 'win32' ? [`${cli}.cmd`, `${cli}.exe`] : [cli];
 }
 
-export function findEditorClis(ctx: Pick<SyncContext, 'platform' | 'env' | 'userHome'>, exists: (file: string) => boolean = existsSync): EditorCli[] {
+export function findCliOnPath(cli: string, ctx: Pick<SyncContext, 'platform' | 'env'>): string | undefined {
   const pathVar = ctx.env.PATH ?? ctx.env.Path ?? '';
+  return cliFileNames(cli, ctx.platform)
+    .map((name) => findOnPath(pathVar, name))
+    .find((p) => p !== undefined);
+}
+
+export function findEditorClis(ctx: Pick<SyncContext, 'platform' | 'env' | 'userHome'>, exists: (file: string) => boolean = existsSync): EditorCli[] {
   const locations = editorCliLocations(ctx.platform, ctx.env, ctx.userHome);
   const found: EditorCli[] = [];
   for (const cli of EDITOR_CLIS) {
-    const onPath = cliFileNames(cli, ctx.platform)
-      .map((name) => findOnPath(pathVar, name))
-      .find((p) => p !== undefined);
-    const file = onPath ?? locations[cli]!.find((p) => exists(p));
+    const file = findCliOnPath(cli, ctx) ?? locations[cli]!.find((p) => exists(p));
     if (file) found.push({ cli, path: file });
   }
   return found;
@@ -157,11 +163,7 @@ export function resolveEditorCli(nameOrPath: string, ctx: Pick<SyncContext, 'pla
     return file ? { cli: pathApi.basename(file, pathApi.extname(file)), path: file } : undefined;
   }
   if (/[\\/]/.test(nameOrPath)) return undefined;
-  const pathVar = ctx.env.PATH ?? ctx.env.Path ?? '';
-  const onPath = cliFileNames(nameOrPath, ctx.platform)
-    .map((name) => findOnPath(pathVar, name))
-    .find((p) => p !== undefined);
-  const file = onPath ?? (editorCliLocations(ctx.platform, ctx.env, ctx.userHome)[nameOrPath] ?? []).find((p) => exists(p));
+  const file = findCliOnPath(nameOrPath, ctx) ?? (editorCliLocations(ctx.platform, ctx.env, ctx.userHome)[nameOrPath] ?? []).find((p) => exists(p));
   return file ? { cli: nameOrPath, path: file } : undefined;
 }
 
@@ -181,13 +183,21 @@ export function cliInvocation(cli: string, args: string[], platform: NodeJS.Plat
   };
 }
 
-async function runCli(ctx: SyncContext, cli: string, args: string[], timeoutMs: number) {
+type CliContext = Pick<SyncContext, 'platform' | 'env'>;
+
+export async function runCliResult(ctx: CliContext, cli: string, args: string[], timeoutMs: number, cwd?: string): Promise<RunResult> {
   const inv = cliInvocation(cli, args, ctx.platform, ctx.env.ComSpec ?? ctx.env.COMSPEC);
-  const result = await run(inv.command, inv.args, { timeoutMs, env: ctx.env, windowsVerbatimArguments: inv.windowsVerbatimArguments });
-  if (result.code !== 0) {
-    const detail = (result.stderr.trim() || result.stdout.trim()).split(/\r?\n/).slice(-3).join(' ');
-    throw new Error(`${path.basename(cli)} ${args[0]} exited with ${result.code}${detail ? `: ${detail}` : ''}`);
-  }
+  return run(inv.command, inv.args, { timeoutMs, env: ctx.env, cwd, windowsVerbatimArguments: inv.windowsVerbatimArguments });
+}
+
+export function cliFailure(cli: string, args: string[], result: RunResult): Error {
+  const detail = (result.stderr.trim() || result.stdout.trim()).split(/\r?\n/).slice(-3).join(' ');
+  return new Error(`${path.basename(cli)} ${args[0]} exited with ${result.code}${detail ? `: ${detail}` : ''}`);
+}
+
+async function runCli(ctx: CliContext, cli: string, args: string[], timeoutMs: number, cwd?: string): Promise<string> {
+  const result = await runCliResult(ctx, cli, args, timeoutMs, cwd);
+  if (result.code !== 0) throw cliFailure(cli, args, result);
   return result.stdout;
 }
 
@@ -222,6 +232,7 @@ export function parseSyncState(text: string | undefined): SyncState | undefined 
       jetbrains: raw.jetbrains,
       syncedAt: typeof raw.syncedAt === 'string' ? raw.syncedAt : '',
       failures: typeof raw.failures === 'number' ? raw.failures : 0,
+      ...(typeof raw.server === 'string' ? { server: raw.server } : {}),
     };
   } catch {
     return undefined;
@@ -236,7 +247,13 @@ export function needsSync(state: SyncState | undefined, bundled: Versions): bool
 export function nextSyncState(previous: SyncState | undefined, bundled: Versions, failed: boolean, now: Date): SyncState {
   const sameVersions = previous?.vscode === bundled.vscode && previous?.jetbrains === bundled.jetbrains;
   const failures = failed ? (sameVersions ? previous!.failures : 0) + 1 : 0;
-  return { ...bundled, syncedAt: now.toISOString(), failures };
+  return { ...bundled, syncedAt: now.toISOString(), failures, ...(previous?.server ? { server: previous.server } : {}) };
+}
+
+export async function serverToRefresh(state: SyncState | undefined, copyExists: boolean, bundledHash: () => Promise<string>): Promise<string | undefined> {
+  if (!copyExists) return undefined;
+  const hash = await bundledHash();
+  return state?.server === hash ? undefined : hash;
 }
 
 export function hookMessage(bundled: Versions, updatedEditors: string[], jetbrainsUpdated: boolean): string | undefined {
@@ -308,43 +325,58 @@ export async function publishJetbrains(bundle: Bundle, repoDir: string, platform
   return { ...result, zip, version, changed: existing !== version };
 }
 
+async function syncEditors(ctx: SyncContext, bundle: Bundle, errors: string[]) {
+  const updated = await Promise.all(
+    findEditorClis(ctx).map(async ({ cli, path: file }) => {
+      try {
+        const installed = await installedExtensionVersion(ctx, file);
+        if (installed === undefined || compareVersions(installed, bundle.versions.vscode) >= 0) return undefined;
+        await installVsix(ctx, file, bundle.vsix);
+        return cli;
+      } catch (e) {
+        errors.push(`${cli}: ${(e as Error).message}`);
+        return undefined;
+      }
+    }),
+  );
+  let jetbrainsUpdated = false;
+  if (existsSync(repositoryDir(ctx.home))) {
+    try {
+      jetbrainsUpdated = (await publishJetbrains(bundle, repositoryDir(ctx.home), ctx.platform)).changed;
+    } catch (e) {
+      errors.push(`jetbrains: ${(e as Error).message}`);
+    }
+  }
+  return { updated: updated.filter((c): c is string => c !== undefined), jetbrainsUpdated };
+}
+
 export async function syncHook(ctx: SyncContext, now = new Date()): Promise<string | undefined> {
   const bundle = await readBundle(ctx.bundleDir);
   const previous = await readSyncState(ctx.home);
-  if (!needsSync(previous, bundle.versions)) return undefined;
+  const server = await serverToRefresh(previous, existsSync(serverCopyDir(ctx.home)), () => serverHash(ctx.serverDir));
+  const ides = needsSync(previous, bundle.versions);
+  if (!ides && server === undefined) return undefined;
   await ensurePrivateDir(ctx.home);
   const lock = path.join(ctx.home, 'sync.lock');
   if (!(await tryLock(lock, LOCK_STALE_MS, now.getTime()))) return undefined;
   try {
     const errors: string[] = [];
-    const updated = await Promise.all(
-      findEditorClis(ctx).map(async ({ cli, path: file }) => {
-        try {
-          const installed = await installedExtensionVersion(ctx, file);
-          if (installed === undefined || compareVersions(installed, bundle.versions.vscode) >= 0) return undefined;
-          await installVsix(ctx, file, bundle.vsix);
-          return cli;
-        } catch (e) {
-          errors.push(`${cli}: ${(e as Error).message}`);
-          return undefined;
-        }
-      }),
-    );
-    let jetbrainsUpdated = false;
-    if (existsSync(repositoryDir(ctx.home))) {
+    let syncedServer = previous?.server;
+    if (server !== undefined) {
       try {
-        jetbrainsUpdated = (await publishJetbrains(bundle, repositoryDir(ctx.home), ctx.platform)).changed;
+        await refreshServerCopy(ctx.serverDir, ctx.home);
+        syncedServer = server;
       } catch (e) {
-        errors.push(`jetbrains: ${(e as Error).message}`);
+        errors.push(`server copy: ${(e as Error).message}`);
       }
     }
-    await writeSyncState(ctx.home, nextSyncState(previous, bundle.versions, errors.length > 0, now));
+    const ideErrors: string[] = [];
+    const result = ides ? await syncEditors(ctx, bundle, ideErrors) : { updated: [], jetbrainsUpdated: false };
+    const state = ides ? nextSyncState(previous, bundle.versions, ideErrors.length > 0, now) : { ...previous!, syncedAt: now.toISOString() };
+    await writeSyncState(ctx.home, { ...state, ...(syncedServer ? { server: syncedServer } : {}) });
+    errors.push(...ideErrors);
     if (errors.length > 0) await appendLog(ctx.home, errors.join('\n'), now);
-    return hookMessage(
-      bundle.versions,
-      updated.filter((c): c is string => c !== undefined),
-      jetbrainsUpdated,
-    );
+    return hookMessage(bundle.versions, result.updated, result.jetbrainsUpdated);
   } finally {
     await fs.rm(lock, { force: true });
   }

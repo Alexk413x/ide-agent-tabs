@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
+import { serverCopyDir } from '../src/serverCopy.js';
+import { makeServerDir } from './serverDir.js';
 import { tempDir } from './tempDir.js';
 import {
   cliInvocation,
@@ -21,6 +23,7 @@ import {
   readBundle,
   repositoryVersion,
   resolveEditorCli,
+  serverToRefresh,
   syncHook,
   tryLock,
   updatePluginsXml,
@@ -144,8 +147,18 @@ test('skips the sync when synced.json records the bundled versions', () => {
   assert.equal(nextSyncState({ ...bundled, syncedAt: '', failures: 2 }, bundled, true, at).failures, 3);
   assert.equal(nextSyncState({ ...bundled, vscode: '0.1.1', syncedAt: '', failures: 2 }, bundled, true, at).failures, 1);
   assert.deepEqual(parseSyncState(JSON.stringify({ ...bundled })), { ...bundled, syncedAt: '', failures: 0 });
+  assert.equal(parseSyncState(JSON.stringify({ ...bundled, server: 'abc' }))?.server, 'abc');
+  assert.equal(nextSyncState({ ...bundled, syncedAt: '', failures: 0, server: 'abc' }, bundled, false, at).server, 'abc');
   assert.equal(parseSyncState('{'), undefined);
   assert.equal(parseSyncState(undefined), undefined);
+});
+
+test('refreshes the server copy only when it exists and the bundled server changed', async () => {
+  const state = { ...bundled, syncedAt: '', failures: 0, server: 'h1' };
+  assert.equal(await serverToRefresh(state, false, async () => 'h2'), undefined);
+  assert.equal(await serverToRefresh(state, true, async () => 'h1'), undefined);
+  assert.equal(await serverToRefresh(state, true, async () => 'h2'), 'h2');
+  assert.equal(await serverToRefresh(undefined, true, async () => 'h1'), 'h1');
 });
 
 test('describes what the hook updated in one line', () => {
@@ -196,14 +209,23 @@ function fakeClis(bin: string, installed: Record<string, string>): void {
     if (process.platform === 'win32') {
       writeFileSync(
         path.join(bin, `${cli}.cmd`),
-        `@echo off\r\necho ${cli} %*>> "%~dp0calls.txt"\r\nif "%~1"=="--list-extensions" echo ${line}\r\nexit /b 0\r\n`,
+        `@echo off\r\necho ${cli} %*>> "%~dp0calls-${cli}.txt"\r\nif "%~1"=="--list-extensions" echo ${line}\r\nexit /b 0\r\n`,
       );
     } else {
       const file = path.join(bin, cli);
-      writeFileSync(file, `#!/bin/sh\necho "${cli} $*" >> "$(dirname "$0")/calls.txt"\n[ "$1" = "--list-extensions" ] && echo "${line}"\nexit 0\n`);
+      writeFileSync(file, `#!/bin/sh\necho "${cli} $*" >> "$(dirname "$0")/calls-${cli}.txt"\n[ "$1" = "--list-extensions" ] && echo "${line}"\nexit 0\n`);
       chmodSync(file, 0o755);
     }
   }
+}
+
+const callFiles = (bin: string) => readdirSync(bin).filter((n) => /^calls-.+\.txt$/.test(n)).map((n) => path.join(bin, n));
+
+function readCalls(bin: string): string[] {
+  return callFiles(bin)
+    .flatMap((file) => readFileSync(file, 'utf8').split(/\r?\n/))
+    .map((l) => l.replace(/"/g, '').trim())
+    .filter(Boolean);
 }
 
 test('the hook updates only editors with an older extension, then stays quiet', async () => {
@@ -213,14 +235,14 @@ test('the hook updates only editors with an older extension, then stays quiet', 
   fakeClis(bin, { code: '0.1.16', cursor: '0.1.2', windsurf: '0.1.17' });
   mkdirSync(path.join(home, 'repository'), { recursive: true });
   const env = { PATH: bin, ComSpec: process.env.ComSpec, SystemRoot: process.env.SystemRoot };
-  const ctx = { bundleDir, home, platform: process.platform, env, userHome: bin };
+  const ctx = { bundleDir, serverDir: makeServerDir(), home, platform: process.platform, env, userHome: bin };
 
   const message = await syncHook(ctx);
   assert.equal(
     message,
     "Agent Tabs: updated the VS Code extension to 0.1.17 in code, cursor (reload their windows); the JetBrains plugin 0.4.1 is ready in each JetBrains IDE's plugin updates.",
   );
-  const calls = readFileSync(path.join(bin, 'calls.txt'), 'utf8').split(/\r?\n/).map((l) => l.replace(/"/g, '').trim()).filter(Boolean);
+  const calls = readCalls(bin);
   const installs = calls.filter((c) => c.includes('--install-extension')).sort();
   const vsix = path.join(bundleDir, VSIX_NAME);
   assert.deepEqual(installs, [`code --install-extension ${vsix} --force`, `cursor --install-extension ${vsix} --force`]);
@@ -229,7 +251,36 @@ test('the hook updates only editors with an older extension, then stays quiet', 
   assert.deepEqual(parseSyncState(readFileSync(path.join(home, 'synced.json'), 'utf8'))?.failures, 0);
   assert.ok(!existsSync(path.join(home, 'sync.lock')));
 
-  writeFileSync(path.join(bin, 'calls.txt'), '');
+  for (const file of callFiles(bin)) writeFileSync(file, '');
   assert.equal(await syncHook(ctx), undefined);
-  assert.equal(readFileSync(path.join(bin, 'calls.txt'), 'utf8'), '');
+  assert.deepEqual(readCalls(bin), []);
+});
+
+test('the hook refreshes an existing server copy when the bundled server changes', async () => {
+  const bundleDir = makeBundle();
+  const serverDir = makeServerDir('server v1');
+  const home = path.join(tempDir('iat-home-'), '.ide-agent-tabs');
+  const ctx = { bundleDir, serverDir, home, platform: process.platform, env: { PATH: '' }, userHome: home };
+  const copy = path.join(serverCopyDir(home), 'mcp-server.mjs');
+
+  await syncHook(ctx);
+  assert.ok(!existsSync(serverCopyDir(home)));
+
+  mkdirSync(serverCopyDir(home), { recursive: true });
+  mkdirSync(path.join(serverCopyDir(home), 'launch'));
+  writeFileSync(path.join(serverCopyDir(home), 'launch', 'old.sh'), 'old');
+  await syncHook(ctx);
+  assert.equal(readFileSync(copy, 'utf8'), 'server v1');
+  assert.deepEqual(readdirSync(path.join(serverCopyDir(home), 'launch')).sort(), ['agent-launch.ps1', 'agent-launch.sh']);
+  const synced = parseSyncState(readFileSync(path.join(home, 'synced.json'), 'utf8'))!;
+  assert.match(synced.server ?? '', /^[0-9a-f]{32}$/);
+
+  writeFileSync(copy, 'edited by hand');
+  await syncHook(ctx);
+  assert.equal(readFileSync(copy, 'utf8'), 'edited by hand');
+
+  writeFileSync(path.join(serverDir, 'mcp-server.mjs'), 'server v2');
+  await syncHook(ctx);
+  assert.equal(readFileSync(copy, 'utf8'), 'server v2');
+  assert.notEqual(parseSyncState(readFileSync(path.join(home, 'synced.json'), 'utf8'))!.server, synced.server);
 });

@@ -6,7 +6,8 @@ the Agent Tabs extension, or in a terminal app when no IDE is running.
 
 The server speaks MCP over stdio. It reads the registry and calls each IDE's HTTP API, as described in
 [docs/design.md](../docs/design.md). The Claude Code plugin registers it as `ide-agent-tabs` in
-[claude-plugin/.mcp.json](../claude-plugin/.mcp.json).
+[claude-plugin/.mcp.json](../claude-plugin/.mcp.json). Other agent CLIs can use it too; see
+[Other agents](#other-agents).
 
 ## Tools
 
@@ -48,10 +49,64 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `config.json` | `defaultAgent`, and `terminal`, the preferred terminal when no IDE is running. |
 | `terminal-tabs.json` | The terminal tabs this server opened. The server writes it; don't edit it. |
 | `launch/` | Short-lived launch files. Each is deleted as soon as its tab starts. |
+| `mcp/` | A copy of the server for other agent CLIs. See [Other agents](#other-agents). |
 
 `list_agents` reads the profile files itself instead of asking an IDE. A terminal tab uses the same
 profiles, so the answer holds whether or not an IDE is running. `installed` reflects the server's `PATH`,
 which is the calling agent's `PATH`.
+
+## Other agents
+
+Codex, Gemini CLI, Copilot CLI and OpenCode can run this server too. The setup skill registers it with
+the agents you choose, through `sync-ides.mjs`:
+
+```sh
+node dist/sync-ides.mjs --agents
+node dist/sync-ides.mjs --register codex gemini copilot opencode
+node dist/sync-ides.mjs --unregister codex
+```
+
+`--agents` reports, for each agent, whether it's installed, whether it's registered, the server path it
+runs, and whether that path is the stable copy. `--register` and `--unregister` print the same fields for
+each agent, with `ok` or an `error`.
+
+Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server name `ide-agent-tabs`:
+
+| Agent | Where the entry goes | How |
+|---|---|---|
+| Codex | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- node <path>` |
+| Gemini CLI | `~/.gemini/settings.json`, user scope | `gemini mcp add --scope user ide-agent-tabs node <path>` |
+| Copilot CLI | `mcpServers` in `~/.copilot/mcp-config.json`, or `$COPILOT_HOME/mcp-config.json` | The script edits the file. |
+| OpenCode | `mcp` in `~/.config/opencode/opencode.json`, or under `$XDG_CONFIG_HOME` | The script edits the file. |
+
+- `~/.ide-agent-tabs/mcp/` holds `mcp-server.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt`, in the same
+  layout as the plugin's `dist/`. The Claude Code plugin folder has the version in its path, so an
+  update would break a registration that pointed there. `--register` writes the copy. When a Claude Code
+  session starts after a plugin update, the session start hook refreshes the copy if it exists.
+- The script writes each file to a temporary name and renames it, so a running server never reads a
+  half-written file. If a file is in use, the hook logs the error to `sync.log` and tries again at the
+  next session.
+- The script runs the agent CLIs from `~/.ide-agent-tabs`, so a project config in the current folder
+  doesn't apply. It checks each registration by reading it back, not by the exit code.
+- The script keeps the other keys in a Copilot CLI or OpenCode config file, and its indentation. It
+  doesn't change a file that isn't plain JSON, such as a file with comments or an `opencode.jsonc`
+  with comments. It reports an error instead, and you add the entry by hand:
+
+  ```json
+  "ide-agent-tabs": { "type": "local", "command": "node", "args": ["<path>"], "env": {}, "tools": ["*"] }
+  ```
+
+  for Copilot CLI under `mcpServers`, or for OpenCode under `mcp`:
+
+  ```json
+  "ide-agent-tabs": { "type": "local", "command": ["node", "<path>"], "enabled": true }
+  ```
+
+- Claude Code isn't registered this way. It gets the server from the plugin.
+- After you register an agent, restart its open sessions.
+
+To remove Agent Tabs from the other agents, run `--unregister` with each agent, then delete
+`~/.ide-agent-tabs/mcp/`.
 
 ## Terminals
 
@@ -79,7 +134,7 @@ names you pass in `env` must be shell identifiers.
 
 A terminal that the server starts, such as a first Windows Terminal window, a new Ghostty or kitty
 process, a WezTerm GUI or a tmux server, gets the server's environment without the variables that
-identify the calling Claude Code session, such as `CLAUDECODE`.
+identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 
 ### Windows Terminal
 
@@ -88,8 +143,8 @@ identify the calling Claude Code session, such as `CLAUDECODE`.
 - A new tab starts in a Windows Terminal process that is already running, so it doesn't inherit the
   server's environment. The launch file carries everything the tab needs.
 - If Windows Terminal isn't running, `wt.exe` starts it with the server's environment, and every later
-  tab in that window inherits it. The server drops the variables that identify the calling Claude Code
-  session, such as `CLAUDECODE`, before it runs `wt.exe`.
+  tab in that window inherits it. The server drops the variables that identify the calling agent
+  session, such as `CLAUDECODE` or `CODEX_SANDBOX`, before it runs `wt.exe`.
 - Windows Terminal has no API to list or close tabs. The launch script writes its process id to
   `launch/<id>.pid`. `list_tabs` reports a tab while that `pwsh` process runs, and `close_tab` ends the
   process and the agent under it. The tab can stay open and show an exit message, depending on your
