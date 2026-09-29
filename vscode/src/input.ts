@@ -1,10 +1,20 @@
-export const ENTER_DELAY_MS = 500;
+export const CHAR_DELAY_MS = 20;
+export const ENTER_DELAY_MS = 300;
 
-// Agent TUIs treat an Enter that arrives in the same burst as typed text as a pasted newline, not a
-// submit (Codex's paste_burst.rs holds that window for 120 ms), so Enter goes on its own after a pause.
-export function typeLine(send: (data: string) => void, text: string, stillOpen: () => boolean, delayMs = ENTER_DELAY_MS): void {
-  send(text);
-  setTimeout(() => {
-    if (stillOpen()) send('\r');
-  }, delayMs);
+// Codex reads characters that arrive under 8 ms apart as a paste and turns a following Enter into a
+// newline (paste_burst.rs), even 500 ms later on Windows, so the line is typed one character at a time.
+export function typeLine(
+  send: (data: string) => void,
+  text: string,
+  stillOpen: () => boolean,
+  charDelayMs = CHAR_DELAY_MS,
+  enterDelayMs = ENTER_DELAY_MS,
+): void {
+  const keys = [...text, '\r'];
+  const press = (index: number) => {
+    if (!stillOpen()) return;
+    send(keys[index]!);
+    if (index + 1 < keys.length) setTimeout(() => press(index + 1), index + 2 === keys.length ? enterDelayMs : charDelayMs);
+  };
+  press(0);
 }

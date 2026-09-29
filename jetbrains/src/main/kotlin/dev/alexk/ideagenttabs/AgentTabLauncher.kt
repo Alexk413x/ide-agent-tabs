@@ -26,7 +26,8 @@ const val ARGS_ENV = "${PLUGIN_ENV_PREFIX}ARGS"
 const val ARG_COUNT_ENV = "${PLUGIN_ENV_PREFIX}ARGC"
 const val ARG_ENV_PREFIX = "${PLUGIN_ENV_PREFIX}ARG_"
 const val STARTUP_ENV = "JEDITERM_SOURCE"
-const val ENTER_DELAY_MS = 500L
+const val CHAR_DELAY_MS = 20L
+const val ENTER_DELAY_MS = 300L
 
 fun isReservedEnv(name: String): Boolean =
     name.startsWith(PLUGIN_ENV_PREFIX, ignoreCase = true) || name.startsWith(STARTUP_ENV, ignoreCase = true)
@@ -111,16 +112,21 @@ object AgentTabLauncher {
         if (!entry.project.isDisposed) FileEditorManager.getInstance(entry.project).closeFile(entry.file)
     }
 
-    // Agent TUIs treat an Enter that arrives in the same burst as typed text as a pasted newline, not a
-    // submit (Codex's paste_burst.rs holds that window for 120 ms), so Enter goes on its own after a pause.
+    // Codex reads characters that arrive under 8 ms apart as a paste and turns a following Enter into a
+    // newline (paste_burst.rs), even 500 ms later on Windows, so the line is typed one character at a time.
     @RequiresEdt
     fun type(entry: AgentTabRegistry.Entry, text: String) {
-        entry.tab.view.sendText(text)
-        AppExecutorUtil.getAppScheduledExecutorService().schedule({
-            ApplicationManager.getApplication().invokeLater {
-                if (AgentTabRegistry.getInstance().find(entry.id) === entry) entry.tab.view.sendText("\r")
-            }
-        }, ENTER_DELAY_MS, TimeUnit.MILLISECONDS)
+        val keys = text.codePoints().toArray().map { String(Character.toChars(it)) } + "\r"
+        fun press(index: Int) {
+            if (AgentTabRegistry.getInstance().find(entry.id) !== entry) return
+            entry.tab.view.sendText(keys[index])
+            if (index + 1 == keys.size) return
+            val delay = if (index + 2 == keys.size) ENTER_DELAY_MS else CHAR_DELAY_MS
+            AppExecutorUtil.getAppScheduledExecutorService().schedule({
+                ApplicationManager.getApplication().invokeLater { press(index + 1) }
+            }, delay, TimeUnit.MILLISECONDS)
+        }
+        press(0)
     }
 
     private val SCRIPT_DIR: Path get() = PathManager.getSystemDir().resolve("ide-agent-tabs")
