@@ -6,3 +6,6 @@ build/
 *.iml
 .vscode/
 bin/
+
+# claude plugin eval run output
+claude-plugin/evals/results/

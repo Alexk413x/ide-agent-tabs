@@ -4,7 +4,10 @@ description: Split work with another live agent session (Claude Code, Codex, Gem
 argument-hint: "[session or agent] <request>"
 ---
 
-Message another agent session through the `ide-agent-tabs` MCP tools. Unlike the `delegate` skill,
+Message another agent session through the `ide-agent-tabs` MCP tools:
+`mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_sessions`, `mcp__plugin_ide-agent-tabs_ide-agent-tabs__send_message`,
+`mcp__plugin_ide-agent-tabs_ide-agent-tabs__read_messages`, `mcp__plugin_ide-agent-tabs_ide-agent-tabs__wait_for_message` and
+`mcp__plugin_ide-agent-tabs_ide-agent-tabs__open_tab`. Below they go by their short names. Unlike the `delegate` skill,
 which runs an agent once in headless mode, a message goes to a live, interactive session that keeps its
 own context.
 
