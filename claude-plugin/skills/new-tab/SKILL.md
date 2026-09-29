@@ -1,11 +1,14 @@
 ---
 name: new-tab
-description: Open a new agent session (Claude Code, Codex, Gemini CLI, Copilot CLI, or a custom profile) in an IDE editor tab or a terminal tab, optionally in another folder and with a first message. Also lists and closes those tabs. Use when the user asks to open a new tab, session or agent somewhere, to see which agent tabs are open, or to close one.
+description: Open a new agent session (Claude Code, Codex, Gemini CLI, Copilot CLI, or a custom profile) in an IDE editor tab or a terminal tab, optionally in another folder and with a first message. Also lists and closes those tabs. Use when the user asks to open a new tab, session or agent somewhere, to see which agent tabs are open, or to close one. Not for opening a file or a web page in a tab.
 argument-hint: "[agent] [folder] [-- first message]"
 ---
 
 Open, list or close agent tabs through the `ide-agent-tabs` MCP server. The tab can be in any running IDE
-(JetBrains IDEs, VS Code and VS Code-based editors) or in a terminal app.
+(JetBrains IDEs, VS Code and VS Code-based editors) or in a terminal app. The tools are
+`mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_ides`, `mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_agents`,
+`mcp__plugin_ide-agent-tabs_ide-agent-tabs__open_tab`, `mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_tabs` and
+`mcp__plugin_ide-agent-tabs_ide-agent-tabs__close_tab`; below they go by their short names.
 
 Arguments: `$ARGUMENTS`
 
