@@ -18,7 +18,7 @@ import {
 } from '../src/messaging/mailbox.js';
 import { Messaging, type Hosts } from '../src/messaging/messaging.js';
 import { unreadReminder, wakeLine } from '../src/messaging/notice.js';
-import { agentFromClient, liveSessions, presencePath, readPresence } from '../src/messaging/sessions.js';
+import { agentFromClient, effectiveState, liveSessions, presencePath, readPresence, WAKE_TIMEOUT_MS } from '../src/messaging/sessions.js';
 import { tempDir } from './tempDir.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -253,7 +253,7 @@ test('send wakes an idle session with the fixed line, and only queues for any ot
   assert.equal(woken.delivery, 'woken');
   assert.deepEqual(typed, [{ id: 'tab-b', host: 'fake-term', text: 'Agent Tabs: new message from codex tab-a. Call read_messages.' }]);
   const after = (await readPresence(home, 'tab-b'))!;
-  assert.equal(after.state, 'busy', 'a woken session is marked busy so a second message does not type again');
+  assert.equal(after.state, 'waking', 'a woken session is marked waking so a second message does not type again');
   assert.equal(after.host, 'fake-term');
   assert.equal((await a.send({ to: 'tab-b', text: 'x' })).delivery, 'queued');
   assert.equal(typed.length, 1);
@@ -312,4 +312,14 @@ test('wait_for_message returns at once when a message waits, filters, and times 
   assert.ok(Date.now() - t1 < 2_000);
 
   assert.equal(await waitForMessage(home, 'tab-b', { from: 'tab-z' }, 0), undefined);
+});
+
+test('a waking session counts as idle again once the wake line had time to start a turn', () => {
+  const at = Date.parse('2026-09-29T06:00:00Z');
+  const waking = { state: 'waking' as const, stateAt: new Date(at).toISOString() };
+  assert.equal(effectiveState(waking, at + WAKE_TIMEOUT_MS - 1), 'waking');
+  assert.equal(effectiveState(waking, at + WAKE_TIMEOUT_MS), 'idle');
+  assert.equal(effectiveState({ state: 'waking' }, at), 'idle');
+  assert.equal(effectiveState({ state: 'busy', stateAt: new Date(at).toISOString() }, at + 10 * WAKE_TIMEOUT_MS), 'busy');
+  assert.equal(effectiveState({}, at), 'unknown');
 });
