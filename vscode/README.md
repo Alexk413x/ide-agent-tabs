@@ -19,8 +19,7 @@ claude plugin install ide-agent-tabs@ide-agent-tabs
 
 In a Claude Code session, run `/ide-agent-tabs:setup`.
 
-To install by hand instead, get the `.vsix` file from a `vscode-v<version>` release on the repository's
-GitHub Releases page, or use `claude-plugin/dist/ide/ide-agent-tabs.vsix` from the repository. Then
+To install by hand instead, use `claude-plugin/dist/ide/ide-agent-tabs.vsix` from the repository, and
 install it with your editor's command-line tool:
 
 ```sh
