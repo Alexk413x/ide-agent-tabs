@@ -14,7 +14,6 @@ const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const HOOK_TIMEOUT_S = 10;
 
 const HOOKS: [event: string, key: string, input: Record<string, string>][] = [
-  ['SessionStart', 'session_start', { event: 'SessionStart', session_id: '${session_id}' }],
   ['UserPromptSubmit', 'user_prompt_submit', { event: 'UserPromptSubmit', session_id: '${session_id}', turn_id: '${turn_id}' }],
   ['PostToolUse', 'post_tool_use', { event: 'PostToolUse', session_id: '${session_id}', turn_id: '${turn_id}' }],
   ['PermissionRequest', 'permission_request', { event: 'PermissionRequest', session_id: '${session_id}', turn_id: '${turn_id}' }],

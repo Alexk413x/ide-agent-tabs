@@ -404,7 +404,7 @@ Hook events for each CLI:
 | CLI | Config | `busy` | `permission` | `idle` | Reminder after | Turn-end nudge |
 |---|---|---|---|---|---|---|
 | Claude Code | The plugin's `hooks/hooks.json` | `UserPromptSubmit`, `PostToolUse` | `Notification` `permission_prompt` | `Stop`, `Notification` `idle_prompt` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
-| Codex | The tab's `-c` arguments, as `mcp_tool` hooks | `SessionStart`, `UserPromptSubmit`, `PostToolUse` | `PermissionRequest` | `Stop` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
+| Codex | The tab's `-c` arguments, as `mcp_tool` hooks | `UserPromptSubmit`, `PostToolUse` | `PermissionRequest` | `Stop` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
 | Gemini CLI | `hooks` in `~/.gemini/settings.json` | `BeforeAgent`, `BeforeTool`, `AfterTool` | `Notification` `ToolPermission` | `AfterAgent` | `BeforeAgent`, `AfterTool` (`hookSpecificOutput.additionalContext`) | `AfterAgent` (`decision: "deny"`) |
 | Copilot CLI | `~/.copilot/hooks/ide-agent-tabs.json` | `userPromptSubmitted`, `preToolUse`, `postToolUse` | `notification` `permission_prompt` | `agentStop`, `notification` `agent_idle` | `postToolUse` only (`additionalContext`) | `agentStop` (`decision: "block"`) |
 
@@ -762,7 +762,7 @@ in `~/.ide-agent-tabs/mcp/` that other agents register.
 | Ghostty on Linux | 1.3.1 in WSL Ubuntu accepts the flags. No window opens, because Ghostty needs OpenGL 4.3 and WSLg offers 4.1. | A working window |
 | Ghostty on macOS | Unit tests of the AppleScript and command generation | A live run |
 | Agent profiles | `claude` and `codex` flags checked against each CLI's help | `gemini` and `copilot` |
-| Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `SessionStart`, `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>` | An interactive Codex tab; the `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Gemini CLI or Copilot CLI session |
+| Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>` | An interactive Codex tab; the `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Gemini CLI or Copilot CLI session |
 
 Open, list and close through the MCP server pass for tmux, kitty and WezTerm. No part is tested on a real
 Mac. For the headless delegation commands, see the **Tested** column in
