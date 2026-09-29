@@ -564,7 +564,7 @@ in `vscode/package.json`.
   `mcp/package.json` carries the same version; `mcp/build.mjs` puts it into the bundle as the server
   version and the User-Agent.
 - Each release adds a `## <version>` entry to `CHANGELOG.md` and gets a tag,
-  `ide-agent-tabs--v<version>`, made with `claude plugin tag --push` on `main`.
+  `ide-agent-tabs--v<version>`, made on `main` with `claude plugin tag claude-plugin --push`.
 - `node scripts/check-plugin-version.mjs` fails when `claude-plugin/` changed since the last tag while the
   version stayed the same, when the two version fields differ, or when the CHANGELOG lacks the entry.
   CI runs it too; run it locally before you push.
