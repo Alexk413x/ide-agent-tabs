@@ -173,7 +173,9 @@ export class Service {
     }
     const { infos, errors } = await this.infos(endpoints);
     const candidates: IdeCandidate[] = infos.map((i) => ({ id: i.endpoint.id, startedAt: i.endpoint.startedAt, projects: i.projects }));
-    const choice = chooseIde(candidates, request.path, this.isWindows);
+    const own = this.deps.env[TAB_ID_ENV];
+    const callerIde = own ? await this.findHost(own).catch(() => undefined) : undefined;
+    const choice = chooseIde(candidates, request.path, this.isWindows, callerIde);
     if (choice) return this.openInIde(infos.find((i) => i.endpoint.id === choice.id)!.endpoint, request, choice.reason);
 
     const settings = await this.settings();

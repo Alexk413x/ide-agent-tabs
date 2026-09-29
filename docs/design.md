@@ -201,7 +201,8 @@ registry and calls the HTTP API.
 `open_tab` routing, first match wins:
 
 1. The IDE or terminal named by `ide`, using its id from `list_ides`.
-2. The IDE with an open project that contains `path`, preferring the focused window.
+2. The IDE with an open project that contains `path`. The deepest such project wins; on a tie, the
+   caller's own IDE, then the focused window, then the most recently started IDE.
 3. The most recently started IDE.
 4. When no IDE is running: the preferred terminal from `config.json`, then the first installed terminal
    in the platform's order: Windows Terminal, then WezTerm on Windows; Ghostty, kitty, WezTerm, then tmux

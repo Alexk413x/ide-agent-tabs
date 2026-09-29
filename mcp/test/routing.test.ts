@@ -19,12 +19,15 @@ const ide = (id: string, startedAt: number, projects: [string, string, boolean][
   projects: projects.map(([name, p, focused]) => ({ name, path: p, focused })),
 });
 
-test('the IDE whose project contains the path wins, focused first, then the deepest project', () => {
+test("the IDE whose project contains the path wins: the deepest project, then the caller's IDE, then the focused window", () => {
   const a = ide('a', 1, [['app', '/w/app', false]]);
   const b = ide('b', 2, [['lib', '/w/lib', true]]);
   const c = ide('c', 3, [['w', '/w', true]]);
   assert.equal(chooseIde([a, b], '/w/app/src', false)?.id, 'a');
-  assert.equal(chooseIde([a, c], '/w/app/src', false)?.id, 'c');
+  assert.equal(chooseIde([a, c], '/w/app/src', false)?.id, 'a');
+  assert.equal(chooseIde([ide('e', 1, [['w', '/w', false]]), c], '/w/app', false)?.id, 'c');
+  assert.equal(chooseIde([ide('e', 1, [['w', '/w', false]]), c], '/w/app', false, 'e')?.id, 'e');
+  assert.match(chooseIde([ide('e', 1, [['w', '/w', false]]), c], '/w/app', false, 'e')!.reason, /the caller's IDE/);
   assert.equal(chooseIde([a, ide('d', 0, [['w', '/w', false]])], '/w/app', false)?.id, 'a');
   assert.equal(chooseIde([ide('x', 5, [['app', '/w/app', false]]), ide('y', 9, [['app', '/w/app', false]])], '/w/app', false)?.id, 'y');
   assert.match(chooseIde([a], '/w/app', false)!.reason, /open project app contains the path/);
