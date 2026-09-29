@@ -9,10 +9,12 @@ import {
   isAbsolutePath,
   isReservedEnv,
   MAX_ENTRIES,
+  MAX_INPUT_CHARS,
   MAX_PROMPT_CHARS,
   openRequestOf,
   parseCloseId,
   parseEmpty,
+  parseInput,
   parseOpenRequest,
 } from '../request';
 
@@ -127,6 +129,31 @@ test('close takes a string id', () => {
   for (const bad of ['', '{}', '{"id":""}', '{"id":"  "}', '{"id":7}', '[]', 'nope']) {
     assert.throws(() => parseCloseId(bad), BadRequest, bad);
   }
+});
+
+test('input takes an id and one line of text', () => {
+  assert.deepEqual(parseInput('{"id":"abc","text":"Agent Tabs: new message from codex 1a2b. Call read_messages."}'), {
+    id: 'abc',
+    text: 'Agent Tabs: new message from codex 1a2b. Call read_messages.',
+  });
+  assert.equal(parseInput(JSON.stringify({ id: 'abc', text: 'é'.repeat(MAX_INPUT_CHARS) })).text.length, MAX_INPUT_CHARS);
+});
+
+test('input rejects a missing id, missing text, long text and control characters', () => {
+  const long = 'x'.repeat(MAX_INPUT_CHARS + 1);
+  const bad: unknown[] = [
+    {},
+    { text: 'hi' },
+    { id: '', text: 'hi' },
+    { id: 'abc' },
+    { id: 'abc', text: '' },
+    { id: 'abc', text: '  ' },
+    { id: 'abc', text: 7 },
+    { id: 'abc', text: long },
+    ...['\r', '\n', '\t', '\u001b', '\u0000', '\u007f', '\u009b'].map(c => ({ id: 'abc', text: `a${c}b` })),
+  ];
+  for (const body of bad) assert.throws(() => parseInput(JSON.stringify(body)), BadRequest, JSON.stringify(body));
+  for (const raw of ['', '[]', 'nope']) assert.throws(() => parseInput(raw), BadRequest, raw);
 });
 
 test('list accepts an empty body or an object', () => {

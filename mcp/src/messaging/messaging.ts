@@ -1,0 +1,345 @@
+import { randomBytes } from 'node:crypto';
+import { readFileSync, rmSync } from 'node:fs';
+import { AGENT_ENV, TAB_ID_ENV } from '../profiles.js';
+import { isProcessAlive } from '../registry.js';
+import {
+  checkMessageId,
+  cleanMail,
+  deliver,
+  MailError,
+  peekUnread,
+  MAX_TEXT_CHARS,
+  newMessageId,
+  reserveSend,
+  takeMessages,
+  waitForMessage,
+  type Message,
+} from './mailbox.js';
+import { runHook } from './hook.js';
+import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
+import {
+  agentFromClient,
+  effectiveState,
+  IDLE_SETTLE_MS,
+  isSessionId,
+  liveSessions,
+  parsePresence,
+  presencePath,
+  readPresence,
+  updatePresence,
+  withState,
+  type Presence,
+  type PresenceFile,
+} from './sessions.js';
+
+export const DEFAULT_WAIT_S = 60;
+export const MAX_WAIT_S = 600;
+const CLEAN_EVERY_MS = 60 * 60 * 1000;
+export const REWAKE_EVERY_MS = 15_000;
+const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+export interface Hosts {
+  findHost(id: string): Promise<string | undefined>;
+  typeInto(id: string, host: string, text: string): Promise<{ ok: true } | { ok: false; reason: string }>;
+}
+
+export interface MessagingDeps {
+  home: string;
+  env: NodeJS.ProcessEnv;
+  pid: number;
+  cwd: string;
+  hosts: Hosts;
+  isAlive?: (pid: number) => boolean;
+  randomId?: () => string;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+export interface SendInput {
+  to: string;
+  text: string;
+  replyTo?: string;
+}
+
+export interface WaitInput {
+  timeout?: number;
+  from?: string;
+  replyTo?: string;
+}
+
+const AGENT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+const THREAD_ID = /^[A-Za-z0-9-]{1,100}$/;
+export const CODEX_ID_PREFIX = 'codex-';
+const generatedId = () => `s-${randomBytes(6).toString('hex')}`;
+const mayBeTab = (id: string) => !id.startsWith('s-') && !id.startsWith(CODEX_ID_PREFIX);
+
+function shown(m: Message) {
+  return { id: m.id, from: m.from, text: m.text, ...(m.replyTo !== undefined ? { replyTo: m.replyTo } : {}), sentAt: m.sentAt };
+}
+
+export class Messaging {
+  private sessionId: string;
+  private isTab: boolean;
+  private agent: string;
+  private readonly startedAt: string;
+  private lastClean = 0;
+  private threadId?: string;
+  private ownHost?: Promise<string | undefined>;
+  private identified: Promise<void> = Promise.resolve();
+
+  constructor(private readonly deps: MessagingDeps) {
+    const tab = deps.env[TAB_ID_ENV];
+    this.isTab = tab !== undefined && isSessionId(tab);
+    this.sessionId = this.isTab ? tab! : (deps.randomId ?? generatedId)();
+    this.agent = this.agentFromEnv() ?? 'unknown';
+    this.startedAt = new Date(this.now()).toISOString();
+  }
+
+  // A client that copies variables into a server's config, such as "${IDE_AGENT_TABS_AGENT}", may pass the text
+  // unexpanded when the variable is unset.
+  private agentFromEnv(): string | undefined {
+    const value = this.deps.env[AGENT_ENV];
+    return value !== undefined && AGENT_NAME.test(value) ? value : undefined;
+  }
+
+  get id(): string {
+    return this.sessionId;
+  }
+
+  private now(): number {
+    return (this.deps.now ?? Date.now)();
+  }
+
+  private get alive() {
+    return this.deps.isAlive ?? isProcessAlive;
+  }
+
+  private presence(current: PresenceFile | undefined, host = current?.host): PresenceFile {
+    return {
+      id: this.sessionId,
+      agent: this.agent,
+      path: this.deps.cwd,
+      pid: this.deps.pid,
+      ...(host !== undefined ? { host } : {}),
+      startedAt: this.startedAt,
+      state: current?.state ?? 'unknown',
+      ...(current?.stateAt !== undefined ? { stateAt: current.stateAt } : {}),
+      ...(current?.nudges !== undefined ? { nudges: current.nudges } : {}),
+      ...(this.threadId !== undefined ? { threadId: this.threadId } : {}),
+    };
+  }
+
+  async start(): Promise<void> {
+    let taken = false;
+    if (this.isTab) {
+      // A headless agent started from inside a tab inherits its IDE_AGENT_TABS_ID; the tab's own server keeps the id.
+      await updatePresence(this.deps.home, this.sessionId, (current) => {
+        if (current?.pid !== undefined && current.pid !== this.deps.pid && this.alive(current.pid)) {
+          taken = true;
+          return current;
+        }
+        return this.presence(current);
+      });
+    }
+    if (taken) {
+      this.isTab = false;
+      this.sessionId = (this.deps.randomId ?? generatedId)();
+    }
+    if (!this.isTab) await updatePresence(this.deps.home, this.sessionId, (current) => this.presence(current));
+    if (this.isTab) this.ownHost = this.resolveOwnHost();
+    void this.clean().catch(() => undefined);
+  }
+
+  private async resolveOwnHost(): Promise<string | undefined> {
+    const host = await this.deps.hosts.findHost(this.sessionId).catch(() => undefined);
+    if (host !== undefined) await this.updateOwn((p) => ({ ...p, host })).catch(() => undefined);
+    return host;
+  }
+
+  noteThread(threadId: unknown): Promise<void> {
+    if (typeof threadId !== 'string' || !THREAD_ID.test(threadId) || threadId === this.threadId) return this.identified;
+    this.threadId = threadId;
+    this.identified = this.identified.then(() => this.identify(threadId)).catch(() => undefined);
+    return this.identified;
+  }
+
+  // The shared Codex daemon starts servers with the environment of whatever started the daemon, so its
+  // IDE_AGENT_TABS_ID can name another tab or a closed one. A Codex session keeps that id only while the tab is open.
+  private async identify(threadId: string): Promise<void> {
+    const id = `${CODEX_ID_PREFIX}${threadId}`;
+    const tabOpen = this.isTab && (await this.ownHost) !== undefined;
+    if (tabOpen || this.sessionId === id) {
+      await this.updateOwn((p) => ({ ...p, threadId }));
+      return;
+    }
+    const old = this.sessionId;
+    const previous = await readPresence(this.deps.home, old);
+    const carried = previous?.pid === this.deps.pid ? previous : undefined;
+    let taken = false;
+    this.sessionId = id;
+    await updatePresence(this.deps.home, id, (current) => {
+      if (current?.pid !== undefined && current.pid !== this.deps.pid && this.alive(current.pid)) {
+        taken = true;
+        return current;
+      }
+      return this.presence(current ?? carried, current?.host);
+    });
+    if (taken) {
+      this.sessionId = old;
+      await this.updateOwn((p) => ({ ...p, threadId }));
+      return;
+    }
+    this.isTab = false;
+    await updatePresence(this.deps.home, old, (current) => (current?.pid === this.deps.pid ? undefined : current));
+  }
+
+  async hook(event: string, input: Record<string, unknown>): Promise<object | undefined> {
+    return runHook({ cli: 'codex', event, input, home: this.deps.home, sessionId: this.sessionId, now: this.now() });
+  }
+
+  private updateOwn(change: (p: PresenceFile) => PresenceFile): Promise<unknown> {
+    return updatePresence(this.deps.home, this.sessionId, (current) =>
+      current === undefined ? change(this.presence(undefined)) : current.pid === this.deps.pid ? change(current) : current,
+    );
+  }
+
+  async setClient(name: string | undefined): Promise<void> {
+    if (this.agentFromEnv() !== undefined) return;
+    this.agent = agentFromClient(name);
+    await this.updateOwn((p) => ({ ...p, agent: this.agent }));
+  }
+
+  stopSync(): void {
+    const file = presencePath(this.deps.home, this.sessionId);
+    try {
+      if (parsePresence(readFileSync(file, 'utf8'))?.pid === this.deps.pid) rmSync(file, { force: true });
+    } catch {
+      return;
+    }
+  }
+
+  private async clean(): Promise<void> {
+    const now = this.now();
+    if (now - this.lastClean < CLEAN_EVERY_MS) return;
+    this.lastClean = now;
+    const live = await liveSessions(this.deps.home, this.alive, now);
+    await cleanMail(this.deps.home, new Set(live.map((s) => s.id)), now);
+  }
+
+  async listSessions() {
+    const sessions = await liveSessions(this.deps.home, this.alive, this.now());
+    return {
+      sessions: sessions.map((s) => ({
+        id: s.id,
+        agent: s.agent,
+        path: s.path,
+        host: s.host ?? null,
+        state: s.state,
+        ...(s.stateAt !== undefined ? { stateAt: s.stateAt } : {}),
+        startedAt: s.startedAt,
+        self: s.id === this.sessionId,
+      })),
+    };
+  }
+
+  async send(input: SendInput) {
+    const { to, text, replyTo } = input;
+    if (to === this.sessionId) throw new MailError('to is this session; pick another id from list_sessions');
+    if (!isSessionId(to)) throw new MailError(`not a session id: ${to}`);
+    if (text.trim() === '') throw new MailError('text is empty');
+    if (text.length > MAX_TEXT_CHARS) throw new MailError(`text exceeds ${MAX_TEXT_CHARS} characters`);
+    if (replyTo !== undefined) checkMessageId(replyTo, 'replyTo');
+    const now = this.now();
+    const recipient = (await liveSessions(this.deps.home, this.alive, now)).find((s) => s.id === to);
+    if (!recipient) throw new MailError(`no live session with id ${to}; call list_sessions`);
+    await reserveSend(this.deps.home, this.sessionId, now);
+    const message: Message = {
+      id: newMessageId(),
+      from: { id: this.sessionId, agent: this.agent, path: this.deps.cwd },
+      to,
+      text,
+      ...(replyTo !== undefined ? { replyTo } : {}),
+      sentAt: new Date(now).toISOString(),
+    };
+    await deliver(this.deps.home, message, now);
+    const wake = await this.wake(recipient, now).catch((e: unknown) => ({ delivery: 'queued' as const, note: String(e) }));
+    void this.clean().catch(() => undefined);
+    return { id: message.id, to, ...wake };
+  }
+
+  private async wake(recipient: Presence, now: number): Promise<{ delivery: 'woken' | 'queued'; note?: string }> {
+    if (effectiveState(recipient, now) !== 'idle') return { delivery: 'queued' };
+    // An agent reports idle when its turn-end hook runs, but it can still be finishing the turn, and a
+    // line typed then is lost; typing only after the session stays idle for IDLE_SETTLE_MS avoids that.
+    const settle = IDLE_SETTLE_MS - (now - Date.parse(recipient.stateAt ?? ''));
+    if (settle > 0) {
+      await (this.deps.sleep ?? realSleep)(settle);
+      now = this.now();
+    }
+    let host = recipient.host;
+    if (host === undefined && mayBeTab(recipient.id)) host = await this.deps.hosts.findHost(recipient.id);
+    if (host === undefined) return { delivery: 'queued' };
+    let claimed: PresenceFile | undefined;
+    await updatePresence(this.deps.home, recipient.id, (current) => {
+      if (current?.pid !== recipient.pid || current.stateAt !== recipient.stateAt || effectiveState(current, now) !== 'idle') return current;
+      claimed = withState({ ...current, host }, 'waking', now);
+      return claimed;
+    });
+    if (!claimed) return { delivery: 'queued' };
+    let typed: Awaited<ReturnType<Hosts['typeInto']>>;
+    try {
+      typed = await this.deps.hosts.typeInto(recipient.id, host, wakeLine(this.agent, this.sessionId));
+    } catch (error) {
+      await this.restoreFailedWake(recipient, claimed);
+      return { delivery: 'queued', note: `the session was idle, but typing the wake line failed: ${String(error)}` };
+    }
+    if (typed.ok) return { delivery: 'woken' };
+    await this.restoreFailedWake(recipient, claimed);
+    return { delivery: 'queued', note: `the session was idle, but typing the wake line failed: ${typed.reason}` };
+  }
+
+  private async restoreFailedWake(recipient: Presence, claimed: PresenceFile): Promise<void> {
+    await updatePresence(this.deps.home, recipient.id, (current) =>
+      current?.stateAt === claimed.stateAt && current?.state === 'waking'
+        ? { ...current, state: recipient.state, ...(recipient.stateAt !== undefined ? { stateAt: recipient.stateAt } : {}) }
+        : current,
+    );
+  }
+
+  private async rewake(peer: string): Promise<void> {
+    const pending = (await peekUnread(this.deps.home, peer)).some((m) => m.from.id === this.sessionId);
+    if (!pending) return;
+    const now = this.now();
+    const recipient = (await liveSessions(this.deps.home, this.alive, now)).find((s) => s.id === peer);
+    if (recipient) await this.wake(recipient, now);
+  }
+
+  private async resetNudges(): Promise<void> {
+    await this.updateOwn((p) => (p.nudges ? { ...p, nudges: 0 } : p)).catch(() => undefined);
+  }
+
+  async read() {
+    const messages = await takeMessages(this.deps.home, this.sessionId);
+    await this.resetNudges();
+    void this.clean().catch(() => undefined);
+    return messages.length === 0 ? { messages: [] } : { notice: UNTRUSTED_NOTICE, messages: messages.map(shown) };
+  }
+
+  async wait(input: WaitInput, signal?: AbortSignal) {
+    if (input.from !== undefined && !isSessionId(input.from)) throw new MailError(`from is not a session id: ${input.from}`);
+    if (input.replyTo !== undefined) checkMessageId(input.replyTo, 'replyTo');
+    const seconds = Math.min(Math.max(input.timeout ?? DEFAULT_WAIT_S, 0), MAX_WAIT_S);
+    const filter = { ...(input.from !== undefined ? { from: input.from } : {}), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}) };
+    const peer = input.from;
+    const retry = peer === undefined ? undefined : setInterval(() => void this.rewake(peer).catch(() => undefined), REWAKE_EVERY_MS);
+    let message: Message | undefined;
+    try {
+      message = await waitForMessage(this.deps.home, this.sessionId, filter, seconds * 1000, signal);
+    } finally {
+      if (retry) clearInterval(retry);
+    }
+    if (!message) return { message: null, timedOut: true, waitedSeconds: seconds };
+    await this.resetNudges();
+    return { notice: UNTRUSTED_NOTICE, message: shown(message) };
+  }
+}

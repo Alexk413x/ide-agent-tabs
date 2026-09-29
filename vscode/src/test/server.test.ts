@@ -17,6 +17,7 @@ const token = newToken();
 const settings = new AgentSettings(home, () => {});
 const opened: { request: OpenRequest; profile: AgentProfile }[] = [];
 const tabs = new Map<string, TabInfo>();
+const typed: { id: string; text: string }[] = [];
 let folderOpen = true;
 
 const host: Host = {
@@ -30,6 +31,11 @@ const host: Host = {
     return tab;
   },
   close: id => tabs.delete(id),
+  input: (id, text) => {
+    if (!tabs.has(id)) return false;
+    typed.push({ id, text });
+    return true;
+  },
   list: () => [...tabs.values()],
 };
 
@@ -63,6 +69,7 @@ test('url is the loopback API base', () => {
 test('routes sit under the API base only', () => {
   assert.equal(route('/ide-agent-tabs/open'), 'open');
   assert.equal(route('/ide-agent-tabs/list?x=1'), 'list');
+  assert.equal(route('/ide-agent-tabs/input'), 'input');
   assert.equal(route('/ide-agent-tabs/nope'), undefined);
   assert.equal(route('/other/open'), undefined);
   assert.equal(route('/ide-agent-tabs'), undefined);
@@ -99,6 +106,20 @@ test('open, list, close, and close again', async () => {
   assert.deepEqual((await call('list', {})).json, { ok: true, tabs: [] });
 });
 
+test('input types into an open tab and 404s once it closes', async () => {
+  const { json: tab } = await call('open', { path: dir, agent: 'probe' });
+  const text = 'Agent Tabs: new message from codex 1a2b. Call read_messages.';
+  assert.deepEqual((await call('input', { id: tab.id, text })).json, { ok: true, id: tab.id });
+  assert.deepEqual(typed.at(-1), { id: tab.id, text });
+
+  await call('close', { id: tab.id });
+  const gone = await call('input', { id: tab.id, text });
+  assert.equal(gone.status, 404);
+  assert.equal(gone.json.ok, false);
+  assert.match(gone.json.error, /no open agent tab/);
+  assert.equal(typed.length, 1);
+});
+
 test('open without an agent uses the default', async () => {
   fs.writeFileSync(path.join(home, 'config.json'), '{"defaultAgent":"codex"}');
   const { json } = await call('open', { path: dir });
@@ -115,6 +136,11 @@ test('bad requests get 400 with an error', async () => {
     ['open', { path: dir, prompt: 'x'.repeat(30_001) }],
     ['open', { path: dir, args: Array(65).fill('x') }],
     ['close', {}],
+    ['input', { text: 'hi' }],
+    ['input', { id: 'tab-1' }],
+    ['input', { id: 'tab-1', text: 'two\nlines' }],
+    ['input', { id: 'tab-1', text: '\u001b[A' }],
+    ['input', { id: 'tab-1', text: 'x'.repeat(501) }],
     ['list', []],
   ] as const) {
     const { status, json } = await call(name, body);

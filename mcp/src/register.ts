@@ -3,7 +3,18 @@ import path from 'node:path';
 import { ensurePrivateDir, readTextIfExists } from './files.js';
 import { isInstalled } from './installed.js';
 import { BUILTIN_PROFILES } from './profiles.js';
-import { refreshServerCopy, serverCopyDir, serverCopyPath, serverHash } from './serverCopy.js';
+import {
+  copilotHooks,
+  hasCodexSettings,
+  hasOurHooks,
+  hookConfigFile,
+  isHookAgent,
+  mergeHookSettings,
+  withCodexSettings,
+  type HookAgent,
+} from './hookConfig.js';
+import { AGENT_ENV, TAB_ID_ENV } from './profiles.js';
+import { hookCopyPath, refreshServerCopy, serverCopyDir, serverCopyPath, serverHash } from './serverCopy.js';
 import type { RunResult } from './process.js';
 import { cliFailure, findCliOnPath, runCliResult, type SyncContext } from './sync.js';
 
@@ -23,10 +34,20 @@ export interface AgentStatus {
   path: string | null;
   stable: boolean;
   config: string;
+  hooks: boolean | null;
   error?: string;
 }
 
 export const isAgentName = (name: string): name is AgentName => (AGENTS as readonly string[]).includes(name);
+
+// Codex tabs bring their own hooks, and the shared Codex daemon would run global ones with another tab's
+// IDE_AGENT_TABS_ID, so Codex gets none.
+export const takesHooks = (agent: AgentName): agent is HookAgent => isHookAgent(agent) && agent !== 'codex';
+
+// The Codex desktop app shares ~/.codex with the CLI, and on Windows, Codex before 0.159 opens a console
+// window for each MCP server the app starts.
+export const CODEX_WINDOWS_REFUSAL =
+  "not registered on Windows: the Codex desktop app reads the same config and would open a console window for each session. Open Codex in an agent tab instead; each Codex tab brings its own Agent Tabs server and hooks";
 
 function profileOf(agent: AgentName) {
   const builtin = BUILTIN_PROFILES.find((p) => p.name === agent);
@@ -64,7 +85,14 @@ export function unregisterArgs(agent: 'codex' | 'gemini'): string[] {
   return agent === 'codex' ? ['mcp', 'remove', SERVER_NAME] : ['mcp', 'remove', '--scope', 'user', SERVER_NAME];
 }
 
-export const copilotEntry = (server: string) => ({ type: 'local', command: 'node', args: [server], env: {}, tools: ['*'] });
+// Copilot CLI passes an MCP server only PATH from its environment; the rest must be named here.
+export const copilotEntry = (server: string) => ({
+  type: 'local',
+  command: 'node',
+  args: [server],
+  env: { [TAB_ID_ENV]: `\${${TAB_ID_ENV}}`, [AGENT_ENV]: `\${${AGENT_ENV}}` },
+  tools: ['*'],
+});
 export const opencodeEntry = (server: string) => ({ type: 'local', command: ['node', server], enabled: true });
 
 export function stripJsonComments(text: string): string {
@@ -106,6 +134,18 @@ export function parseConfig(text: string, file: string, allowComments: boolean):
 
 function detectIndent(text: string): string {
   return text.match(/^([ \t]+)\S/m)?.[1] ?? '  ';
+}
+
+export function editJson(
+  text: string | undefined,
+  file: string,
+  change: (root: Record<string, unknown>) => Record<string, unknown>,
+): string | undefined {
+  const root = text === undefined || text.trim() === '' ? {} : parseConfig(text, file, false);
+  const next = change(root);
+  if (JSON.stringify(next) === JSON.stringify(root)) return undefined;
+  const eol = text?.includes('\r\n') ? '\r\n' : '\n';
+  return `${JSON.stringify(next, null, detectIndent(text ?? ''))}\n`.replace(/\n/g, eol);
 }
 
 export function withServerEntry(text: string | undefined, file: string, section: string, entry: unknown, skeleton: Record<string, unknown> = {}): string | undefined {
@@ -178,6 +218,49 @@ async function changeWithCli(ctx: RegisterContext, agent: 'codex' | 'gemini', ar
   if (result.code !== 0) throw cliFailure(cli, args, result);
 }
 
+const codexConfig = (ctx: RegisterContext) => configFile('codex', ctx.env, ctx.userHome);
+
+async function readJsonIfExists(file: string): Promise<Record<string, unknown> | undefined> {
+  const text = await readTextIfExists(file);
+  return text === undefined || text.trim() === '' ? undefined : parseConfig(text, file, true);
+}
+
+async function hooksInstalled(ctx: RegisterContext, agent: HookAgent): Promise<boolean> {
+  const hook = hookCopyPath(ctx.home, ctx.platform);
+  const file = hookConfigFile(agent, ctx.env, ctx.userHome);
+  const root = await readJsonIfExists(file);
+  if (agent === 'copilot') return root !== undefined && JSON.stringify(root) === JSON.stringify(copilotHooks(hook));
+  return root !== undefined && hasOurHooks(root, agent, hook);
+}
+
+async function changeJson(file: string, change: (root: Record<string, unknown>) => Record<string, unknown>): Promise<void> {
+  const next = editJson(await readTextIfExists(file), file, change);
+  if (next !== undefined) await writeConfig(file, next);
+}
+
+async function installCodexSettings(ctx: RegisterContext): Promise<void> {
+  const config = codexConfig(ctx);
+  const next = withCodexSettings((await readTextIfExists(config)) ?? '', config);
+  if (next !== undefined) await writeConfig(config, next);
+}
+
+async function installHooks(ctx: RegisterContext, agent: HookAgent): Promise<void> {
+  const hook = hookCopyPath(ctx.home, ctx.platform);
+  const file = hookConfigFile(agent, ctx.env, ctx.userHome);
+  if (agent === 'copilot') return changeJson(file, () => copilotHooks(hook));
+  await changeJson(file, (root) => mergeHookSettings(root, file, agent, hook));
+}
+
+async function removeHooks(ctx: RegisterContext, agent: HookAgent): Promise<void> {
+  const file = hookConfigFile(agent, ctx.env, ctx.userHome);
+  if (agent === 'copilot') {
+    await fs.rm(file, { force: true });
+    return;
+  }
+  if ((await readTextIfExists(file)) === undefined) return;
+  await changeJson(file, (root) => mergeHookSettings(root, file, agent, undefined));
+}
+
 const sectionOf = (agent: 'gemini' | 'copilot' | 'opencode') => (agent === 'opencode' ? 'mcp' : 'mcpServers');
 
 async function readEntry(ctx: RegisterContext, agent: AgentName, file: string): Promise<unknown> {
@@ -198,17 +281,19 @@ export async function agentStatus(ctx: RegisterContext, agent: AgentName): Promi
   const { command, label } = profileOf(agent);
   const config = configFile(agent, ctx.env, ctx.userHome);
   const installed = isInstalled(command, ctx.env.PATH ?? ctx.env.Path ?? '', ctx.platform === 'win32');
-  const status: AgentStatus = { agent, label, installed, registered: false, path: null, stable: false, config };
+  const status: AgentStatus = { agent, label, installed, registered: false, path: null, stable: false, config, hooks: takesHooks(agent) ? false : null };
   if (agent === 'codex' && !installed) return status;
   try {
+    if (takesHooks(agent)) status.hooks = await hooksInstalled(ctx, agent);
     const entry = await readEntry(ctx, agent, config);
     if (entry === undefined) return status;
     const registered = entryServerPath(entry) ?? null;
+    const settings = agent !== 'codex' || hasCodexSettings(await readTextIfExists(config));
     return {
       ...status,
       registered: true,
       path: registered,
-      stable: registered !== null && samePath(registered, serverCopyPath(ctx.home, ctx.platform), ctx.platform),
+      stable: settings && registered !== null && samePath(registered, serverCopyPath(ctx.home, ctx.platform), ctx.platform),
     };
   } catch (e) {
     return { ...status, error: (e as Error).message };
@@ -224,9 +309,14 @@ async function editConfig(file: string, agent: 'copilot' | 'opencode', entry: un
 async function register(ctx: RegisterContext, agent: AgentName, server: string, file: string): Promise<void> {
   if (agent === 'codex' || agent === 'gemini') await changeWithCli(ctx, agent, registerArgs(agent, server));
   else await editConfig(file, agent, agent === 'copilot' ? copilotEntry(server) : opencodeEntry(server));
+  if (agent === 'codex') {
+    await installCodexSettings(ctx);
+  }
+  if (takesHooks(agent)) await installHooks(ctx, agent);
 }
 
 async function unregister(ctx: RegisterContext, agent: AgentName, file: string): Promise<void> {
+  if (takesHooks(agent)) await removeHooks(ctx, agent);
   if (agent === 'codex' || agent === 'gemini') await changeWithCli(ctx, agent, unregisterArgs(agent));
   else await editConfig(file, agent, undefined);
 }
@@ -267,26 +357,33 @@ async function registerOne(ctx: RegisterContext, agent: AgentName, server: strin
   const before = await agentStatus(ctx, agent);
   if (!existsSync(server)) return outcome(before, copyError ?? `${server} is missing`);
   if (!before.installed) return outcome(before, 'not installed');
+  if (agent === 'codex' && ctx.platform === 'win32') return outcome(before, CODEX_WINDOWS_REFUSAL);
   try {
     await register(ctx, agent, server, before.config);
   } catch (e) {
     return outcome(before, (e as Error).message);
   }
   const after = await agentStatus(ctx, agent);
-  const missing = !after.registered || !after.stable ? `${after.config} doesn't hold the ${SERVER_NAME} entry after registering` : undefined;
+  const missing =
+    !after.registered || !after.stable
+      ? `${after.config} doesn't hold the ${SERVER_NAME} entry after registering`
+      : after.hooks === false
+        ? `the Agent Tabs hooks aren't in ${isHookAgent(agent) ? hookConfigFile(agent, ctx.env, ctx.userHome) : after.config} after registering`
+        : undefined;
   return outcome(after, after.error ?? missing);
 }
 
 async function unregisterOne(ctx: RegisterContext, agent: AgentName): Promise<Outcome> {
   const before = await agentStatus(ctx, agent);
-  if (before.error || !before.registered) return outcome(before, before.error);
+  if (before.error || (!before.registered && !before.hooks)) return outcome(before, before.error);
   try {
     await unregister(ctx, agent, before.config);
   } catch (e) {
     return outcome(before, (e as Error).message);
   }
   const after = await agentStatus(ctx, agent);
-  return outcome(after, after.error ?? (after.registered ? `${after.config} still holds the ${SERVER_NAME} entry` : undefined));
+  const left = after.registered ? `${after.config} still holds the ${SERVER_NAME} entry` : after.hooks ? 'the Agent Tabs hooks are still installed' : undefined;
+  return outcome(after, after.error ?? left);
 }
 
 const errorsOf = (outcomes: Outcome[]) => outcomes.filter((o) => o.error !== undefined).map((o) => `${o.agent}: ${o.error}`);

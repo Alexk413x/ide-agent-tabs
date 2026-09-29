@@ -173,7 +173,9 @@ export class Service {
     }
     const { infos, errors } = await this.infos(endpoints);
     const candidates: IdeCandidate[] = infos.map((i) => ({ id: i.endpoint.id, startedAt: i.endpoint.startedAt, projects: i.projects }));
-    const choice = chooseIde(candidates, request.path, this.isWindows);
+    const own = this.deps.env[TAB_ID_ENV];
+    const callerIde = own ? await this.findHost(own).catch(() => undefined) : undefined;
+    const choice = chooseIde(candidates, request.path, this.isWindows, callerIde);
     if (choice) return this.openInIde(infos.find((i) => i.endpoint.id === choice.id)!.endpoint, request, choice.reason);
 
     const settings = await this.settings();
@@ -312,19 +314,7 @@ export class Service {
       }
       return { id: target, ide: driver.name, closed: true };
     }
-    const { endpoints } = await this.registry();
-    const owners = await Promise.all(
-      endpoints.map(async (endpoint) => {
-        try {
-          const reply = await this.deps.callIde(endpoint, 'list');
-          const tabs = Array.isArray(reply.tabs) ? (reply.tabs as { id?: unknown }[]) : [];
-          return tabs.some((t) => t.id === target) ? endpoint : undefined;
-        } catch {
-          return undefined;
-        }
-      }),
-    );
-    const owner = owners.find((o) => o !== undefined);
+    const owner = await this.ideOwner(target);
     if (!owner) throw new ToolError(`no open agent tab with id ${target}; list_tabs shows the open ones`);
     try {
       await this.deps.callIde(owner, 'close', { id: target });
@@ -332,5 +322,50 @@ export class Service {
       throw new ToolError(errorText(e));
     }
     return { id: target, ide: owner.id, closed: true };
+  }
+
+  private async ideOwner(id: string): Promise<Endpoint | undefined> {
+    const { endpoints } = await this.registry();
+    const owners = await Promise.all(
+      endpoints.map(async (endpoint) => {
+        try {
+          const reply = await this.deps.callIde(endpoint, 'list');
+          const tabs = Array.isArray(reply.tabs) ? (reply.tabs as { id?: unknown }[]) : [];
+          return tabs.some((t) => t.id === id) ? endpoint : undefined;
+        } catch {
+          return undefined;
+        }
+      }),
+    );
+    return owners.find((o) => o !== undefined);
+  }
+
+  async findHost(id: string): Promise<string | undefined> {
+    const record = (await this.store.read()).find((t) => t.id === id);
+    if (record) return record.terminal;
+    return (await this.ideOwner(id))?.id;
+  }
+
+  async typeInto(id: string, host: string, text: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const driver = this.deps.drivers.find((d) => d.name === host);
+    if (driver) {
+      if (!driver.input) return { ok: false, reason: `${driver.label} can't take input from outside` };
+      const record = (await this.store.read()).find((t) => t.id === id && t.terminal === host);
+      if (!record) return { ok: false, reason: `no ${driver.label} tab with id ${id}` };
+      try {
+        await driver.input(this.ctx, record, text);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, reason: `${driver.label}: ${errorText(e)}` };
+      }
+    }
+    const endpoint = (await this.registry()).endpoints.find((e) => e.id === host);
+    if (!endpoint) return { ok: false, reason: `no running IDE or terminal with id ${host}` };
+    try {
+      await this.deps.callIde(endpoint, 'input', { id, text });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: errorText(e) };
+    }
   }
 }

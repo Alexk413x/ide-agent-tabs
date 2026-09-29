@@ -19,8 +19,7 @@ claude plugin install ide-agent-tabs@ide-agent-tabs
 
 In a Claude Code session, run `/ide-agent-tabs:setup`.
 
-To install by hand instead, get the `.vsix` file from a `vscode-v<version>` release on the repository's
-GitHub Releases page, or use `claude-plugin/dist/ide/ide-agent-tabs.vsix` from the repository. Then
+To install by hand instead, use `claude-plugin/dist/ide/ide-agent-tabs.vsix` from the repository, and
 install it with your editor's command-line tool:
 
 ```sh
@@ -102,7 +101,7 @@ Each VS Code window runs its own server on `127.0.0.1` and writes a registry fil
 `~/.ide-agent-tabs/endpoints/vscode-<pid>-<window>.json`. The file holds the server URL and a token. The
 window deletes its file when it closes.
 
-The routes are `info`, `agents`, `open`, `close` and `list`. The
+The routes are `info`, `agents`, `open`, `close`, `list` and `input`. The
 [design document](https://github.com/Alexk413x/ide-agent-tabs/blob/main/docs/design.md) describes the
 registry, each route, the status codes and the security rules.
 

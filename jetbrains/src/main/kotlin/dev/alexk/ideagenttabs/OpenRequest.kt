@@ -10,6 +10,7 @@ import java.security.MessageDigest
 
 const val MAX_PROMPT_CHARS = 30_000
 const val MAX_ENTRIES = 64
+const val MAX_INPUT_CHARS = 500
 
 class Refusal(val status: Int, val message: String)
 
@@ -57,6 +58,21 @@ fun parseCloseId(body: String): String {
     val id = parseObject(body).string("id")
     if (id.isNullOrBlank()) throw IllegalArgumentException("id is required")
     return id
+}
+
+data class InputRequest(val id: String, val text: String)
+
+fun parseInput(body: String): InputRequest {
+    val obj = parseObject(body)
+    val id = obj.string("id")
+    if (id.isNullOrBlank()) throw IllegalArgumentException("id is required")
+    val text = obj.string("text")
+    if (text.isNullOrBlank()) throw IllegalArgumentException("text is required")
+    if (text.length > MAX_INPUT_CHARS) throw IllegalArgumentException("text exceeds $MAX_INPUT_CHARS characters")
+    if (text.any { Character.getType(it) == Character.CONTROL.toInt() }) {
+        throw IllegalArgumentException("text must be one line with no control characters")
+    }
+    return InputRequest(id, text)
 }
 
 fun parseEmpty(body: String) {

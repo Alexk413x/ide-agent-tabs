@@ -6,6 +6,7 @@ import { agentTabsHome } from './home.js';
 import { ideCaller } from './ideClient.js';
 import { runJevCli } from './jev/cli.js';
 import { startJev } from './jev/service.js';
+import { Messaging } from './messaging/messaging.js';
 import { createServer } from './server.js';
 import { Service } from './service.js';
 import { TERMINAL_DRIVERS } from './terminals/index.js';
@@ -32,5 +33,19 @@ const [command, ...args] = process.argv.slice(2);
 if (command === 'jev') {
   process.exitCode = await runJevCli(args, jev, off);
 } else {
-  await createServer(service, jev).connect(new StdioServerTransport());
+  const messaging = new Messaging({ home, env: process.env, pid: process.pid, cwd: process.cwd(), hosts: service });
+  await messaging.start().catch(() => undefined);
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    messaging.stopSync();
+    process.exit(0);
+  };
+  process.on('exit', () => messaging.stopSync());
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => stop());
+  // Windows sends no SIGTERM to a child; a client ends the server by closing its stdin.
+  process.stdin.on('end', () => stop());
+  process.stdin.on('close', () => stop());
+  await createServer(service, jev, messaging).connect(new StdioServerTransport());
 }

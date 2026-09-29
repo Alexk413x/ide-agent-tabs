@@ -44,9 +44,7 @@ normal plugin update.
 
 To install by hand instead:
 
-1. Get the plugin zip. Download `ide-agent-tabs-<version>.zip` from a `jetbrains-v<version>` release on
-   the repository's GitHub Releases page, or use `claude-plugin/dist/ide/ide-agent-tabs-jetbrains.zip`
-   from the repository. You can also build it (see [Build from source](#build-from-source)).
+1. Get the plugin zip: `claude-plugin/dist/ide/ide-agent-tabs-jetbrains.zip` in the repository. You can also build it (see [Build from source](#build-from-source)).
 2. In the IDE, open **Settings > Plugins**, click **⚙**, and choose **Install Plugin from Disk**.
 3. Select the zip file, then restart the IDE.
 
@@ -59,7 +57,7 @@ The plugin knows these agents:
 | Name | Label | Command | First prompt |
 |---|---|---|---|
 | `claude` | Claude Code | `claude` | positional |
-| `codex` | Codex | `codex` | positional |
+| `codex` | Codex | `codex --no-daemon` and `-c` options that add Agent Tabs messaging; needs Codex 0.158 or later | positional |
 | `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 | `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
 
@@ -184,6 +182,13 @@ opens in the open project that contains `path`, or in the last focused project w
 plugin opened. Each session can read its own id from the `IDE_AGENT_TABS_ID` environment variable,
 so a session can close its own tab when it finishes. `IDE_AGENT_TABS_AGENT` holds the agent name.
 
+### Input
+
+`POST {"id": "<tab id>", "text": "<one line>"}` to `input`. The plugin types `text` into the tab's
+terminal and presses Enter, as if you typed it. `text` is one line of up to 500 characters with no
+control characters. The reply holds the tab's `id`. The MCP server uses `input` only to wake an idle
+session for a new message.
+
 ### List
 
 `POST {}` to `list`. The reply's `tabs` array holds the `id`, `agent`, `project` and `path` of each
@@ -205,14 +210,14 @@ in the last focused window.
 | Status | Meaning |
 |---|---|
 | 200 | Done. |
-| 400 | Bad body, relative path, missing folder, missing `id`, or unknown `agent`. |
+| 400 | Bad body, relative path, missing folder, missing `id`, unknown `agent`, or bad `text` for `input`. |
 | 401 | Missing or wrong token. |
 | 403 | The request came from outside this computer, or carried an `Origin` or `Referer` header. |
-| 404 | `close`: no open tab has that id. Also the IDE's reply to a browser-like request. |
+| 404 | `close`, `input`: no open tab has that id. Also the IDE's reply to a browser-like request. |
 | 405 | The method wasn't `POST`. |
 | 409 | `open`: no project is open. |
 | 415 | `Content-Type` wasn't `application/json`. |
-| 503 | The IDE didn't respond within 10 seconds, usually because a dialog is open. Nothing opens later. |
+| 503 | The IDE didn't respond within 10 seconds, usually because a dialog is open. Nothing happens later. |
 
 The API accepts requests only from this computer, and only with the token. On macOS and Linux, only
 your user account can read the registry folder. The `Origin`, `Referer` and `Content-Type` rules stop
