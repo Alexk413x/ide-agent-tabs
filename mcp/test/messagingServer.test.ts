@@ -115,7 +115,7 @@ test("a Codex tab's hooks reach the hook tool, which only Codex sees", async () 
       assert.ok(!result.isError);
       return result.content.length ? JSON.parse(result.content[0]!.text) : undefined;
     };
-    assert.equal(await hook('SessionStart'), undefined);
+    assert.equal(await hook('UserPromptSubmit'), undefined);
     assert.equal(codex.messaging.id, `codex-${thread}`, 'the closed tab id gives way to the thread id');
 
     await claude.call('send_message', { to: `codex-${thread}`, text: 'Status?' });

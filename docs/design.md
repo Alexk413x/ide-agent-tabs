@@ -13,7 +13,7 @@ This document is the contract every part builds against. Change it before you ch
 | JetBrains plugin | Built | `jetbrains/` |
 | Protocol: registry and HTTP API | Built | This document |
 | Claude Code plugin: `delegate` skill | Built | `claude-plugin/`, marketplace in `.claude-plugin/` |
-| CI and release workflows | Built | `.github/workflows/` |
+| CI workflow | Built | `.github/workflows/ci.yml` |
 | Claude Code plugin: MCP server, `new-tab`, `setup` and `update` skills | Built | `claude-plugin/`, `mcp/` |
 | VS Code extension (VS Code and editors built on it) | Built | `vscode/` |
 | Messaging between agent sessions: MCP tools, hooks and the `message` skill | Built | `mcp/src/messaging/`, `mcp/src/agentHook.ts`, `claude-plugin/hooks/`, `claude-plugin/skills/message/` |
@@ -40,7 +40,7 @@ The file name without `.json` is the IDE's id in the MCP tools.
 }
 ```
 
-- `ide` is one of `jetbrains`, `vscode` or `visualstudio`.
+- `ide` is `jetbrains` or `vscode`.
 - `url` is the API base. Routes are `<url>/<route>`.
 - `token` is 32 random bytes, hex-encoded, made fresh each time the IDE starts.
 - Write the file atomically: write a temporary file in the same folder, then rename it.
@@ -188,12 +188,11 @@ setup. The `codex` profile's `args`, placed before the caller's `args` and the p
   `env_vars = ["IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_HOME"]`, because Codex passes a
   stdio server only a fixed set of variables, and `tool_timeout_sec = 660`, because Codex's default of
   60 seconds would end `wait_for_message` early.
-- One `-c hooks.<Event>=[…]` for each of `SessionStart`, `UserPromptSubmit`, `PostToolUse`,
-  `PermissionRequest` and `Stop`. Each is an `mcp_tool` hook that calls the server's `agent_tabs_hook`
-  tool with `input = { event = '<Event>', session_id = '${session_id}', turn_id = '${turn_id}' }`
-  (`SessionStart` has no `turn_id`). The call runs over the session's own MCP connection, so no process
+- One `-c hooks.<Event>=[…]` for each of `UserPromptSubmit`, `PostToolUse`, `PermissionRequest` and
+  `Stop`. Each is an `mcp_tool` hook that calls the server's `agent_tabs_hook`
+  tool with `input = { event = '<Event>', session_id = '${session_id}', turn_id = '${turn_id}' }`. The call runs over the session's own MCP connection, so no process
   starts and no console window opens.
-- `-c hooks.state={ … }`, which trusts exactly those five hooks, so Codex runs them without a `/hooks`
+- `-c hooks.state={ … }`, which trusts exactly those four hooks, so Codex runs them without a `/hooks`
   review. Codex keys a hook by its source path, event and position: for `-c` hooks the source is
   `/<session-flags>/config.toml`, or `C:\<session-flags>\config.toml` on Windows, so the profile lists
   both. The trusted hash is Codex's `version_for_toml` of the normalized hook: the SHA-256 of its
@@ -593,23 +592,8 @@ the bundled version passes it.
 
 An IDE that was never set up needs the setup skill, not the update skill.
 
-### GitHub Releases
-
-The release workflow, `.github/workflows/release.yml`, publishes each IDE extension to GitHub Releases
-for people who install by hand.
-
-- **Trigger:** a tag per part and version, such as `jetbrains-v0.4.1` or `vscode-v0.1.17`. The version in
-  the tag must match the part's own version (`pluginVersion` in `jetbrains/gradle.properties`, or
-  `version` in `vscode/package.json`). The workflow fails otherwise.
-- **JetBrains:** a Linux job sets up JDK 25, installs zsh and fish, and runs
-  `./gradlew test buildPlugin verifyPlugin`. A Windows job runs the tests, including the PowerShell launch
-  tests.
-- **VS Code:** a Linux job runs `npm test` and `npm run build`, and packages the `.vsix`.
-- **Publish:** the workflow attaches `ide-agent-tabs-<version>.zip` or `ide-agent-tabs-<version>.vsix`,
-  and a `SHA256SUMS` file, to a GitHub Release named after the tag.
-
 The build compiles against a local IDE when `studioPath` is set in `~/.gradle/gradle.properties`, and
-downloads IntelliJ IDEA 2026.2.2 otherwise, as the release workflow does. The Plugin Verifier checks
+downloads IntelliJ IDEA 2026.2.2 otherwise. The Plugin Verifier checks
 IntelliJ IDEA 2026.2.2 and Android Studio 2026.2.2.2.
 
 The plugin needs build 262.10315 or later (IntelliJ IDEA and Android Studio 2026.2.2). Earlier 2026.2

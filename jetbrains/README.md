@@ -44,9 +44,7 @@ normal plugin update.
 
 To install by hand instead:
 
-1. Get the plugin zip. Download `ide-agent-tabs-<version>.zip` from a `jetbrains-v<version>` release on
-   the repository's GitHub Releases page, or use `claude-plugin/dist/ide/ide-agent-tabs-jetbrains.zip`
-   from the repository. You can also build it (see [Build from source](#build-from-source)).
+1. Get the plugin zip: `claude-plugin/dist/ide/ide-agent-tabs-jetbrains.zip` in the repository. You can also build it (see [Build from source](#build-from-source)).
 2. In the IDE, open **Settings > Plugins**, click **⚙**, and choose **Install Plugin from Disk**.
 3. Select the zip file, then restart the IDE.
 

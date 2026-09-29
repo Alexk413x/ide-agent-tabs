@@ -41,7 +41,7 @@ export interface AgentStatus {
 export const isAgentName = (name: string): name is AgentName => (AGENTS as readonly string[]).includes(name);
 
 // Codex tabs bring their own hooks, and the shared Codex daemon would run global ones with another tab's
-// IDE_AGENT_TABS_ID, so Codex gets none. Registering still removes the ones older versions installed.
+// IDE_AGENT_TABS_ID, so Codex gets none.
 export const takesHooks = (agent: AgentName): agent is HookAgent => isHookAgent(agent) && agent !== 'codex';
 
 // The Codex desktop app shares ~/.codex with the CLI, and on Windows, Codex before 0.159 opens a console
@@ -311,13 +311,12 @@ async function register(ctx: RegisterContext, agent: AgentName, server: string, 
   else await editConfig(file, agent, agent === 'copilot' ? copilotEntry(server) : opencodeEntry(server));
   if (agent === 'codex') {
     await installCodexSettings(ctx);
-    await removeHooks(ctx, 'codex');
   }
   if (takesHooks(agent)) await installHooks(ctx, agent);
 }
 
 async function unregister(ctx: RegisterContext, agent: AgentName, file: string): Promise<void> {
-  if (isHookAgent(agent)) await removeHooks(ctx, agent);
+  if (takesHooks(agent)) await removeHooks(ctx, agent);
   if (agent === 'codex' || agent === 'gemini') await changeWithCli(ctx, agent, unregisterArgs(agent));
   else await editConfig(file, agent, undefined);
 }
