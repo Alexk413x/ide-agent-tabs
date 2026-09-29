@@ -147,5 +147,6 @@ export function effectiveState(p: { state?: SessionState; stateAt?: string }, no
   const state = p.state ?? 'unknown';
   if (state !== 'waking') return state;
   const at = Date.parse(p.stateAt ?? '');
-  return Number.isFinite(at) && now - at < WAKE_TIMEOUT_MS ? 'waking' : 'idle';
+  const elapsed = now - at;
+  return Number.isFinite(at) && elapsed >= 0 && elapsed < WAKE_TIMEOUT_MS ? 'waking' : 'idle';
 }
