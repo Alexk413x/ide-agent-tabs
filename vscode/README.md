@@ -17,6 +17,9 @@ claude plugin marketplace add Alexk413x/ide-agent-tabs
 claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
 
+The repository is private, so installing needs read access to it: sign in to GitHub with an account
+that has access, for example with `gh auth login`.
+
 In a Claude Code session, run `/ide-agent-tabs:setup`.
 
 To install by hand instead, use `claude-plugin/dist/ide/ide-agent-tabs.vsix` from the repository, and
@@ -137,3 +140,7 @@ can close its own tab.
   Install PowerShell 7 to avoid this.
 - Tested on Windows. The bash launcher is tested through WSL. zsh, fish, macOS and remote workspaces
   are untested.
+
+## License
+
+Proprietary. See the LICENSE file that ships with this extension.

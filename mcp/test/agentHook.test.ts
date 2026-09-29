@@ -20,7 +20,7 @@ async function mail(home: string) {
 }
 
 const state = async (home: string) => (await readPresence(home, ID))?.state;
-const REMINDER = 'Agent Tabs: 1 unread message from codex abcdef01; call read_messages.';
+const REMINDER = 'Agent Tabs: 1 unread message from codex abcdef01. read_messages returns it.';
 
 test('hooks set busy, permission and idle for each CLI', async () => {
   const cases: [string, string, Record<string, unknown>, string][] = [
@@ -52,25 +52,46 @@ test('hooks set busy, permission and idle for each CLI', async () => {
 });
 
 test('each CLI gets the reminder in its own context format after a prompt and a tool call', async () => {
+  const context = (event: string) => ({ hookSpecificOutput: { hookEventName: event, additionalContext: REMINDER } });
+  const cases: [string, string, object | undefined][] = [
+    ['claude', 'UserPromptSubmit', context('UserPromptSubmit')],
+    ['claude', 'PostToolUse', context('PostToolUse')],
+    ['codex', 'PreToolUse', undefined],
+    ['codex', 'UserPromptSubmit', context('UserPromptSubmit')],
+    ['codex', 'PostToolUse', context('PostToolUse')],
+    ['gemini', 'BeforeAgent', context('BeforeAgent')],
+    ['gemini', 'AfterTool', context('AfterTool')],
+    ['copilot', 'userPromptSubmitted', undefined],
+    ['copilot', 'postToolUse', { additionalContext: REMINDER }],
+  ];
+  for (const [cli, event, want] of cases) {
+    const home = tempDir('iat-hook-');
+    await mail(home);
+    const got = await hook(home, cli, event);
+    assert.deepEqual(got, want, `${cli} ${event}`);
+    assert.doesNotMatch(JSON.stringify(got ?? {}), /secret text/);
+  }
+});
+
+test('a message is reminded once, and a new message brings a new reminder', async () => {
   const home = tempDir('iat-hook-');
   await mail(home);
-  const context = (event: string) => ({ hookSpecificOutput: { hookEventName: event, additionalContext: REMINDER } });
-  assert.deepEqual(await hook(home, 'claude', 'UserPromptSubmit'), context('UserPromptSubmit'));
-  assert.deepEqual(await hook(home, 'claude', 'PostToolUse'), context('PostToolUse'));
-  assert.equal(await hook(home, 'codex', 'PreToolUse'), undefined);
-  assert.deepEqual(await hook(home, 'codex', 'UserPromptSubmit'), context('UserPromptSubmit'));
-  assert.deepEqual(await hook(home, 'codex', 'PostToolUse'), context('PostToolUse'));
-  assert.deepEqual(await hook(home, 'gemini', 'BeforeAgent'), context('BeforeAgent'));
-  assert.deepEqual(await hook(home, 'gemini', 'AfterTool'), context('AfterTool'));
-  assert.equal(await hook(home, 'copilot', 'userPromptSubmitted'), undefined, "Copilot CLI drops a prompt hook's output");
-  assert.deepEqual(await hook(home, 'copilot', 'postToolUse'), { additionalContext: REMINDER });
-  assert.doesNotMatch(JSON.stringify(await hook(home, 'claude', 'PostToolUse')), /secret text/);
+  const context = (text: string) => ({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: text } });
+  assert.deepEqual(await hook(home, 'claude', 'PostToolUse'), context(REMINDER));
+  assert.equal(await hook(home, 'claude', 'PostToolUse'), undefined);
+  assert.equal(await hook(home, 'claude', 'UserPromptSubmit'), undefined);
+  await mail(home);
+  assert.deepEqual(await hook(home, 'claude', 'PostToolUse'), context('Agent Tabs: 2 unread messages from codex abcdef01. read_messages returns them.'));
+  assert.equal(await hook(home, 'claude', 'PostToolUse'), undefined);
+  await takeMessages(home, ID);
+  await hook(home, 'claude', 'PostToolUse');
+  assert.equal((await readPresence(home, ID))!.reminded, undefined);
 });
 
 test('turn end blocks at most three times in a row, and a prompt or a read resets the count', async () => {
   const home = tempDir('iat-hook-');
   await mail(home);
-  const block = { decision: 'block', reason: `${REMINDER} Read them before you end your turn.` };
+  const block = { decision: 'block', reason: `Agent Tabs kept this turn open. ${REMINDER}` };
   for (let i = 1; i <= 3; i++) {
     assert.deepEqual(await hook(home, 'claude', 'Stop', { stop_hook_active: i > 1 }), block, `block ${i}`);
     assert.equal(await state(home), 'busy');

@@ -13,6 +13,9 @@ claude plugin marketplace add Alexk413x/ide-agent-tabs
 claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
 
+The repository is private, so installing needs read access to it: sign in to GitHub with an account
+that has access, for example with `gh auth login`.
+
 Then, in a Claude Code session, run `/ide-agent-tabs:setup`. The setup skill finds your IDEs, installs
 the extension in VS Code and editors built on it, and gives you two one-time steps for each JetBrains
 IDE. It also reports which agent CLIs it finds.
@@ -30,6 +33,19 @@ the new plugin as a normal plugin update.
   or VS Code 1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium and Antigravity.
 - At least one agent CLI, such as Claude Code, Codex, Gemini CLI or Copilot CLI.
 
+## Where it works
+
+The plugin needs a computer with IDEs or a terminal, and agent CLIs, that it can reach.
+
+| Surface | What works |
+|---|---|
+| Claude Code: terminal, IDE extensions, desktop app | Everything. |
+| Cowork, local session in the desktop app | The MCP server runs on your computer, so opening, listing and closing tabs, messaging and the Jev tools reach your IDEs and terminals. `delegate`, `setup` and `update` run their shell steps in Cowork's Linux VM, which has no IDE and may lack the agent CLIs. |
+| claude.ai chat, cloud Cowork | Nothing. These surfaces don't run the local MCP server or the hooks, and have no local shell. |
+
+Where local Cowork runs a plugin hook is not documented. The `SessionStart` sync always exits 0, and
+the messaging hooks do nothing outside an agent tab, so a hook that runs in the VM changes nothing.
+
 ## Parts
 
 | Part | Folder | What it does |
@@ -46,4 +62,5 @@ and possible future work. Change the design before you change the protocol.
 
 ## License
 
-[MIT](LICENSE)
+Proprietary. See [LICENSE](LICENSE). The bundled third-party licenses are in
+`claude-plugin/dist/THIRD_PARTY_NOTICES.txt`.

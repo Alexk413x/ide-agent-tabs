@@ -1,6 +1,6 @@
 ---
 name: jev
-description: Use TypeSafe's Jev model, through the jev_ tools of the ide-agent-tabs server, for a judgment-shaped step instead of deciding it with a model turn - pick one item from options you can list (a file, test, agent or next step), answer yes or no about text you already hold, grade text on levels you can describe, or rank and filter candidates such as search results, review comments or log lines. Use it on your own whenever a step has that shape, and when the user asks for Jev. Don't use it to write text or code, to count or compute, to read images, or for a final verdict on a merge, deletion or permission.
+description: When jev_ tools are listed, use them for a judgment step instead of a model turn - a pick from options you list, a yes or no about text you hold, a grade on described levels, or a ranking - and when the user asks for Jev. Not for text, code, counts or a final verdict.
 ---
 
 Jev is TypeSafe's "System One" model. It reads text and returns a typed judgment in under a second:
@@ -38,12 +38,12 @@ Typical steps:
 
 | Shape of the step | Tool |
 |---|---|
-| One option from a list | `jev_choose` with `instruction`, `options` and `state` |
-| Several yes-or-no conditions about one text | `jev_check` with `state` and `conditions` |
-| Order candidates by relevance, or keep the top few | `jev_rank` with `query`, `items` and `top` |
-| Which agent or model tier takes a task | `jev_route` with `task` |
-| A score on described levels, or a mix of question kinds | `jev_ask` with `state` and `questions` in the API's form |
-| Whether a key is found, and today's calls and cost | `jev_status` |
+| One option from a list | `jev_choose` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_choose`) with `instruction`, `options` and `state` |
+| Several yes-or-no conditions about one text | `jev_check` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_check`) with `state` and `conditions` |
+| Order candidates by relevance, or keep the top few | `jev_rank` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_rank`) with `query`, `items` and `top` |
+| Which agent or model tier takes a task | `jev_route` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_route`) with `task` |
+| A score on described levels, or a mix of question kinds | `jev_ask` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_ask`) with `state` and `questions` in the API's form |
+| Whether a key is found, and today's calls and cost | `jev_status` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_status`) |
 
 ## Write questions Jev answers well
 
