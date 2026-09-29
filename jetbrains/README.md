@@ -59,7 +59,7 @@ The plugin knows these agents:
 | Name | Label | Command | First prompt |
 |---|---|---|---|
 | `claude` | Claude Code | `claude` | positional |
-| `codex` | Codex | `codex` | positional |
+| `codex` | Codex | `codex --no-daemon` and `-c` options that add Agent Tabs messaging; needs Codex 0.158 or later | positional |
 | `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 | `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
 

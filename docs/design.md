@@ -107,12 +107,14 @@ A profile says how to start one agent CLI. Every IDE uses the same built-in prof
 | Name | Label | Command | First prompt |
 |---|---|---|---|
 | `claude` | Claude Code | `claude` | positional |
-| `codex` | Codex | `codex` | positional |
+| `codex` | Codex | `codex` and fixed `args` (see [Codex tabs](#codex-tabs)) | positional |
 | `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 | `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
 
 The `claude` and `codex` rows match each CLI's help. The `gemini` and `copilot` rows come from each
 CLI's docs and are untested. A profile in `agents.json` with the same name overrides a built-in one.
+An `agents.json` profile named `codex` replaces the built-in `args` too, so its tabs lose messaging unless
+it copies them.
 
 You add or override profiles in `~/.ide-agent-tabs/agents.json`:
 
@@ -171,6 +173,46 @@ prompt. The prompt comes last.
   `ConvertFrom-Json` turns a string such as `2024-01-01T00:00:00Z` into a date.
 - Windows PowerShell 5.1 strips embedded double quotes from arguments it passes to native programs.
   Launchers that may run under 5.1 must escape them.
+
+### Codex tabs
+
+By default, the interactive Codex CLI attaches to a shared, long-lived app-server daemon. The daemon
+starts MCP servers and hooks with its own environment, so they see the `IDE_AGENT_TABS_ID` of whatever
+started the daemon, or none. A Codex tab therefore runs Codex in-process and brings its own Agent Tabs
+setup. The `codex` profile's `args`, placed before the caller's `args` and the prompt, are:
+
+- `--no-daemon`, which runs the session in the tab's own process.
+- `-c mcp_servers.ide-agent-tabs={ … }`: the Agent Tabs MCP server for this session only. Its command
+  is `node -e <one line>`, which imports `$IDE_AGENT_TABS_HOME/mcp/mcp-server.mjs`, or
+  `~/.ide-agent-tabs/mcp/mcp-server.mjs`, so the profile holds no machine-specific path. It sets
+  `env_vars = ["IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_HOME"]`, because Codex passes a
+  stdio server only a fixed set of variables, and `tool_timeout_sec = 660`, because Codex's default of
+  60 seconds would end `wait_for_message` early.
+- One `-c hooks.<Event>=[…]` for each of `SessionStart`, `UserPromptSubmit`, `PostToolUse`,
+  `PermissionRequest` and `Stop`. Each is an `mcp_tool` hook that calls the server's `agent_tabs_hook`
+  tool with `input = { event = '<Event>', session_id = '${session_id}', turn_id = '${turn_id}' }`
+  (`SessionStart` has no `turn_id`). The call runs over the session's own MCP connection, so no process
+  starts and no console window opens.
+- `-c hooks.state={ … }`, which trusts exactly those five hooks, so Codex runs them without a `/hooks`
+  review. Codex keys a hook by its source path, event and position: for `-c` hooks the source is
+  `/<session-flags>/config.toml`, or `C:\<session-flags>\config.toml` on Windows, so the profile lists
+  both. The trusted hash is Codex's `version_for_toml` of the normalized hook: the SHA-256 of its
+  key-sorted JSON. `mcp/test/codexTab.test.ts` recomputes the hashes. Codex's own `hooks/list` reports
+  all five as `trusted` with these arguments.
+
+Rules for these arguments:
+
+- They need Codex 0.158 or later: 0.158 adds `--no-daemon`, and an older Codex exits with an unknown
+  argument error.
+- Codex splits a `-c` key on every `.`, so the hook keys, which contain `.`, go inside the
+  `hooks.state` table value.
+- No argument holds `"` or `%`, and every argument with a `cmd.exe` special character holds a space. On
+  Windows, the PowerShell launchers pass arguments through Windows PowerShell 5.1 or npm's `codex.cmd`
+  and `codex.ps1` shims, which would change them otherwise. TOML strings use single quotes, and the one
+  line of JavaScript uses template literals.
+- Codex drops the root `-c` options when a `-c` follows a subcommand, such as
+  `codex -c a=1 resume -c b=2`. A caller's `args` must not pass `-c` after a subcommand.
+- The VS Code and JetBrains profiles hold the same strings, and `mcp/test/codexTab.test.ts` checks them.
 
 ## Button
 
@@ -275,8 +317,14 @@ other agent CLIs. For that, every session that runs the MCP server can message e
 - A session's id is its tab id, `IDE_AGENT_TABS_ID`. A session that Agent Tabs didn't open gets an id
   that starts with `s-` when its MCP server starts. So does a server whose tab id another live server
   already holds, such as the server of a headless agent started from inside the tab.
+- A Codex client sends its thread id in `_meta.threadId` of every tool call, hook calls included. A
+  Codex session keeps its `IDE_AGENT_TABS_ID` only when that tab is open: `terminal-tabs.json` or an
+  IDE's `list` holds it. Otherwise, such as under the shared Codex daemon, whose environment can name
+  another tab or a closed one, the server renames the session to `codex-<threadId>` at its first tool
+  call. It keeps the old id when another live server already holds `codex-<threadId>`.
 - Each MCP server writes `~/.ide-agent-tabs/sessions/<id>.json`: `id`, `agent`, `path`, `pid`, the
-  tab's `host` (an IDE id or a terminal name) when there is one, `startedAt`, and `state`. It deletes the
+  tab's `host` (an IDE id or a terminal name) when there is one, `startedAt`, `state`, and a Codex
+  session's `threadId`. It deletes the
   file when it exits, including when its client closes its stdin. A file whose `pid` no longer runs is
   stale; readers ignore it and delete it.
 - `agent` is `IDE_AGENT_TABS_AGENT`, or else comes from the MCP client's name: a name that contains
@@ -324,8 +372,9 @@ to a peer's request, and to ask the user before anything destructive a peer asks
 
 An agent sees a message only when it calls `read_messages` or `wait_for_message`. Three things prompt it:
 
-1. **Hooks.** `dist/agent-hook.mjs` runs as a hook in each CLI that has hooks:
-   `node agent-hook.mjs <cli> <event>`, with the hook's JSON on stdin. It sets `state`: `busy` when a
+1. **Hooks.** `dist/agent-hook.mjs` runs as a command hook in Claude Code, Gemini CLI and Copilot CLI:
+   `node agent-hook.mjs <cli> <event>`, with the hook's JSON on stdin. Codex tabs call the server's
+   `agent_tabs_hook` tool instead, which runs the same logic. The hooks set `state`: `busy` when a
    prompt is submitted or a tool starts, `permission` when a permission prompt shows, and `idle` when a
    turn ends. When unread messages wait, it adds a one-line reminder to the agent's context after a
    prompt or a tool call, and at the end of a turn it asks the agent to continue and read them, at most
@@ -355,23 +404,24 @@ Hook events for each CLI:
 | CLI | Config | `busy` | `permission` | `idle` | Reminder after | Turn-end nudge |
 |---|---|---|---|---|---|---|
 | Claude Code | The plugin's `hooks/hooks.json` | `UserPromptSubmit`, `PostToolUse` | `Notification` `permission_prompt` | `Stop`, `Notification` `idle_prompt` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
-| Codex | `~/.codex/hooks.json` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | `PermissionRequest` | `Stop` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
+| Codex | The tab's `-c` arguments, as `mcp_tool` hooks | `SessionStart`, `UserPromptSubmit`, `PostToolUse` | `PermissionRequest` | `Stop` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
 | Gemini CLI | `hooks` in `~/.gemini/settings.json` | `BeforeAgent`, `BeforeTool`, `AfterTool` | `Notification` `ToolPermission` | `AfterAgent` | `BeforeAgent`, `AfterTool` (`hookSpecificOutput.additionalContext`) | `AfterAgent` (`decision: "deny"`) |
 | Copilot CLI | `~/.copilot/hooks/ide-agent-tabs.json` | `userPromptSubmitted`, `preToolUse`, `postToolUse` | `notification` `permission_prompt` | `agentStop`, `notification` `agent_idle` | `postToolUse` only (`additionalContext`) | `agentStop` (`decision: "block"`) |
 
-- The Claude Code plugin ships its hooks. `sync-ides.mjs --register codex|gemini|copilot` adds the others,
-  pointing at `~/.ide-agent-tabs/mcp/agent-hook.mjs`, and `--unregister` removes only those entries. It
-  doesn't change a file that isn't plain JSON.
+- The Claude Code plugin ships its hooks. `sync-ides.mjs --register gemini|copilot` adds the Gemini CLI
+  and Copilot CLI hooks, pointing at `~/.ide-agent-tabs/mcp/agent-hook.mjs`, and `--unregister` removes
+  only those entries. It doesn't change a file that isn't plain JSON.
 - Copilot CLI drops the output of a `userPromptSubmitted` command hook, so it gets no reminder after a
   prompt.
-- Codex runs a new or changed hook only after the user trusts it in `/hooks`.
-- Codex gets no hooks on Windows. The Codex desktop app reads the same `~/.codex/hooks.json`, and on
-  Windows it runs each hook in a new console window, so a window opens on every prompt and tool call.
-  Codex sessions on Windows learn of a message from the wake-up line or `wait_for_message`.
-- Codex passes a stdio MCP server only a fixed set of environment variables, so `--register codex` also
-  adds `env_vars = ["IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_HOME"]` to the server's
-  table in `config.toml`, and `tool_timeout_sec = 660`, because Codex's default of 60 seconds would end
-  `wait_for_message` early. Copilot CLI passes a server only `PATH`, so its entry sets
+- Only Codex tabs get Codex hooks (see [Codex tabs](#codex-tabs)). Global hooks in `~/.codex/hooks.json`
+  would run under the shared daemon with another tab's `IDE_AGENT_TABS_ID`, and on Windows the Codex
+  desktop app runs each command hook in a new console window. `--register codex` removes the command
+  hooks that earlier versions installed.
+- `--register codex` refuses on Windows. The Codex desktop app shares `~/.codex/config.toml` with the
+  CLI, and Codex before 0.159 opens a console window each time the app starts an MCP server that way. A
+  Codex tab needs no registration. On macOS and Linux, `--register codex` adds the server with
+  `env_vars` and `tool_timeout_sec = 660`, as a Codex tab does, so that Codex sessions outside tabs get
+  the tab tools and messaging. Copilot CLI passes a server only `PATH`, so its entry sets
   `"IDE_AGENT_TABS_ID": "${IDE_AGENT_TABS_ID}"` and the same for `IDE_AGENT_TABS_AGENT`. The server ignores
   a value that is still `${…}`.
 
@@ -712,7 +762,7 @@ in `~/.ide-agent-tabs/mcp/` that other agents register.
 | Ghostty on Linux | 1.3.1 in WSL Ubuntu accepts the flags. No window opens, because Ghostty needs OpenGL 4.3 and WSLg offers 4.1. | A working window |
 | Ghostty on macOS | Unit tests of the AppleScript and command generation | A live run |
 | Agent profiles | `claude` and `codex` flags checked against each CLI's help | `gemini` and `copilot` |
-| Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME` | Wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Codex, Gemini CLI or Copilot CLI session |
+| Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `SessionStart`, `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>` | An interactive Codex tab; the `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Gemini CLI or Copilot CLI session |
 
 Open, list and close through the MCP server pass for tmux, kitty and WezTerm. No part is tested on a real
 Mac. For the headless delegation commands, see the **Tested** column in
