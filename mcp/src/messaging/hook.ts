@@ -21,7 +21,7 @@ const STOP: Action = { stop: true };
 
 export const HOOK_EVENTS: Record<HookCli, Record<string, Action>> = {
   claude: { UserPromptSubmit: PROMPT, PostToolUse: AFTER_TOOL, Notification: { notification: true }, Stop: STOP },
-  codex: { SessionStart: BUSY, UserPromptSubmit: PROMPT, PermissionRequest: { state: 'permission' }, PostToolUse: AFTER_TOOL, Stop: STOP },
+  codex: { UserPromptSubmit: PROMPT, PermissionRequest: { state: 'permission' }, PostToolUse: AFTER_TOOL, Stop: STOP },
   gemini: { BeforeAgent: PROMPT, BeforeTool: BUSY, Notification: { notification: true }, AfterTool: AFTER_TOOL, AfterAgent: STOP },
   copilot: {
     userPromptSubmitted: { state: 'busy', prompt: true },
