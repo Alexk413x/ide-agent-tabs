@@ -32,7 +32,10 @@ export function ideCaller(timeoutMs = IDE_TIMEOUT_MS): IdeCall {
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
-      const reason = (e as Error).name === 'TimeoutError' ? `no answer within ${timeoutMs / 1000} s` : (e as Error).message;
+      const reason =
+        (e as Error).name === 'TimeoutError'
+          ? `no answer within ${timeoutMs / 1000} s. ${endpoint.product} may be busy or showing a modal dialog; ask the user to check it, then retry once`
+          : (e as Error).message;
       throw new IdeError(`${endpoint.id} ${route} failed: ${reason}`);
     }
     const text = await response.text();
@@ -44,8 +47,18 @@ export function ideCaller(timeoutMs = IDE_TIMEOUT_MS): IdeCall {
     }
     const obj = typeof json === 'object' && json !== null && !Array.isArray(json) ? (json as Record<string, unknown>) : undefined;
     if (!response.ok || !obj || obj.ok !== true) {
-      throw new IdeError(`${endpoint.id} ${route} answered HTTP ${response.status}: ${text}`, response.status, json);
+      const error = typeof obj?.error === 'string' ? obj.error : text;
+      const hint = nextStep(endpoint, route, response.status, error);
+      throw new IdeError(`${endpoint.id} ${route} answered HTTP ${response.status}: ${error}${hint ? `. ${hint}` : ''}`, response.status, json);
     }
     return obj;
   };
+}
+
+function nextStep(endpoint: Endpoint, route: Route, status: number, error: string): string | undefined {
+  if (status === 401) return `${endpoint.product} refused the token in ${endpoint.id}, so that endpoint is stale. Call list_ides for the current ids`;
+  if (status === 409 && route === 'open') return 'To open the tab in a terminal instead, pass ide set to a terminal id from list_ides';
+  if (status === 503) return `A modal dialog is likely open in ${endpoint.product}. Ask the user to close it, then retry once`;
+  if (error.startsWith('unknown agent')) return 'Call list_agents for the profile names';
+  return undefined;
 }

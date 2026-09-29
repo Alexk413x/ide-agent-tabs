@@ -35,10 +35,8 @@ Report the folder, where the tab opened (IDE and project, or terminal), the agen
 
 ## Errors
 
-- 503 or "did not respond": a dialog is open in that IDE. Ask the user to close it, then retry once.
-- 409: no project is open in that IDE. Offer to open the tab in a terminal instead.
-- 401: the IDE restarted and its token changed. Retry once; the server rereads the registry.
-- Unknown agent: call `list_agents` and show the installed ones.
+An IDE error from the server ends with the next step. Follow it, and retry at most once. After an
+unknown-agent error, show the user the installed agents from `list_agents`.
 
 ## Without the MCP server
 

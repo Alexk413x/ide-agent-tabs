@@ -251,6 +251,16 @@ registry and calls the HTTP API.
 
 The reply includes a `reason` that says which rule chose the target.
 
+Results are compact JSON. An IDE error keeps the HTTP status and the IDE's `error` text and adds the
+next step: on 409 from `open`, pass a terminal id as `ide`; on 503 or a timeout, ask the user to close
+a dialog in the IDE; on an unknown agent, call `list_agents`. On 401 the server rereads the registry
+and retries once when the same endpoint id now holds a new token, as after a JetBrains plugin reload.
+Otherwise the error says the endpoint is stale.
+
+The server's instructions start with one sentence that names the tab tools, then the messaging rules,
+then the Jev rules when Jev is on. Claude Code cuts each server's instructions at 2,048 characters, so
+`instructions.test.ts` fails when the joined text passes that.
+
 ## Terminals
 
 Standalone terminal apps need no extension. The MCP server drives them directly and shows each one in
@@ -375,9 +385,11 @@ An agent sees a message only when it calls `read_messages` or `wait_for_message`
    `node agent-hook.mjs <cli> <event>`, with the hook's JSON on stdin. Codex tabs call the server's
    `agent_tabs_hook` tool instead, which runs the same logic. The hooks set `state`: `busy` when a
    prompt is submitted or a tool starts, `permission` when a permission prompt shows, and `idle` when a
-   turn ends. When unread messages wait, it adds a one-line reminder to the agent's context after a
-   prompt or a tool call, and at the end of a turn it asks the agent to continue and read them, at most
-   three times in a row. `read_messages`, `wait_for_message` and a new prompt reset that count. Without
+   turn ends. When a message arrives unread, it adds a one-line reminder to the agent's context after
+   the next prompt or tool call, once per message: `Agent Tabs: 1 unread message from <agent> <short id>.
+   read_messages returns it.` The presence file keeps the ids already reminded in `reminded`. At the end
+   of a turn with unread messages, it asks the agent to continue and read them, at most three times in a
+   row. `read_messages`, `wait_for_message` and a new prompt reset that count. Without
    `IDE_AGENT_TABS_ID`, the hook does nothing. It always exits 0.
 2. **Wake-up.** When the recipient's `state` is `idle` and its tab supports input, `send_message` types
    one fixed line into the tab: `Agent Tabs: new message from <agent> <short id>. Call read_messages.`

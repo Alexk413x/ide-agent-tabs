@@ -63,7 +63,7 @@ test('the wake line and the reminder hold only sanitized names and short ids', (
   assert.equal(wakeLine('x; rm -rf ~\r\n', 's-00ff00ff00ff'), 'Agent Tabs: new message from xrm-rf s-00ff00. Call read_messages.');
   assert.equal(unreadReminder([]), undefined);
   const two = [message('b'), message('b', { from: { id: 's-1234567890', agent: 'gemini', path: '/' } })];
-  assert.equal(unreadReminder(two), 'Agent Tabs: 2 unread messages from codex tab-a, gemini s-123456; call read_messages.');
+  assert.equal(unreadReminder(two), 'Agent Tabs: 2 unread messages from codex tab-a, gemini s-123456. read_messages returns them.');
 });
 
 test('a message lands in new/ whole, moves to cur/ when read, and nobody reads it twice', async () => {
