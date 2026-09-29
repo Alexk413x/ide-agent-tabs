@@ -37,6 +37,9 @@ claude plugin marketplace add Alexk413x/ide-agent-tabs
 claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
 
+The repository is private, so installing needs read access to it: sign in to GitHub with an account
+that has access, for example with `gh auth login`.
+
 In a Claude Code session, run `/ide-agent-tabs:setup`. For each JetBrains IDE, the skill gives you two
 one-time steps: add a local plugin repository in **Settings > Plugins > ⚙ > Manage Plugin
 Repositories**, then install **Agent Tabs** from the **Marketplace** tab. Each later version arrives as a
@@ -284,4 +287,5 @@ folder.
 
 ## License
 
-[MIT](../LICENSE)
+Proprietary. See [LICENSE](../LICENSE). The bundled third-party licenses are in
+`claude-plugin/dist/THIRD_PARTY_NOTICES.txt`.

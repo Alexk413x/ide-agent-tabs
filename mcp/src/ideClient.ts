@@ -1,6 +1,7 @@
 import type { Endpoint } from './registry.js';
+import { PACKAGE_VERSION } from './version.js';
 
-export const USER_AGENT = 'ide-agent-tabs-mcp/0.1.0';
+export const USER_AGENT = `ide-agent-tabs-mcp/${PACKAGE_VERSION}`;
 export const IDE_TIMEOUT_MS = 15_000;
 
 export type Route = 'info' | 'agents' | 'open' | 'close' | 'list' | 'input';

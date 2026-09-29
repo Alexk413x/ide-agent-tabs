@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(root, '..', 'claude-plugin', 'dist');
+const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 // dist/ide holds the IDE builds from scripts/pack-ides.mjs, which this build doesn't make, so it stays.
 for (const name of existsSync(dist) ? readdirSync(dist) : []) {
@@ -27,6 +28,7 @@ const result = await build({
   minify: true,
   legalComments: 'none',
   metafile: true,
+  define: { BUNDLED_VERSION: JSON.stringify(version) },
   // Bundled CommonJS dependencies call require(); an ES module has none unless one is made.
   banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
 });
