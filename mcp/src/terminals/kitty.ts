@@ -6,7 +6,7 @@ import { findOnPath } from '../installed.js';
 import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, type LaunchSpec } from '../spec.js';
 import { findExecutable, GUI_SETTLE_MS, hangUp, pidTabsAlive, startDetached, terminalEnvironment } from './processes.js';
-import { checkArgvPaths, launcherName, loginShell, surfaceArgv, tabTitle } from './shell.js';
+import { checkArgvPaths, checkInputLine, ENTER_DELAY_MS, launcherName, loginShell, sleep, surfaceArgv, tabTitle } from './shell.js';
 import type { TerminalCapabilities, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
 
 export const KITTY = 'kitty';
@@ -85,6 +85,17 @@ export function kittyLaunchArgs(o: { address: string; cwd: string; title: string
 export function kittySpawnArgs(cwd: string, argv: string[]): string[] {
   checkArgvPaths('kitty', [cwd]);
   return ['--directory', cwd, ...argv];
+}
+
+// kitty reads escapes such as \r in a send-text argument, so the line and the Enter both go through stdin,
+// which it sends unchanged.
+export function kittyInputCalls(address: string, windowId: string, text: string): { args: string[]; input: string }[] {
+  checkInputLine(text);
+  const args = ['@', '--to', address, 'send-text', '--match', `id:${windowId}`, '--stdin'];
+  return [
+    { args, input: text },
+    { args, input: '\r' },
+  ];
 }
 
 export function parseKittyWindowId(stdout: string): string {
@@ -195,5 +206,18 @@ export const kitty: TerminalDriver = {
     if (!windows?.has(tab.terminalId)) throw new Error(`kitty has no window ${tab.terminalId}; the tab is already closed`);
     const result = await run(kitten, ['@', '--to', tab.socket, 'close-window', '--match', `id:${tab.terminalId}`], { timeoutMs: 15_000 });
     if (result.code !== 0) throw new Error(`kitten @ close-window failed: ${result.stderr.trim()}`);
+  },
+
+  async input(ctx, tab: TerminalTab, text) {
+    if (tab.pidFile) throw new Error("a kitty window started without remote control can't take input");
+    if (!tab.socket || !tab.terminalId || !/^\d+$/.test(tab.terminalId)) throw new Error(`tab ${tab.id} has no kitty window id`);
+    const [type, enter] = kittyInputCalls(tab.socket, tab.terminalId, text);
+    const { kitten } = tools(ctx);
+    if (!(await kittyLs(kitten, tab.socket))?.has(tab.terminalId)) throw new Error(`kitty has no window ${tab.terminalId}`);
+    for (const call of [type!, enter!]) {
+      if (call === enter) await sleep(ENTER_DELAY_MS);
+      const result = await run(kitten, call.args, { input: call.input, timeoutMs: 15_000 });
+      if (result.code !== 0) throw new Error(`kitten @ send-text failed: ${result.stderr.trim()}`);
+    }
   },
 };

@@ -1,6 +1,6 @@
 {
   "name": "ide-agent-tabs",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Open agent sessions in IDE tabs and delegate work to other agent CLIs.",
   "author": {
     "name": "Alexk413x"

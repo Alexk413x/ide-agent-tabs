@@ -6,12 +6,20 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import java.util.concurrent.ConcurrentHashMap
 
 @Service(Service.Level.APP)
 class AgentTabRegistry {
 
-    class Entry(val id: String, val agent: String, val project: Project, val file: VirtualFile, val path: String)
+    class Entry(
+        val id: String,
+        val agent: String,
+        val project: Project,
+        val file: VirtualFile,
+        val path: String,
+        val tab: TerminalToolWindowTab,
+    )
 
     private val entries = ConcurrentHashMap<String, Entry>()
 
@@ -20,6 +28,8 @@ class AgentTabRegistry {
     }
 
     fun remove(id: String): Entry? = entries.remove(id)
+
+    fun find(id: String): Entry? = entries[id]?.takeUnless { it.project.isDisposed }
 
     fun removeFile(file: VirtualFile) {
         entries.values.removeIf { it.file == file }

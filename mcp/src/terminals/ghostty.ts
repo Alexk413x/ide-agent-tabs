@@ -6,7 +6,7 @@ import { findOnPath } from '../installed.js';
 import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, type LaunchSpec } from '../spec.js';
 import { GUI_SETTLE_MS, hangUp, pidTabsAlive, startDetached, terminalEnvironment } from './processes.js';
-import { checkArgvPaths, launcherName, loginShell, surfaceArgv, surfaceCommand, type LoginShell } from './shell.js';
+import { checkArgvPaths, checkInputLine, launcherName, loginShell, surfaceArgv, surfaceCommand, type LoginShell } from './shell.js';
 import type { OpenedTab, TerminalCapabilities, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
 
 export const GHOSTTY = 'ghostty';
@@ -81,6 +81,20 @@ export function closeScript(terminalId: string): string {
     '\tend repeat',
     'end tell',
     'return "missing"',
+    '',
+  ].join('\n');
+}
+
+// input text arrives as a paste when the program turned on bracketed paste, so Enter is a separate key event.
+export function inputScript(terminalId: string, text: string): string {
+  checkInputLine(text);
+  return [
+    'tell application "Ghostty"',
+    `\tset t to terminal id ${appleScriptString(terminalId)}`,
+    `\tinput text ${appleScriptString(text)} to t`,
+    '\tdelay 0.2',
+    '\tsend key "enter" to t',
+    'end tell',
     '',
   ].join('\n');
 }
@@ -171,5 +185,10 @@ export const ghostty: TerminalDriver = {
     if ((await osascript(closeScript(tab.terminalId))).trim() !== 'closed') {
       throw new Error(`Ghostty has no terminal ${tab.terminalId}; the tab is already closed`);
     }
+  },
+
+  async input(_ctx, tab: TerminalTab, text) {
+    if (tab.pidFile || !tab.terminalId) throw new Error("Ghostty on Linux can't take input from outside");
+    await osascript(inputScript(tab.terminalId, text));
   },
 };

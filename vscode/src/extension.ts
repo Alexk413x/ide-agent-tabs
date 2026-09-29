@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { typeLine } from './input';
 import { launchScripts, terminalEnv, unixShell, windowsShell } from './launch';
 import { AgentProfile, AgentSettings, CONFIG_FILE, isInstalled, launchOf } from './profiles';
 import { endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
@@ -124,6 +125,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!tab) return false;
       tabs.delete(id);
       tab.terminal.dispose();
+      return true;
+    },
+    input: (id, text) => {
+      const tab = tabs.get(id);
+      if (!tab) return false;
+      typeLine(data => tab.terminal.sendText(data, false), text, () => tabs.get(id) === tab);
       return true;
     },
     list: () => [...tabs.values()].map(({ id, agent, project, path: dir }) => ({ id, agent, project, path: dir })),

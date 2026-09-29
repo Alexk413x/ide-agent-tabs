@@ -4,6 +4,9 @@ import { ensurePrivateDir, readTextIfExists, writeAtomically } from './files.js'
 import { findOnPath } from './installed.js';
 import { run, type RunResult } from './process.js';
 import { refreshServerCopy, serverCopyDir, serverHash } from './serverCopy.js';
+import { compareVersions } from './version.js';
+
+export { compareVersions };
 
 export const EXTENSION_ID = 'alexk413x.ide-agent-tabs';
 export const JETBRAINS_PLUGIN_ID = 'dev.alexk.ide-agent-tabs';
@@ -46,17 +49,6 @@ export interface SyncContext {
 export interface EditorCli {
   cli: string;
   path: string;
-}
-
-export function compareVersions(a: string, b: string): number {
-  const parts = (v: string) => v.split('.').map((p) => Number.parseInt(p, 10) || 0);
-  const pa = parts(a);
-  const pb = parts(b);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (diff !== 0) return Math.sign(diff);
-  }
-  return 0;
 }
 
 export function parseExtensionList(stdout: string): Map<string, string> {

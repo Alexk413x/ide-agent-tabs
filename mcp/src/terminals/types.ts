@@ -30,7 +30,8 @@ export interface TerminalContext {
 
 // A terminal driver never passes caller text on a command line: the caller's command, arguments, prompt
 // and env travel in the spec file the launcher reads. A command line holds only fixed flags, our own paths,
-// the checked folder path and a title cleaned by tabTitle.
+// the checked folder path and a title cleaned by tabTitle. input gets only the fixed wake line from
+// messaging/notice.ts, never message text.
 export interface TerminalDriver {
   name: string;
   label: string;
@@ -40,4 +41,5 @@ export interface TerminalDriver {
   open(ctx: TerminalContext, spec: LaunchSpec, title: string): Promise<OpenedTab>;
   alive(ctx: TerminalContext, tabs: TerminalTab[]): Promise<Set<string>>;
   close(ctx: TerminalContext, tab: TerminalTab): Promise<void>;
+  input?(ctx: TerminalContext, tab: TerminalTab, text: string): Promise<void>;
 }

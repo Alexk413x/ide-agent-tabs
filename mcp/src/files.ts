@@ -11,12 +11,28 @@ export async function writeNewPrivateFile(file: string, content: string | Buffer
   await fs.writeFile(file, content, { flag: 'wx', mode: 0o600 });
 }
 
+const RENAME_BUSY = new Set(['EPERM', 'EACCES', 'EBUSY']);
+
+// Windows refuses to rename over a file while another process has it open, such as a reader of the same
+// file; the reader closes it within milliseconds.
+async function renameRetrying(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fs.rename(from, to);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? '';
+      if (process.platform !== 'win32' || !RENAME_BUSY.has(code) || attempt >= 20) throw e;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+}
+
 export async function writeAtomically(file: string, content: string | Buffer): Promise<void> {
   await ensurePrivateDir(path.dirname(file));
   const temp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
     await fs.writeFile(temp, content, { mode: 0o600 });
-    await fs.rename(temp, file);
+    await renameRetrying(temp, file);
   } catch (e) {
     await fs.rm(temp, { force: true });
     throw e;
@@ -62,7 +78,9 @@ export async function withFileLock<T>(file: string, work: () => Promise<T>, time
       await handle.close();
       break;
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      const code = (e as NodeJS.ErrnoException).code;
+      // Windows answers EPERM, not EEXIST, while another process's delete of the lock is still pending.
+      if (code !== 'EEXIST' && !(process.platform === 'win32' && code === 'EPERM')) throw e;
       const stat = await fs.stat(lock).catch(() => undefined);
       if (stat && Date.now() - stat.mtimeMs > 10_000) {
         await fs.rm(lock, { force: true });

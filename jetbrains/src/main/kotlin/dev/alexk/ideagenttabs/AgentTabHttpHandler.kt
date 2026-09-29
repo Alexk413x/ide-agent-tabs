@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 const val ENDPOINT_BASE = "/ide-agent-tabs"
 const val START_TIMEOUT_SECONDS = 10L
 
-private val ROUTES = setOf("info", "agents", "open", "close", "list")
+private val ROUTES = setOf("info", "agents", "open", "close", "list", "input")
 
 private class Reply(val status: Int, val body: JsonObject)
 
@@ -56,6 +56,7 @@ class AgentTabHttpHandler : HttpRequestHandler() {
                     onEdt(context) { open(open, profile) }
                 }
                 "close" -> parseCloseId(body).let { onEdt(context) { close(it) } }
+                "input" -> parseInput(body).let { onEdt(context) { input(it) } }
                 "agents" -> {
                     parseEmpty(body)
                     AppExecutorUtil.getAppExecutorService().execute { respond(context, attempt(::agents)) }
@@ -111,6 +112,13 @@ class AgentTabHttpHandler : HttpRequestHandler() {
             ?: return Reply(404, error("no open agent tab with id $id; only tabs this plugin opened can be closed"))
         AgentTabLauncher.close(entry)
         return Reply(200, ok().apply { addProperty("id", id) })
+    }
+
+    private fun input(request: InputRequest): Reply {
+        val entry = AgentTabRegistry.getInstance().find(request.id)
+            ?: return Reply(404, error("no open agent tab with id ${request.id}; only tabs this plugin opened take input"))
+        AgentTabLauncher.type(entry, request.text)
+        return Reply(200, ok().apply { addProperty("id", request.id) })
     }
 
     private fun list(): Reply {

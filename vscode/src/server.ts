@@ -2,7 +2,7 @@ import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { AgentProfile, AgentSettings } from './profiles';
 import { ENDPOINT_BASE } from './registry';
-import { BadRequest, checkAdmission, OpenRequest, parseCloseId, parseEmpty, parseOpenRequest } from './request';
+import { BadRequest, checkAdmission, OpenRequest, parseCloseId, parseEmpty, parseInput, parseOpenRequest } from './request';
 
 export const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
@@ -24,10 +24,11 @@ export interface Host {
   isInstalled(profile: AgentProfile): boolean;
   open(request: OpenRequest, profile: AgentProfile): TabInfo | undefined;
   close(id: string): boolean;
+  input(id: string, text: string): boolean;
   list(): TabInfo[];
 }
 
-const ROUTES = new Set(['info', 'agents', 'open', 'close', 'list']);
+const ROUTES = new Set(['info', 'agents', 'open', 'close', 'list', 'input']);
 
 type Reply = { status: number; body: Record<string, unknown> };
 
@@ -58,6 +59,10 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
       case 'close': {
         const id = parseCloseId(body);
         return host.close(id) ? ok({ id }) : fail(404, `no open agent tab with id ${id}; only tabs this extension opened can be closed`);
+      }
+      case 'input': {
+        const { id, text } = parseInput(body);
+        return host.input(id, text) ? ok({ id }) : fail(404, `no open agent tab with id ${id}; only tabs this extension opened take input`);
       }
       case 'agents':
         parseEmpty(body);

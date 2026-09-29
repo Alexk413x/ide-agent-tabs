@@ -16,6 +16,7 @@ const result = await build({
   entryPoints: {
     'mcp-server': path.join(root, 'src', 'main.ts'),
     'sync-ides': path.join(root, 'src', 'syncMain.ts'),
+    'agent-hook': path.join(root, 'src', 'agentHook.ts'),
   },
   outdir: dist,
   outExtension: { '.js': '.mjs' },
