@@ -14,6 +14,7 @@ import {
   waitForMessage,
   type Message,
 } from './mailbox.js';
+import { runHook } from './hook.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
   agentFromClient,
@@ -21,6 +22,7 @@ import {
   liveSessions,
   parsePresence,
   presencePath,
+  readPresence,
   updatePresence,
   withState,
   type Presence,
@@ -60,7 +62,10 @@ export interface WaitInput {
 }
 
 const AGENT_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+const THREAD_ID = /^[A-Za-z0-9-]{1,100}$/;
+export const CODEX_ID_PREFIX = 'codex-';
 const generatedId = () => `s-${randomBytes(6).toString('hex')}`;
+const mayBeTab = (id: string) => !id.startsWith('s-') && !id.startsWith(CODEX_ID_PREFIX);
 
 function shown(m: Message) {
   return { id: m.id, from: m.from, text: m.text, ...(m.replyTo !== undefined ? { replyTo: m.replyTo } : {}), sentAt: m.sentAt };
@@ -72,6 +77,9 @@ export class Messaging {
   private agent: string;
   private readonly startedAt: string;
   private lastClean = 0;
+  private threadId?: string;
+  private ownHost?: Promise<string | undefined>;
+  private identified: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: MessagingDeps) {
     const tab = deps.env[TAB_ID_ENV];
@@ -111,6 +119,7 @@ export class Messaging {
       state: current?.state ?? 'unknown',
       ...(current?.stateAt !== undefined ? { stateAt: current.stateAt } : {}),
       ...(current?.nudges !== undefined ? { nudges: current.nudges } : {}),
+      ...(this.threadId !== undefined ? { threadId: this.threadId } : {}),
     };
   }
 
@@ -131,13 +140,55 @@ export class Messaging {
       this.sessionId = (this.deps.randomId ?? generatedId)();
     }
     if (!this.isTab) await updatePresence(this.deps.home, this.sessionId, (current) => this.presence(current));
-    if (this.isTab) void this.resolveOwnHost().catch(() => undefined);
+    if (this.isTab) this.ownHost = this.resolveOwnHost();
     void this.clean().catch(() => undefined);
   }
 
-  private async resolveOwnHost(): Promise<void> {
-    const host = await this.deps.hosts.findHost(this.sessionId);
-    if (host !== undefined) await this.updateOwn((p) => ({ ...p, host }));
+  private async resolveOwnHost(): Promise<string | undefined> {
+    const host = await this.deps.hosts.findHost(this.sessionId).catch(() => undefined);
+    if (host !== undefined) await this.updateOwn((p) => ({ ...p, host })).catch(() => undefined);
+    return host;
+  }
+
+  noteThread(threadId: unknown): Promise<void> {
+    if (typeof threadId !== 'string' || !THREAD_ID.test(threadId) || threadId === this.threadId) return this.identified;
+    this.threadId = threadId;
+    this.identified = this.identified.then(() => this.identify(threadId)).catch(() => undefined);
+    return this.identified;
+  }
+
+  // The shared Codex daemon starts servers with the environment of whatever started the daemon, so its
+  // IDE_AGENT_TABS_ID can name another tab or a closed one. A Codex session keeps that id only while the tab is open.
+  private async identify(threadId: string): Promise<void> {
+    const id = `${CODEX_ID_PREFIX}${threadId}`;
+    const tabOpen = this.isTab && (await this.ownHost) !== undefined;
+    if (tabOpen || this.sessionId === id) {
+      await this.updateOwn((p) => ({ ...p, threadId }));
+      return;
+    }
+    const old = this.sessionId;
+    const previous = await readPresence(this.deps.home, old);
+    const carried = previous?.pid === this.deps.pid ? previous : undefined;
+    let taken = false;
+    this.sessionId = id;
+    await updatePresence(this.deps.home, id, (current) => {
+      if (current?.pid !== undefined && current.pid !== this.deps.pid && this.alive(current.pid)) {
+        taken = true;
+        return current;
+      }
+      return this.presence(current ?? carried, current?.host);
+    });
+    if (taken) {
+      this.sessionId = old;
+      await this.updateOwn((p) => ({ ...p, threadId }));
+      return;
+    }
+    this.isTab = false;
+    await updatePresence(this.deps.home, old, (current) => (current?.pid === this.deps.pid ? undefined : current));
+  }
+
+  async hook(event: string, input: Record<string, unknown>): Promise<object | undefined> {
+    return runHook({ cli: 'codex', event, input, home: this.deps.home, sessionId: this.sessionId, now: this.now() });
   }
 
   private updateOwn(change: (p: PresenceFile) => PresenceFile): Promise<unknown> {
@@ -213,7 +264,7 @@ export class Messaging {
   private async wake(recipient: Presence, now: number): Promise<{ delivery: 'woken' | 'queued'; note?: string }> {
     if (recipient.state !== 'idle') return { delivery: 'queued' };
     let host = recipient.host;
-    if (host === undefined && !recipient.id.startsWith('s-')) host = await this.deps.hosts.findHost(recipient.id);
+    if (host === undefined && mayBeTab(recipient.id)) host = await this.deps.hosts.findHost(recipient.id);
     if (host === undefined) return { delivery: 'queued' };
     let claimed: PresenceFile | undefined;
     await updatePresence(this.deps.home, recipient.id, (current) => {

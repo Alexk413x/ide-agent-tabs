@@ -182,6 +182,52 @@ test('a server keeps the state a hook wrote before it started', async () => {
   assert.deepEqual([p.state, p.stateAt, p.nudges, p.pid], ['idle', 'then', 2, 100]);
 });
 
+const THREAD = '019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b';
+
+test('a Codex session keeps the tab id of an open tab and records its thread', async () => {
+  const home = tempDir('iat-thread-');
+  const a = session(home, 'tab-a', 100, { hosts: hosts([], true, 'jetbrains-1') });
+  await a.start();
+  await Promise.all([a.noteThread(THREAD), a.noteThread(THREAD)]);
+  assert.equal(a.id, 'tab-a');
+  const p = (await readPresence(home, 'tab-a'))!;
+  assert.deepEqual([p.threadId, p.host, p.pid], [THREAD, 'jetbrains-1', 100]);
+});
+
+test('a Codex session whose tab id names no open tab becomes codex-<thread>', async () => {
+  const home = tempDir('iat-thread-');
+  const stale = session(home, 'tab-gone', 100, { hosts: { findHost: async () => undefined, typeInto: async () => ({ ok: true }) } });
+  await stale.start();
+  await setState(home, 'tab-gone', 'busy');
+  await stale.noteThread('not a thread id');
+  assert.equal(stale.id, 'tab-gone');
+  await stale.noteThread(THREAD);
+  assert.equal(stale.id, `codex-${THREAD}`);
+  assert.ok(!existsSync(presencePath(home, 'tab-gone')));
+  const p = (await readPresence(home, stale.id))!;
+  assert.deepEqual([p.id, p.threadId, p.pid, p.state, p.path], [`codex-${THREAD}`, THREAD, 100, 'busy', '/w/tab-gone']);
+  await stale.noteThread(THREAD);
+  assert.equal(stale.id, `codex-${THREAD}`);
+  stale.stopSync();
+  assert.ok(!existsSync(presencePath(home, stale.id)));
+});
+
+test('a session without a tab id takes codex-<thread> unless another live server holds it', async () => {
+  const home = tempDir('iat-thread-');
+  const first = session(home, undefined, 100, { randomId: () => 's-first000001' });
+  await first.start();
+  await first.noteThread(THREAD);
+  assert.equal(first.id, `codex-${THREAD}`);
+  assert.ok(!existsSync(presencePath(home, 's-first000001')));
+
+  const second = session(home, undefined, 200, { randomId: () => 's-second00001' });
+  await second.start();
+  await second.noteThread(THREAD);
+  assert.equal(second.id, 's-second00001');
+  assert.equal((await readPresence(home, 's-second00001'))!.threadId, THREAD);
+  assert.equal((await readPresence(home, `codex-${THREAD}`))!.pid, 100);
+});
+
 async function pair(typed: Typed[], ok = true) {
   const home = tempDir('iat-pair-');
   const a = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-a', IDE_AGENT_TABS_AGENT: 'codex' }, pid: 1, cwd: '/a', hosts: hosts(typed, ok), isAlive: () => true });

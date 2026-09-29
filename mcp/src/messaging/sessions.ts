@@ -19,6 +19,7 @@ export interface PresenceFile {
   state?: SessionState;
   stateAt?: string;
   nudges?: number;
+  threadId?: string;
 }
 
 export interface Presence extends PresenceFile {
@@ -66,7 +67,18 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
   const state = STATES.includes(o.state as SessionState) ? { state: o.state as SessionState } : {};
   const pid = typeof o.pid === 'number' && Number.isSafeInteger(o.pid) && o.pid > 0 ? { pid: o.pid } : {};
   const nudges = typeof o.nudges === 'number' && Number.isSafeInteger(o.nudges) && o.nudges >= 0 ? { nudges: o.nudges } : {};
-  return { id: o.id, ...str('agent'), ...str('path'), ...pid, ...str('host'), ...str('startedAt'), ...state, ...str('stateAt'), ...nudges };
+  return {
+    id: o.id,
+    ...str('agent'),
+    ...str('path'),
+    ...pid,
+    ...str('host'),
+    ...str('startedAt'),
+    ...state,
+    ...str('stateAt'),
+    ...nudges,
+    ...str('threadId'),
+  };
 }
 
 export function isComplete(p: PresenceFile): p is Presence {

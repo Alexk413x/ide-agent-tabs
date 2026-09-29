@@ -35,6 +35,8 @@ class AgentProfilesTest {
         assertEquals(listOf("Claude Code", "Codex", "Gemini CLI", "Copilot CLI"), settings.profiles().map { it.label })
         assertEquals(listOf("claude", "codex", "gemini", "copilot"), settings.profiles().map { it.command })
         assertEquals(listOf(null, null, "-i", "-i"), settings.profiles().map { it.promptFlag })
+        assertEquals(listOf(emptyList(), CODEX_TAB_ARGS, emptyList(), emptyList()), settings.profiles().map { it.args })
+        assertEquals(listOf("--no-daemon", "-c"), CODEX_TAB_ARGS.take(2))
         assertEquals("claude", settings.defaultProfile().name)
         assertTrue(warnings.isEmpty())
     }

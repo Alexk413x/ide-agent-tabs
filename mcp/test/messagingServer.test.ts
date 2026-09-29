@@ -96,3 +96,41 @@ test('with Jev on, the server sends the messaging and the Jev instructions toget
   assert.ok((await client.listTools()).tools.some((t) => t.name === 'jev_route'));
   await client.close();
 });
+
+test("a Codex tab's hooks reach the hook tool, which only Codex sees", async () => {
+  const home = tempDir('iat-msg-hook-');
+  const thread = '019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b';
+  const codex = await connect(home, 'tab-closed-1', 'codex-mcp-client', 105);
+  const claude = await connect(home, 'tab-eeee-2', 'claude-code', 106);
+  try {
+    const hookTool = (await codex.client.listTools()).tools.find((t) => t.name === 'agent_tabs_hook');
+    assert.deepEqual(hookTool?._meta, { ui: { visibility: [] } });
+    assert.ok(!(await claude.client.listTools()).tools.some((t) => t.name === 'agent_tabs_hook'));
+
+    const hook = async (event: string) => {
+      const result = (await codex.client.callTool({ name: 'agent_tabs_hook', arguments: { event, session_id: thread, turn_id: 't1' }, _meta: { threadId: thread } })) as {
+        isError?: boolean;
+        content: { text: string }[];
+      };
+      assert.ok(!result.isError);
+      return result.content.length ? JSON.parse(result.content[0]!.text) : undefined;
+    };
+    assert.equal(await hook('SessionStart'), undefined);
+    assert.equal(codex.messaging.id, `codex-${thread}`, 'the closed tab id gives way to the thread id');
+
+    await claude.call('send_message', { to: `codex-${thread}`, text: 'Status?' });
+    const reminder = await hook('PostToolUse');
+    assert.match(reminder.hookSpecificOutput.additionalContext, /1 unread message from claude tab-eeee.*read_messages/);
+    assert.equal(reminder.hookSpecificOutput.hookEventName, 'PostToolUse');
+    assert.equal((await hook('Stop')).decision, 'block');
+    assert.equal((await codex.call('read_messages')).json.messages[0].text, 'Status?');
+    assert.equal(await hook('Stop'), undefined);
+    const self = (await codex.call('list_sessions')).json.sessions.find((s: { self: boolean }) => s.self);
+    assert.deepEqual([self.id, self.state, self.agent], [`codex-${thread}`, 'idle', 'codex']);
+  } finally {
+    await codex.client.close();
+    await claude.client.close();
+    codex.messaging.stopSync();
+    claude.messaging.stopSync();
+  }
+});

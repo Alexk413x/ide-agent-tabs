@@ -90,7 +90,7 @@ to answer a message that needs no answer.
 | Agent | Hooks | Reminder after a prompt | Reminder after a tool call | Nudge at turn end |
 |---|---|---|---|---|
 | Claude Code | From the plugin | Yes | Yes | Yes |
-| Codex | Added by `--register codex` on macOS and Linux; trust them once in `/hooks`. None on Windows | Yes | Yes | Yes |
+| Codex | In Codex tabs only, from the tab's arguments; trusted, with no `/hooks` review | Yes | Yes | Yes |
 | Gemini CLI | Added by `--register gemini` | Yes | Yes | Yes |
 | Copilot CLI | Added by `--register copilot` | No: Copilot CLI drops that hook's output | Yes | Yes |
 | OpenCode | None | No | No | No |
@@ -101,6 +101,20 @@ to answer a message that needs no answer.
 | tmux, WezTerm, kitty with remote control, Ghostty on macOS | The terminal's own send-text command |
 | Windows Terminal, Ghostty on Linux, kitty without remote control | None; the session relies on hooks |
 | A session Agent Tabs didn't open | None |
+
+### Codex tabs
+
+A Codex tab starts `codex --no-daemon` with `-c` options that add, for that session only, this server
+and five hooks that call it. Codex's shared daemon would start both with another tab's environment, so a
+Codex tab runs in its own process instead. The tab needs Codex 0.158 or later, and the shared server copy
+in `~/.ide-agent-tabs/mcp/`, which each Claude Code session start refreshes. The hooks are `mcp_tool`
+hooks: they call the internal `agent_tabs_hook` tool over the session's own MCP connection, so no process
+starts and no console window opens. The options also trust the five hooks, so Codex runs them without a
+`/hooks` review. For the exact options, see `CODEX_TAB_ARGS` in `src/profiles.ts` and
+[Codex tabs](../docs/design.md#codex-tabs) in the design doc.
+
+A Codex session outside a tab, such as one in the Codex desktop app, has no hooks. When its server's
+`IDE_AGENT_TABS_ID` names no open tab, the session's id becomes `codex-<thread id>`.
 
 ### Limits
 
@@ -140,8 +154,9 @@ which is the calling agent's `PATH`.
 ## Other agents
 
 Codex, Gemini CLI, Copilot CLI and OpenCode can run this server too. The setup skill registers it with
-the agents you choose, through `sync-ides.mjs`. For Codex, Gemini CLI and Copilot CLI, registering also
-adds the messaging hooks:
+the agents you choose, through `sync-ides.mjs`. For Gemini CLI and Copilot CLI, registering also adds the
+messaging hooks. Codex tabs bring their own server and hooks, so Codex needs registering only for Codex
+sessions outside tabs, and only on macOS and Linux:
 
 ```sh
 node dist/sync-ides.mjs --agents
@@ -151,14 +166,14 @@ node dist/sync-ides.mjs --unregister codex
 
 `--agents` reports, for each agent, whether it's installed, whether it's registered, the server path it
 runs, whether that path is the stable copy, and `hooks`: whether its messaging hooks are in place (`null`
-for OpenCode, which has none). `--register` and `--unregister` print the same fields for
+for Codex and OpenCode, which get none). `--register` and `--unregister` print the same fields for
 each agent, with `ok` or an `error`.
 
 Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server name `ide-agent-tabs`:
 
 | Agent | Where the entry goes | How |
 |---|---|---|
-| Codex | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- node <path>` |
+| Codex, not on Windows | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- node <path>` |
 | Gemini CLI | `~/.gemini/settings.json`, user scope | `gemini mcp add --scope user ide-agent-tabs node <path>` |
 | Copilot CLI | `mcpServers` in `~/.copilot/mcp-config.json`, or `$COPILOT_HOME/mcp-config.json` | The script edits the file. |
 | OpenCode | `mcp` in `~/.config/opencode/opencode.json`, or under `$XDG_CONFIG_HOME` | The script edits the file. |
@@ -190,11 +205,14 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
 
   | Agent | Where the hooks go |
   |---|---|
-  | Codex | `~/.codex/hooks.json`, or `$CODEX_HOME/hooks.json`. Codex asks you to trust new hooks in `/hooks`. Not on Windows: the Codex desktop app reads the same file and opens a console window for each hook it runs. |
   | Gemini CLI | `hooks` in `~/.gemini/settings.json` |
   | Copilot CLI | Its own file, `~/.copilot/hooks/ide-agent-tabs.json`, or under `$COPILOT_HOME` |
 
   `--unregister` removes only the Agent Tabs entries and leaves your other hooks in place.
+  `--register codex` removes the Codex hooks that earlier versions added to `~/.codex/hooks.json`.
+- `--register codex` refuses on Windows. The Codex desktop app reads the same `config.toml`, and Codex
+  before 0.159 opens a console window each time the app starts an MCP server from it. Use Codex tabs
+  there.
 - Codex passes a server only a fixed set of environment variables, so `--register codex` adds
   `env_vars` for `IDE_AGENT_TABS_ID`, `IDE_AGENT_TABS_AGENT` and `IDE_AGENT_TABS_HOME` to the server's
   table in `config.toml`. It also sets `tool_timeout_sec = 660`, so `wait_for_message` can wait its
