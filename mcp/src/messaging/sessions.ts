@@ -4,10 +4,12 @@ import { readTextIfExists, withFileLock, writeAtomically } from '../files.js';
 import { isProcessAlive } from '../registry.js';
 
 export const SESSIONS_DIR = 'sessions';
-export const STATES = ['idle', 'busy', 'permission', 'unknown'] as const;
+export const STATES = ['idle', 'busy', 'permission', 'waking', 'unknown'] as const;
 export type SessionState = (typeof STATES)[number];
 export const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const STUB_MAX_AGE_MS = 60 * 60 * 1000;
+export const WAKE_TIMEOUT_MS = 20_000;
+export const IDLE_SETTLE_MS = 2_000;
 
 export interface PresenceFile {
   id: string;
@@ -129,7 +131,7 @@ export async function liveSessions(
     if (text === null || text === undefined) continue;
     const presence = parsePresence(text);
     if (presence && isComplete(presence) && alive(presence.pid)) {
-      sessions.push({ ...presence, state: presence.state ?? 'unknown' });
+      sessions.push({ ...presence, state: effectiveState(presence, now) });
       continue;
     }
     const stat = await fs.stat(file).catch(() => undefined);
@@ -137,4 +139,13 @@ export async function liveSessions(
     if (stat && (dead || now - stat.mtimeMs > STUB_MAX_AGE_MS)) await fs.rm(file, { force: true }).catch(() => undefined);
   }
   return sessions;
+}
+
+// A wake line that never starts a turn, such as one typed while the agent was still finishing, leaves the
+// session waking; after WAKE_TIMEOUT_MS it counts as idle again, so the next send or wait retries.
+export function effectiveState(p: { state?: SessionState; stateAt?: string }, now: number): SessionState {
+  const state = p.state ?? 'unknown';
+  if (state !== 'waking') return state;
+  const at = Date.parse(p.stateAt ?? '');
+  return Number.isFinite(at) && now - at < WAKE_TIMEOUT_MS ? 'waking' : 'idle';
 }

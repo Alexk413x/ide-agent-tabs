@@ -7,6 +7,7 @@ import {
   cleanMail,
   deliver,
   MailError,
+  peekUnread,
   MAX_TEXT_CHARS,
   newMessageId,
   reserveSend,
@@ -18,6 +19,8 @@ import { runHook } from './hook.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
   agentFromClient,
+  effectiveState,
+  IDLE_SETTLE_MS,
   isSessionId,
   liveSessions,
   parsePresence,
@@ -32,6 +35,8 @@ import {
 export const DEFAULT_WAIT_S = 60;
 export const MAX_WAIT_S = 600;
 const CLEAN_EVERY_MS = 60 * 60 * 1000;
+export const REWAKE_EVERY_MS = 15_000;
+const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export interface Hosts {
   findHost(id: string): Promise<string | undefined>;
@@ -47,6 +52,7 @@ export interface MessagingDeps {
   isAlive?: (pid: number) => boolean;
   randomId?: () => string;
   now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface SendInput {
@@ -262,23 +268,40 @@ export class Messaging {
   }
 
   private async wake(recipient: Presence, now: number): Promise<{ delivery: 'woken' | 'queued'; note?: string }> {
-    if (recipient.state !== 'idle') return { delivery: 'queued' };
+    if (effectiveState(recipient, now) !== 'idle') return { delivery: 'queued' };
+    // An agent reports idle when its turn-end hook runs, but it can still be finishing the turn, and a
+    // line typed then is lost; typing only after the session stays idle for IDLE_SETTLE_MS avoids that.
+    const settle = IDLE_SETTLE_MS - (now - Date.parse(recipient.stateAt ?? ''));
+    if (settle > 0) {
+      await (this.deps.sleep ?? realSleep)(settle);
+      now = this.now();
+    }
     let host = recipient.host;
     if (host === undefined && mayBeTab(recipient.id)) host = await this.deps.hosts.findHost(recipient.id);
     if (host === undefined) return { delivery: 'queued' };
     let claimed: PresenceFile | undefined;
     await updatePresence(this.deps.home, recipient.id, (current) => {
-      if (current?.pid !== recipient.pid || current.state !== 'idle') return current;
-      claimed = withState({ ...current, host }, 'busy', now);
+      if (current?.pid !== recipient.pid || current.stateAt !== recipient.stateAt || effectiveState(current, now) !== 'idle') return current;
+      claimed = withState({ ...current, host }, 'waking', now);
       return claimed;
     });
     if (!claimed) return { delivery: 'queued' };
     const typed = await this.deps.hosts.typeInto(recipient.id, host, wakeLine(this.agent, this.sessionId));
     if (typed.ok) return { delivery: 'woken' };
     await updatePresence(this.deps.home, recipient.id, (current) =>
-      current?.stateAt === claimed!.stateAt && current?.state === 'busy' ? { ...current, state: 'idle', stateAt: recipient.stateAt ?? current.stateAt } : current,
+      current?.stateAt === claimed!.stateAt && current?.state === 'waking'
+        ? { ...current, state: recipient.state, ...(recipient.stateAt !== undefined ? { stateAt: recipient.stateAt } : {}) }
+        : current,
     );
     return { delivery: 'queued', note: `the session was idle, but typing the wake line failed: ${typed.reason}` };
+  }
+
+  private async rewake(peer: string): Promise<void> {
+    const pending = (await peekUnread(this.deps.home, peer)).some((m) => m.from.id === this.sessionId);
+    if (!pending) return;
+    const now = this.now();
+    const recipient = (await liveSessions(this.deps.home, this.alive, now)).find((s) => s.id === peer);
+    if (recipient) await this.wake(recipient, now);
   }
 
   private async resetNudges(): Promise<void> {
@@ -297,7 +320,14 @@ export class Messaging {
     if (input.replyTo !== undefined) checkMessageId(input.replyTo, 'replyTo');
     const seconds = Math.min(Math.max(input.timeout ?? DEFAULT_WAIT_S, 0), MAX_WAIT_S);
     const filter = { ...(input.from !== undefined ? { from: input.from } : {}), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}) };
-    const message = await waitForMessage(this.deps.home, this.sessionId, filter, seconds * 1000, signal);
+    const peer = input.from;
+    const retry = peer === undefined ? undefined : setInterval(() => void this.rewake(peer).catch(() => undefined), REWAKE_EVERY_MS);
+    let message: Message | undefined;
+    try {
+      message = await waitForMessage(this.deps.home, this.sessionId, filter, seconds * 1000, signal);
+    } finally {
+      if (retry) clearInterval(retry);
+    }
     if (!message) return { message: null, timedOut: true, waitedSeconds: seconds };
     await this.resetNudges();
     return { notice: UNTRUSTED_NOTICE, message: shown(message) };
