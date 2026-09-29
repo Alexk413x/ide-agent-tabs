@@ -102,7 +102,7 @@ Each VS Code window runs its own server on `127.0.0.1` and writes a registry fil
 `~/.ide-agent-tabs/endpoints/vscode-<pid>-<window>.json`. The file holds the server URL and a token. The
 window deletes its file when it closes.
 
-The routes are `info`, `agents`, `open`, `close` and `list`. The
+The routes are `info`, `agents`, `open`, `close`, `list` and `input`. The
 [design document](https://github.com/Alexk413x/ide-agent-tabs/blob/main/docs/design.md) describes the
 registry, each route, the status codes and the security rules.
 

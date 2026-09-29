@@ -4,6 +4,7 @@ import * as path from 'node:path';
 
 export const MAX_PROMPT_CHARS = 30_000;
 export const MAX_ENTRIES = 64;
+export const MAX_INPUT_CHARS = 500;
 export const PLUGIN_ENV_PREFIX = 'IDE_AGENT_TABS_';
 export const STARTUP_ENV = 'JEDITERM_SOURCE';
 
@@ -110,6 +111,22 @@ export function parseCloseId(body: string): string {
   const id = optString(parseObject(body), 'id');
   if (id === undefined || isBlank(id)) throw new BadRequest('id is required');
   return id;
+}
+
+export interface InputRequest {
+  id: string;
+  text: string;
+}
+
+export function parseInput(body: string): InputRequest {
+  const obj = parseObject(body);
+  const id = optString(obj, 'id');
+  if (id === undefined || isBlank(id)) throw new BadRequest('id is required');
+  const text = optString(obj, 'text');
+  if (text === undefined || isBlank(text)) throw new BadRequest('text is required');
+  if (text.length > MAX_INPUT_CHARS) throw new BadRequest(`text exceeds ${MAX_INPUT_CHARS} characters`);
+  if (/\p{Cc}/u.test(text)) throw new BadRequest('text must be one line with no control characters');
+  return { id, text };
 }
 
 export function parseEmpty(body: string): void {

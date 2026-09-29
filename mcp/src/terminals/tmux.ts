@@ -4,7 +4,7 @@ import { writeNewPrivateFile } from '../files.js';
 import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, type LaunchSpec } from '../spec.js';
 import { findExecutable, terminalEnvironment } from './processes.js';
-import { checkArgvPaths, launcherName, loginShell, surfaceArgv, tabTitle } from './shell.js';
+import { checkArgvPaths, checkInputLine, ENTER_DELAY_MS, launcherName, loginShell, sleep, surfaceArgv, tabTitle } from './shell.js';
 import type { TerminalContext, TerminalDriver, TerminalTab } from './types.js';
 
 export const TMUX = 'tmux';
@@ -69,6 +69,16 @@ export function tmuxOpenArgs(target: TmuxTarget, o: { title: string; launcher: s
     '-e', `IDE_AGENT_TABS_LAUNCHER=${o.launcher}`,
     '-e', `IDE_AGENT_TABS_SPEC=${o.spec}`,
     '--', ...o.argv,
+  ];
+}
+
+// tmux ends a command at an argument that ends in ';', so a line may not end in one.
+export function tmuxInputArgs(socket: string, windowId: string, text: string): [string[], string[]] {
+  checkInputLine(text);
+  if (text.endsWith(';')) throw new Error("tmux input can't end in ';'");
+  return [
+    ['-S', socket, 'send-keys', '-t', windowId, '-l', '--', text],
+    ['-S', socket, 'send-keys', '-t', windowId, 'Enter'],
   ];
 }
 
@@ -193,5 +203,18 @@ export const tmux: TerminalDriver = {
     }
     const result = await run(exe, ['-S', tab.socket, 'kill-window', '-t', tab.terminalId], { env, timeoutMs: 15_000 });
     if (result.code !== 0) throw new Error(`tmux kill-window failed: ${result.stderr.trim()}`);
+  },
+
+  async input(ctx, tab: TerminalTab, text) {
+    if (!tab.socket || !tab.terminalId || !/^@\d+$/.test(tab.terminalId)) throw new Error(`tab ${tab.id} has no tmux window id`);
+    const [type, enter] = tmuxInputArgs(tab.socket, tab.terminalId, text);
+    const exe = tmuxPath(ctx);
+    const env = terminalEnvironment(ctx.env);
+    if (!isOpen(tab, await liveWindows(exe, tab.socket, env))) throw new Error(`tmux has no window ${tab.terminalId}`);
+    for (const args of [type, enter]) {
+      if (args === enter) await sleep(ENTER_DELAY_MS);
+      const result = await run(exe, args, { env, timeoutMs: 15_000 });
+      if (result.code !== 0) throw new Error(`tmux send-keys failed: ${result.stderr.trim()}`);
+    }
   },
 };

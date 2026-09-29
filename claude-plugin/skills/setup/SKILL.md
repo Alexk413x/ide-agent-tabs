@@ -98,8 +98,8 @@ The JSON report lists each editor with `ok`, or an `error`. Tell the user to rel
 
 ## 6. Other agents
 
-Codex, Gemini CLI, Copilot CLI and OpenCode can use Agent Tabs too. With it, they can list IDEs and
-open, list and close agent tabs.
+Codex, Gemini CLI, Copilot CLI and OpenCode can use Agent Tabs too. With it, they can list IDEs, open,
+list and close agent tabs, and message any other agent session on this machine, including this one.
 
 1. Run:
 
@@ -107,13 +107,14 @@ open, list and close agent tabs.
    node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --agents
    ```
 
-   The JSON lists each agent with `installed`, `registered`, the server `path` it's registered with, and
-   `stable`, which is `true` when that path is the copy in `~/.ide-agent-tabs/mcp/`. Claude Code isn't
-   listed, because it gets the server from this plugin.
+   The JSON lists each agent with `installed`, `registered`, the server `path` it's registered with,
+   `stable`, which is `true` when that path is the copy in `~/.ide-agent-tabs/mcp/`, and `hooks`, which
+   is `true` when the messaging hooks are in place (`null` for OpenCode, which has none). Claude Code
+   isn't listed, because it gets the server and the hooks from this plugin.
 
 2. Show the installed agents and whether each can already use Agent Tabs. Treat an agent with
-   `registered` but not `stable` as one that needs registering again. If no agent is installed, skip
-   this step.
+   `registered` but not `stable`, or with `hooks: false`, as one that needs registering again. If no
+   agent is installed, skip this step.
 
 3. Ask once which agents to register. The default is every installed agent that isn't registered with
    the stable copy. Then run:
@@ -122,11 +123,19 @@ open, list and close agent tabs.
    node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --register <agent> [<agent>...]
    ```
 
+   Registering also adds the messaging hooks: to `~/.codex/hooks.json` for Codex (not on Windows, where
+   the Codex desktop app would open a console window for each hook), to
+   `~/.gemini/settings.json` for Gemini CLI, and as `~/.copilot/hooks/ide-agent-tabs.json` for Copilot
+   CLI. For Codex, it also sets `env_vars` and `tool_timeout_sec` in the server's table in
+   `~/.codex/config.toml`. The script keeps every other entry in those files.
+
    The JSON report lists each agent with `ok`, or an `error`. For a config file the script can't edit
    safely, such as a JSON file with comments, the error says so; show the user the entry to add by hand
    from the "Other agents" section of the MCP server README.
 
-4. Tell the user to restart open sessions of those agents, so they load the server.
+4. Tell the user to restart open sessions of those agents, so they load the server and the hooks. For
+   Codex on macOS and Linux, tell them to open `/hooks` once in a Codex session and trust the Agent Tabs
+   hooks, because Codex doesn't run a new hook until the user trusts it.
 
 ## 7. Terminal
 

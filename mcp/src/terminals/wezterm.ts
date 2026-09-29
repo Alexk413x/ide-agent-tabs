@@ -5,7 +5,7 @@ import { writeNewPrivateFile } from '../files.js';
 import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, powerShellSpec, type LaunchSpec } from '../spec.js';
 import { findExecutable, GUI_SETTLE_MS, startDetached, STARTUP_GRACE_MS, terminalEnvironment } from './processes.js';
-import { argvModeCommand, checkArgvPaths, launcherName, loginShell } from './shell.js';
+import { argvModeCommand, checkArgvPaths, checkInputLine, ENTER_DELAY_MS, launcherName, loginShell } from './shell.js';
 import type { TerminalContext, TerminalDriver, TerminalTab } from './types.js';
 import { findPowerShell, LAUNCHER_PS1, powerShellArgv } from './windowsTerminal.js';
 
@@ -92,6 +92,15 @@ export function weztermSpawnArgs(cwd: string, argv: string[]): string[] {
 export function weztermStartArgs(cwd: string, argv: string[]): string[] {
   checkArgvPaths('WezTerm', [cwd]);
   return ['start', '--cwd', cwd, '--', ...argv];
+}
+
+// --no-paste sends the bytes as typed input. As a bracketed paste, the CR would not submit the line.
+export function weztermInputArgs(paneId: string, text: string): [string[], string[]] {
+  checkInputLine(text);
+  return [
+    ['send-text', '--pane-id', paneId, '--no-paste', '--', text],
+    ['send-text', '--pane-id', paneId, '--no-paste', '--', '\r'],
+  ];
 }
 
 export function parsePaneId(stdout: string): string {
@@ -220,5 +229,18 @@ export const wezterm: TerminalDriver = {
     if (!panes?.has(tab.terminalId)) throw new Error(`WezTerm has no pane ${tab.terminalId}; the tab is already closed`);
     const result = await cli(exe, tab.socket, ['kill-pane', '--pane-id', tab.terminalId], env);
     if (result.code !== 0) throw new Error(`wezterm cli kill-pane failed: ${result.stderr.trim()}`);
+  },
+
+  async input(ctx, tab: TerminalTab, text) {
+    if (tab.terminalId === undefined || !/^\d+$/.test(tab.terminalId) || !tab.socket) throw new Error(`tab ${tab.id} has no WezTerm pane id`);
+    const [type, enter] = weztermInputArgs(tab.terminalId, text);
+    const exe = weztermPath(ctx);
+    const env = terminalEnvironment(ctx.env);
+    if (!(await listPanes(exe, tab.socket, env))?.has(tab.terminalId)) throw new Error(`WezTerm has no pane ${tab.terminalId}`);
+    for (const args of [type, enter]) {
+      if (args === enter) await sleep(ENTER_DELAY_MS);
+      const result = await cli(exe, tab.socket, args, env);
+      if (result.code !== 0) throw new Error(`wezterm cli send-text failed: ${result.stderr.trim()}`);
+    }
   },
 };

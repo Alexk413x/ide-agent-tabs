@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
@@ -13,11 +13,13 @@ import {
   registerArgs,
   samePath,
   stripJsonComments,
+  takesHooks,
   unregisterAgents,
   unregisterArgs,
   withServerEntry,
 } from '../src/register.js';
-import { refreshServerCopy, serverCopyDir, serverCopyPath, serverHash } from '../src/serverCopy.js';
+import { hasOurHooks, hookCommand, mergeHookSettings, withCodexSettings } from '../src/hookConfig.js';
+import { copyVersion, hookCopyPath, refreshServerCopy, serverCopyDir, serverCopyPath, serverHash } from '../src/serverCopy.js';
 import { makeServerDir } from './serverDir.js';
 import { tempDir } from './tempDir.js';
 
@@ -90,8 +92,8 @@ test('compares paths by platform rules', () => {
 test('copies the server with its launch scripts in the layout main.ts expects', async () => {
   const source = makeServerDir('server v1');
   const home = tempDir('iat-copy-');
-  assert.deepEqual((await refreshServerCopy(source, home)).sort(), ['THIRD_PARTY_NOTICES.txt', 'launch/agent-launch.ps1', 'launch/agent-launch.sh', 'mcp-server.mjs']);
-  assert.deepEqual(readdirSync(serverCopyDir(home)).sort(), ['THIRD_PARTY_NOTICES.txt', 'launch', 'mcp-server.mjs']);
+  assert.deepEqual((await refreshServerCopy(source, home)).sort(), ['THIRD_PARTY_NOTICES.txt', 'agent-hook.mjs', 'launch/agent-launch.ps1', 'launch/agent-launch.sh', 'mcp-server.mjs']);
+  assert.deepEqual(readdirSync(serverCopyDir(home)).sort(), ['THIRD_PARTY_NOTICES.txt', 'agent-hook.mjs', 'launch', 'mcp-server.mjs']);
   assert.equal(await serverHash(serverCopyDir(home)), await serverHash(source));
   assert.deepEqual(await refreshServerCopy(source, home), []);
   writeFileSync(path.join(serverCopyDir(home), 'launch', 'removed.fish'), 'x');
@@ -110,6 +112,12 @@ const [agent, ...args] = process.argv.slice(2);
 fs.appendFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'calls.txt'), JSON.stringify({ agent, args, cwd: process.cwd() }) + '\\n');
 const readJson = (f) => (fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : {});
 const writeJson = (f, v) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(v, null, 2)); };
+const writeToml = (servers) => {
+  const file = path.join(process.env.CODEX_HOME, 'config.toml');
+  const head = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').split('[mcp_servers.')[0] : '';
+  const tables = Object.entries(servers).map(([n, s]) => '[mcp_servers.' + n + ']\\ncommand = ' + JSON.stringify(s.command) + '\\nargs = ' + JSON.stringify(s.args) + '\\n');
+  fs.writeFileSync(file, head + tables.join('\\n'));
+};
 if (agent === 'codex') {
   const store = path.join(process.env.CODEX_HOME, 'fake-mcp.json');
   const servers = readJson(store);
@@ -121,9 +129,11 @@ if (agent === 'codex') {
     const [command, ...rest] = args.slice(args.indexOf('--') + 1);
     servers[args[2]] = { command, args: rest };
     writeJson(store, servers);
+    writeToml(servers);
   } else if (args[1] === 'remove') {
     delete servers[args[2]];
     writeJson(store, servers);
+    writeToml(servers);
   }
 } else if (agent === 'gemini') {
   const file = path.join(process.env.GEMINI_CLI_HOME, '.gemini', 'settings.json');
@@ -173,18 +183,25 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   const opencodeFile = path.join(env.XDG_CONFIG_HOME, 'opencode', 'opencode.json');
   mkdirSync(env.COPILOT_HOME, { recursive: true });
   writeFileSync(copilotFile, '{\n  "mcpServers": {\n    "github": {\n      "type": "http",\n      "url": "https://example.test/mcp"\n    }\n  }\n}\n');
+  const codexHooks = path.join(env.CODEX_HOME, 'hooks.json');
+  const userHook = { matcher: 'Bash', hooks: [{ type: 'command', command: 'python check.py' }] };
+  mkdirSync(env.CODEX_HOME, { recursive: true });
+  writeFileSync(codexHooks, JSON.stringify({ hooks: { PreToolUse: [userHook] } }, null, 2));
+  writeFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'model = "x"\n\n');
   const ctx = { serverDir: makeServerDir(), home, platform: process.platform, env, userHome };
   const server = serverCopyPath(home, process.platform);
+  const hook = hookCopyPath(home, process.platform);
 
+  const codexHooked = process.platform !== 'win32';
   const before = await agentsReport(ctx);
   assert.deepEqual(before.server, { path: server, exists: false, current: false });
   assert.deepEqual(
-    before.agents.map((a) => [a.agent, a.installed, a.registered, a.error]),
+    before.agents.map((a) => [a.agent, a.installed, a.registered, a.hooks, a.error]),
     [
-      ['codex', true, false, undefined],
-      ['gemini', true, false, undefined],
-      ['copilot', true, false, undefined],
-      ['opencode', true, false, undefined],
+      ['codex', true, false, codexHooked ? false : null, undefined],
+      ['gemini', true, false, false, undefined],
+      ['copilot', true, false, false, undefined],
+      ['opencode', true, false, null, undefined],
     ],
   );
 
@@ -192,6 +209,31 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   assert.deepEqual(report.errors, ['claude: Claude Code gets the server from the plugin; nothing to register']);
   assert.deepEqual(report.server, { path: server, exists: true, current: true });
   assert.ok(report.agents.every((a) => a.ok && a.registered && a.stable && a.path === server));
+  assert.deepEqual(report.agents.map((a) => a.hooks), [codexHooked ? true : null, true, true, null]);
+  assert.ok(existsSync(hook));
+
+  const codexHooksJson = JSON.parse(readFileSync(codexHooks, 'utf8')).hooks;
+  if (codexHooked) {
+    const codexEvents = ['UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'Stop'];
+    assert.deepEqual(Object.keys(codexHooksJson).sort(), [...codexEvents].sort());
+    assert.deepEqual(codexHooksJson.PreToolUse, [userHook, { hooks: [{ type: 'command', command: `node "${hook}" codex PreToolUse`, timeout: 5 }] }]);
+    assert.deepEqual(codexHooksJson.Stop, [{ hooks: [{ type: 'command', command: `node "${hook}" codex Stop`, timeout: 5 }] }]);
+  } else {
+    assert.deepEqual(codexHooksJson, { PreToolUse: [userHook] });
+  }
+  const toml = readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
+  assert.match(toml, /^model = "x"\n/);
+  assert.match(toml, /\[mcp_servers\.ide-agent-tabs\]\nenv_vars = \["IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_HOME"\]\ntool_timeout_sec = 660\ncommand = "node"/);
+
+  const gemini = JSON.parse(readFileSync(path.join(userHome, '.gemini', 'settings.json'), 'utf8'));
+  assert.deepEqual(Object.keys(gemini.hooks), ['BeforeAgent', 'BeforeTool', 'Notification', 'AfterTool', 'AfterAgent']);
+  assert.deepEqual(gemini.hooks.AfterAgent, [{ hooks: [{ type: 'command', name: 'ide-agent-tabs', command: `node "${hook}" gemini AfterAgent`, timeout: 5000 }] }]);
+  const copilotHooksFile = path.join(env.COPILOT_HOME, 'hooks', 'ide-agent-tabs.json');
+  const copilotHooks = JSON.parse(readFileSync(copilotHooksFile, 'utf8'));
+  assert.equal(copilotHooks.version, 1);
+  assert.deepEqual(copilotHooks.hooks.agentStop, [{ type: 'command', exec: 'node', args: [hook, 'copilot', 'agentStop'], timeoutSec: 5 }]);
+  assert.deepEqual(Object.keys(copilotHooks.hooks), ['userPromptSubmitted', 'preToolUse', 'notification', 'postToolUse', 'agentStop']);
+
 
   const calls = readFileSync(path.join(bin, 'calls.txt'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { agent: string; args: string[]; cwd: string });
   const writes = calls.filter((c) => c.args[1] !== 'get').map((c) => [c.agent, ...c.args]);
@@ -204,16 +246,25 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
 
   assert.equal(
     readFileSync(copilotFile, 'utf8'),
-    `{\n  "mcpServers": {\n    "github": {\n      "type": "http",\n      "url": "https://example.test/mcp"\n    },\n    "ide-agent-tabs": {\n      "type": "local",\n      "command": "node",\n      "args": [\n        "${server}"\n      ],\n      "env": {},\n      "tools": [\n        "*"\n      ]\n    }\n  }\n}\n`,
+    `{\n  "mcpServers": {\n    "github": {\n      "type": "http",\n      "url": "https://example.test/mcp"\n    },\n    "ide-agent-tabs": {\n      "type": "local",\n      "command": "node",\n      "args": [\n        "${server}"\n      ],\n      "env": {\n        "IDE_AGENT_TABS_ID": "\${IDE_AGENT_TABS_ID}",\n        "IDE_AGENT_TABS_AGENT": "\${IDE_AGENT_TABS_AGENT}"\n      },\n      "tools": [\n        "*"\n      ]\n    }\n  }\n}\n`,
   );
   assert.deepEqual(JSON.parse(readFileSync(opencodeFile, 'utf8')), {
     $schema: 'https://opencode.ai/config.json',
     mcp: { 'ide-agent-tabs': { type: 'local', command: ['node', server], enabled: true } },
   });
 
+  const again = await registerAgents(ctx, ['codex', 'gemini', 'copilot']);
+  assert.deepEqual(again.errors, []);
+  assert.equal(JSON.parse(readFileSync(codexHooks, 'utf8')).hooks.PreToolUse.length, codexHooked ? 2 : 1, 'registering twice adds no second entry');
+  assert.equal(readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8').match(/env_vars/g)!.length, 1);
+
   const removed = await unregisterAgents(ctx, ['codex', 'gemini', 'copilot', 'opencode']);
   assert.deepEqual(removed.errors, []);
-  assert.ok(removed.agents.every((a) => a.ok && !a.registered));
+  assert.ok(removed.agents.every((a) => a.ok && !a.registered && !a.hooks));
+  assert.deepEqual(JSON.parse(readFileSync(codexHooks, 'utf8')), { hooks: { PreToolUse: [userHook] } });
+  assert.doesNotMatch(readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8'), /ide-agent-tabs|env_vars/);
+  assert.equal(JSON.parse(readFileSync(path.join(userHome, '.gemini', 'settings.json'), 'utf8')).hooks, undefined);
+  assert.ok(!existsSync(copilotHooksFile));
   assert.deepEqual(JSON.parse(readFileSync(copilotFile, 'utf8')), { mcpServers: { github: { type: 'http', url: 'https://example.test/mcp' } } });
   assert.deepEqual(JSON.parse(readFileSync(opencodeFile, 'utf8')).mcp, {});
   assert.ok(existsSync(server.replace(/\//g, path.sep)));
@@ -244,4 +295,76 @@ test('refuses configs it cannot edit safely and agents that are missing', async 
   assert.equal(readFileSync(copilotFile, 'utf8'), '{ "mcpServers": ');
   assert.equal(readFileSync(jsoncFile, 'utf8'), jsonc);
   assert.ok(!existsSync(path.join(path.dirname(jsoncFile), 'opencode.json')));
+});
+
+const HOOK = 'C:/Users/a/.ide-agent-tabs/mcp/agent-hook.mjs';
+
+test('merges and removes only the Agent Tabs hook entries', () => {
+  const theirs = { matcher: 'Bash', hooks: [{ type: 'command', command: 'python check.py' }] };
+  const mixed = { hooks: [{ type: 'command', command: 'echo hi' }, { type: 'command', command: `node "/old/place/agent-hook.mjs" codex Stop` }] };
+  const root = { model: 'x', hooks: { PreToolUse: [theirs], Stop: [mixed], Custom: 'kept' } };
+  const merged = mergeHookSettings(root, 'f', 'codex', HOOK);
+  assert.ok(hasOurHooks(merged, 'codex', HOOK));
+  assert.ok(!hasOurHooks(merged, 'codex', '/elsewhere/agent-hook.mjs'));
+  const hooks = merged.hooks as Record<string, unknown[]>;
+  assert.deepEqual(hooks.PreToolUse![0], theirs);
+  assert.deepEqual(hooks.Stop, [
+    { hooks: [{ type: 'command', command: 'echo hi' }] },
+    { hooks: [{ type: 'command', command: `node "${HOOK}" codex Stop`, timeout: 5 }] },
+  ]);
+  assert.equal(hooks.Custom, 'kept');
+  assert.deepEqual(mergeHookSettings(merged, 'f', 'codex', HOOK), merged);
+  assert.deepEqual(mergeHookSettings(merged, 'f', 'codex', undefined), {
+    model: 'x',
+    hooks: { PreToolUse: [theirs], Stop: [{ hooks: [{ type: 'command', command: 'echo hi' }] }], Custom: 'kept' },
+  });
+  assert.deepEqual(mergeHookSettings({ a: 1 }, 'f', 'gemini', undefined), { a: 1 });
+  assert.throws(() => mergeHookSettings({ hooks: [] }, 'f', 'gemini', HOOK), /isn't an object/);
+  assert.throws(() => hookCommand('C:/Users/100%/x/agent-hook.mjs', 'codex', 'Stop'), /shell command/);
+  assert.throws(() => hookCommand('/home/a"b/agent-hook.mjs', 'gemini', 'Stop'), /shell command/);
+});
+
+test('adds env_vars to the Codex server table without touching the rest of config.toml', () => {
+  const toml = 'model = "o"\r\n\r\n[mcp_servers."ide-agent-tabs"]\r\ncommand = "node"\r\n\r\n[mcp_servers.ide-agent-tabs.env]\r\nA = "1"\r\n';
+  const next = withCodexSettings(toml, 'f')!;
+  assert.equal(
+    next,
+    'model = "o"\r\n\r\n[mcp_servers."ide-agent-tabs"]\r\nenv_vars = ["IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_HOME"]\r\ntool_timeout_sec = 660\r\ncommand = "node"\r\n\r\n[mcp_servers.ide-agent-tabs.env]\r\nA = "1"\r\n',
+  );
+  assert.equal(
+    withCodexSettings('[mcp_servers.ide-agent-tabs]\ntool_timeout_sec = 30\n', 'f'),
+    '[mcp_servers.ide-agent-tabs]\nenv_vars = ["IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_HOME"]\ntool_timeout_sec = 30\n',
+    "a timeout the user set stays",
+  );
+  assert.equal(withCodexSettings(next, 'f'), undefined);
+  assert.throws(() => withCodexSettings('[mcp_servers.ide-agent-tabs]\nenv_vars = ["OTHER"]\n', 'f'), /by hand/);
+  assert.throws(() => withCodexSettings('[mcp_servers.other]\n', 'f'), /no \[mcp_servers\.ide-agent-tabs\]/);
+});
+
+test('Codex gets hooks everywhere except Windows', () => {
+  assert.equal(takesHooks('codex', 'win32'), false);
+  assert.equal(takesHooks('codex', 'darwin'), true);
+  assert.equal(takesHooks('gemini', 'win32'), true);
+  assert.equal(takesHooks('copilot', 'win32'), true);
+  assert.equal(takesHooks('opencode', 'linux'), false);
+});
+
+test('an older plugin never replaces a newer server copy', async () => {
+  const plugin = (version: string, server: string) => {
+    const root = tempDir('iat-plugin-');
+    const dist = path.join(root, 'dist');
+    cpSync(makeServerDir(server), dist, { recursive: true });
+    mkdirSync(path.join(root, '.claude-plugin'));
+    writeFileSync(path.join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ version }));
+    return dist;
+  };
+  const home = tempDir('iat-copy-');
+  const server = path.join(serverCopyDir(home), 'mcp-server.mjs');
+  await refreshServerCopy(plugin('0.5.0', 'new server'), home);
+  assert.equal(await copyVersion(home), '0.5.0');
+  assert.deepEqual(await refreshServerCopy(plugin('0.4.0', 'old server'), home), []);
+  assert.equal(readFileSync(server, 'utf8'), 'new server');
+  await refreshServerCopy(plugin('0.6.0', 'newer server'), home);
+  assert.equal(readFileSync(server, 'utf8'), 'newer server');
+  assert.equal(await copyVersion(home), '0.6.0');
 });

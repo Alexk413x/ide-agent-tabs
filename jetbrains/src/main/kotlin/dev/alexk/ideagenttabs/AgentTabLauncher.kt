@@ -1,18 +1,21 @@
 package dev.alexk.ideagenttabs
 
 import com.google.gson.JsonArray
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 const val PLUGIN_ENV_PREFIX = "IDE_AGENT_TABS_"
 const val PROMPT_ENV = "${PLUGIN_ENV_PREFIX}PROMPT"
@@ -23,6 +26,7 @@ const val ARGS_ENV = "${PLUGIN_ENV_PREFIX}ARGS"
 const val ARG_COUNT_ENV = "${PLUGIN_ENV_PREFIX}ARGC"
 const val ARG_ENV_PREFIX = "${PLUGIN_ENV_PREFIX}ARG_"
 const val STARTUP_ENV = "JEDITERM_SOURCE"
+const val ENTER_DELAY_MS = 500L
 
 fun isReservedEnv(name: String): Boolean =
     name.startsWith(PLUGIN_ENV_PREFIX, ignoreCase = true) || name.startsWith(STARTUP_ENV, ignoreCase = true)
@@ -98,13 +102,25 @@ object AgentTabLauncher {
         } finally {
             file.putUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN, null)
         }
-        AgentTabRegistry.getInstance().add(AgentTabRegistry.Entry(id, profile.name, project, file, directory))
+        AgentTabRegistry.getInstance().add(AgentTabRegistry.Entry(id, profile.name, project, file, directory, tab))
         return id
     }
 
     @RequiresEdt
     fun close(entry: AgentTabRegistry.Entry) {
         if (!entry.project.isDisposed) FileEditorManager.getInstance(entry.project).closeFile(entry.file)
+    }
+
+    // Agent TUIs treat an Enter that arrives in the same burst as typed text as a pasted newline, not a
+    // submit (Codex's paste_burst.rs holds that window for 120 ms), so Enter goes on its own after a pause.
+    @RequiresEdt
+    fun type(entry: AgentTabRegistry.Entry, text: String) {
+        entry.tab.view.sendText(text)
+        AppExecutorUtil.getAppScheduledExecutorService().schedule({
+            ApplicationManager.getApplication().invokeLater {
+                if (AgentTabRegistry.getInstance().find(entry.id) === entry) entry.tab.view.sendText("\r")
+            }
+        }, ENTER_DELAY_MS, TimeUnit.MILLISECONDS)
     }
 
     private val SCRIPT_DIR: Path get() = PathManager.getSystemDir().resolve("ide-agent-tabs")
