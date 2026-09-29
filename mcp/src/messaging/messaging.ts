@@ -286,14 +286,24 @@ export class Messaging {
       return claimed;
     });
     if (!claimed) return { delivery: 'queued' };
-    const typed = await this.deps.hosts.typeInto(recipient.id, host, wakeLine(this.agent, this.sessionId));
+    let typed: Awaited<ReturnType<Hosts['typeInto']>>;
+    try {
+      typed = await this.deps.hosts.typeInto(recipient.id, host, wakeLine(this.agent, this.sessionId));
+    } catch (error) {
+      await this.restoreFailedWake(recipient, claimed);
+      return { delivery: 'queued', note: `the session was idle, but typing the wake line failed: ${String(error)}` };
+    }
     if (typed.ok) return { delivery: 'woken' };
+    await this.restoreFailedWake(recipient, claimed);
+    return { delivery: 'queued', note: `the session was idle, but typing the wake line failed: ${typed.reason}` };
+  }
+
+  private async restoreFailedWake(recipient: Presence, claimed: PresenceFile): Promise<void> {
     await updatePresence(this.deps.home, recipient.id, (current) =>
-      current?.stateAt === claimed!.stateAt && current?.state === 'waking'
+      current?.stateAt === claimed.stateAt && current?.state === 'waking'
         ? { ...current, state: recipient.state, ...(recipient.stateAt !== undefined ? { stateAt: recipient.stateAt } : {}) }
         : current,
     );
-    return { delivery: 'queued', note: `the session was idle, but typing the wake line failed: ${typed.reason}` };
   }
 
   private async rewake(peer: string): Promise<void> {

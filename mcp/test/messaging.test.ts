@@ -269,6 +269,31 @@ test('a failed wake-up leaves the message queued and the session idle', async ()
   assert.equal((await readPresence(home, 'tab-b'))!.state, 'idle');
 });
 
+test('a thrown wake-up leaves the message queued and the session idle', async () => {
+  const home = tempDir('iat-pair-');
+  const a = new Messaging({
+    home,
+    env: { IDE_AGENT_TABS_ID: 'tab-a', IDE_AGENT_TABS_AGENT: 'codex' },
+    pid: 1,
+    cwd: '/a',
+    hosts: {
+      findHost: async () => 'fake-term',
+      typeInto: async () => {
+        throw new Error('no input here');
+      },
+    },
+    isAlive: () => true,
+  });
+  const b = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-b', IDE_AGENT_TABS_AGENT: 'claude' }, pid: 2, cwd: '/b', hosts: hosts([]), isAlive: () => true });
+  await a.start();
+  await b.start();
+  await setState(home, 'tab-b', 'idle');
+  const result = await a.send({ to: 'tab-b', text: 'x' });
+  assert.equal(result.delivery, 'queued');
+  assert.match(result.note!, /no input here/);
+  assert.equal((await readPresence(home, 'tab-b'))!.state, 'idle');
+});
+
 test('send refuses bad targets and ids; read marks read and wraps the text as untrusted', async () => {
   const { home, a, b } = await pair([]);
   await assert.rejects(a.send({ to: 'tab-a', text: 'x' }), /this session/);
@@ -319,6 +344,7 @@ test('a waking session counts as idle again once the wake line had time to start
   const waking = { state: 'waking' as const, stateAt: new Date(at).toISOString() };
   assert.equal(effectiveState(waking, at + WAKE_TIMEOUT_MS - 1), 'waking');
   assert.equal(effectiveState(waking, at + WAKE_TIMEOUT_MS), 'idle');
+  assert.equal(effectiveState(waking, at - 1), 'idle');
   assert.equal(effectiveState({ state: 'waking' }, at), 'idle');
   assert.equal(effectiveState({ state: 'busy', stateAt: new Date(at).toISOString() }, at + 10 * WAKE_TIMEOUT_MS), 'busy');
   assert.equal(effectiveState({}, at), 'unknown');
