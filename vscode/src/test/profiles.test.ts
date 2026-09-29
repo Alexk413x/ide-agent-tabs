@@ -7,6 +7,7 @@ import {
   AGENTS_FILE,
   AgentSettings,
   BUILTIN_PROFILES,
+  CODEX_TAB_ARGS,
   CONFIG_FILE,
   findOnPath,
   isInstalled,
@@ -37,6 +38,9 @@ test('built-in profiles match the design', () => {
   assert.deepEqual(profiles.map(p => p.label), ['Claude Code', 'Codex', 'Gemini CLI', 'Copilot CLI']);
   assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'gemini', 'copilot']);
   assert.deepEqual(profiles.map(p => p.promptFlag), [undefined, undefined, '-i', '-i']);
+  assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0]);
+  assert.deepEqual(profiles[1]!.args, CODEX_TAB_ARGS);
+  assert.deepEqual(profiles[1]!.args.slice(0, 2), ['--no-daemon', '-c']);
   assert.equal(settings.defaultProfile().name, 'claude');
   assert.deepEqual(warnings, []);
 });

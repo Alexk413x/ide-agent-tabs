@@ -116,6 +116,31 @@ class OpenRequestTest {
     }
 
     @Test
+    fun `input takes an id and one line of text`() {
+        val line = "Agent Tabs: new message from codex 1a2b. Call read_messages."
+        assertEquals(InputRequest("abc", line), parseInput("""{"id":"abc","text":"$line"}"""))
+        val longest = "é".repeat(MAX_INPUT_CHARS)
+        assertEquals(longest, parseInput("""{"id":"abc","text":"$longest"}""").text)
+    }
+
+    @Test
+    fun `input rejects a missing id, missing text, long text and control characters`() {
+        val bad = listOf(
+            "", "[]", "nope", "{}",
+            """{"text":"hi"}""",
+            """{"id":"","text":"hi"}""",
+            """{"id":"abc"}""",
+            """{"id":"abc","text":""}""",
+            """{"id":"abc","text":"  "}""",
+            """{"id":"abc","text":7}""",
+            """{"id":"abc","text":"${"x".repeat(MAX_INPUT_CHARS + 1)}"}""",
+        ) + listOf("\\r", "\\n", "\\t", "\\u001b", "\\u0000", "\\u007f", "\\u009b").map { """{"id":"abc","text":"a${it}b"}""" }
+        for (body in bad) {
+            assertThrows(body, IllegalArgumentException::class.java) { parseInput(body) }
+        }
+    }
+
+    @Test
     fun `list accepts an empty body or an object`() {
         parseEmpty("")
         parseEmpty("{}")

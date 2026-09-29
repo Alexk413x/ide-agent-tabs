@@ -3,7 +3,7 @@ import type { Endpoint } from './registry.js';
 export const USER_AGENT = 'ide-agent-tabs-mcp/0.1.0';
 export const IDE_TIMEOUT_MS = 15_000;
 
-export type Route = 'info' | 'agents' | 'open' | 'close' | 'list';
+export type Route = 'info' | 'agents' | 'open' | 'close' | 'list' | 'input';
 
 export class IdeError extends Error {
   constructor(

@@ -11,16 +11,16 @@ This document is the contract every part builds against. Change it before you ch
 | Part | Status | Location |
 |---|---|---|
 | JetBrains plugin | Built | `jetbrains/` |
-| Protocol: registry and HTTP API | Built (Phase 0) | This document |
+| Protocol: registry and HTTP API | Built | This document |
 | Claude Code plugin: `delegate` skill | Built | `claude-plugin/`, marketplace in `.claude-plugin/` |
-| CI and release workflows | Built | `.github/workflows/` |
+| CI workflow | Built | `.github/workflows/ci.yml` |
 | Claude Code plugin: MCP server, `new-tab`, `setup` and `update` skills | Built | `claude-plugin/`, `mcp/` |
 | VS Code extension (VS Code and editors built on it) | Built | `vscode/` |
-| Visual Studio extension (Windows Terminal tabs first) | Phase 3 | `visualstudio/` |
-| Jev judgment tools in the MCP server, and the `jev` skill (optional) | Phase 4 | `mcp/src/jev/`, `claude-plugin/skills/jev/`; plan in [jev-integration.md](jev-integration.md) |
+| Messaging between agent sessions: MCP tools, hooks and the `message` skill | Built | `mcp/src/messaging/`, `mcp/src/agentHook.ts`, `claude-plugin/hooks/`, `claude-plugin/skills/message/` |
+| Jev judgment tools in the MCP server, and the `jev` skill (optional) | Built | `mcp/src/jev/`, `claude-plugin/skills/jev/`; later steps in [jev-integration.md](jev-integration.md) |
 
-Messaging between agents is out of scope. Claude Code sessions message each other with Claude Code's
-own `ListAgents` and `SendMessage`. For other CLIs, see [Messaging](#messaging).
+Claude Code sessions message each other with Claude Code's own `ListAgents` and `SendMessage`. Sessions
+of different agent CLIs message each other through the MCP server. See [Messaging](#messaging).
 
 ## Registry
 
@@ -40,7 +40,7 @@ The file name without `.json` is the IDE's id in the MCP tools.
 }
 ```
 
-- `ide` is one of `jetbrains`, `vscode` or `visualstudio`.
+- `ide` is `jetbrains` or `vscode`.
 - `url` is the API base. Routes are `<url>/<route>`.
 - `token` is 32 random bytes, hex-encoded, made fresh each time the IDE starts.
 - Write the file atomically: write a temporary file in the same folder, then rename it.
@@ -68,6 +68,7 @@ The server refuses non-loopback addresses and any request with an `Origin` or `R
 | `open` | `path`, and optional `agent`, `prompt`, `args`, `env` | `id`, `agent`, `project`, `path` |
 | `close` | `id` | `id` |
 | `list` | `{}` | `tabs`: `id`, `agent`, `project`, `path` for each open tab this IDE opened |
+| `input` | `id`, `text` | `id` |
 
 `open` fields:
 
@@ -82,13 +83,17 @@ The server refuses non-loopback addresses and any request with an `Origin` or `R
 The tab opens in the open project or folder that contains `path`, or in the last focused window if none
 does.
 
+`input` types `text` into the tab's terminal and presses Enter, as if the user typed it. `text` is one
+line of up to 500 characters with no control characters. The MCP server uses it only to wake an idle
+session for a new message.
+
 | Status | Meaning |
 |---|---|
 | 200 | Done. |
-| 400 | Bad body, relative path, missing folder, missing `id`, or unknown `agent`. |
+| 400 | Bad body, relative path, missing folder, missing `id`, unknown `agent`, or `input` `text` that is empty, over 500 characters or holds a control character. |
 | 401 | Missing or wrong token. |
 | 403 | Non-loopback address, or an `Origin` or `Referer` header. |
-| 404 | `close`: no open tab with that id. |
+| 404 | `close`, `input`: no open tab with that id. |
 | 405 | Not a `POST`. |
 | 409 | `open`: no project or folder is open. |
 | 413 | The body is over 16 MB (VS Code extension). |
@@ -102,12 +107,14 @@ A profile says how to start one agent CLI. Every IDE uses the same built-in prof
 | Name | Label | Command | First prompt |
 |---|---|---|---|
 | `claude` | Claude Code | `claude` | positional |
-| `codex` | Codex | `codex` | positional |
+| `codex` | Codex | `codex` and fixed `args` (see [Codex tabs](#codex-tabs)) | positional |
 | `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 | `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
 
 The `claude` and `codex` rows match each CLI's help. The `gemini` and `copilot` rows come from each
 CLI's docs and are untested. A profile in `agents.json` with the same name overrides a built-in one.
+An `agents.json` profile named `codex` replaces the built-in `args` too, so its tabs lose messaging unless
+it copies them.
 
 You add or override profiles in `~/.ide-agent-tabs/agents.json`:
 
@@ -167,6 +174,45 @@ prompt. The prompt comes last.
 - Windows PowerShell 5.1 strips embedded double quotes from arguments it passes to native programs.
   Launchers that may run under 5.1 must escape them.
 
+### Codex tabs
+
+By default, the interactive Codex CLI attaches to a shared, long-lived app-server daemon. The daemon
+starts MCP servers and hooks with its own environment, so they see the `IDE_AGENT_TABS_ID` of whatever
+started the daemon, or none. A Codex tab therefore runs Codex in-process and brings its own Agent Tabs
+setup. The `codex` profile's `args`, placed before the caller's `args` and the prompt, are:
+
+- `--no-daemon`, which runs the session in the tab's own process.
+- `-c mcp_servers.ide-agent-tabs={ … }`: the Agent Tabs MCP server for this session only. Its command
+  is `node -e <one line>`, which imports `$IDE_AGENT_TABS_HOME/mcp/mcp-server.mjs`, or
+  `~/.ide-agent-tabs/mcp/mcp-server.mjs`, so the profile holds no machine-specific path. It sets
+  `env_vars = ["IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_HOME"]`, because Codex passes a
+  stdio server only a fixed set of variables, and `tool_timeout_sec = 660`, because Codex's default of
+  60 seconds would end `wait_for_message` early.
+- One `-c hooks.<Event>=[…]` for each of `UserPromptSubmit`, `PostToolUse`, `PermissionRequest` and
+  `Stop`. Each is an `mcp_tool` hook that calls the server's `agent_tabs_hook`
+  tool with `input = { event = '<Event>', session_id = '${session_id}', turn_id = '${turn_id}' }`. The call runs over the session's own MCP connection, so no process
+  starts and no console window opens.
+- `-c hooks.state={ … }`, which trusts exactly those four hooks, so Codex runs them without a `/hooks`
+  review. Codex keys a hook by its source path, event and position: for `-c` hooks the source is
+  `/<session-flags>/config.toml`, or `C:\<session-flags>\config.toml` on Windows, so the profile lists
+  both. The trusted hash is Codex's `version_for_toml` of the normalized hook: the SHA-256 of its
+  key-sorted JSON. `mcp/test/codexTab.test.ts` recomputes the hashes. Codex's own `hooks/list` reports
+  all five as `trusted` with these arguments.
+
+Rules for these arguments:
+
+- They need Codex 0.158 or later: 0.158 adds `--no-daemon`, and an older Codex exits with an unknown
+  argument error.
+- Codex splits a `-c` key on every `.`, so the hook keys, which contain `.`, go inside the
+  `hooks.state` table value.
+- No argument holds `"` or `%`, and every argument with a `cmd.exe` special character holds a space. On
+  Windows, the PowerShell launchers pass arguments through Windows PowerShell 5.1 or npm's `codex.cmd`
+  and `codex.ps1` shims, which would change them otherwise. TOML strings use single quotes, and the one
+  line of JavaScript uses template literals.
+- Codex drops the root `-c` options when a `-c` follows a subcommand, such as
+  `codex -c a=1 resume -c b=2`. A caller's `args` must not pass `-c` after a subcommand.
+- The VS Code and JetBrains profiles hold the same strings, and `mcp/test/codexTab.test.ts` checks them.
+
 ## Button
 
 Every IDE shows a **New Agent Tab** button, and binds **Ctrl+Alt+A** (**⌘⌥A** on macOS) to it.
@@ -180,7 +226,7 @@ Every IDE shows a **New Agent Tab** button, and binds **Ctrl+Alt+A** (**⌘⌥A*
 
 The default lives in `~/.ide-agent-tabs/config.json`, so all IDEs and the MCP server share it.
 
-## MCP server (Phase 1)
+## MCP server
 
 A stdio MCP server, written in TypeScript and bundled into one file for Node 20 or later. It reads the
 registry and calls the HTTP API.
@@ -196,7 +242,8 @@ registry and calls the HTTP API.
 `open_tab` routing, first match wins:
 
 1. The IDE or terminal named by `ide`, using its id from `list_ides`.
-2. The IDE with an open project that contains `path`, preferring the focused window.
+2. The IDE with an open project that contains `path`. The deepest such project wins; on a tie, the
+   caller's own IDE, then the focused window, then the most recently started IDE.
 3. The most recently started IDE.
 4. When no IDE is running: the preferred terminal from `config.json`, then the first installed terminal
    in the platform's order: Windows Terminal, then WezTerm on Windows; Ghostty, kitty, WezTerm, then tmux
@@ -204,7 +251,7 @@ registry and calls the HTTP API.
 
 The reply includes a `reason` that says which rule chose the target.
 
-## Terminals (Phase 1)
+## Terminals
 
 Standalone terminal apps need no extension. The MCP server drives them directly and shows each one in
 `list_ides` next to the IDEs, with `ide` set to the terminal's name, such as `windows-terminal` or
@@ -222,7 +269,6 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
 | WezTerm | Windows, macOS, Linux | Tab | Yes | Yes | `wezterm cli --no-auto-start spawn --cwd <dir> -- …` prints the pane id; `cli list --format json`; `cli kill-pane --pane-id`. `WEZTERM_UNIX_SOCKET` names the newest running GUI's `gui-sock-<pid>` ([wezterm#4456](https://github.com/wezterm/wezterm/issues/4456)). With no GUI running, `wezterm start` opens one. |
 | kitty | macOS, Linux | Tab | Yes | Yes | With remote control on: `kitten @ --to <socket> launch --type=tab`, `ls` and `close-window --match id:<n>`. Without it: a new `kitty` process per agent, tracked like Ghostty on Linux (Window, Tracked, Best effort). |
 | tmux 3.0+ | macOS, Linux | Tab | Yes | Yes | `tmux new-window -e … -- …` in the most recently attached session, else in the detached session `agents`; `list-windows -a`; `kill-window`. |
-| Terminal, iTerm2 | macOS | Tab | Partly | Partly | AppleScript. Later. |
 
 - The MCP server tracks the tabs it opens in terminals in `~/.ide-agent-tabs/terminal-tabs.json`, with
   the terminal's own tab, pane or window id where it has one, and the shell's pid file otherwise.
@@ -258,15 +304,125 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
 - tmux: the server uses the default tmux server. When no client is attached, `open_tab` adds a `note` to
   its reply: run `tmux attach -t agents`. The server records the tmux socket and server pid with each
   window id, so a restarted tmux server doesn't match old ids.
-- The Visual Studio extension (Phase 3) opens its tabs through the Windows Terminal support.
 
 ## Messaging
 
-- Claude Code to Claude Code: Claude Code's native `ListAgents` and `SendMessage`. They work across tabs
-  and IDEs on the same machine, but not between WSL and native Windows.
-- Other CLIs: not decided. The first experiment is a shared MCP mailbox,
-  [mcp_agent_mail](https://github.com/Dicklesworthstone/mcp_agent_mail), with Claude Code, Codex and
-  Gemini CLI polling one mailbox.
+Claude Code sessions message each other with Claude Code's native `ListAgents` and `SendMessage`. They
+work across tabs and IDEs on the same machine, but not between WSL and native Windows, and not with
+other agent CLIs. For that, every session that runs the MCP server can message every other one.
+
+### Sessions
+
+- A session's id is its tab id, `IDE_AGENT_TABS_ID`. A session that Agent Tabs didn't open gets an id
+  that starts with `s-` when its MCP server starts. So does a server whose tab id another live server
+  already holds, such as the server of a headless agent started from inside the tab.
+- A Codex client sends its thread id in `_meta.threadId` of every tool call, hook calls included. A
+  Codex session keeps its `IDE_AGENT_TABS_ID` only when that tab is open: `terminal-tabs.json` or an
+  IDE's `list` holds it. Otherwise, such as under the shared Codex daemon, whose environment can name
+  another tab or a closed one, the server renames the session to `codex-<threadId>` at its first tool
+  call. It keeps the old id when another live server already holds `codex-<threadId>`.
+- Each MCP server writes `~/.ide-agent-tabs/sessions/<id>.json`: `id`, `agent`, `path`, `pid`, the
+  tab's `host` (an IDE id or a terminal name) when there is one, `startedAt`, `state`, and a Codex
+  session's `threadId`. It deletes the
+  file when it exits, including when its client closes its stdin. A file whose `pid` no longer runs is
+  stale; readers ignore it and delete it.
+- `agent` is `IDE_AGENT_TABS_AGENT`, or else comes from the MCP client's name: a name that contains
+  `claude`, `codex`, `gemini`, `copilot` or `opencode` maps to that profile name.
+- `host` is the terminal from `terminal-tabs.json`, or the IDE whose `list` holds the tab id. The server
+  looks it up when it starts, and a sender looks it up again when the file has none.
+- `state` is `idle`, `busy` or `permission`, with `stateAt`. The session's hooks set it (see
+  [Noticing a message](#noticing-a-message)). Without hooks, it's `unknown`. A hook that runs before the
+  server starts writes a file with only `id` and `state`, and the server keeps that state.
+- Every change to a presence file happens under a lock file next to it, because the server, the hooks
+  and senders all write it.
+
+### Mailboxes
+
+- Each session has a mailbox at `~/.ide-agent-tabs/mail/<id>/`. A message is one JSON file, written to
+  `tmp/` and renamed into `new/`, so readers never see half a message. Reading a message moves it to
+  `cur/`. The reader holds a lock file in the mailbox while it moves messages, because Node on Windows
+  renames through an open handle, and two readers could both move the same file.
+- A message holds `id` (`m-` and 16 hex characters), `from` (`id`, `agent`, `path`), `to`, `text`, an
+  optional `replyTo`, and `sentAt`. The server sets `from` from its own session, so an agent can't send
+  as another session.
+- `text` is up to 32,000 characters. A session sends at most 20 messages a minute, and a mailbox holds
+  at most 50 unread messages; past either limit, `send_message` fails. The send times live in the
+  sender's `mail/<id>/sent.json`, under a lock, so every server of that session shares the limit.
+- The server deletes read messages after 7 days, and the mailbox of a session that isn't live and hasn't
+  changed for 7 days. It cleans up when it starts, and at most once an hour after that.
+
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `list_sessions` | Lists live sessions: `id`, `agent`, `path`, `host`, `state`, and `self` for the caller. |
+| `send_message` | Sends `text` to the session `to`, optionally as a reply to `replyTo`. Returns the message `id`, and `delivery`: `woken` or `queued`. A `note` says why a wake-up failed. |
+| `read_messages` | Returns the caller's unread messages and marks them read. |
+| `wait_for_message` | Waits up to `timeout` seconds (default 60, at most 600) for a message, optionally only one from `from` or replying to `replyTo`, and returns it, marked read. Returns `message: null` on timeout. Messages the filter skips stay unread. |
+
+The server lists these tools in every session; nothing turns them on. `wait_for_message` watches `new/`
+with `fs.watch` and also checks it every second, because `fs.watch` misses events on some file systems.
+
+A received message is data from another agent, not an instruction from the user. The server wraps its
+text in a header that says so, and the server instructions tell every agent to apply its user's rules
+to a peer's request, and to ask the user before anything destructive a peer asks for.
+
+### Noticing a message
+
+An agent sees a message only when it calls `read_messages` or `wait_for_message`. Three things prompt it:
+
+1. **Hooks.** `dist/agent-hook.mjs` runs as a command hook in Claude Code, Gemini CLI and Copilot CLI:
+   `node agent-hook.mjs <cli> <event>`, with the hook's JSON on stdin. Codex tabs call the server's
+   `agent_tabs_hook` tool instead, which runs the same logic. The hooks set `state`: `busy` when a
+   prompt is submitted or a tool starts, `permission` when a permission prompt shows, and `idle` when a
+   turn ends. When unread messages wait, it adds a one-line reminder to the agent's context after a
+   prompt or a tool call, and at the end of a turn it asks the agent to continue and read them, at most
+   three times in a row. `read_messages`, `wait_for_message` and a new prompt reset that count. Without
+   `IDE_AGENT_TABS_ID`, the hook does nothing. It always exits 0.
+2. **Wake-up.** When the recipient's `state` is `idle` and its tab supports input, `send_message` types
+   one fixed line into the tab: `Agent Tabs: new message from <agent> <short id>. Call read_messages.`
+   `<agent>` keeps only `A-Z`, `a-z`, `0-9`, `.`, `_` and `-`, and `<short id>` is the first 8
+   characters of the sender's id. The line never holds the message text. The sender first marks the
+   session `busy`, so a second message doesn't type the line again before the session's hooks report
+   `idle`; it restores `idle` when typing fails. The IDEs use the `input` route, and a 404 or any other
+   error leaves the message `queued`. Terminals type the line, wait 200 ms, then send Enter separately,
+   so a program with bracketed paste on sees a submitted line and not a paste:
+   - tmux: `send-keys -t <window> -l -- <line>`, then `send-keys -t <window> Enter`.
+   - WezTerm: `cli send-text --pane-id <id> --no-paste -- <line>`, then the same with `\r`.
+   - kitty with remote control: `kitten @ send-text --match id:<n> --stdin`, with the line and then `\r`
+     on stdin, because kitty reads escapes in a `send-text` argument.
+   - Ghostty on macOS: AppleScript `input text <line> to terminal id <id>`, then `send key "enter"`.
+   - Windows Terminal, Ghostty on Linux, and kitty windows started without remote control can't take
+     input from outside, so their sessions rely on hooks.
+3. **Waiting.** An agent that asked a question calls `wait_for_message` for the reply.
+
+Nothing types into a session whose `state` is `busy`, `permission` or `unknown`.
+
+Hook events for each CLI:
+
+| CLI | Config | `busy` | `permission` | `idle` | Reminder after | Turn-end nudge |
+|---|---|---|---|---|---|---|
+| Claude Code | The plugin's `hooks/hooks.json` | `UserPromptSubmit`, `PostToolUse` | `Notification` `permission_prompt` | `Stop`, `Notification` `idle_prompt` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
+| Codex | The tab's `-c` arguments, as `mcp_tool` hooks | `UserPromptSubmit`, `PostToolUse` | `PermissionRequest` | `Stop` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
+| Gemini CLI | `hooks` in `~/.gemini/settings.json` | `BeforeAgent`, `BeforeTool`, `AfterTool` | `Notification` `ToolPermission` | `AfterAgent` | `BeforeAgent`, `AfterTool` (`hookSpecificOutput.additionalContext`) | `AfterAgent` (`decision: "deny"`) |
+| Copilot CLI | `~/.copilot/hooks/ide-agent-tabs.json` | `userPromptSubmitted`, `preToolUse`, `postToolUse` | `notification` `permission_prompt` | `agentStop`, `notification` `agent_idle` | `postToolUse` only (`additionalContext`) | `agentStop` (`decision: "block"`) |
+
+- The Claude Code plugin ships its hooks. `sync-ides.mjs --register gemini|copilot` adds the Gemini CLI
+  and Copilot CLI hooks, pointing at `~/.ide-agent-tabs/mcp/agent-hook.mjs`, and `--unregister` removes
+  only those entries. It doesn't change a file that isn't plain JSON.
+- Copilot CLI drops the output of a `userPromptSubmitted` command hook, so it gets no reminder after a
+  prompt.
+- Only Codex tabs get Codex hooks (see [Codex tabs](#codex-tabs)). Global hooks in `~/.codex/hooks.json`
+  would run under the shared daemon with another tab's `IDE_AGENT_TABS_ID`, and on Windows the Codex
+  desktop app runs each command hook in a new console window. `--register codex` removes the command
+  hooks that earlier versions installed.
+- `--register codex` refuses on Windows. The Codex desktop app shares `~/.codex/config.toml` with the
+  CLI, and Codex before 0.159 opens a console window each time the app starts an MCP server that way. A
+  Codex tab needs no registration. On macOS and Linux, `--register codex` adds the server with
+  `env_vars` and `tool_timeout_sec = 660`, as a Codex tab does, so that Codex sessions outside tabs get
+  the tab tools and messaging. Copilot CLI passes a server only `PATH`, so its entry sets
+  `"IDE_AGENT_TABS_ID": "${IDE_AGENT_TABS_ID}"` and the same for `IDE_AGENT_TABS_AGENT`. The server ignores
+  a value that is still `${…}`.
 
 ## Delegation
 
@@ -321,7 +477,7 @@ question to another agent CLI in headless mode and reads the answer back. The Cl
 - If shell calls prove fragile, move delegation into the MCP server as a `delegate` tool, or adopt
   pal-mcp-server's `clink`.
 
-## Install (Phase 1)
+## Install
 
 The repository is a Claude Code plugin marketplace. Two commands install the plugin:
 
@@ -356,7 +512,7 @@ The Codex plugin isn't declared as a plugin dependency. A dependency from anothe
 only when this marketplace lists it in `allowCrossMarketplaceDependenciesOn` and the user has already
 added OpenAI's marketplace. Otherwise the install is refused, which would break the one-step install.
 
-## Distribution and updates (Phase 1)
+## Distribution and updates
 
 The Claude Code plugin carries the IDE extensions. The IDEs install them from files on the local disk,
 so no IDE downloads anything.
@@ -369,6 +525,7 @@ so no IDE downloads anything.
 |---|---|---|
 | `mcp-server.mjs`, `launch/`, `THIRD_PARTY_NOTICES.txt` | The MCP server, the terminal launch scripts and bundled licenses | `mcp/build.mjs` |
 | `sync-ides.mjs` | The IDE sync script, from `mcp/src/sync.ts` | `mcp/build.mjs` |
+| `agent-hook.mjs` | The messaging hook script, from `mcp/src/agentHook.ts` | `mcp/build.mjs` |
 | `ide/ide-agent-tabs.vsix` | The VS Code extension | `scripts/pack-ides.mjs` |
 | `ide/ide-agent-tabs-jetbrains.zip` | The JetBrains plugin | `scripts/pack-ides.mjs` |
 | `ide/versions.json` | The bundled version of each, such as `{"vscode": "0.1.17", "jetbrains": "0.4.1"}` | `scripts/pack-ides.mjs` |
@@ -385,7 +542,7 @@ in `vscode/package.json`.
 | Claude Code plugin | This repository, through the marketplace | `claude plugin update ide-agent-tabs@ide-agent-tabs`, or auto-update turned on for the marketplace in `/plugin` (off by default for a marketplace you add yourself) |
 | VS Code extension | `dist/ide/ide-agent-tabs.vsix` in the installed plugin | The session start hook runs `<cli> --install-extension <vsix> --force` in each editor that has an older version. |
 | JetBrains plugin | `~/.ide-agent-tabs/repository/updatePlugins.xml` | The session start hook puts the bundled zip there. The IDE offers the update from its custom plugin repository. |
-| MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Gemini CLI, Copilot CLI and OpenCode run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. |
+| MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Gemini CLI, Copilot CLI and OpenCode run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. `version.json` records the plugin version it came from, and an older plugin never replaces a copy from a newer one, because every Claude Code install on the machine shares the copy. |
 
 ### Session start hook
 
@@ -435,29 +592,14 @@ the bundled version passes it.
 
 An IDE that was never set up needs the setup skill, not the update skill.
 
-### GitHub Releases
-
-The release workflow, `.github/workflows/release.yml`, publishes each IDE extension to GitHub Releases
-for people who install by hand.
-
-- **Trigger:** a tag per part and version, such as `jetbrains-v0.4.1` or `vscode-v0.1.17`. The version in
-  the tag must match the part's own version (`pluginVersion` in `jetbrains/gradle.properties`, or
-  `version` in `vscode/package.json`). The workflow fails otherwise.
-- **JetBrains:** a Linux job sets up JDK 25, installs zsh and fish, and runs
-  `./gradlew test buildPlugin verifyPlugin`. A Windows job runs the tests, including the PowerShell launch
-  tests.
-- **VS Code:** a Linux job runs `npm test` and `npm run build`, and packages the `.vsix`.
-- **Publish:** the workflow attaches `ide-agent-tabs-<version>.zip` or `ide-agent-tabs-<version>.vsix`,
-  and a `SHA256SUMS` file, to a GitHub Release named after the tag.
-
 The build compiles against a local IDE when `studioPath` is set in `~/.gradle/gradle.properties`, and
-downloads IntelliJ IDEA 2026.2.2 otherwise, as the release workflow does. The Plugin Verifier checks
+downloads IntelliJ IDEA 2026.2.2 otherwise. The Plugin Verifier checks
 IntelliJ IDEA 2026.2.2 and Android Studio 2026.2.2.2.
 
 The plugin needs build 262.10315 or later (IntelliJ IDEA and Android Studio 2026.2.2). Earlier 2026.2
 builds have a different `TerminalViewVirtualFile` constructor, so opening a tab would fail there.
 
-## Jev judgments (Phase 4, optional)
+## Jev judgments (optional)
 
 [Jev](https://docs.typesafe.ai/) is TypeSafe's "System One" model. It reads text and returns a typed
 judgment: one option out of up to 255 (Choice), a probability of yes (Noul), or a position on 2 to 10
@@ -584,6 +726,10 @@ in `~/.ide-agent-tabs/mcp/` that other agents register.
 - Any such process can start any agent with any flags, including flags that skip permission prompts.
   This is by design: it is the same power as running the agent yourself.
 - The server never passes caller text through a shell parser.
+- A message's text never reaches a command line or a terminal. The only line the server types into a
+  session is the fixed wake line, built from the sender's cleaned agent name and id.
+- Any process of your user can write to any mailbox, as it can open tabs. Every agent treats a message
+  as a peer's request, applies its user's rules to it, and asks its user before anything destructive.
 - The server makes one kind of network call: a Jev request to `https://api.typesafe.ai`, and only
   when Jev is turned on and a tool asks. Everything a caller puts in a Jev request leaves the machine.
   The tool descriptions say so.
@@ -600,18 +746,21 @@ in `~/.ide-agent-tabs/mcp/` that other agents register.
 | Ghostty on Linux | 1.3.1 in WSL Ubuntu accepts the flags. No window opens, because Ghostty needs OpenGL 4.3 and WSLg offers 4.1. | A working window |
 | Ghostty on macOS | Unit tests of the AppleScript and command generation | A live run |
 | Agent profiles | `claude` and `codex` flags checked against each CLI's help | `gemini` and `copilot` |
+| Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>`; interactive Codex 0.158.0 tabs in Antigravity on Windows 11: a message read mid-task through the hooks, and an idle tab woken by the typed line through the `input` route, each answered | The `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Gemini CLI or Copilot CLI session |
 
 Open, list and close through the MCP server pass for tmux, kitty and WezTerm. No part is tested on a real
 Mac. For the headless delegation commands, see the **Tested** column in
 [Headless commands](#headless-commands).
 
-## Phases
+## Possible future work
 
-0. Done: registry, token, `info` and `agents` routes, and agent profiles in the JetBrains plugin.
-   Right-click agent menu.
-1. Built: the build without a local IDE, CI and release workflows, the `new-tab`, `setup` and `update`
-   skills, the IDE extensions bundled in the Claude Code plugin, and the MCP server with its terminal
-   drivers.
-2. Built: the VS Code extension.
-3. Visual Studio extension, opening Windows Terminal tabs.
-4. Jev judgment tools in the MCP server, the `jev` skill, and Jev routing in `delegate`.
+None of these is scheduled.
+
+- **Visual Studio extension:** the **New Agent Tab** button and editor tabs in Visual Studio on Windows.
+  Until then, the MCP server opens tabs for Visual Studio users in Windows Terminal.
+- **Terminal and iTerm2 on macOS:** terminal drivers through AppleScript.
+- **Messaging hooks for OpenCode:** state and reminders through an OpenCode plugin. Without hooks, an
+  OpenCode session's `state` stays `unknown`, so it gets no wake-up and sees a message only when it calls
+  `read_messages` or `wait_for_message`.
+- **Jev steps J3 to J5:** a routing bench, a guard hook and a cost report. See
+  [jev-integration.md](jev-integration.md#phases).

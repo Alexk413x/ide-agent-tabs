@@ -8,6 +8,7 @@ import {
   kittyAddresses,
   kittyLaunchArgs,
   kittySocketDir,
+  kittyInputCalls,
   kittySpawnArgs,
   parseKittyWindowId,
   parseKittyWindows,
@@ -18,6 +19,7 @@ import {
   parseTmuxWindow,
   parseTmuxWindowList,
   planTmuxTarget,
+  tmuxInputArgs,
   tmuxOpenArgs,
   tmuxTitle,
 } from '../src/terminals/tmux.js';
@@ -27,6 +29,7 @@ import {
   parsePaneId,
   parseWeztermPanes,
   weztermCliArgs,
+  weztermInputArgs,
   weztermLocations,
   weztermRuntimeDir,
   weztermSpawnArgs,
@@ -157,4 +160,27 @@ test('tmux window records hold the window id, server pid and socket', () => {
   assert.ok(isNoServerError('no server running on /tmp/tmux-501/default'));
   assert.ok(isNoServerError('error connecting to /tmp/tmux-501/default (No such file or directory)'));
   assert.ok(!isNoServerError('unknown flag -e'));
+});
+
+test('typing a line sends the text and a separate Enter, with no bracketed paste', () => {
+  const line = 'Agent Tabs: new message from codex 01234567. Call read_messages.';
+  assert.deepEqual(tmuxInputArgs('/tmp/tmux-1000/default', '@12', line), [
+    ['-S', '/tmp/tmux-1000/default', 'send-keys', '-t', '@12', '-l', '--', line],
+    ['-S', '/tmp/tmux-1000/default', 'send-keys', '-t', '@12', 'Enter'],
+  ]);
+  assert.throws(() => tmuxInputArgs('/s', '@1', 'ends;'), /';'/);
+  assert.deepEqual(weztermInputArgs('7', line), [
+    ['send-text', '--pane-id', '7', '--no-paste', '--', line],
+    ['send-text', '--pane-id', '7', '--no-paste', '--', '\r'],
+  ]);
+  const kittyArgs = ['@', '--to', 'unix:/run/k-1', 'send-text', '--match', 'id:5', '--stdin'];
+  assert.deepEqual(kittyInputCalls('unix:/run/k-1', '5', line), [
+    { args: kittyArgs, input: line },
+    { args: kittyArgs, input: '\r' },
+  ]);
+  for (const bad of ['two\nlines', 'x'.repeat(501), 'esc\u001b[2J']) {
+    assert.throws(() => tmuxInputArgs('/s', '@1', bad), /one line/);
+    assert.throws(() => weztermInputArgs('1', bad), /one line/);
+    assert.throws(() => kittyInputCalls('unix:/k', '1', bad), /one line/);
+  }
 });

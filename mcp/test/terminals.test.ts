@@ -8,6 +8,7 @@ import {
   closeScript,
   ghosttyCapabilities,
   ghosttyLinuxArgs,
+  inputScript,
   listScript,
   openScript,
   parseOpenResult,
@@ -210,4 +211,21 @@ test('a pid-tracked tab is a running shell, and counts as open during start-up u
     now,
   );
   assert.deepEqual([...alive], ['starting']);
+});
+
+test('Ghostty types the line into the recorded terminal, then presses Enter as a key event', () => {
+  assert.equal(
+    inputScript('A1B2-C3', 'Agent Tabs: new message from codex 01234567. Call read_messages.'),
+    [
+      'tell application "Ghostty"',
+      '\tset t to terminal id "A1B2-C3"',
+      '\tinput text "Agent Tabs: new message from codex 01234567. Call read_messages." to t',
+      '\tdelay 0.2',
+      '\tsend key "enter" to t',
+      'end tell',
+      '',
+    ].join('\n'),
+  );
+  assert.equal(inputScript('x"y', 'hi').split('\n')[1], '\tset t to terminal id "x\\"y"');
+  assert.throws(() => inputScript('x', 'a\rb'), /one line/);
 });

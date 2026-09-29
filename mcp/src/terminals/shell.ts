@@ -72,3 +72,14 @@ export function tabTitle(label: string): string {
   const clean = [...label.replace(/\p{C}+/gu, ' ').replace(/\s+/g, ' ').trim()].slice(0, TITLE_MAX).join('').trim();
   return clean === '' ? 'Agent' : clean;
 }
+
+export const MAX_INPUT_CHARS = 500;
+export const ENTER_DELAY_MS = 200;
+
+export function checkInputLine(text: string): void {
+  if (text.length > MAX_INPUT_CHARS || /\p{Cc}/u.test(text)) {
+    throw new Error(`input must be one line of at most ${MAX_INPUT_CHARS} characters with no control characters`);
+  }
+}
+
+export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

@@ -1,8 +1,8 @@
 # Agent Tabs MCP server
 
-This MCP server lets an agent open, list and close agent tabs. A tab runs an interactive agent CLI
-session, such as Claude Code, Codex, Gemini CLI or Copilot CLI. The tab opens in a running IDE that has
-the Agent Tabs extension, or in a terminal app when no IDE is running.
+This MCP server lets an agent open, list and close agent tabs, and message other agent sessions. A tab
+runs an interactive agent CLI session, such as Claude Code, Codex, Gemini CLI or Copilot CLI. The tab
+opens in a running IDE that has the Agent Tabs extension, or in a terminal app when no IDE is running.
 
 The server speaks MCP over stdio. It reads the registry and calls each IDE's HTTP API, as described in
 [docs/design.md](../docs/design.md). The Claude Code plugin registers it as `ide-agent-tabs` in
@@ -18,6 +18,10 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 | `list_tabs` | `ide` (optional) | Open tabs across all IDEs and terminals, or in one |
 | `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, and a `note` when you need to act, such as attaching to tmux |
 | `close_tab` | `id` (optional) | The closed tab. With no `id`, it closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
+| `list_sessions` | none | Live agent sessions (`id`, `agent`, `path`, `host`, `state`, `startedAt`), with `self` for the caller |
+| `send_message` | `to`, `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued` |
+| `read_messages` | none | The caller's unread messages, marked read, under a `notice` that they come from other agents |
+| `wait_for_message` | optional `timeout` (seconds, default 60, at most 600), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
 
 An IDE's id is its registry file name without `.json`: `<ide>-<pid>`, or `<ide>-<pid>-<window>` for a VS
 Code window. A terminal's id is its name: `windows-terminal`, `ghostty`, `kitty`, `wezterm` or `tmux`.
@@ -57,8 +61,75 @@ TypeSafe's API.
 The server reads the API key from `TYPESAFE_API_KEY`, or from the operating system's credential store
 under service `typesafe`, account `api_key`. Each call appends a line without request contents to
 `jev/ledger.jsonl`. `node mcp-server.mjs jev <status|ask|choose|check|rank|route>` takes the same
-request as JSON on stdin. See [Jev judgments](../docs/design.md#jev-judgments-phase-4-optional) for
+request as JSON on stdin. See [Jev judgments](../docs/design.md#jev-judgments-optional) for
 the settings, the key lookup and the ledger.
+
+## Messaging
+
+Every session that runs this server can message every other one on the machine, whichever agent CLI it
+is. Claude Code sessions can also use Claude Code's own `SendMessage`, which doesn't reach other CLIs or
+cross between WSL and Windows.
+
+1. Call `list_sessions` to find the other session's `id`.
+2. Call `send_message` with `to` and `text`. The text goes to that session's mailbox.
+3. Call `wait_for_message` with `replyTo` set to the message id to wait for the answer.
+
+The server's instructions tell every agent to treat a received message as a peer's request, not an
+instruction from its user, to ask its user before anything destructive, to reply with `replyTo`, and not
+to answer a message that needs no answer.
+
+### How a session learns about a message
+
+- **Hooks** keep each session's `state`: `idle`, `busy` or `permission`, or `unknown` without hooks.
+  When messages wait, the hooks add a one-line reminder after a prompt or a tool call. At the end of a
+  turn, they ask the agent to read the messages, at most three times in a row.
+- **Wake-up:** when the recipient is `idle` and its tab can take input, `send_message` types one fixed
+  line into the tab: `Agent Tabs: new message from <agent> <short id>. Call read_messages.` It never
+  types the message text.
+
+| Agent | Hooks | Reminder after a prompt | Reminder after a tool call | Nudge at turn end |
+|---|---|---|---|---|
+| Claude Code | From the plugin | Yes | Yes | Yes |
+| Codex | In Codex tabs only, from the tab's arguments; trusted, with no `/hooks` review | Yes | Yes | Yes |
+| Gemini CLI | Added by `--register gemini` | Yes | Yes | Yes |
+| Copilot CLI | Added by `--register copilot` | No: Copilot CLI drops that hook's output | Yes | Yes |
+| OpenCode | None | No | No | No |
+
+| Where the recipient runs | Wake-up |
+|---|---|
+| JetBrains IDE, VS Code and editors built on it | The IDE's `input` route |
+| tmux, WezTerm, kitty with remote control, Ghostty on macOS | The terminal's own send-text command |
+| Windows Terminal, Ghostty on Linux, kitty without remote control | None; the session relies on hooks |
+| A session Agent Tabs didn't open | None |
+
+### Codex tabs
+
+A Codex tab starts `codex --no-daemon` with `-c` options that add, for that session only, this server
+and five hooks that call it. Codex's shared daemon would start both with another tab's environment, so a
+Codex tab runs in its own process instead. The tab needs Codex 0.158 or later, and the shared server copy
+in `~/.ide-agent-tabs/mcp/`, which each Claude Code session start refreshes. The hooks are `mcp_tool`
+hooks: they call the internal `agent_tabs_hook` tool over the session's own MCP connection, so no process
+starts and no console window opens. The options also trust the five hooks, so Codex runs them without a
+`/hooks` review. For the exact options, see `CODEX_TAB_ARGS` in `src/profiles.ts` and
+[Codex tabs](../docs/design.md#codex-tabs) in the design doc.
+
+A Codex session outside a tab, such as one in the Codex desktop app, has no hooks. When its server's
+`IDE_AGENT_TABS_ID` names no open tab, the session's id becomes `codex-<thread id>`.
+
+### Limits
+
+- A message holds up to 32,000 characters.
+- A session sends at most 20 messages a minute.
+- A mailbox holds at most 50 unread messages.
+- The server deletes read messages after 7 days, and the mailbox of a session that ended 7 days ago.
+
+### Security
+
+- Messages are files in `~/.ide-agent-tabs/mail/` that only your user can read. Any process of your
+  user can write one, as it can open a tab.
+- A message's text never reaches a command line or a terminal. The wake line holds only the sender's
+  cleaned agent name and the first 8 characters of its id.
+- The server sets `from` itself, so an agent can't send as another session.
 
 ## Config files
 
@@ -71,6 +142,8 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `config.json` | `defaultAgent`; `terminal`, the preferred terminal when no IDE is running; and `jev`, the Jev settings. |
 | `jev/ledger.jsonl` | One line per Jev call: time, tool, agent, tab, model, question count, input tokens and result. |
 | `terminal-tabs.json` | The terminal tabs this server opened. The server writes it; don't edit it. |
+| `sessions/*.json` | One presence file per running server: session id, agent, folder, process id, host and state. |
+| `mail/<id>/` | A session's mailbox: `tmp/`, `new/` (unread), `cur/` (read), and `sent.json` for the rate limit. |
 | `launch/` | Short-lived launch files. Each is deleted as soon as its tab starts. |
 | `mcp/` | A copy of the server for other agent CLIs. See [Other agents](#other-agents). |
 
@@ -81,7 +154,9 @@ which is the calling agent's `PATH`.
 ## Other agents
 
 Codex, Gemini CLI, Copilot CLI and OpenCode can run this server too. The setup skill registers it with
-the agents you choose, through `sync-ides.mjs`:
+the agents you choose, through `sync-ides.mjs`. For Gemini CLI and Copilot CLI, registering also adds the
+messaging hooks. Codex tabs bring their own server and hooks, so Codex needs registering only for Codex
+sessions outside tabs, and only on macOS and Linux:
 
 ```sh
 node dist/sync-ides.mjs --agents
@@ -90,19 +165,20 @@ node dist/sync-ides.mjs --unregister codex
 ```
 
 `--agents` reports, for each agent, whether it's installed, whether it's registered, the server path it
-runs, and whether that path is the stable copy. `--register` and `--unregister` print the same fields for
+runs, whether that path is the stable copy, and `hooks`: whether its messaging hooks are in place (`null`
+for Codex and OpenCode, which get none). `--register` and `--unregister` print the same fields for
 each agent, with `ok` or an `error`.
 
 Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server name `ide-agent-tabs`:
 
 | Agent | Where the entry goes | How |
 |---|---|---|
-| Codex | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- node <path>` |
+| Codex, not on Windows | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- node <path>` |
 | Gemini CLI | `~/.gemini/settings.json`, user scope | `gemini mcp add --scope user ide-agent-tabs node <path>` |
 | Copilot CLI | `mcpServers` in `~/.copilot/mcp-config.json`, or `$COPILOT_HOME/mcp-config.json` | The script edits the file. |
 | OpenCode | `mcp` in `~/.config/opencode/opencode.json`, or under `$XDG_CONFIG_HOME` | The script edits the file. |
 
-- `~/.ide-agent-tabs/mcp/` holds `mcp-server.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt`, in the same
+- `~/.ide-agent-tabs/mcp/` holds `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt`, in the same
   layout as the plugin's `dist/`. The Claude Code plugin folder has the version in its path, so an
   update would break a registration that pointed there. `--register` writes the copy. When a Claude Code
   session starts after a plugin update, the session start hook refreshes the copy if it exists.
@@ -116,7 +192,7 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
   with comments. It reports an error instead, and you add the entry by hand:
 
   ```json
-  "ide-agent-tabs": { "type": "local", "command": "node", "args": ["<path>"], "env": {}, "tools": ["*"] }
+  "ide-agent-tabs": { "type": "local", "command": "node", "args": ["<path>"], "env": { "IDE_AGENT_TABS_ID": "${IDE_AGENT_TABS_ID}", "IDE_AGENT_TABS_AGENT": "${IDE_AGENT_TABS_AGENT}" }, "tools": ["*"] }
   ```
 
   for Copilot CLI under `mcpServers`, or for OpenCode under `mcp`:
@@ -125,7 +201,23 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
   "ide-agent-tabs": { "type": "local", "command": ["node", "<path>"], "enabled": true }
   ```
 
-- Claude Code isn't registered this way. It gets the server from the plugin.
+- The hooks run `node ~/.ide-agent-tabs/mcp/agent-hook.mjs <agent> <event>`:
+
+  | Agent | Where the hooks go |
+  |---|---|
+  | Gemini CLI | `hooks` in `~/.gemini/settings.json` |
+  | Copilot CLI | Its own file, `~/.copilot/hooks/ide-agent-tabs.json`, or under `$COPILOT_HOME` |
+
+  `--unregister` removes only the Agent Tabs entries and leaves your other hooks in place.
+  `--register codex` removes the Codex hooks that earlier versions added to `~/.codex/hooks.json`.
+- `--register codex` refuses on Windows. The Codex desktop app reads the same `config.toml`, and Codex
+  before 0.159 opens a console window each time the app starts an MCP server from it. Use Codex tabs
+  there.
+- Codex passes a server only a fixed set of environment variables, so `--register codex` adds
+  `env_vars` for `IDE_AGENT_TABS_ID`, `IDE_AGENT_TABS_AGENT` and `IDE_AGENT_TABS_HOME` to the server's
+  table in `config.toml`. It also sets `tool_timeout_sec = 660`, so `wait_for_message` can wait its
+  full 10 minutes. The Copilot CLI entry forwards the first two variables in its `env`.
+- Claude Code isn't registered this way. It gets the server and the hooks from the plugin.
 - After you register an agent, restart its open sessions.
 
 To remove Agent Tabs from the other agents, run `--unregister` with each agent, then delete
@@ -246,7 +338,8 @@ identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 ### Adding a terminal
 
 Each terminal is a `TerminalDriver` in `src/terminals/`, with `available`, `open`, `alive` and `close`,
-and `currentCapabilities` when what it can do depends on its setup. Add the driver to
+`currentCapabilities` when what it can do depends on its setup, and `input` when it can type a line into a
+tab. Add the driver to
 `TERMINAL_DRIVERS`, and to the platform order in `src/terminals/index.ts`. Shared pieces live in
 `shell.ts` (login shell, env mode and argv mode commands, path checks, titles) and `processes.ts`
 (environment, detached start, pid tracking).
@@ -272,8 +365,8 @@ npm test
 npm run build
 ```
 
-`npm run build` type-checks the code and bundles it into `claude-plugin/dist/mcp-server.mjs` and
-`claude-plugin/dist/sync-ides.mjs`. It copies the launch scripts to `claude-plugin/dist/launch/` and
+`npm run build` type-checks the code and bundles it into `claude-plugin/dist/mcp-server.mjs`,
+`claude-plugin/dist/sync-ides.mjs` and `claude-plugin/dist/agent-hook.mjs`. It copies the launch scripts to `claude-plugin/dist/launch/` and
 writes the bundled packages' licenses to `claude-plugin/dist/THIRD_PARTY_NOTICES.txt`. It leaves the IDE
 builds in `claude-plugin/dist/ide/` in place. Commit the `dist/` folder: the plugin runs it without
 `node_modules`.

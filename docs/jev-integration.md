@@ -1,6 +1,6 @@
 # System One judgments with Jev
 
-Status: J0, J1 and J2 are built on branch `feat/jev-tools` and not yet committed. J3 to J5 are plans. Written on 2026-09-28.
+Status: J0, J1 and J2 are built. J3 to J5 are plans.
 
 This plan adds an optional TypeSafe Jev integration to Agent Tabs. Every agent that Agent Tabs opens or
 delegates to can then ask Jev a question, not only Claude Code. The goal is to move the calls that
@@ -136,7 +136,7 @@ diff, answer or document meets each of several narrow conditions.
 
 | Phase | What | Needs | Done when |
 |---|---|---|---|
-| J0 | The contract in `docs/design.md` | Nothing | Done on the branch; the owner reviews it with the code |
+| J0 | The contract in `docs/design.md` | Nothing | Done |
 | J1 | `mcp/src/jev/`: the key lookup, the client, `jev_status`, `jev_ask`, `jev_choose`, `jev_check`, `jev_rank`, `jev_route`, the ledger, the server instructions and the `jev` subcommand. Tests use a fake TypeSafe server on loopback | Nothing | `npm test` and `npm run build` pass; one live call with the real key |
 | J2 | The `jev` skill, the `delegate` change and the `setup` step | J1 | Codex, from a tab, calls `jev_status` and gets an answer |
 | J3 | A routing bench: about 30 past delegate tasks, each labelled with the right tier by the owner | J1 | Agreement and the `sure` share reported, and `sure` re-set from the data |
