@@ -140,6 +140,9 @@ You add or override profiles in `~/.ide-agent-tabs/agents.json`:
 A profile is `installed` when its command is on the IDE's `PATH`. On Windows, the IDE also looks for
 `.exe`, `.cmd`, `.bat` and `.ps1` files, because npm installs CLIs as `.cmd` and `.ps1` shims.
 
+The setup skill carries a copy of this section in `claude-plugin/skills/setup/agent-profiles.md`,
+because the installed plugin holds only `claude-plugin/`. Change both together.
+
 `~/.ide-agent-tabs/config.json` holds shared settings:
 
 ```json
@@ -250,6 +253,16 @@ registry and calls the HTTP API.
    on macOS and Linux.
 
 The reply includes a `reason` that says which rule chose the target.
+
+Results are compact JSON. An IDE error keeps the HTTP status and the IDE's `error` text and adds the
+next step: on 409 from `open`, pass a terminal id as `ide`; on 503 or a timeout, ask the user to close
+a dialog in the IDE; on an unknown agent, call `list_agents`. On 401 the server rereads the registry
+and retries once when the same endpoint id now holds a new token, as after a JetBrains plugin reload.
+Otherwise the error says the endpoint is stale.
+
+The server's instructions start with one sentence that names the tab tools, then the messaging rules,
+then the Jev rules when Jev is on. Claude Code cuts each server's instructions at 2,048 characters, so
+`instructions.test.ts` fails when the joined text passes that.
 
 ## Terminals
 
@@ -375,9 +388,11 @@ An agent sees a message only when it calls `read_messages` or `wait_for_message`
    `node agent-hook.mjs <cli> <event>`, with the hook's JSON on stdin. Codex tabs call the server's
    `agent_tabs_hook` tool instead, which runs the same logic. The hooks set `state`: `busy` when a
    prompt is submitted or a tool starts, `permission` when a permission prompt shows, and `idle` when a
-   turn ends. When unread messages wait, it adds a one-line reminder to the agent's context after a
-   prompt or a tool call, and at the end of a turn it asks the agent to continue and read them, at most
-   three times in a row. `read_messages`, `wait_for_message` and a new prompt reset that count. Without
+   turn ends. When a message arrives unread, it adds a one-line reminder to the agent's context after
+   the next prompt or tool call, once per message: `Agent Tabs: 1 unread message from <agent> <short id>.
+   read_messages returns it.` The presence file keeps the ids already reminded in `reminded`. At the end
+   of a turn with unread messages, it asks the agent to continue and read them, at most three times in a
+   row. `read_messages`, `wait_for_message` and a new prompt reset that count. Without
    `IDE_AGENT_TABS_ID`, the hook does nothing. It always exits 0.
 2. **Wake-up.** When the recipient's `state` is `idle` and its tab supports input, `send_message` types
    one fixed line into the tab: `Agent Tabs: new message from <agent> <short id>. Call read_messages.`
@@ -459,13 +474,17 @@ question to another agent CLI in headless mode and reads the answer back. The Cl
   passes a model only when the user names one.
 - **Check the installed CLI's help first.** Flags change between releases, so the skill confirms them
   with `--help` once per session.
+- **Resume in the same mode.** Neither `codex exec resume` nor `claude -p --resume` keeps the first run's
+  sandbox or permission mode, so a follow-up passes it again.
+- **Codex plugin first.** `/codex:review` is user-only, so the skill asks the user to type it, and hands
+  delegated work to the plugin's `codex:codex-rescue` subagent.
 
 ### Headless commands
 
 | Agent | Run once | Answer | Follow-up | Tested |
 |---|---|---|---|---|
-| Codex | `codex exec -s read-only -C <dir> -o <answer> --json - < prompt.md` | `-o` file | `codex exec resume <thread_id> - < followup.md`; the id is in the `thread.started` event | Yes, 0.154.0 |
-| Claude | `claude -p --output-format json --permission-mode plan < prompt.md` | `.result` | `--resume <session_id>` | Flags checked in help |
+| Codex | `codex exec -s read-only -C <dir> -o <answer> --json - < prompt.md` | `-o` file | `codex exec -s <sandbox> resume <thread_id> - < followup.md`; the id is in the `thread.started` event, and `-s` must come before `resume` | Yes, 0.154.0 |
+| Claude | `claude -p --output-format json --permission-mode plan < prompt.md` | `.result`; cost in `.total_cost_usd` | `--permission-mode <mode> --resume <session_id>` | Flags checked in help |
 | Gemini CLI | `gemini -p "<instruction>" --output-format json < prompt.md` | `.response` | Unreliable in headless mode | No |
 | Copilot CLI | `copilot -p …` | Output | `--resume` has open Windows bugs | No |
 | OpenCode | `opencode run … --format json` | JSON events | `opencode run -c` | No |
@@ -485,6 +504,9 @@ The repository is a Claude Code plugin marketplace. Two commands install the plu
 claude plugin marketplace add Alexk413x/ide-agent-tabs
 claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
+
+The repository is private, so installing needs read access to it: sign in to GitHub with an account
+that has access, for example with `gh auth login`.
 
 Installing the plugin at user scope makes its skills available in every session and every IDE.
 
@@ -535,6 +557,18 @@ so no IDE downloads anything.
 common JDK folders. Run it after you raise `pluginVersion` in `jetbrains/gradle.properties` or `version`
 in `vscode/package.json`.
 
+### Versions and releases
+
+- Claude Code updates an installed plugin only when `version` in `claude-plugin/.claude-plugin/plugin.json`
+  changes, so every change under `claude-plugin/`, including `dist/`, needs a new version.
+  `mcp/package.json` carries the same version; `mcp/build.mjs` puts it into the bundle as the server
+  version and the User-Agent.
+- Each release adds a `## <version>` entry to `CHANGELOG.md` and gets a tag,
+  `ide-agent-tabs--v<version>`, made with `claude plugin tag --push` on `main`.
+- `node scripts/check-plugin-version.mjs` fails when `claude-plugin/` changed since the last tag while the
+  version stayed the same, when the two version fields differ, or when the CHANGELOG lacks the entry.
+  CI runs it too; run it locally before you push.
+
 ### What updates from where
 
 | Part | Update source | How it updates |
@@ -582,8 +616,9 @@ the bundled version passes it.
 
 `/ide-agent-tabs:update`:
 
-1. Runs `claude plugin marketplace update ide-agent-tabs`, `claude plugin list` and
-   `sync-ides.mjs --status`, and reports the installed and available versions.
+1. Runs `claude plugin marketplace update ide-agent-tabs`, reads the available version from the
+   marketplace clone's `claude-plugin/.claude-plugin/plugin.json` and the installed one from
+   `claude plugin list --json`, runs `sync-ides.mjs --status`, and reports the versions.
 2. If a newer plugin version exists, runs `claude plugin update ide-agent-tabs@ide-agent-tabs`, then asks
    the user to run `/reload-plugins` and the skill again. The loaded skill's paths point to the old
    version's files.
@@ -591,6 +626,9 @@ the bundled version passes it.
 4. Reports each part's old and new version, and the reload or restart each IDE needs.
 
 An IDE that was never set up needs the setup skill, not the update skill.
+
+`setup` and `update` set `disable-model-invocation: true`: they change the machine, so only the user
+starts them, and their descriptions cost no context until then.
 
 The build compiles against a local IDE when `studioPath` is set in `~/.gradle/gradle.properties`, and
 downloads IntelliJ IDEA 2026.2.2 otherwise. The Plugin Verifier checks

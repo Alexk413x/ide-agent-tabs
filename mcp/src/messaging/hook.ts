@@ -65,10 +65,11 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
   if (!action) return undefined;
   const now = run.now ?? Date.now();
   const state = action.notification ? notificationState(run.input) : action.state;
-  const needsMail = action.remind || action.stop;
-  const reminder = needsMail ? unreadReminder(await peekUnread(home, sessionId)) : undefined;
+  const unread = action.remind || action.stop ? await peekUnread(home, sessionId) : [];
+  const reminder = unreadReminder(unread);
 
   let block = false;
+  let remind = false;
   await updatePresence(home, sessionId, (current) => {
     const base: PresenceFile = current ?? { id: sessionId };
     if (action.stop) {
@@ -77,10 +78,15 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
       return block ? withState(base, 'busy', now, nudges + 1) : withState(base, 'idle', now, reminder === undefined ? 0 : nudges);
     }
     if (state === undefined) return current;
-    return withState(base, state, now, action.prompt ? 0 : undefined);
+    const next = withState(base, state, now, action.prompt ? 0 : undefined);
+    if (!action.remind) return next;
+    const seen = new Set(base.reminded);
+    remind = unread.some((m) => !seen.has(m.id));
+    const { reminded: _, ...rest } = next;
+    return unread.length ? { ...rest, reminded: unread.map((m) => m.id) } : rest;
   });
 
-  if (action.stop) return block ? stopOutput(cli, `${reminder} Read them before you end your turn.`) : undefined;
-  if (action.remind && reminder !== undefined) return contextOutput(cli, event, reminder);
+  if (action.stop) return block ? stopOutput(cli, `Agent Tabs kept this turn open. ${reminder}`) : undefined;
+  if (remind && reminder !== undefined) return contextOutput(cli, event, reminder);
   return undefined;
 }

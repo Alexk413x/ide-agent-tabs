@@ -21,6 +21,7 @@ export interface PresenceFile {
   state?: SessionState;
   stateAt?: string;
   nudges?: number;
+  reminded?: string[];
   threadId?: string;
 }
 
@@ -69,6 +70,7 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
   const state = STATES.includes(o.state as SessionState) ? { state: o.state as SessionState } : {};
   const pid = typeof o.pid === 'number' && Number.isSafeInteger(o.pid) && o.pid > 0 ? { pid: o.pid } : {};
   const nudges = typeof o.nudges === 'number' && Number.isSafeInteger(o.nudges) && o.nudges >= 0 ? { nudges: o.nudges } : {};
+  const reminded = Array.isArray(o.reminded) && o.reminded.every((r) => typeof r === 'string') ? { reminded: o.reminded as string[] } : {};
   return {
     id: o.id,
     ...str('agent'),
@@ -79,6 +81,7 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...state,
     ...str('stateAt'),
     ...nudges,
+    ...reminded,
     ...str('threadId'),
   };
 }

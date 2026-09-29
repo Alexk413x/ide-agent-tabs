@@ -1,21 +1,40 @@
-MIT License
+PROPRIETARY SOFTWARE LICENSE
 
-Copyright (c) 2026 Alexk413x
+Copyright (c) 2026 Alex Koch. All Rights Reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software, including the Claude Code plugin, the MCP server, the IDE
+extensions and their associated documentation (collectively, the
+"Software"), is the proprietary and confidential property of Alex Koch
+("Licensor").
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+NO LICENSE IS GRANTED BY THIS FILE.
+
+No right to use, copy, modify, merge, publish, distribute, sublicense, or sell
+the Software, in whole or in part, is granted except under a separate written
+agreement executed or otherwise accepted by Licensor. Absent an effective
+agreement with Licensor, all rights are reserved under applicable copyright
+law and international treaties.
+
+Possession of a copy of the Software, by any means and from any source, does
+not convey any license or right of use. Access to the source form of the
+Software does not place it in the public domain, waive its confidential
+status, or imply permission to use it.
+
+Unauthorized copying, modification, distribution, public display, or use of
+the Software is prohibited and may result in civil and criminal penalties.
+
+THIRD-PARTY MATERIAL
+
+The Software bundles third-party components, each governed by its own
+license. Those licenses are recorded in claude-plugin/dist/THIRD_PARTY_NOTICES.txt,
+continue to govern the components they cover, and are not superseded by this
+file.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Licensing enquiries: alexk413x@gmail.com

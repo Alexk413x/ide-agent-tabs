@@ -12,7 +12,7 @@ Arguments: `$ARGUMENTS`
 ## 1. Pick the agent
 
 - Use the agent named in the arguments.
-- If none is named and the `jev_route` tool is listed, call it with a `task` of two or three sentences:
+- If none is named and the `jev_route` tool (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_route`) is listed, call it with a `task` of two or three sentences:
   what to do, how large it is, and what it touches. Leave out secrets, because the text goes to
   TypeSafe's API.
   - On `band: "sure"`, use the tier it returns, and tell the user which tier Jev picked and with what
@@ -22,9 +22,14 @@ Arguments: `$ARGUMENTS`
 - If none is named and `jev_route` isn't listed, ask which agent to use, and list the installed ones.
 - Check that the CLI is installed: `command -v <cli>` in Bash, or `Get-Command <cli>` in PowerShell. If
   it isn't, say so and stop.
-- For Codex, prefer OpenAI's Codex plugin when its commands are available: `/codex:review` for reviews
-  and `/codex:rescue` for delegated work. It manages background jobs and follow-ups for you. Use the
-  steps below only when that plugin isn't installed or the user asks for `codex exec` directly.
+- For Codex, prefer OpenAI's Codex plugin when it's installed. It manages background jobs and
+  follow-ups for you. For delegated work, call the Agent tool with `subagent_type: "codex:codex-rescue"`.
+  For a review, ask the user to type `/codex:review`, because only the user can run it; if they'd rather
+  not, use `codex exec` below. Use the steps below also when the plugin isn't installed or the user asks
+  for `codex exec` directly.
+- For "a second Claude" that needs no other model, settings or folder, a subagent with a fresh context
+  (the Agent tool) costs less than a new process. Use `claude -p` below when the user asks for it, or
+  for a different model, configuration or directory.
 - Before the first run of a CLI in this session, run `<cli> --help` (and `<cli> exec --help` for Codex)
   and confirm the flags in the table below. CLI flags change between releases. The installed help wins
   over this table.
@@ -64,7 +69,8 @@ Pick the command for the agent and mode. `<dir>` is the absolute path of the rep
 | Copilot CLI | Check `copilot --help` for the prompt, tool-permission and output flags | Check `copilot --help` | Its output | Treat each run as new. Resume has open bugs on Windows. |
 | OpenCode | Check `opencode run --help` for the prompt, model and `--format json` flags | Check `opencode run --help` | Its output | `opencode run -c` continues the last session |
 
-Add `--skip-git-repo-check` to Codex when `<dir>` isn't a git repository. Leave the model flag off unless
+For an unattended Claude run, offer a cost cap with `--max-budget-usd <amount>`; don't set one the user
+didn't agree to. Add `--skip-git-repo-check` to Codex when `<dir>` isn't a git repository. Leave the model flag off unless
 the user names a model, or the chosen tier is `<profile>:<model>`: each CLI's default follows the user's
 own login and plan.
 
@@ -83,7 +89,8 @@ a notification when it exits. Don't poll in a loop.
 ## 6. Report
 
 - Lead with the agent's answer or verdict, in a few lines. Quote the parts that matter.
-- Say which agent and mode you used, and give the run folder so the user can read everything.
+- Say which agent and mode you used, and give the run folder so the user can read everything. For
+  Claude, also give the cost from `.total_cost_usd` in `result.json`.
 - Check factual claims about the code before repeating them as true. Flag anything you couldn't check.
 - Don't apply changes from a write-mode worktree to the user's tree without asking.
 - Save `$RUN/meta.json` with `agent`, `mode`, `dir`, and the session id, so a follow-up can find it.
@@ -91,8 +98,10 @@ a notification when it exits. Don't poll in a loop.
 ## Follow-ups
 
 When the user wants to continue with the same agent, read the newest matching `meta.json`, write the
-follow-up to `$RUN/followup.md`, and resume the session:
+follow-up to `$RUN/followup.md`, and resume the session. A resumed run doesn't keep the first run's
+mode, so pass it again: `read-only` or `workspace-write` for Codex, `plan` or `acceptEdits` for Claude.
 
-- Codex: `codex exec resume <thread_id> -o "$RUN/result-2.md" - < "$RUN/followup.md"`
-- Claude: `claude -p --output-format json --resume <session_id> < "$RUN/followup.md"`
+- Codex: `codex exec -s <sandbox> resume <thread_id> -o "$RUN/result-2.md" - < "$RUN/followup.md"`.
+  `-s` goes before `resume`; `resume` itself doesn't accept it.
+- Claude: `claude -p --output-format json --permission-mode <mode> --resume <session_id> < "$RUN/followup.md"`
 - Others: start a new run, and include the earlier answer in the prompt.

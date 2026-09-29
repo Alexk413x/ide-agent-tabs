@@ -293,7 +293,8 @@ test('the Jev tools and instructions appear only when jev.enabled is true', asyn
   assert.match(off.off, /Jev is off\. Set "jev": \{"enabled": true\} in .*config\.json/);
   const plain = await connect(service, off.jev);
   assert.deepEqual((await plain.listTools()).tools.map((t) => t.name).sort(), ['close_tab', 'list_agents', 'list_ides', 'list_tabs', 'open_tab']);
-  assert.equal(plain.getInstructions(), undefined);
+  assert.match(plain.getInstructions()!, /open_tab/);
+  assert.doesNotMatch(plain.getInstructions()!, /jev_/);
   await plain.close();
 
   writeFileSync(path.join(home, 'config.json'), JSON.stringify({ jev: { enabled: true, tiers: { codex: 'Reviews' } } }));
