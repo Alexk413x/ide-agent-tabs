@@ -15,6 +15,7 @@ import type { LaunchSpec } from '../src/spec.js';
 import type { TerminalDriver, TerminalTab } from '../src/terminals/types.js';
 
 const TOKEN = 'f'.repeat(64);
+let ideToken = TOKEN;
 const home = tempDir('iat-it-');
 const project = tempDir('iat-proj-');
 const outside = tempDir('iat-out-');
@@ -38,7 +39,7 @@ function fakeIde(req: http.IncomingMessage, res: http.ServerResponse) {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
     };
-    if (req.headers.authorization !== `Bearer ${TOKEN}`) return reply(401, { ok: false, error: 'missing or wrong token' });
+    if (req.headers.authorization !== `Bearer ${ideToken}`) return reply(401, { ok: false, error: 'missing or wrong token' });
     if (req.headers['content-type'] !== 'application/json') return reply(415, { ok: false, error: 'Content-Type must be application/json' });
     if (req.headers.origin || /Mozilla/.test(req.headers['user-agent'] ?? '')) return reply(403, { ok: false, error: 'browser' });
     const route = req.url!.replace('/ide-agent-tabs/', '');
@@ -49,6 +50,14 @@ function fakeIde(req: http.IncomingMessage, res: http.ServerResponse) {
         return reply(200, { ok: true, ide: 'jetbrains', product: 'Fake Studio', version: '1.0', pid: process.pid, projects: [{ name: 'proj', path: project, focused: true }] });
       case 'open': {
         if (body.agent === 'nope') return reply(400, { ok: false, error: 'unknown agent: nope' });
+        if (body.agent === 'dialog') return reply(503, { ok: false, error: 'the IDE did not respond in 10 s, likely a modal dialog; nothing was done' });
+        if (body.agent === 'no-project') return reply(409, { ok: false, error: 'no open project to host the tab' });
+        if (body.agent === 'rotate' && ideToken === TOKEN) {
+          ideToken = 'e'.repeat(64);
+          const file = path.join(endpoints, `jetbrains-${process.pid}.json`);
+          writeFileSync(file, readFileSync(file, 'utf8').replace(TOKEN, ideToken));
+          return reply(401, { ok: false, error: 'missing or wrong token' });
+        }
         const tab = { id: `ide-tab-${ideTabs.length + 1}`, agent: body.agent ?? 'claude', project: 'proj', path: body.path };
         ideTabs.push(tab);
         return reply(200, { ok: true, ...tab });
@@ -144,8 +153,8 @@ test('list_ides reads the registry, drops dead entries and shows terminals', asy
   const { json } = await call('list_ides');
   assert.equal(json.ides.length, 1);
   assert.deepEqual(
-    { ...json.ides[0], startedAt: undefined },
-    { id: `jetbrains-${process.pid}`, ide: 'jetbrains', product: 'Fake Studio', version: '1.0', pid: process.pid, startedAt: undefined, projects: [{ name: 'proj', path: project, focused: true }] },
+    json.ides[0],
+    { id: `jetbrains-${process.pid}`, ide: 'jetbrains', product: 'Fake Studio', version: '1.0', projects: [{ name: 'proj', path: project, focused: true }] },
   );
   assert.deepEqual(json.terminals, [{ id: 'fake-term', name: 'Fake Terminal', capabilities: { open: 'tab', list: 'yes', close: 'yes' }, preferred: false }]);
   assert.equal(readdirSync(endpoints).length, 2, 'the dead entry is deleted and the future one kept');
@@ -178,12 +187,34 @@ test('open_tab routes a path inside an open project to that IDE and forwards the
   assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', prompt: 'hi "there"', args: ['--yolo'], env: { A: 'b' } });
 });
 
-test('open_tab falls back to the most recently started IDE and surfaces IDE errors verbatim', async () => {
+test('open_tab falls back to the most recently started IDE and adds the next step to IDE errors', async () => {
   const ok = await call('open_tab', { path: outside });
   assert.match(ok.json.reason, /most recently started IDE/);
   const bad = await call('open_tab', { path: outside, agent: 'nope' });
   assert.ok(bad.isError);
-  assert.match(bad.text, /answered HTTP 400: \{"ok":false,"error":"unknown agent: nope"\}/);
+  assert.match(bad.text, /answered HTTP 400: unknown agent: nope\. Call list_agents/);
+  const dialog = await call('open_tab', { path: outside, agent: 'dialog' });
+  assert.match(dialog.text, /answered HTTP 503: .*modal dialog.*\. A modal dialog is likely open in Fake Studio\. Ask the user to close it/);
+  const noProject = await call('open_tab', { path: outside, agent: 'no-project' });
+  assert.match(noProject.text, /answered HTTP 409: no open project to host the tab\. .*pass ide set to a terminal id from list_ides/);
+});
+
+test('open_tab rereads the registry and retries once when the IDE rotated its token', async () => {
+  const file = path.join(endpoints, `jetbrains-${process.pid}.json`);
+  const saved = readFileSync(file, 'utf8');
+  try {
+    const rotated = await call('open_tab', { path: outside, agent: 'rotate' });
+    assert.equal(rotated.json.agent, 'rotate');
+    assert.equal(seen.filter((s) => s.body.agent === 'rotate').length, 2);
+    ideTabs.pop();
+
+    writeFileSync(file, saved.replace(TOKEN, 'd'.repeat(64)));
+    const stale = await call('open_tab', { path: outside, agent: 'codex' });
+    assert.match(stale.text, /answered HTTP 401: missing or wrong token\. Fake Studio refused the token in jetbrains-\d+, so that endpoint is stale\. Call list_ides/);
+  } finally {
+    ideToken = TOKEN;
+    writeFileSync(file, saved);
+  }
 });
 
 test('open_tab refuses bad input before routing', async () => {

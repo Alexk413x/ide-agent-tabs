@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { readTextIfExists, removeStaleFiles } from './files.js';
-import type { IdeCall } from './ideClient.js';
+import { IdeError, type IdeCall, type Route } from './ideClient.js';
 import { isInstalled } from './installed.js';
 import {
   AGENTS_FILE,
@@ -79,11 +79,22 @@ export class Service {
     return readRegistry(this.deps.home, this.deps.isAlive ?? isProcessAlive);
   }
 
+  private async callIde(endpoint: Endpoint, route: Route, body?: object) {
+    try {
+      return await this.deps.callIde(endpoint, route, body);
+    } catch (e) {
+      if (!(e instanceof IdeError) || e.status !== 401) throw e;
+      const fresh = (await this.registry()).endpoints.find((f) => f.id === endpoint.id && f.token !== endpoint.token);
+      if (!fresh) throw e;
+      return this.deps.callIde(fresh, route, body);
+    }
+  }
+
   private async infos(endpoints: Endpoint[]) {
     const results = await Promise.all(
       endpoints.map(async (endpoint) => {
         try {
-          const reply = await this.deps.callIde(endpoint, 'info');
+          const reply = await this.callIde(endpoint, 'info');
           return {
             info: {
               endpoint,
@@ -120,8 +131,6 @@ export class Service {
         ide: i.endpoint.ide,
         product: i.product,
         version: i.version,
-        pid: i.endpoint.pid,
-        startedAt: new Date(i.endpoint.startedAt).toISOString(),
         projects: i.projects,
       })),
       terminals: drivers.map((d, i) => ({
@@ -198,7 +207,7 @@ export class Service {
     };
     let reply: Record<string, unknown>;
     try {
-      reply = await this.deps.callIde(endpoint, 'open', body);
+      reply = await this.callIde(endpoint, 'open', body);
     } catch (e) {
       throw new ToolError(errorText(e));
     }
@@ -274,7 +283,7 @@ export class Service {
     await Promise.all(
       (driver ? [] : chosen).map(async (endpoint) => {
         try {
-          const reply = await this.deps.callIde(endpoint, 'list');
+          const reply = await this.callIde(endpoint, 'list');
           for (const t of Array.isArray(reply.tabs) ? reply.tabs : []) tabs.push({ ...(t as object), ide: endpoint.id });
         } catch (e) {
           errors.push({ id: endpoint.id, error: errorText(e) });
@@ -317,7 +326,7 @@ export class Service {
     const owner = await this.ideOwner(target);
     if (!owner) throw new ToolError(`no open agent tab with id ${target}; list_tabs shows the open ones`);
     try {
-      await this.deps.callIde(owner, 'close', { id: target });
+      await this.callIde(owner, 'close', { id: target });
     } catch (e) {
       throw new ToolError(errorText(e));
     }
@@ -329,7 +338,7 @@ export class Service {
     const owners = await Promise.all(
       endpoints.map(async (endpoint) => {
         try {
-          const reply = await this.deps.callIde(endpoint, 'list');
+          const reply = await this.callIde(endpoint, 'list');
           const tabs = Array.isArray(reply.tabs) ? (reply.tabs as { id?: unknown }[]) : [];
           return tabs.some((t) => t.id === id) ? endpoint : undefined;
         } catch {
@@ -362,7 +371,7 @@ export class Service {
     const endpoint = (await this.registry()).endpoints.find((e) => e.id === host);
     if (!endpoint) return { ok: false, reason: `no running IDE or terminal with id ${host}` };
     try {
-      await this.deps.callIde(endpoint, 'input', { id, text });
+      await this.callIde(endpoint, 'input', { id, text });
       return { ok: true };
     } catch (e) {
       return { ok: false, reason: errorText(e) };
