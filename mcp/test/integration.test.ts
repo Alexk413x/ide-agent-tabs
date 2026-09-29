@@ -160,7 +160,7 @@ test('list_ides reads the registry, drops dead entries and shows terminals', asy
   assert.equal(readdirSync(endpoints).length, 2, 'the dead entry is deleted and the future one kept');
   const info = seen.find((s) => s.route === 'info')!;
   assert.equal(info.headers['content-type'], 'application/json');
-  assert.equal(info.headers['user-agent'], 'ide-agent-tabs-mcp/0.1.0');
+  assert.equal(info.headers['user-agent'], `ide-agent-tabs-mcp/${SERVER_VERSION}`);
 });
 
 test('list_agents reports profiles, installed state and the default, and warns on a bad agents file', async () => {

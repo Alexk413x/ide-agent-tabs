@@ -10,9 +10,10 @@ import { MESSAGING_INSTRUCTIONS, TAB_INSTRUCTIONS } from './messaging/notice.js'
 import { agentFromClient } from './messaging/sessions.js';
 import { MAX_ENTRIES, MAX_PROMPT_CHARS } from './profiles.js';
 import type { Service } from './service.js';
+import { PACKAGE_VERSION } from './version.js';
 
 export const SERVER_NAME = 'ide-agent-tabs';
-export const SERVER_VERSION = '0.5.0';
+export const SERVER_VERSION = PACKAGE_VERSION;
 export const HOOK_TOOL = 'agent_tabs_hook';
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;

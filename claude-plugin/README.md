@@ -15,6 +15,9 @@ claude plugin marketplace add Alexk413x/ide-agent-tabs
 claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
 
+The repository is private, so installing needs read access to it: sign in to GitHub with an account
+that has access, for example with `gh auth login`.
+
 Then, in a Claude Code session, run `/ide-agent-tabs:setup` to install the IDE extensions.
 
 ## Contents

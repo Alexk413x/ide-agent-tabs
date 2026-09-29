@@ -13,6 +13,9 @@ claude plugin marketplace add Alexk413x/ide-agent-tabs
 claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
 
+The repository is private, so installing needs read access to it: sign in to GitHub with an account
+that has access, for example with `gh auth login`.
+
 Then, in a Claude Code session, run `/ide-agent-tabs:setup`. The setup skill finds your IDEs, installs
 the extension in VS Code and editors built on it, and gives you two one-time steps for each JetBrains
 IDE. It also reports which agent CLIs it finds.
@@ -59,4 +62,5 @@ and possible future work. Change the design before you change the protocol.
 
 ## License
 
-[MIT](LICENSE)
+Proprietary. See [LICENSE](LICENSE). The bundled third-party licenses are in
+`claude-plugin/dist/THIRD_PARTY_NOTICES.txt`.

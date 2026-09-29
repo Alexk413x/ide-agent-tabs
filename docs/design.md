@@ -505,6 +505,9 @@ claude plugin marketplace add Alexk413x/ide-agent-tabs
 claude plugin install ide-agent-tabs@ide-agent-tabs
 ```
 
+The repository is private, so installing needs read access to it: sign in to GitHub with an account
+that has access, for example with `gh auth login`.
+
 Installing the plugin at user scope makes its skills available in every session and every IDE.
 
 Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before each change, and:
@@ -553,6 +556,18 @@ so no IDE downloads anything.
 `vscode/`. It finds the JDK through `JAVA_HOME`, the JetBrains Runtime bundled with an installed IDE, or
 common JDK folders. Run it after you raise `pluginVersion` in `jetbrains/gradle.properties` or `version`
 in `vscode/package.json`.
+
+### Versions and releases
+
+- Claude Code updates an installed plugin only when `version` in `claude-plugin/.claude-plugin/plugin.json`
+  changes, so every change under `claude-plugin/`, including `dist/`, needs a new version.
+  `mcp/package.json` carries the same version; `mcp/build.mjs` puts it into the bundle as the server
+  version and the User-Agent.
+- Each release adds a `## <version>` entry to `CHANGELOG.md` and gets a tag,
+  `ide-agent-tabs--v<version>`, made with `claude plugin tag --push` on `main`.
+- `node scripts/check-plugin-version.mjs` fails when `claude-plugin/` changed since the last tag while the
+  version stayed the same, when the two version fields differ, or when the CHANGELOG lacks the entry.
+  CI runs it too; run it locally before you push.
 
 ### What updates from where
 

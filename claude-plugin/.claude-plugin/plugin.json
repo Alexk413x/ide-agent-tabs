@@ -1,10 +1,10 @@
 {
   "name": "ide-agent-tabs",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Open agent sessions in IDE tabs and delegate work to other agent CLIs.",
   "author": {
     "name": "Alexk413x"
   },
   "repository": "https://github.com/Alexk413x/ide-agent-tabs",
-  "license": "MIT"
+  "license": "LicenseRef-Proprietary"
 }
