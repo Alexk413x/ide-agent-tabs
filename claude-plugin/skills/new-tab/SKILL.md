@@ -30,6 +30,13 @@ agent flags or variables.
 
 Report the folder, where the tab opened (IDE and project, or terminal), the agent, and the tab id.
 
+## When a subagent fits better
+
+When you start a session for your own task, and it would work in the same folder or project as this
+session and you only need its result, run a subagent in this session instead. A subagent reports back
+directly and ends by itself. Open a tab for another repository, for a session the user will work in, or
+for a handoff that needs a fresh session, such as one that loads an updated plugin.
+
 ## List and close
 
 - "Which tabs are open": call `list_tabs` and show agent, folder and where each tab is.

@@ -32,11 +32,13 @@ unchanged.
 ### How `open_tab` picks a place
 
 1. If you pass `ide`, the tab opens there.
-2. Otherwise, the tab opens in the IDE with an open project that contains `path`. A focused project wins,
-   then the deepest project, then the most recently started IDE.
-3. Otherwise, the tab opens in the most recently started IDE that has a project open.
-4. Otherwise, the tab opens in the terminal named by `"terminal"` in `config.json`.
-5. Otherwise, the tab opens in the first installed terminal in the platform's order: Windows Terminal,
+2. Otherwise, the tab opens in the IDE with an open project that contains `path`. The deepest project
+   wins; on a tie, the caller's own IDE, then the focused window, then the most recently started IDE.
+3. Otherwise, the tab opens in the caller's own IDE, when the caller runs in an Agent Tabs tab of a running
+   IDE.
+4. Otherwise, the tab opens in the most recently started IDE that has a project open.
+5. Otherwise, the tab opens in the terminal named by `"terminal"` in `config.json`.
+6. Otherwise, the tab opens in the first installed terminal in the platform's order: Windows Terminal,
    then WezTerm on Windows; Ghostty, kitty, WezTerm, then tmux on macOS and Linux.
 
 The server skips an IDE that doesn't answer `info`, so an IDE stuck behind a modal dialog doesn't block the

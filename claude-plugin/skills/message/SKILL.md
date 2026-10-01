@@ -19,7 +19,10 @@ Arguments: `$ARGUMENTS`
    this session. Pick the session the user named, or the one whose `agent` and `path` fit the task.
 2. If no session fits, call `open_tab` with the folder and agent, and a `prompt` that holds the task.
    The new session starts on the task, so you don't need to message it. To get its answer, ask in the
-   prompt for a reply with `send_message` to this session's `id`.
+   prompt for a reply with `send_message` to this session's `id`. When the work stays in this session's
+   folder or project and you only need the result, run a subagent in this session instead: it reports
+   back directly and ends by itself. Keep a tab for another repository, for a session the user will work
+   in, or for a handoff that needs a fresh session, such as one that loads an updated plugin.
 3. Otherwise, call `send_message` with `to` and `text`. Write the text so it stands on its own: the
    goal, the files, what's out of bounds, and what to send back. Keep each session's files separate, so
    two agents never edit the same file.
