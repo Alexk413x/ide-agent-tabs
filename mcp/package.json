@@ -1,6 +1,6 @@
 {
   "name": "ide-agent-tabs-mcp",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "private": true,
   "description": "MCP server that opens, lists and closes agent tabs in IDEs and terminals.",
   "license": "UNLICENSED",
