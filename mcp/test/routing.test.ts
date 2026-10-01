@@ -33,6 +33,17 @@ test("the IDE whose project contains the path wins: the deepest project, then th
   assert.match(chooseIde([a], '/w/app', false)!.reason, /open project app contains the path/);
 });
 
+test("with no containing project, the caller's IDE wins when it is running", () => {
+  const old = ide('old', 1, [['p', '/p', true]]);
+  const recent = ide('recent', 5, [['q', '/q', false]]);
+  const choice = chooseIde([old, recent], '/elsewhere', false, 'old');
+  assert.equal(choice?.id, 'old');
+  assert.equal(choice?.reason, "no open project contains the path; the caller's IDE");
+  assert.equal(chooseIde([old, recent], '/elsewhere', false, 'gone')?.id, 'recent');
+  assert.equal(chooseIde([old, recent], '/elsewhere', false)?.id, 'recent');
+  assert.equal(chooseIde([old, recent], '/q/src', false, 'old')?.id, 'recent');
+});
+
 test('with no containing project, the most recently started IDE with a project wins', () => {
   const old = ide('old', 1, [['p', '/p', true]]);
   const recent = ide('recent', 5, [['q', '/q', false]]);

@@ -4,6 +4,23 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 `mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
 `ide-agent-tabs--v<version>`.
 
+## 0.5.3
+
+Plugin and MCP server 0.5.3. The IDE extensions are unchanged.
+
+### Fixed
+
+- `open_tab` without `ide`, for a folder that no open project contains, opens the tab in the caller's own
+  IDE when the caller runs in an Agent Tabs tab. Before, it opened in the most recently started IDE,
+  which could be an unrelated window. The most recently started IDE stays the fallback when there is no
+  caller IDE or it isn't running.
+
+### Changed
+
+- The `new-tab` and `message` skills prefer a subagent in the caller's session when the new session
+  would work in the same folder or project and only its result is needed. Tabs stay the choice for
+  other repositories, sessions the user works in, and handoffs that need a fresh session.
+
 ## 0.5.2
 
 Plugin and MCP server 0.5.2. The IDE extensions are unchanged.
