@@ -211,7 +211,6 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
   | Copilot CLI | Its own file, `~/.copilot/hooks/ide-agent-tabs.json`, or under `$COPILOT_HOME` |
 
   `--unregister` removes only the Agent Tabs entries and leaves your other hooks in place.
-  `--register codex` removes the Codex hooks that earlier versions added to `~/.codex/hooks.json`.
 - `--register codex` refuses on Windows. The Codex desktop app reads the same `config.toml`, and Codex
   before 0.159 opens a console window each time the app starts an MCP server from it. Use Codex tabs
   there.

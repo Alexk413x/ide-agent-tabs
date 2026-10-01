@@ -4,9 +4,9 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 `mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
 `ide-agent-tabs--v<version>`.
 
-## 0.5.2
+## 0.5.3
 
-Plugin and MCP server 0.5.2. VS Code extension 0.1.19 and JetBrains plugin 0.4.2, unchanged.
+Plugin and MCP server 0.5.3. The IDE extensions are unchanged.
 
 ### Fixed
 
@@ -20,6 +20,15 @@ Plugin and MCP server 0.5.2. VS Code extension 0.1.19 and JetBrains plugin 0.4.2
 - The `new-tab` and `message` skills prefer a subagent in the caller's session when the new session
   would work in the same folder or project and only its result is needed. Tabs stay the choice for
   other repositories, sessions the user works in, and handoffs that need a fresh session.
+
+## 0.5.2
+
+Plugin and MCP server 0.5.2. The IDE extensions are unchanged.
+
+### Fixed
+
+- The server and the sync hook no longer stop with `write EPIPE` when an editor CLI, an agent CLI or a
+  terminal CLI exits before it reads its input.
 
 ## 0.5.1
 
