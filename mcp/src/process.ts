@@ -25,6 +25,8 @@ export function run(command: string, args: string[], options: { input?: string; 
       clearTimeout(timer);
       resolve({ code, stdout, stderr });
     });
+    // A child that exits without reading its input breaks the pipe; its exit code is the result.
+    child.stdin.on('error', () => undefined);
     child.stdin.end(options.input ?? '');
   });
 }
