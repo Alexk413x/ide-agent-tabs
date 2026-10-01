@@ -213,7 +213,7 @@ function fakeClis(bin: string, installed: Record<string, string>): void {
       );
     } else {
       const file = path.join(bin, cli);
-      writeFileSync(file, `#!/bin/sh\necho "${cli} $*" >> "$(dirname "$0")/calls-${cli}.txt"\n[ "$1" = "--list-extensions" ] && echo "${line}"\nexit 0\n`);
+      writeFileSync(file, `#!/bin/sh\necho "${cli} $*" >> "\${0%/*}/calls-${cli}.txt"\n[ "$1" = "--list-extensions" ] && echo "${line}"\nexit 0\n`);
       chmodSync(file, 0o755);
     }
   }

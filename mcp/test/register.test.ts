@@ -157,7 +157,7 @@ function fakeAgents(bin: string): void {
       writeFileSync(path.join(bin, `${agent}.cmd`), `@"${process.execPath}" "%~dp0fake-agent.mjs" ${agent} %*\r\n@exit /b %ERRORLEVEL%\r\n`);
     } else {
       const file = path.join(bin, agent);
-      writeFileSync(file, `#!/bin/sh\nexec "${process.execPath}" "$(dirname "$0")/fake-agent.mjs" ${agent} "$@"\n`);
+      writeFileSync(file, `#!/bin/sh\nexec "${process.execPath}" "\${0%/*}/fake-agent.mjs" ${agent} "$@"\n`);
       chmodSync(file, 0o755);
     }
   }
@@ -190,9 +190,8 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   const codexRegisters = process.platform !== 'win32';
   const codexHooks = path.join(env.CODEX_HOME, 'hooks.json');
   const userHook = { matcher: 'Bash', hooks: [{ type: 'command', command: 'python check.py' }] };
-  const oldHook = { hooks: [{ type: 'command', command: `node "${hook}" codex PreToolUse`, timeout: 5 }] };
   mkdirSync(env.CODEX_HOME, { recursive: true });
-  writeFileSync(codexHooks, JSON.stringify({ hooks: { PreToolUse: codexRegisters ? [userHook, oldHook] : [userHook] } }, null, 2));
+  writeFileSync(codexHooks, JSON.stringify({ hooks: { PreToolUse: [userHook] } }, null, 2));
   writeFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'model = "x"\n\n');
 
   const before = await agentsReport(ctx);
@@ -216,7 +215,7 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   assert.deepEqual(report.agents.map((a) => a.hooks), [null, true, true, null]);
   assert.ok(existsSync(hook));
 
-  assert.deepEqual(JSON.parse(readFileSync(codexHooks, 'utf8')), { hooks: { PreToolUse: [userHook] } }, 'registering removes the old Codex hooks');
+  assert.deepEqual(JSON.parse(readFileSync(codexHooks, 'utf8')), { hooks: { PreToolUse: [userHook] } }, 'registering leaves the Codex hooks alone');
   const toml = readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8');
   if (codexRegisters) {
     assert.match(toml, /^model = "x"\n/);
