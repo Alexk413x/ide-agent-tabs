@@ -10,8 +10,9 @@ after(() => {
 });
 
 export function tempDir(prefix: string): string {
-  // macOS keeps its temp folder behind a symlink, and a child process reports the real path.
-  const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), prefix)));
+  // A child process reports the real path: macOS keeps the temp folder behind a symlink, and Windows
+  // may name it with a short 8.3 path, which only the native call expands.
+  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), prefix)));
   dirs.push(dir);
   return dir;
 }

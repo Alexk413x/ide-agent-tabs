@@ -4,6 +4,15 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 `mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
 `ide-agent-tabs--v<version>`.
 
+## 0.5.2
+
+Plugin and MCP server 0.5.2. The IDE extensions are unchanged.
+
+### Fixed
+
+- The server and the sync hook no longer stop with `write EPIPE` when an editor CLI, an agent CLI or a
+  terminal CLI exits before it reads its input.
+
 ## 0.5.1
 
 Plugin and MCP server 0.5.1. VS Code extension 0.1.19. JetBrains plugin 0.4.2, unchanged.
