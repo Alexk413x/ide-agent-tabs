@@ -149,7 +149,8 @@ write the choice to `~/.ide-agent-tabs/config.json` as `"terminal"`. Without one
 first installed terminal in this order:
 
 - Windows: `windows-terminal`, `wezterm`.
-- macOS and Linux: `ghostty`, `kitty`, `wezterm`, `tmux`.
+- macOS: `ghostty`, `iterm2`, `kitty`, `wezterm`, `tmux`.
+- Linux: `ghostty`, `kitty`, `wezterm`, `tmux`.
 
 If the user picks `kitty`, tell them to add these two lines to `kitty.conf` (usually
 `~/.config/kitty/kitty.conf`) and restart kitty, so it can open tabs. Without them, each agent opens
@@ -157,6 +158,10 @@ in a new kitty window that `close_tab` can only close on a best-effort basis.
 
 - Linux: `allow_remote_control socket-only` and `listen_on unix:${XDG_RUNTIME_DIR}/kitty-agent-tabs`
 - macOS: `allow_remote_control socket-only` and `listen_on unix:${TMPDIR}/kitty-agent-tabs`
+
+If the user picks `iterm2`, tell them that the first tab makes macOS ask whether the app that runs the
+agent may control iTerm. They must allow it. They can change the answer later in **System Settings >
+Privacy & Security > Automation**.
 
 If the user picks `tmux`, tell them that tabs open in their most recently attached session, or in a
 detached session named `agents` that they open with `tmux attach -t agents`.

@@ -35,6 +35,10 @@ the bundled IDE packages are not rebuilt yet.
 
 ### Added
 
+- iTerm2 on macOS as a terminal host, `iterm2`: open, list and close tabs, and the messaging wake-up,
+  through AppleScript. The first tab asks for the macOS Automation permission. A denied permission
+  returns an error that names the setting, and later tabs open in the next terminal in the platform
+  order until the server restarts.
 - `scripts/check.mjs` runs typecheck, tests, the bundle check, the plugin version check and both
   `claude plugin validate --strict` runs.
 

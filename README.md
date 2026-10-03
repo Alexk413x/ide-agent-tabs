@@ -32,6 +32,9 @@ the new plugin as a normal plugin update.
 - Node.js 20 or later.
 - An IDE: IntelliJ IDEA, Android Studio or another JetBrains IDE at build 262.10315 or later (2026.2.2),
   or VS Code 1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium and Antigravity.
+- Or, without an IDE, a terminal: Windows Terminal or WezTerm on Windows; Ghostty, iTerm2, kitty, WezTerm
+  or tmux on macOS; Ghostty, kitty, WezTerm or tmux on Linux. iTerm2 and Ghostty on macOS need the
+  Automation permission that macOS asks for on the first tab.
 - At least one agent CLI, such as Claude Code, Codex, Gemini CLI or Copilot CLI.
 
 ## Where it works
