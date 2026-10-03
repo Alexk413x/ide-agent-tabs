@@ -1,6 +1,6 @@
 # Agent Tabs for VS Code
 
-Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI and Copilot CLI, in
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI, Copilot CLI and Antigravity CLI, in
 editor tabs. You open a tab with one button. Another agent opens, lists and closes tabs through a local
 HTTP API, the same API the JetBrains plugin serves.
 
@@ -71,7 +71,7 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `gemini`, `copilot` | `claude` |
+| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `gemini`, `copilot`, `agy` | `claude` |
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
 
 The editor title button, the status bar item and startup all use `ideAgentTabs.defaultAgent`. The
@@ -80,7 +80,7 @@ plugin or any other window shows up here too, and the MCP server uses the same d
 
 ## Agent profiles
 
-The built-in profiles are `claude`, `codex`, `gemini` and `copilot`. To add a profile or change a built-in
+The built-in profiles are `claude`, `codex`, `gemini`, `copilot` and `agy`. To add a profile or change a built-in
 one, edit `~/.ide-agent-tabs/agents.json`:
 
 ```json

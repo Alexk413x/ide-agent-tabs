@@ -19,7 +19,7 @@ import {
   unregisterArgs,
   withServerEntry,
 } from '../src/register.js';
-import { hasOurHooks, hookCommand, mergeHookSettings, withCodexSettings } from '../src/hookConfig.js';
+import { agyHookCommand, hasOurHooks, hookCommand, mergeHookSettings, withCodexSettings } from '../src/hookConfig.js';
 import { copyVersion, hookCopyPath, refreshServerCopy, serverCopyDir, serverCopyPath, serverHash } from '../src/serverCopy.js';
 import { makeServerDir } from './serverDir.js';
 import { tempDir } from './tempDir.js';
@@ -42,6 +42,7 @@ test('finds each agent config file, honoring the relocation variables', () => {
   assert.equal(configFile('gemini', { GEMINI_CLI_HOME: 'g' }, home, none), path.join('g', '.gemini', 'settings.json'));
   assert.equal(configFile('copilot', {}, home, none), path.join('h', '.copilot', 'mcp-config.json'));
   assert.equal(configFile('copilot', { COPILOT_HOME: 'p' }, home, none), path.join('p', 'mcp-config.json'));
+  assert.equal(configFile('agy', { GEMINI_CLI_HOME: 'g' }, home, none), path.join('h', '.gemini', 'config', 'mcp_config.json'));
   assert.equal(configFile('opencode', {}, home, none), path.join('h', '.config', 'opencode', 'opencode.json'));
   assert.equal(configFile('opencode', { XDG_CONFIG_HOME: 'x' }, home, none), path.join('x', 'opencode', 'opencode.json'));
   const jsonc = path.join('x', 'opencode', 'opencode.jsonc');
@@ -161,7 +162,7 @@ function fakeAgents(bin: string): void {
       chmodSync(file, 0o755);
     }
   }
-  for (const agent of ['copilot', 'opencode']) writeFileSync(path.join(bin, process.platform === 'win32' ? `${agent}.cmd` : agent), '');
+  for (const agent of ['copilot', 'agy', 'opencode']) writeFileSync(path.join(bin, process.platform === 'win32' ? `${agent}.cmd` : agent), '');
 }
 
 test('registers and unregisters every agent in a temp home with fake CLIs', async () => {
@@ -193,6 +194,15 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   mkdirSync(env.CODEX_HOME, { recursive: true });
   writeFileSync(codexHooks, JSON.stringify({ hooks: { PreToolUse: [userHook] } }, null, 2));
   writeFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'model = "x"\n\n');
+  const agyDir = path.join(userHome, '.gemini', 'config');
+  const agySettings = path.join(userHome, '.gemini', 'antigravity-cli', 'settings.json');
+  const agyUserHooks = { lint: { PostToolUse: [{ matcher: 'run_command', hooks: [{ type: 'command', command: 'lint.cmd', timeout: 10 }] }] } };
+  const agyUserSettings = { permissions: { allow: ['command(adb devices)'] }, statusLine: { type: '', command: '', enabled: true } };
+  mkdirSync(agyDir, { recursive: true });
+  mkdirSync(path.dirname(agySettings), { recursive: true });
+  writeFileSync(path.join(agyDir, 'mcp_config.json'), '');
+  writeFileSync(path.join(agyDir, 'hooks.json'), JSON.stringify(agyUserHooks, null, 2));
+  writeFileSync(agySettings, JSON.stringify(agyUserSettings, null, 2));
 
   const before = await agentsReport(ctx);
   assert.deepEqual(before.server, { path: server, exists: false, current: false });
@@ -202,17 +212,18 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
       ['codex', true, false, null, undefined],
       ['gemini', true, false, false, undefined],
       ['copilot', true, false, false, undefined],
+      ['agy', true, false, false, undefined],
       ['opencode', true, false, null, undefined],
     ],
   );
 
-  const report = await registerAgents(ctx, ['codex', 'gemini', 'copilot', 'opencode', 'claude']);
+  const report = await registerAgents(ctx, ['codex', 'gemini', 'copilot', 'agy', 'opencode', 'claude']);
   const codexErrors = codexRegisters ? [] : [`codex: ${CODEX_WINDOWS_REFUSAL}`];
   assert.deepEqual(report.errors, ['claude: Claude Code gets the server from the plugin; nothing to register', ...codexErrors]);
   assert.deepEqual(report.server, { path: server, exists: true, current: true });
   const registered = report.agents.filter((a) => codexRegisters || a.agent !== 'codex');
   assert.ok(registered.every((a) => a.ok && a.registered && a.stable && a.path === server));
-  assert.deepEqual(report.agents.map((a) => a.hooks), [null, true, true, null]);
+  assert.deepEqual(report.agents.map((a) => a.hooks), [null, true, true, true, null]);
   assert.ok(existsSync(hook));
 
   assert.deepEqual(JSON.parse(readFileSync(codexHooks, 'utf8')), { hooks: { PreToolUse: [userHook] } }, 'registering leaves the Codex hooks alone');
@@ -232,6 +243,18 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   assert.equal(copilotHooks.version, 1);
   assert.deepEqual(copilotHooks.hooks.agentStop, [{ type: 'command', exec: 'node', args: [hook, 'copilot', 'agentStop'], timeoutSec: 5 }]);
   assert.deepEqual(Object.keys(copilotHooks.hooks), ['sessionStart', 'userPromptSubmitted', 'preToolUse', 'notification', 'postToolUse', 'agentStop']);
+  const agyHooks = JSON.parse(readFileSync(path.join(agyDir, 'hooks.json'), 'utf8'));
+  assert.deepEqual(agyHooks.lint, agyUserHooks.lint, "registering keeps the user's own agy hooks");
+  assert.deepEqual(agyHooks['ide-agent-tabs'], {
+    PreInvocation: [{ type: 'command', command: `node ${hook} agy PreInvocation`, timeout: 5 }],
+    PostToolUse: [{ matcher: '*', hooks: [{ type: 'command', command: `node ${hook} agy PostToolUse`, timeout: 5 }] }],
+    Stop: [{ type: 'command', command: `node ${hook} agy Stop`, timeout: 5 }],
+  });
+  assert.deepEqual(JSON.parse(readFileSync(path.join(agyDir, 'mcp_config.json'), 'utf8')), { mcpServers: { 'ide-agent-tabs': { command: 'node', args: [server] } } });
+  assert.deepEqual(JSON.parse(readFileSync(agySettings, 'utf8')), {
+    ...agyUserSettings,
+    permissions: { allow: ['command(adb devices)', 'mcp(ide-agent-tabs/*)'] },
+  });
 
 
   const calls = readFileSync(path.join(bin, 'calls.txt'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { agent: string; args: string[]; cwd: string });
@@ -252,11 +275,12 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
     mcp: { 'ide-agent-tabs': { type: 'local', command: ['node', server], enabled: true } },
   });
 
-  const again = await registerAgents(ctx, ['codex', 'gemini', 'copilot']);
+  const again = await registerAgents(ctx, ['codex', 'gemini', 'copilot', 'agy']);
   assert.deepEqual(again.errors, codexErrors);
   assert.equal(readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8').match(/env_vars/g)?.length ?? 0, codexRegisters ? 1 : 0);
+  assert.equal(JSON.parse(readFileSync(agySettings, 'utf8')).permissions.allow.length, 2, 'registering again adds the rule once');
 
-  const removed = await unregisterAgents(ctx, ['codex', 'gemini', 'copilot', 'opencode']);
+  const removed = await unregisterAgents(ctx, ['codex', 'gemini', 'copilot', 'agy', 'opencode']);
   assert.deepEqual(removed.errors, []);
   assert.ok(removed.agents.every((a) => a.ok && !a.registered && !a.hooks));
   assert.deepEqual(JSON.parse(readFileSync(codexHooks, 'utf8')), { hooks: { PreToolUse: [userHook] } });
@@ -265,6 +289,9 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   assert.ok(!existsSync(copilotHooksFile));
   assert.deepEqual(JSON.parse(readFileSync(copilotFile, 'utf8')), { mcpServers: { github: { type: 'http', url: 'https://example.test/mcp' } } });
   assert.deepEqual(JSON.parse(readFileSync(opencodeFile, 'utf8')).mcp, {});
+  assert.deepEqual(JSON.parse(readFileSync(path.join(agyDir, 'hooks.json'), 'utf8')), agyUserHooks);
+  assert.deepEqual(JSON.parse(readFileSync(path.join(agyDir, 'mcp_config.json'), 'utf8')), { mcpServers: {} });
+  assert.deepEqual(JSON.parse(readFileSync(agySettings, 'utf8')), agyUserSettings, 'unregistering removes only the Agent Tabs rule');
   assert.ok(existsSync(server.replace(/\//g, path.sep)));
 });
 
@@ -289,7 +316,7 @@ test('refuses configs it cannot edit safely and agents that are missing', async 
   assert.match(byAgent.copilot!.error!, /isn't plain JSON/);
   assert.match(byAgent.opencode!.error!, /opencode\.jsonc isn't plain JSON/);
   assert.equal(byAgent.codex!.error, 'not installed');
-  assert.ok(report.errors.includes('nope: unknown agent; use codex, gemini, copilot, opencode'));
+  assert.ok(report.errors.includes('nope: unknown agent; use codex, gemini, copilot, agy, opencode'));
   assert.equal(readFileSync(copilotFile, 'utf8'), '{ "mcpServers": ');
   assert.equal(readFileSync(jsoncFile, 'utf8'), jsonc);
   assert.ok(!existsSync(path.join(path.dirname(jsoncFile), 'opencode.json')));
@@ -339,10 +366,11 @@ test('adds env_vars to the Codex server table without touching the rest of confi
   assert.throws(() => withCodexSettings('[mcp_servers.other]\n', 'f'), /no \[mcp_servers\.ide-agent-tabs\]/);
 });
 
-test('Gemini CLI and Copilot CLI get global hooks; Codex tabs bring their own', () => {
+test('Gemini CLI, Copilot CLI and Antigravity CLI get global hooks; Codex tabs bring their own', () => {
   assert.equal(takesHooks('codex'), false);
   assert.equal(takesHooks('gemini'), true);
   assert.equal(takesHooks('copilot'), true);
+  assert.equal(takesHooks('agy'), true);
   assert.equal(takesHooks('opencode'), false);
 });
 
@@ -364,4 +392,11 @@ test('an older plugin never replaces a newer server copy', async () => {
   await refreshServerCopy(plugin('0.6.0', 'newer server'), home);
   assert.equal(readFileSync(server, 'utf8'), 'newer server');
   assert.equal(await copyVersion(home), '0.6.0');
+});
+
+test('an Antigravity CLI hook command holds the path bare and refuses one cmd.exe would split', () => {
+  assert.equal(agyHookCommand('C:\Users\a\.ide-agent-tabs\mcp\agent-hook.mjs', 'Stop'), 'node C:\Users\a\.ide-agent-tabs\mcp\agent-hook.mjs agy Stop');
+  for (const bad of ['C:\Users\John Smith\h.mjs', 'C:\a&b\h.mjs', 'C:\%X%\h.mjs', 'C:\Program Files (x86)\h.mjs']) {
+    assert.throws(() => agyHookCommand(bad, 'Stop'), /Antigravity CLI/);
+  }
 });

@@ -20,7 +20,7 @@ import {
   waitForMessage,
   type Message,
 } from '../src/messaging/mailbox.js';
-import { Messaging, type Hosts } from '../src/messaging/messaging.js';
+import { AGY_MAX_WAIT_S, Messaging, type Hosts } from '../src/messaging/messaging.js';
 import { unreadReminder, wakeLine } from '../src/messaging/notice.js';
 import {
   agentFromClient,
@@ -69,6 +69,7 @@ test('maps MCP client names to agent names', () => {
   assert.equal(agentFromClient('gemini-cli-mcp-client'), 'gemini');
   assert.equal(agentFromClient('github-copilot-cli'), 'copilot');
   assert.equal(agentFromClient('opencode'), 'opencode');
+  assert.equal(agentFromClient('antigravity-client'), 'agy');
   assert.equal(agentFromClient('My Agent!'), 'MyAgent');
   assert.equal(agentFromClient(undefined), 'unknown');
 });
@@ -179,10 +180,11 @@ test('presence files: written at start, stale ones ignored and removed, and dele
   assert.deepEqual((await liveSessions(home, isAlive)).map((s) => s.id).sort(), ['s-child0000001', 's-loose0000001', 'tab-a']);
   assert.ok(!existsSync(presencePath(home, 'dead')));
   assert.ok(existsSync(presencePath(home, 'stub')), 'a fresh stub from a hook waits for its server');
-  const later = Date.now() + 2 * 60 * 60 * 1000;
-  for (const id of ['tab-a', 's-child0000001', 's-loose0000001']) utimesSync(presencePath(home, id), new Date(later), new Date(later));
-  await liveSessions(home, isAlive, later);
-  assert.ok(!existsSync(presencePath(home, 'stub')));
+  const stubs = tempDir('iat-pres-');
+  mkdirSync(path.join(stubs, 'sessions'));
+  writeFileSync(presencePath(stubs, 'stub'), JSON.stringify({ id: 'stub', state: 'idle' }));
+  await liveSessions(stubs, isAlive, Date.now() + 2 * 60 * 60 * 1000);
+  assert.ok(!existsSync(presencePath(stubs, 'stub')), 'a stub whose server never came is removed after an hour');
 
   child.stopSync();
   assert.ok(existsSync(presencePath(home, 'tab-a')), "a server never deletes another server's presence");
@@ -559,4 +561,16 @@ test('a tab still starting is not typed into, and the follow-up wakes it once it
   } finally {
     a.stopFollowUps();
   }
+});
+
+test('an Antigravity CLI session waits at most AGY_MAX_WAIT_S, inside its 3-minute tool limit', async () => {
+  const home = tempDir('iat-agy-');
+  const env = { IDE_AGENT_TABS_ID: 'tab-agy', IDE_AGENT_TABS_AGENT: 'agy' };
+  const agy = new Messaging({ home, env, pid: 3, cwd: '/a', hosts: hosts([]), isAlive: () => true });
+  await agy.start();
+  const cancel = new AbortController();
+  cancel.abort();
+  assert.equal((await agy.wait({ timeout: 600 }, cancel.signal)).waitedSeconds, AGY_MAX_WAIT_S);
+  assert.ok(AGY_MAX_WAIT_S < 180);
+  agy.stopHeartbeat();
 });

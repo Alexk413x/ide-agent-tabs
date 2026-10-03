@@ -42,6 +42,7 @@ test('a Windows Terminal started by the server does not inherit the calling sess
       CODEX_HOME: 'c',
       GEMINI_CLI: '1',
       OPENCODE_SESSION_ID: 's',
+      ANTIGRAVITY_CLI_ALIAS: 'agy',
       COPILOT_HOME: 'g',
     }),
     { PATH: 'p', CLAUDE_CODE_USE_BEDROCK: '1', IDE_AGENT_TABS_HOME: 'h', CODEX_HOME: 'c', COPILOT_HOME: 'g' },

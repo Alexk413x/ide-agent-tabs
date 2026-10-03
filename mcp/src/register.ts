@@ -4,12 +4,17 @@ import { ensurePrivateDir, readTextIfExists } from './files.js';
 import { isInstalled } from './installed.js';
 import { BUILTIN_PROFILES } from './profiles.js';
 import {
+  agySettingsFile,
   copilotHooks,
+  hasAgyAllowRule,
+  hasAgyHooks,
   hasCodexSettings,
   hasOurHooks,
   hookConfigFile,
   isHookAgent,
   mergeHookSettings,
+  withAgyAllowRule,
+  withAgyHooks,
   withCodexSettings,
   type HookAgent,
 } from './hookConfig.js';
@@ -19,7 +24,7 @@ import type { RunResult } from './process.js';
 import { cliFailure, findCliOnPath, runCliResult, type SyncContext } from './sync.js';
 
 export const SERVER_NAME = 'ide-agent-tabs';
-export const AGENTS = ['codex', 'gemini', 'copilot', 'opencode'] as const;
+export const AGENTS = ['codex', 'gemini', 'copilot', 'agy', 'opencode'] as const;
 export type AgentName = (typeof AGENTS)[number];
 const CLI_TIMEOUT_MS = 30_000;
 const OPENCODE_SCHEMA = 'https://opencode.ai/config.json';
@@ -66,6 +71,8 @@ export function configFile(agent: AgentName, env: NodeJS.ProcessEnv, userHome: s
       return path.join(env.GEMINI_CLI_HOME || userHome, '.gemini', 'settings.json');
     case 'copilot':
       return path.join(env.COPILOT_HOME || path.join(userHome, '.copilot'), 'mcp-config.json');
+    case 'agy':
+      return path.join(userHome, '.gemini', 'config', 'mcp_config.json');
     case 'opencode': {
       const dir = path.join(env.XDG_CONFIG_HOME || path.join(userHome, '.config'), 'opencode');
       const json = path.join(dir, 'opencode.json');
@@ -93,6 +100,7 @@ export const copilotEntry = (server: string) => ({
   env: { [TAB_ID_ENV]: `\${${TAB_ID_ENV}}`, [AGENT_ENV]: `\${${AGENT_ENV}}` },
   tools: ['*'],
 });
+export const agyEntry = (server: string) => ({ command: 'node', args: [server] });
 export const opencodeEntry = (server: string) => ({ type: 'local', command: ['node', server], enabled: true });
 
 export function stripJsonComments(text: string): string {
@@ -230,6 +238,7 @@ async function hooksInstalled(ctx: RegisterContext, agent: HookAgent): Promise<b
   const file = hookConfigFile(agent, ctx.env, ctx.userHome);
   const root = await readJsonIfExists(file);
   if (agent === 'copilot') return root !== undefined && JSON.stringify(root) === JSON.stringify(copilotHooks(hook));
+  if (agent === 'agy') return root !== undefined && hasAgyHooks(root, hook);
   return root !== undefined && hasOurHooks(root, agent, hook);
 }
 
@@ -248,6 +257,7 @@ async function installHooks(ctx: RegisterContext, agent: HookAgent): Promise<voi
   const hook = hookCopyPath(ctx.home, ctx.platform);
   const file = hookConfigFile(agent, ctx.env, ctx.userHome);
   if (agent === 'copilot') return changeJson(file, () => copilotHooks(hook));
+  if (agent === 'agy') return changeJson(file, (root) => withAgyHooks(root, hook));
   await changeJson(file, (root) => mergeHookSettings(root, file, agent, hook));
 }
 
@@ -258,10 +268,11 @@ async function removeHooks(ctx: RegisterContext, agent: HookAgent): Promise<void
     return;
   }
   if ((await readTextIfExists(file)) === undefined) return;
+  if (agent === 'agy') return changeJson(file, (root) => withAgyHooks(root, undefined));
   await changeJson(file, (root) => mergeHookSettings(root, file, agent, undefined));
 }
 
-const sectionOf = (agent: 'gemini' | 'copilot' | 'opencode') => (agent === 'opencode' ? 'mcp' : 'mcpServers');
+const sectionOf = (agent: 'gemini' | 'copilot' | 'agy' | 'opencode') => (agent === 'opencode' ? 'mcp' : 'mcpServers');
 
 async function readEntry(ctx: RegisterContext, agent: AgentName, file: string): Promise<unknown> {
   if (agent === 'codex') {
@@ -288,7 +299,12 @@ export async function agentStatus(ctx: RegisterContext, agent: AgentName): Promi
     const entry = await readEntry(ctx, agent, config);
     if (entry === undefined) return status;
     const registered = entryServerPath(entry) ?? null;
-    const settings = agent !== 'codex' || hasCodexSettings(await readTextIfExists(config));
+    const settings =
+      agent === 'codex'
+        ? hasCodexSettings(await readTextIfExists(config))
+        : agent === 'agy'
+          ? hasAgyAllowRule(await readJsonIfExists(agySettingsFile(ctx.userHome)))
+          : true;
     return {
       ...status,
       registered: true,
@@ -300,7 +316,7 @@ export async function agentStatus(ctx: RegisterContext, agent: AgentName): Promi
   }
 }
 
-async function editConfig(file: string, agent: 'copilot' | 'opencode', entry: unknown): Promise<void> {
+async function editConfig(file: string, agent: 'copilot' | 'agy' | 'opencode', entry: unknown): Promise<void> {
   const skeleton = agent === 'opencode' ? { $schema: OPENCODE_SCHEMA } : {};
   const next = withServerEntry(await readTextIfExists(file), file, sectionOf(agent), entry, skeleton);
   if (next !== undefined) await writeConfig(file, next);
@@ -308,10 +324,11 @@ async function editConfig(file: string, agent: 'copilot' | 'opencode', entry: un
 
 async function register(ctx: RegisterContext, agent: AgentName, server: string, file: string): Promise<void> {
   if (agent === 'codex' || agent === 'gemini') await changeWithCli(ctx, agent, registerArgs(agent, server));
-  else await editConfig(file, agent, agent === 'copilot' ? copilotEntry(server) : opencodeEntry(server));
+  else await editConfig(file, agent, agent === 'copilot' ? copilotEntry(server) : agent === 'agy' ? agyEntry(server) : opencodeEntry(server));
   if (agent === 'codex') {
     await installCodexSettings(ctx);
   }
+  if (agent === 'agy') await setAgyAllowRule(ctx, true);
   if (takesHooks(agent)) await installHooks(ctx, agent);
 }
 
@@ -319,6 +336,14 @@ async function unregister(ctx: RegisterContext, agent: AgentName, file: string):
   if (takesHooks(agent)) await removeHooks(ctx, agent);
   if (agent === 'codex' || agent === 'gemini') await changeWithCli(ctx, agent, unregisterArgs(agent));
   else await editConfig(file, agent, undefined);
+  if (agent === 'agy') await setAgyAllowRule(ctx, false);
+}
+
+// Antigravity CLI asks before each call to an MCP tool it has no allow rule for, and denies the call in -p runs.
+async function setAgyAllowRule(ctx: RegisterContext, allow: boolean): Promise<void> {
+  const file = agySettingsFile(ctx.userHome);
+  if (!allow && (await readTextIfExists(file)) === undefined) return;
+  await changeJson(file, (root) => withAgyAllowRule(root, file, allow));
 }
 
 export async function serverStatus(ctx: RegisterContext) {

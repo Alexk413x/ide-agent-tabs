@@ -2,7 +2,7 @@ import { peekUnread } from './mailbox.js';
 import { unreadReminder } from './notice.js';
 import { isSessionId, updatePresence, withState, type PresenceFile, type SessionState } from './sessions.js';
 
-export const HOOK_CLIS = ['claude', 'codex', 'gemini', 'copilot'] as const;
+export const HOOK_CLIS = ['claude', 'codex', 'gemini', 'copilot', 'agy'] as const;
 export type HookCli = (typeof HOOK_CLIS)[number];
 export const MAX_NUDGES = 3;
 
@@ -14,6 +14,7 @@ interface Action {
   stop?: boolean;
   notification?: boolean;
   failure?: boolean;
+  invocation?: boolean;
 }
 
 const BUSY: Action = { state: 'busy' };
@@ -22,6 +23,7 @@ const AFTER_TOOL: Action = { state: 'busy', remind: true };
 const STOP: Action = { stop: true };
 const STARTED: Action = { start: true, state: 'idle', remind: true };
 const TOOL_FAILED: Action = { failure: true, remind: true };
+const INVOCATION: Action = { invocation: true, state: 'busy', remind: true };
 
 export const HOOK_EVENTS: Record<HookCli, Record<string, Action>> = {
   claude: {
@@ -43,6 +45,7 @@ export const HOOK_EVENTS: Record<HookCli, Record<string, Action>> = {
     postToolUse: AFTER_TOOL,
     agentStop: STOP,
   },
+  agy: { PreInvocation: INVOCATION, PostToolUse: BUSY, Stop: STOP },
 };
 
 export const isHookCli = (cli: string): cli is HookCli => (HOOK_CLIS as readonly string[]).includes(cli);
@@ -55,22 +58,28 @@ function notificationState(input: Record<string, unknown>): SessionState | undef
 }
 
 function contextOutput(cli: HookCli, event: string, text: string): object {
+  if (cli === 'agy') return { injectSteps: [{ ephemeralMessage: text }] };
   return cli === 'copilot' ? { additionalContext: text } : { hookSpecificOutput: { hookEventName: event, additionalContext: text } };
 }
 
 function stopOutput(cli: HookCli, reason: string): object {
-  return { decision: cli === 'gemini' ? 'deny' : 'block', reason };
+  return { decision: cli === 'gemini' ? 'deny' : cli === 'agy' ? 'continue' : 'block', reason };
 }
 
-function agentSession(input: Record<string, unknown>): string | undefined {
+const OWNED_CLIS: readonly HookCli[] = ['claude', 'copilot'];
+
+// Only CLIs whose start hook fires again when the tab switches sessions can hand ownership on; elsewhere a
+// new session id would lock the tab out of its own hooks.
+function agentSession(cli: HookCli, input: Record<string, unknown>): string | undefined {
+  if (!OWNED_CLIS.includes(cli)) return undefined;
   const id = [input.session_id, input.sessionId].find((v) => typeof v === 'string' && v !== '');
   return id as string | undefined;
 }
 
 // A headless agent started from inside a tab inherits IDE_AGENT_TABS_ID, so its hooks name the tab too; only
 // the agent session that claimed the tab first may change it, until a clear or resume in the tab hands it on.
-function ownedBy(base: PresenceFile, action: Action, input: Record<string, unknown>): string | undefined | false {
-  const session = agentSession(input);
+function ownedBy(cli: HookCli, base: PresenceFile, action: Action, input: Record<string, unknown>): string | undefined | false {
+  const session = agentSession(cli, input);
   if (session === undefined || base.owner === undefined || base.owner === session) return session;
   return action.start && input.source !== undefined && input.source !== 'startup' ? session : false;
 }
@@ -98,7 +107,7 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
   let remind = false;
   let foreign = false;
   await updatePresence(home, sessionId, (current) => {
-    const owned = ownedBy(current ?? { id: sessionId }, action, run.input);
+    const owned = ownedBy(cli, current ?? { id: sessionId }, action, run.input);
     if (owned === false) {
       foreign = true;
       return current;
@@ -110,7 +119,8 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
       return block ? withState(base, 'busy', now, nudges + 1) : withState(base, 'idle', now, reminder === undefined ? 0 : nudges);
     }
     if (state === undefined) return owned === undefined || current?.owner === owned ? current : base;
-    const next = withState(base, state, now, action.prompt ? 0 : undefined);
+    const prompt = action.prompt || (action.invocation && run.input.invocationNum === 0);
+    const next = withState(base, state, now, prompt ? 0 : undefined);
     if (!action.remind) return next;
     const seen = new Set(base.reminded);
     remind = unread.some((m) => !seen.has(m.id));

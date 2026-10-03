@@ -10,7 +10,7 @@ import { endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId
 import { closestBase } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
 
-const BUILTIN_ICONS = new Set(['claude', 'codex', 'gemini', 'copilot']);
+const BUILTIN_ICONS = new Set(['claude', 'codex', 'gemini', 'copilot', 'agy']);
 
 interface Tab extends TabInfo {
   terminal: vscode.Terminal;

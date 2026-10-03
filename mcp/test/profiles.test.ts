@@ -22,10 +22,10 @@ const p = (over: Partial<AgentProfile> & { name: string }): AgentProfile => ({
 
 test('built-in profiles match the design', () => {
   const s = resolveSettings(undefined, undefined);
-  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'gemini', 'copilot']);
-  assert.deepEqual(s.profiles.map((x) => x.label), ['Claude Code', 'Codex', 'Gemini CLI', 'Copilot CLI']);
-  assert.deepEqual(s.profiles.map((x) => x.command), ['claude', 'codex', 'gemini', 'copilot']);
-  assert.deepEqual(s.profiles.map((x) => x.promptFlag), [undefined, undefined, '-i', '-i']);
+  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'gemini', 'copilot', 'agy']);
+  assert.deepEqual(s.profiles.map((x) => x.label), ['Claude Code', 'Codex', 'Gemini CLI', 'Copilot CLI', 'Antigravity CLI']);
+  assert.deepEqual(s.profiles.map((x) => x.command), ['claude', 'codex', 'gemini', 'copilot', 'agy']);
+  assert.deepEqual(s.profiles.map((x) => x.promptFlag), [undefined, undefined, '-i', '-i', '-i']);
   assert.equal(s.defaultAgent.name, 'claude');
   assert.deepEqual(s.warnings, []);
 });
@@ -46,9 +46,9 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     }),
     undefined,
   );
-  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'gemini', 'copilot', 'opencode-local', 'bare']);
+  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'gemini', 'copilot', 'agy', 'opencode-local', 'bare']);
   assert.deepEqual(s.profiles[1], p({ name: 'codex', label: 'Codex (fast)', args: ['--model', 'o4'] }));
-  assert.deepEqual(s.profiles[4], {
+  assert.deepEqual(s.profiles[5], {
     name: 'opencode-local',
     label: 'OpenCode (LM Studio)',
     command: 'opencode',
@@ -57,7 +57,7 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     env: { LMSTUDIO: '1' },
     icon: 'icons/opencode.svg',
   });
-  assert.equal(s.profiles[5]!.label, 'bare');
+  assert.equal(s.profiles[6]!.label, 'bare');
   assert.deepEqual(s.warnings, []);
 });
 
@@ -144,6 +144,6 @@ test('the preferred terminal comes from config', () => {
 
 test('merge keeps built-in order and appends new profiles in file order', () => {
   const merged = mergeProfiles(BUILTIN_PROFILES, [p({ name: 'z' }), p({ name: 'gemini', label: 'G' }), p({ name: 'a' })]);
-  assert.deepEqual(merged.map((x) => x.name), ['claude', 'codex', 'gemini', 'copilot', 'z', 'a']);
+  assert.deepEqual(merged.map((x) => x.name), ['claude', 'codex', 'gemini', 'copilot', 'agy', 'z', 'a']);
   assert.equal(merged[2]!.label, 'G');
 });

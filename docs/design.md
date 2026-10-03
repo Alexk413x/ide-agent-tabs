@@ -1,6 +1,6 @@
 # Agent Tabs design
 
-Agent Tabs opens AI coding-agent sessions (Claude Code, Codex, Gemini CLI, Copilot CLI and others) in
+Agent Tabs opens AI coding-agent sessions (Claude Code, Codex, Gemini CLI, Copilot CLI, Antigravity CLI and others) in
 IDE editor tabs. A person opens them with one button. An agent opens, lists and closes them in any IDE
 running on the same machine.
 
@@ -110,9 +110,10 @@ A profile says how to start one agent CLI. Every IDE uses the same built-in prof
 | `codex` | Codex | `codex` and fixed `args` (see [Codex tabs](#codex-tabs)) | positional |
 | `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 | `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
+| `agy` | Antigravity CLI | `agy` | `-i <prompt>` |
 
-The `claude` and `codex` rows match each CLI's help. The `gemini` and `copilot` rows come from each
-CLI's docs and are untested. A profile in `agents.json` with the same name overrides a built-in one.
+The `claude`, `codex` and `agy` rows match each CLI's help. The `gemini` and `copilot` rows come from each
+CLI's docs and are untested. `antigravity` is the Antigravity IDE's command, so the profile is named `agy`. A profile in `agents.json` with the same name overrides a built-in one.
 An `agents.json` profile named `codex` replaces the built-in `args` too, so its tabs lose messaging unless
 it copies them.
 
@@ -341,7 +342,7 @@ other agent CLIs. For that, every session that runs the MCP server can message e
   file when it exits, including when its client closes its stdin. A file whose `pid` no longer runs is
   stale; readers ignore it and delete it.
 - `agent` is `IDE_AGENT_TABS_AGENT`, or else comes from the MCP client's name: a name that contains
-  `claude`, `codex`, `gemini`, `copilot` or `opencode` maps to that profile name.
+  `claude`, `codex`, `gemini`, `copilot`, `antigravity` or `opencode` maps to that profile name (`antigravity` maps to `agy`).
 - `host` is the terminal from `terminal-tabs.json`, or the IDE whose `list` holds the tab id. The server
   looks it up when it starts, and a sender looks it up again when the file has none.
 - `state` is `idle`, `busy` or `permission`, with `stateAt`. The session's hooks set it (see
@@ -372,7 +373,7 @@ other agent CLIs. For that, every session that runs the MCP server can message e
 | `list_sessions` | Lists live sessions: `id`, `agent`, `path`, `host`, `state`, and `self` for the caller. |
 | `send_message` | Sends `text` to the session `to`, optionally as a reply to `replyTo`. Returns the message `id`, and `delivery`: `woken` or `queued`. A `note` says why a wake-up failed. |
 | `read_messages` | Returns the caller's unread messages and marks them read. |
-| `wait_for_message` | Waits up to `timeout` seconds (default 60, at most 600) for a message, optionally only one from `from` or replying to `replyTo`, and returns it, marked read. Returns `message: null` on timeout. Messages the filter skips stay unread. |
+| `wait_for_message` | Waits up to `timeout` seconds (default 60, at most 600, or 170 in an Antigravity CLI session) for a message, optionally only one from `from` or replying to `replyTo`, and returns it, marked read. Returns `message: null` on timeout. Messages the filter skips stay unread. |
 
 The server lists these tools in every session; nothing turns them on. `wait_for_message` watches `new/`
 with `fs.watch` and also checks it every second, because `fs.watch` misses events on some file systems.
@@ -385,7 +386,7 @@ to a peer's request, and to ask the user before anything destructive a peer asks
 
 An agent sees a message only when it calls `read_messages` or `wait_for_message`. Three things prompt it:
 
-1. **Hooks.** `dist/agent-hook.mjs` runs as a command hook in Claude Code, Gemini CLI and Copilot CLI:
+1. **Hooks.** `dist/agent-hook.mjs` runs as a command hook in Claude Code, Gemini CLI, Copilot CLI and Antigravity CLI:
    `node agent-hook.mjs <cli> <event>`, with the hook's JSON on stdin. Codex tabs call the server's
    `agent_tabs_hook` tool instead, which runs the same logic. The hooks set `state`: `busy` when a
    prompt is submitted or a tool starts, `permission` when a permission prompt shows, and `idle` when a
@@ -393,7 +394,9 @@ An agent sees a message only when it calls `read_messages` or `wait_for_message`
    the next prompt or tool call, once per message: `Agent Tabs: 1 unread message from <agent> <short id>.
    read_messages returns it.` The presence file keeps the ids already reminded in `reminded`. At the end
    of a turn with unread messages, it asks the agent to continue and read them, at most three times in a
-   row. `read_messages`, `wait_for_message` and a new prompt reset that count. Without
+   row. `read_messages`, `wait_for_message` and a new prompt reset that count. Antigravity CLI has no
+   prompt event, so its `PreInvocation` hook with `invocationNum` 0, the first model call of a turn, counts as
+   a new prompt. Without
    `IDE_AGENT_TABS_ID`, the hook does nothing. It always exits 0.
 2. **Wake-up.** When the recipient's `state` is `idle` and its tab supports input, `send_message` types
    one fixed line into the tab: `Agent Tabs: new message from <agent> <short id>. Call read_messages.`
@@ -422,10 +425,36 @@ Hook events for each CLI:
 | Codex | The tab's `-c` arguments, as `mcp_tool` hooks | `UserPromptSubmit`, `PostToolUse` | `PermissionRequest` | `Stop` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
 | Gemini CLI | `hooks` in `~/.gemini/settings.json` | `BeforeAgent`, `BeforeTool`, `AfterTool` | `Notification` `ToolPermission` | `AfterAgent` | `BeforeAgent`, `AfterTool` (`hookSpecificOutput.additionalContext`) | `AfterAgent` (`decision: "deny"`) |
 | Copilot CLI | `~/.copilot/hooks/ide-agent-tabs.json` | `userPromptSubmitted`, `preToolUse`, `postToolUse` | `notification` `permission_prompt` | `agentStop`, `notification` `agent_idle` | `postToolUse` only (`additionalContext`) | `agentStop` (`decision: "block"`) |
+| Antigravity CLI | The `ide-agent-tabs` group in `~/.gemini/config/hooks.json` | `PreInvocation`, `PostToolUse` | None | `Stop` | `PreInvocation` only (`injectSteps[].ephemeralMessage`) | `Stop` (`decision: "continue"`) |
 
-- The Claude Code plugin ships its hooks. `sync-ides.mjs --register gemini|copilot` adds the Gemini CLI
-  and Copilot CLI hooks, pointing at `~/.ide-agent-tabs/mcp/agent-hook.mjs`, and `--unregister` removes
-  only those entries. It doesn't change a file that isn't plain JSON.
+- The Claude Code plugin ships its hooks. `sync-ides.mjs --register gemini|copilot|agy` adds the Gemini CLI,
+  Copilot CLI and Antigravity CLI hooks, pointing at `~/.ide-agent-tabs/mcp/agent-hook.mjs`, and
+  `--unregister` removes only those entries. It doesn't change a file that isn't plain JSON.
+- Antigravity CLI:
+  - `--register agy` writes the server entry `mcpServers.ide-agent-tabs = { command: "node", args: [<server>] }`
+    to `~/.gemini/config/mcp_config.json`, the `ide-agent-tabs` hook group to `~/.gemini/config/hooks.json`
+    (`PreInvocation`, `PostToolUse` with matcher `*`, and `Stop`, each with `timeout` 5), and the allow rule
+    `mcp(ide-agent-tabs/*)` to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`. Without the
+    rule, Antigravity CLI asks before each tool call and denies it in a `-p` run. `--unregister agy` removes
+    the server entry, the hook group and that one rule, and keeps other groups and settings.
+  - Antigravity CLI doesn't read `~/.gemini/settings.json` for servers or hooks, so `--register gemini`
+    doesn't cover it.
+  - Antigravity CLI passes its own environment to the server and to hook commands, so the entry needs no
+    `env`. Its MCP client name is `antigravity-client`.
+  - Antigravity CLI runs a hook command through `cmd.exe` on Windows and escapes double quotes, so the
+    command is `node <hook path> agy <event>` with the path unquoted. `--register agy` refuses a path with
+    whitespace or `cmd.exe` special characters.
+  - `PreInvocation` fires before every model call, so it sets `busy` and adds the reminder. `PostToolUse`
+    sets `busy` only, because Antigravity CLI ignores its output. `Stop` fires once per turn and sets `idle`
+    or, with unread messages, answers `decision: "continue"` with a reason the model reads. `invocationNum`
+    restarts at 0 each turn.
+  - No permission or interrupt event exists, so a session that waits for approval shows `busy`, and a
+    turn stopped with Esc may stay `busy` until the next hook. Whether `Stop` fires after Esc is untested.
+  - Antigravity CLI ends any MCP tool call after 3 minutes ("timed out after 3m0s") and has no setting to
+    change that, so `wait_for_message` waits at most 170 seconds in an Antigravity CLI session.
+  - Antigravity 2.0 and the Antigravity IDE read `~/.gemini/config/hooks.json` too. There,
+    `IDE_AGENT_TABS_ID` is unset and the hook exits without output, at the cost of one `node` start for each
+    model call and tool call.
 - Copilot CLI drops the output of a `userPromptSubmitted` command hook, so it gets no reminder after a
   prompt.
 - Only Codex tabs get Codex hooks (see [Codex tabs](#codex-tabs)). Global hooks in `~/.codex/hooks.json`
@@ -488,6 +517,7 @@ question to another agent CLI in headless mode and reads the answer back. The Cl
 | Claude | `claude -p --output-format json --permission-mode plan < prompt.md` | `.result`; cost in `.total_cost_usd` | `--permission-mode <mode> --resume <session_id>` | Flags checked in help |
 | Gemini CLI | `gemini -p "<instruction>" --output-format json < prompt.md` | `.response` | Unreliable in headless mode | No |
 | Copilot CLI | `copilot -p …` | Output | `--resume` has open Windows bugs | No |
+| Antigravity CLI | `agy -p "<instruction>" --output-format json` | `.response` | `--conversation <.conversation_id>` | `-p` and `--conversation` run in 1.2.16; `--mode plan` not run |
 | OpenCode | `opencode run … --format json` | JSON events | `opencode run -c` | No |
 
 ### Later
@@ -524,7 +554,7 @@ Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before eac
 - reports which agent CLIs are installed, and writes the default agent and the preferred terminal to
   `~/.ide-agent-tabs/config.json`;
 - registers the MCP server with the other agent CLIs the user picks (Codex, Gemini CLI, Copilot CLI,
-  OpenCode) with `sync-ides.mjs --register <agent>…`;
+  Antigravity CLI, OpenCode) with `sync-ides.mjs --register <agent>…`;
 - offers to add OpenAI's Codex plugin (`claude plugin marketplace add openai/codex-plugin-cc`, then
   `claude plugin install codex@openai-codex`) when Codex is installed.
 
@@ -577,7 +607,7 @@ in `vscode/package.json`.
 | Claude Code plugin | This repository, through the marketplace | `claude plugin update ide-agent-tabs@ide-agent-tabs`, or auto-update turned on for the marketplace in `/plugin` (off by default for a marketplace you add yourself) |
 | VS Code extension | `dist/ide/ide-agent-tabs.vsix` in the installed plugin | The session start hook runs `<cli> --install-extension <vsix> --force` in each editor that has an older version. |
 | JetBrains plugin | `~/.ide-agent-tabs/repository/updatePlugins.xml` | The session start hook puts the bundled zip there. The IDE offers the update from its custom plugin repository. |
-| MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Gemini CLI, Copilot CLI and OpenCode run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. `version.json` records the plugin version it came from, and an older plugin never replaces a copy from a newer one, because every Claude Code install on the machine shares the copy. |
+| MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Gemini CLI, Copilot CLI, Antigravity CLI and OpenCode run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. `version.json` records the plugin version it came from, and an older plugin never replaces a copy from a newer one, because every Claude Code install on the machine shares the copy. |
 
 ### Session start hook
 
@@ -644,7 +674,7 @@ builds have a different `TerminalViewVirtualFile` constructor, so opening a tab 
 judgment: one option out of up to 255 (Choice), a probability of yes (Noul), or a position on 2 to 10
 described levels (Score). It writes no text. When Jev is turned on, the MCP server lists tools that let
 any agent it serves ask Jev instead of spending a large-model turn on a pick, a yes or no, or a grade.
-Codex, Gemini CLI, Copilot CLI and OpenCode get them through the same registration as the tab tools.
+Codex, Gemini CLI, Copilot CLI, Antigravity CLI and OpenCode get them through the same registration as the tab tools.
 
 ### Turning it on
 
@@ -784,8 +814,8 @@ in `~/.ide-agent-tabs/mcp/` that other agents register.
 | tmux | 3.6 with bash in WSL Ubuntu, with and without an attached client | macOS |
 | Ghostty on Linux | 1.3.1 in WSL Ubuntu accepts the flags. No window opens, because Ghostty needs OpenGL 4.3 and WSLg offers 4.1. | A working window |
 | Ghostty on macOS | Unit tests of the AppleScript and command generation | A live run |
-| Agent profiles | `claude` and `codex` flags checked against each CLI's help | `gemini` and `copilot` |
-| Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>`; interactive Codex 0.158.0 tabs in Antigravity on Windows 11: a message read mid-task through the hooks, and an idle tab woken by the typed line through the `input` route, each answered | The `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Gemini CLI or Copilot CLI session |
+| Agent profiles | `claude`, `codex` and `agy` flags checked against each CLI's help | `gemini` and `copilot`; `agy -i` in a tab |
+| Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>`; interactive Codex 0.158.0 tabs in Antigravity on Windows 11: a message read mid-task through the hooks, and an idle tab woken by the typed line through the `input` route, each answered; Antigravity CLI 1.2.16 headless (`agy -p`) on Windows 11 with a workspace `.agents/` config: `IDE_AGENT_TABS_ID` reaches the server and the hook commands, the MCP client name is `antigravity-client`, `PreInvocation` context reaches the model, `Stop` with `decision: "continue"` keeps the turn going, and `Stop` fires once per turn | The `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Gemini CLI or Copilot CLI session; Antigravity CLI: whether `Stop` fires after Esc, whether the typed wake line submits in its interactive TUI, and `--register agy` against the real `~/.gemini` files |
 
 Open, list and close through the MCP server pass for tmux, kitty and WezTerm. No part is tested on a real
 Mac. For the headless delegation commands, see the **Tested** column in

@@ -1,7 +1,7 @@
 # Agent Tabs MCP server
 
 This MCP server lets an agent open, list and close agent tabs, and message other agent sessions. A tab
-runs an interactive agent CLI session, such as Claude Code, Codex, Gemini CLI or Copilot CLI. The tab
+runs an interactive agent CLI session, such as Claude Code, Codex, Gemini CLI, Copilot CLI or Antigravity CLI. The tab
 opens in a running IDE that has the Agent Tabs extension, or in a terminal app when no IDE is running.
 
 The server speaks MCP over stdio. It reads the registry and calls each IDE's HTTP API, as described in
@@ -21,7 +21,7 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 | `list_sessions` | none | Live agent sessions (`id`, `agent`, `path`, `host`, `state`, `startedAt`), with `self` for the caller |
 | `send_message` | `to`, `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued` |
 | `read_messages` | none | The caller's unread messages, marked read, under a `notice` that they come from other agents |
-| `wait_for_message` | optional `timeout` (seconds, default 60, at most 600), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
+| `wait_for_message` | optional `timeout` (seconds, default 60, at most 600, or 170 in an Antigravity CLI session), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
 
 An IDE's id is its registry file name without `.json`: `<ide>-<pid>`, or `<ide>-<pid>-<window>` for a VS
 Code window. A terminal's id is its name: `windows-terminal`, `ghostty`, `kitty`, `wezterm` or `tmux`.
@@ -95,6 +95,7 @@ to answer a message that needs no answer.
 | Codex | In Codex tabs only, from the tab's arguments; trusted, with no `/hooks` review | Yes | Yes | Yes |
 | Gemini CLI | Added by `--register gemini` | Yes | Yes | Yes |
 | Copilot CLI | Added by `--register copilot` | No: Copilot CLI drops that hook's output | Yes | Yes |
+| Antigravity CLI | Added by `--register agy` | Yes, before each model call | Yes, through the same hook; Antigravity CLI ignores a `PostToolUse` hook's output | Yes |
 | OpenCode | None | No | No | No |
 
 | Where the recipient runs | Wake-up |
@@ -155,14 +156,14 @@ which is the calling agent's `PATH`.
 
 ## Other agents
 
-Codex, Gemini CLI, Copilot CLI and OpenCode can run this server too. The setup skill registers it with
-the agents you choose, through `sync-ides.mjs`. For Gemini CLI and Copilot CLI, registering also adds the
-messaging hooks. Codex tabs bring their own server and hooks, so Codex needs registering only for Codex
-sessions outside tabs, and only on macOS and Linux:
+Codex, Gemini CLI, Copilot CLI, Antigravity CLI and OpenCode can run this server too. The setup skill
+registers it with the agents you choose, through `sync-ides.mjs`. For Gemini CLI, Copilot CLI and
+Antigravity CLI, registering also adds the messaging hooks. Codex tabs bring their own server and hooks,
+so Codex needs registering only for Codex sessions outside tabs, and only on macOS and Linux:
 
 ```sh
 node dist/sync-ides.mjs --agents
-node dist/sync-ides.mjs --register codex gemini copilot opencode
+node dist/sync-ides.mjs --register codex gemini copilot agy opencode
 node dist/sync-ides.mjs --unregister codex
 ```
 
@@ -178,6 +179,7 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
 | Codex, not on Windows | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- node <path>` |
 | Gemini CLI | `~/.gemini/settings.json`, user scope | `gemini mcp add --scope user ide-agent-tabs node <path>` |
 | Copilot CLI | `mcpServers` in `~/.copilot/mcp-config.json`, or `$COPILOT_HOME/mcp-config.json` | The script edits the file. |
+| Antigravity CLI | `mcpServers` in `~/.gemini/config/mcp_config.json` | The script edits the file. |
 | OpenCode | `mcp` in `~/.config/opencode/opencode.json`, or under `$XDG_CONFIG_HOME` | The script edits the file. |
 
 - `~/.ide-agent-tabs/mcp/` holds `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt`, in the same
@@ -189,7 +191,7 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
   next session.
 - The script runs the agent CLIs from `~/.ide-agent-tabs`, so a project config in the current folder
   doesn't apply. It checks each registration by reading it back, not by the exit code.
-- The script keeps the other keys in a Copilot CLI or OpenCode config file, and its indentation. It
+- The script keeps the other keys in a Copilot CLI, Antigravity CLI or OpenCode config file, and its indentation. It
   doesn't change a file that isn't plain JSON, such as a file with comments or an `opencode.jsonc`
   with comments. It reports an error instead, and you add the entry by hand:
 
@@ -197,7 +199,13 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
   "ide-agent-tabs": { "type": "local", "command": "node", "args": ["<path>"], "env": { "IDE_AGENT_TABS_ID": "${IDE_AGENT_TABS_ID}", "IDE_AGENT_TABS_AGENT": "${IDE_AGENT_TABS_AGENT}" }, "tools": ["*"] }
   ```
 
-  for Copilot CLI under `mcpServers`, or for OpenCode under `mcp`:
+  for Copilot CLI under `mcpServers`, for Antigravity CLI under `mcpServers`:
+
+  ```json
+  "ide-agent-tabs": { "command": "node", "args": ["<path>"] }
+  ```
+
+  or for OpenCode under `mcp`:
 
   ```json
   "ide-agent-tabs": { "type": "local", "command": ["node", "<path>"], "enabled": true }
@@ -209,8 +217,23 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
   |---|---|
   | Gemini CLI | `hooks` in `~/.gemini/settings.json` |
   | Copilot CLI | Its own file, `~/.copilot/hooks/ide-agent-tabs.json`, or under `$COPILOT_HOME` |
+  | Antigravity CLI | The `ide-agent-tabs` group in `~/.gemini/config/hooks.json` |
 
   `--unregister` removes only the Agent Tabs entries and leaves your other hooks in place.
+- Antigravity CLI notes:
+  - `--register agy` also adds the allow rule `mcp(ide-agent-tabs/*)` to `permissions.allow` in
+    `~/.gemini/antigravity-cli/settings.json`, because Antigravity CLI asks before each call to an MCP
+    tool that has no rule. `--unregister agy` removes only that rule and keeps your other settings.
+  - Antigravity CLI runs a hook command through `cmd.exe` on Windows and escapes double quotes, so the
+    hook path goes in without quotes. `--register agy` refuses a path with spaces or `cmd.exe` special
+    characters.
+  - `~/.gemini/config/hooks.json` is also read by Antigravity 2.0 and the Antigravity IDE. There,
+    `IDE_AGENT_TABS_ID` is unset, so the hook exits without output, at the cost of one `node` start for each
+    model call and tool call.
+  - There is no permission or interrupt event. A session that waits for approval shows `busy`.
+  - Antigravity CLI ends any MCP tool call after 3 minutes and has no setting to change that, so
+    `wait_for_message` waits at most 170 seconds in an Antigravity CLI session.
+  - The entry needs no `env`: Antigravity CLI passes its own environment to the server and the hooks.
 - `--register codex` refuses on Windows. The Codex desktop app reads the same `config.toml`, and Codex
   before 0.159 opens a console window each time the app starts an MCP server from it. Use Codex tabs
   there.

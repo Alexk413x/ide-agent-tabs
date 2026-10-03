@@ -98,7 +98,7 @@ The JSON report lists each editor with `ok`, or an `error`. Tell the user to rel
 
 ## 6. Other agents
 
-Codex, Gemini CLI, Copilot CLI and OpenCode can use Agent Tabs too. With it, they can list IDEs, open,
+Codex, Gemini CLI, Copilot CLI, Antigravity CLI and OpenCode can use Agent Tabs too. With it, they can list IDEs, open,
 list and close agent tabs, and message any other agent session on this machine, including this one.
 
 A Codex agent tab needs no registration: it starts Codex with its own Agent Tabs server and messaging
@@ -128,8 +128,11 @@ config and would open a console window each time it starts the server.
    node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --register <agent> [<agent>...]
    ```
 
-   Registering also adds the messaging hooks: to `~/.gemini/settings.json` for Gemini CLI, and as
-   `~/.copilot/hooks/ide-agent-tabs.json` for Copilot CLI. For Codex, it sets `env_vars` and
+   Registering also adds the messaging hooks: to `~/.gemini/settings.json` for Gemini CLI, as
+   `~/.copilot/hooks/ide-agent-tabs.json` for Copilot CLI, and as the `ide-agent-tabs` group in
+   `~/.gemini/config/hooks.json` for Antigravity CLI. For Antigravity CLI, it also adds the allow rule
+   `mcp(ide-agent-tabs/*)` to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`, so the
+   agent doesn't ask before each Agent Tabs tool call. For Codex, it sets `env_vars` and
    `tool_timeout_sec` in the server's table in `~/.codex/config.toml`, and removes Agent Tabs hooks that
    earlier versions added to `~/.codex/hooks.json`. The script keeps every other entry in those files.
 

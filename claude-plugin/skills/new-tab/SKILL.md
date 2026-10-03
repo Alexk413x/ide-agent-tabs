@@ -1,6 +1,6 @@
 ---
 name: new-tab
-description: Open a new agent session (Claude Code, Codex, Gemini CLI, Copilot CLI, or a custom profile) in an IDE editor tab or a terminal tab, optionally in another folder and with a first message. Also lists and closes those tabs. Use when the user asks to open a new tab, session or agent somewhere, to see which agent tabs are open, or to close one. Not for opening a file or a web page in a tab.
+description: Open a new agent session (Claude Code, Codex, Gemini CLI, Copilot CLI, Antigravity CLI, or a custom profile) in an IDE editor tab or a terminal tab, optionally in another folder and with a first message. Also lists and closes those tabs. Use when the user asks to open a new tab, session or agent somewhere, to see which agent tabs are open, or to close one. Not for opening a file or a web page in a tab.
 argument-hint: "[agent] [folder] [-- first message]"
 ---
 
@@ -15,7 +15,7 @@ Arguments: `$ARGUMENTS`
 ## Parse the arguments
 
 - Everything after a standalone `--` is the first message. It is optional.
-- Before `--`: an agent name (a profile such as `claude`, `codex`, `gemini`, `copilot`, or a custom one)
+- Before `--`: an agent name (a profile such as `claude`, `codex`, `gemini`, `copilot`, `agy`, or a custom one)
   and a folder. Either can be missing. Call `list_agents` when you need to tell a profile name from a
   folder name.
 - No folder means the current working directory. Resolve a relative folder to an absolute path and check

@@ -92,7 +92,7 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging)
     {
       title: 'Open an agent tab',
       description:
-        'Open a new tab that runs an interactive agent CLI session (Claude Code, Codex, Gemini CLI, Copilot CLI or a custom profile from list_agents) in an IDE or a terminal, for the user to work in. ' +
+        'Open a new tab that runs an interactive agent CLI session (Claude Code, Codex, Gemini CLI, Copilot CLI, Antigravity CLI or a custom profile from list_agents) in an IDE or a terminal, for the user to work in. ' +
         "It does not return the agent's output: to get an answer, run that CLI headless, or ask in prompt for a reply through send_message. " +
         "Without ide, the tab opens in the IDE whose open project best contains path, else the caller's own IDE, else the most recently started IDE, else the configured terminal. " +
         'Returns the tab id, the ide id and product, the agent and the reason for the route, plus a note to pass on when the user must act, such as attaching to tmux.',

@@ -70,6 +70,7 @@ val BUILTIN_PROFILES = listOf(
     AgentProfile("codex", "Codex", "codex", CODEX_TAB_ARGS),
     AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i"),
     AgentProfile("copilot", "Copilot CLI", "copilot", promptFlag = "-i"),
+    AgentProfile("agy", "Antigravity CLI", "agy", promptFlag = "-i"),
 )
 
 fun parseProfiles(text: String): List<AgentProfile> {

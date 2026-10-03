@@ -6,8 +6,8 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 
 ## 0.6.0
 
-Plugin and MCP server 0.6.0. The VS Code and JetBrains profile sources add the Codex `Interrupt` hook;
-the bundled IDE packages are not rebuilt yet.
+Plugin and MCP server 0.6.0, with VS Code extension 0.1.20 and JetBrains plugin 0.4.3 bundled. Both IDE
+packages add the `agy` profile and icon and the Codex `Interrupt` hook.
 
 ### Fixed
 
@@ -35,6 +35,21 @@ the bundled IDE packages are not rebuilt yet.
 
 ### Added
 
+- Antigravity CLI (`agy`) is a built-in agent profile, labelled "Antigravity CLI", that starts with
+  `agy -i <prompt>`. `--register agy` writes the server entry to `~/.gemini/config/mcp_config.json`, the
+  `ide-agent-tabs` hook group (`PreInvocation`, `PostToolUse`, `Stop`) to `~/.gemini/config/hooks.json`,
+  and the allow rule `mcp(ide-agent-tabs/*)` to `permissions.allow` in
+  `~/.gemini/antigravity-cli/settings.json`. `--unregister agy` removes only those. The hook path goes in
+  unquoted, because Antigravity CLI escapes quotes in a `cmd.exe` command, so registration refuses a path
+  with spaces or `cmd.exe` special characters.
+- Antigravity CLI hooks set `busy` at `PreInvocation` and `PostToolUse`, add the unread-message reminder
+  at `PreInvocation`, and nudge at `Stop` with `decision: "continue"`. A `PreInvocation` with
+  `invocationNum` 0 counts as a new prompt. Antigravity CLI has no permission or interrupt event, so a
+  session that waits for approval shows `busy`.
+- `wait_for_message` waits at most 170 seconds in an Antigravity CLI session, because Antigravity CLI ends
+  any MCP tool call after 3 minutes.
+- The `delegate` skill runs Antigravity CLI headless with `agy -p`.
+- Codex tabs report an Esc interrupt through the `Interrupt` hook (see Fixed).
 - `scripts/check.mjs` runs typecheck, tests, the bundle check, the plugin version check and both
   `claude plugin validate --strict` runs.
 

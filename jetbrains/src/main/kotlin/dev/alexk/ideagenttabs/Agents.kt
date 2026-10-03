@@ -25,6 +25,7 @@ object Agents {
         "codex" to "/icons/agents/codex.svg",
         "gemini" to "/icons/agents/gemini.svg",
         "copilot" to "/icons/agents/copilot.svg",
+        "agy" to "/icons/agents/agy.svg",
     )
 
     private val neutralButtonIcon: Icon = IconLoader.getIcon("/icons/agentTab_new.svg", Agents::class.java)

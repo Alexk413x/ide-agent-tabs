@@ -67,6 +67,7 @@ export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
   profile('codex', 'Codex', 'codex', { args: [...CODEX_TAB_ARGS] }),
   profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i' }),
   profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i' }),
+  profile('agy', 'Antigravity CLI', 'agy', { promptFlag: '-i' }),
 ]);
 
 export function parseProfiles(text: string): AgentProfile[] {
