@@ -32,9 +32,20 @@ the bundled IDE packages are not rebuilt yet.
   alive.
 - Copilot CLI tabs map `sessionStart` to idle; existing Copilot installs re-sync their hook file.
 - A Windows test race that wrote presence without the lock.
+- The IDE sync finds VS Code Insiders and Cursor on macOS: their app bundles name the command-line
+  tool `bin/code`, not `bin/<cli>`. Cursor, Windsurf and Trae bundles are checked under both names.
+- The IDE sync looks for editor command-line tools on Linux when they aren't on `PATH`: in
+  `/usr/share/<cli>/bin`, `/opt/<cli>/bin`, `~/.local/bin`, `/snap/bin` for VS Code, VS Code Insiders
+  and VSCodium, and the Flatpak exports of VS Code and VSCodium.
+- The first tmux tab works on tmux 3.0 and 3.1. The launch paths reach the window through
+  `/usr/bin/env` instead of `new-session -e`, which needs tmux 3.2.
+- Ghostty and WezTerm on Linux are found in `/usr/bin`, `/usr/local/bin` and `~/.local/bin` when they
+  aren't on `PATH`, and also in `/snap/bin` (Ghostty) and `/home/linuxbrew/.linuxbrew/bin` (WezTerm).
+- The setup skill looks for JetBrains Toolbox 1.x installs, including the macOS Toolbox folder.
 
 ### Added
 
+- The IDE sync and setup skill support Kiro (`kiro`), Positron (`positron`) and Trae (`trae`).
 - `scripts/check.mjs` runs typecheck, tests, the bundle check, the plugin version check and both
   `claude plugin validate --strict` runs.
 

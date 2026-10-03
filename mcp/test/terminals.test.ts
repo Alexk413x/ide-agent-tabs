@@ -8,6 +8,7 @@ import {
   closeScript,
   ghosttyCapabilities,
   ghosttyLinuxArgs,
+  ghosttyLinuxLocations,
   inputScript,
   listScript,
   openScript,
@@ -180,6 +181,10 @@ test('Ghostty opens a tab over AppleScript on macOS and a new process on Linux',
     '-e', '/bin/bash', '-l', '-i', '-c', '. "$IDE_AGENT_TABS_LAUNCHER"; exec /bin/bash -l -i',
   ]);
   assert.throws(() => ghosttyLinuxArgs('/home/u/a\nb', { path: '/bin/bash', kind: 'posix' }), /control character/);
+});
+
+test('Ghostty on Linux is looked for in its install folders after PATH', () => {
+  assert.deepEqual(ghosttyLinuxLocations('/home/u'), ['/usr/bin/ghostty', '/usr/local/bin/ghostty', '/home/u/.local/bin/ghostty', '/snap/bin/ghostty']);
 });
 
 test('the default terminal is the first available one in the platform order', () => {

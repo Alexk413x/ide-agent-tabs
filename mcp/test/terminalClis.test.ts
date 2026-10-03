@@ -70,7 +70,12 @@ test('WezTerm is looked for in its install folders', () => {
     '/Applications/WezTerm.app/Contents/MacOS/wezterm',
     '/Users/u/Applications/WezTerm.app/Contents/MacOS/wezterm',
   ]);
-  assert.deepEqual(weztermLocations('linux', '/home/u', undefined), []);
+  assert.deepEqual(weztermLocations('linux', '/home/u', undefined), [
+    '/usr/bin/wezterm',
+    '/usr/local/bin/wezterm',
+    '/home/u/.local/bin/wezterm',
+    '/home/linuxbrew/.linuxbrew/bin/wezterm',
+  ]);
 });
 
 test('WezTerm GUI sockets are found in its runtime folder, only for running GUIs, newest first', () => {
@@ -141,11 +146,12 @@ test('tmux opens in the most recently attached session, else in the agents sessi
   assert.deepEqual(planTmuxTarget([]), { newSession: 'agents' });
 });
 
-test('tmux gets our paths in -e, a title without # or ;, and no folder', () => {
+test('tmux gets our paths through env without -e, a title without # or ;, and no folder', () => {
   const o = { title: 'Cl#{pane_pid}aude;', launcher: '/d/agent-launch.sh', spec: '/h/t.spec', argv };
-  const tail = ['-n', 'Cl {pane_pid}aude', '-e', 'IDE_AGENT_TABS_LAUNCHER=/d/agent-launch.sh', '-e', 'IDE_AGENT_TABS_SPEC=/h/t.spec', '--', ...argv];
+  const tail = ['-n', 'Cl {pane_pid}aude', '--', '/usr/bin/env', 'IDE_AGENT_TABS_LAUNCHER=/d/agent-launch.sh', 'IDE_AGENT_TABS_SPEC=/h/t.spec', ...argv];
   assert.deepEqual(tmuxOpenArgs({ session: '$2', detached: false }, o), ['new-window', '-P', '-F', '#{window_id} #{session_id} #{pid} #{socket_path}', '-t', '$2:', ...tail]);
   assert.deepEqual(tmuxOpenArgs({ newSession: 'agents' }, o), ['new-session', '-d', '-s', 'agents', '-P', '-F', '#{window_id} #{session_id} #{pid} #{socket_path}', ...tail]);
+  assert.ok(!tmuxOpenArgs({ newSession: 'agents' }, o).includes('-e'), 'new-session -e needs tmux 3.2');
   assert.throws(() => tmuxOpenArgs({ newSession: 'agents' }, { ...o, spec: '/h/a;b.spec' }), /';'/);
   assert.equal(tmuxTitle('#;'), 'Agent');
 });

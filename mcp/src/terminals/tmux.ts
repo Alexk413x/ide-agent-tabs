@@ -10,6 +10,7 @@ import type { TerminalContext, TerminalDriver, TerminalTab } from './types.js';
 export const TMUX = 'tmux';
 export const TMUX_SESSION = 'agents';
 const TMUX_LOCATIONS = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux', '/home/linuxbrew/.linuxbrew/bin/tmux'];
+const ENV = '/usr/bin/env';
 const SESSION_FORMAT = '#{session_attached} #{session_last_attached} #{session_id} #{session_name}';
 const WINDOW_FORMAT = '#{window_id} #{session_id} #{pid} #{socket_path}';
 const LIST_FORMAT = '#{pid} #{window_id}';
@@ -63,12 +64,12 @@ export function tmuxOpenArgs(target: TmuxTarget, o: { title: string; launcher: s
     'session' in target
       ? ['new-window', '-P', '-F', WINDOW_FORMAT, '-t', `${target.session}:`]
       : ['new-session', '-d', '-s', target.newSession, '-P', '-F', WINDOW_FORMAT];
+  // /usr/bin/env sets the paths instead of -e: new-session -e needs tmux 3.2, and it would also leave them
+  // in the session environment for later windows.
   return [
     ...head,
     '-n', tmuxTitle(o.title),
-    '-e', `IDE_AGENT_TABS_LAUNCHER=${o.launcher}`,
-    '-e', `IDE_AGENT_TABS_SPEC=${o.spec}`,
-    '--', ...o.argv,
+    '--', ENV, `IDE_AGENT_TABS_LAUNCHER=${o.launcher}`, `IDE_AGENT_TABS_SPEC=${o.spec}`, ...o.argv,
   ];
 }
 
@@ -159,11 +160,6 @@ export const tmux: TerminalDriver = {
     } catch (e) {
       await fs.rm(specFile, { force: true });
       throw e;
-    }
-    if ('newSession' in target) {
-      // new-session -e also sets the session environment, which later windows would inherit.
-      const unset = (name: string) => ['set-environment', '-t', window.sessionId, '-u', name];
-      await run(exe, ['-S', window.socket, ...unset('IDE_AGENT_TABS_LAUNCHER'), ';', ...unset('IDE_AGENT_TABS_SPEC')], { env }).catch(() => undefined);
     }
     const detached = 'newSession' in target || target.detached;
     return {
