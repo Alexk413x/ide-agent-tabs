@@ -21,7 +21,7 @@ export function weztermLocations(platform: NodeJS.Platform, home: string, progra
       path.posix.join(home, 'Applications', 'WezTerm.app', 'Contents', 'MacOS', 'wezterm'),
     ];
   }
-  return [];
+  return ['/usr/bin/wezterm', '/usr/local/bin/wezterm', path.posix.join(home, '.local', 'bin', 'wezterm'), '/home/linuxbrew/.linuxbrew/bin/wezterm'];
 }
 
 function findWezterm(ctx: TerminalContext): string | undefined {

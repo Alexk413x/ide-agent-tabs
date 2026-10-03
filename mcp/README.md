@@ -304,7 +304,8 @@ identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 - The launch script writes its shell's process id to `launch/<id>.pid`. `list_tabs` reports the window
   while that shell runs, and `close_tab` sends the shell `SIGHUP`, which ends the agent and closes the
   window.
-- The server finds Ghostty as `ghostty` on `PATH`.
+- The server finds `ghostty` on `PATH`, then in `/usr/bin`, `/usr/local/bin`, `~/.local/bin` and
+  `/snap/bin`.
 
 ### WezTerm
 
@@ -323,7 +324,8 @@ identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
   `close_tab` can't close it.
 - The most recent stable WezTerm release is 20240203. The server uses only commands that release has.
 - The server finds `wezterm` on `PATH`, then in `%ProgramFiles%\WezTerm` on Windows or
-  `/Applications/WezTerm.app` and `~/Applications/WezTerm.app` on macOS.
+  `/Applications/WezTerm.app` and `~/Applications/WezTerm.app` on macOS, or `/usr/bin`, `/usr/local/bin`,
+  `~/.local/bin` and `/home/linuxbrew/.linuxbrew/bin` on Linux.
 
 ### kitty
 
@@ -356,7 +358,8 @@ identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 - tmux reads `#` in a window name as a format and an argument that ends in `;` as a command separator,
   so the tab title drops both. tmux also expands formats in `-c`, so the server doesn't pass the folder
   there; the launch script changes to it.
-- You need tmux 3.0 or later, for `new-window -e`. The server finds `tmux` on `PATH`, then in
+- You need tmux 3.0 or later. The server sets the launch paths with `/usr/bin/env` in the window
+  command, not with `-e`, which `new-session` gained only in tmux 3.2. The server finds `tmux` on `PATH`, then in
   `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` and `/home/linuxbrew/.linuxbrew/bin`.
 
 ### Adding a terminal

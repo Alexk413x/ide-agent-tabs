@@ -2,14 +2,21 @@ import { promises as fs, existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { writeNewPrivateFile } from '../files.js';
-import { findOnPath } from '../installed.js';
 import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, type LaunchSpec } from '../spec.js';
-import { GUI_SETTLE_MS, hangUp, pidTabsAlive, startDetached, terminalEnvironment } from './processes.js';
+import { findExecutable, GUI_SETTLE_MS, hangUp, pidTabsAlive, startDetached, terminalEnvironment } from './processes.js';
 import { checkArgvPaths, checkInputLine, launcherName, loginShell, surfaceArgv, surfaceCommand, type LoginShell } from './shell.js';
 import type { OpenedTab, TerminalCapabilities, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
 
 export const GHOSTTY = 'ghostty';
+
+export function ghosttyLinuxLocations(home: string): string[] {
+  return ['/usr/bin/ghostty', '/usr/local/bin/ghostty', path.posix.join(home, '.local', 'bin', 'ghostty'), '/snap/bin/ghostty'];
+}
+
+function findGhosttyOnLinux(ctx: TerminalContext): string | undefined {
+  return findExecutable(ctx.pathVar, 'ghostty', ghosttyLinuxLocations(os.homedir()));
+}
 
 export function ghosttyCapabilities(platform: NodeJS.Platform): TerminalCapabilities {
   return platform === 'linux'
@@ -116,8 +123,8 @@ function ghosttyApp(home: string): string | undefined {
 }
 
 async function openOnLinux(ctx: TerminalContext, spec: LaunchSpec, shell: LoginShell, specFile: string, launcher: string): Promise<OpenedTab> {
-  const exe = findOnPath(ctx.pathVar, 'ghostty');
-  if (!exe) throw new Error('ghostty was not found on PATH');
+  const exe = findGhosttyOnLinux(ctx);
+  if (!exe) throw new Error('ghostty was not found');
   const pidFile = path.join(path.dirname(specFile), `${spec.id}.pid`);
   const args = ghosttyLinuxArgs(spec.cwd, shell);
   const env = { ...terminalEnvironment(ctx.env), IDE_AGENT_TABS_LAUNCHER: launcher, IDE_AGENT_TABS_SPEC: specFile };
@@ -137,7 +144,7 @@ export const ghostty: TerminalDriver = {
   capabilities: ghosttyCapabilities(process.platform),
 
   async available(ctx) {
-    if (process.platform === 'linux') return findOnPath(ctx.pathVar, 'ghostty') !== undefined;
+    if (process.platform === 'linux') return findGhosttyOnLinux(ctx) !== undefined;
     return process.platform === 'darwin' && ghosttyApp(os.homedir()) !== undefined;
   },
 

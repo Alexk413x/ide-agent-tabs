@@ -283,17 +283,18 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
 | Ghostty | Linux | Window | Tracked | Best effort | A new process per agent: `ghostty --gtk-single-instance=false --working-directory=<dir> --confirm-close-surface=false --wait-after-command=false -e <shell> -l -i -c …`. Ghostty can't open a tab in a running instance from outside ([ghostty#12136](https://github.com/ghostty-org/ghostty/issues/12136)). The launcher writes its shell's pid; `list_tabs` checks that the shell runs, and `close_tab` sends it `SIGHUP`. |
 | WezTerm | Windows, macOS, Linux | Tab | Yes | Yes | `wezterm cli --no-auto-start spawn --cwd <dir> -- …` prints the pane id; `cli list --format json`; `cli kill-pane --pane-id`. `WEZTERM_UNIX_SOCKET` names the newest running GUI's `gui-sock-<pid>` ([wezterm#4456](https://github.com/wezterm/wezterm/issues/4456)). With no GUI running, `wezterm start` opens one. |
 | kitty | macOS, Linux | Tab | Yes | Yes | With remote control on: `kitten @ --to <socket> launch --type=tab`, `ls` and `close-window --match id:<n>`. Without it: a new `kitty` process per agent, tracked like Ghostty on Linux (Window, Tracked, Best effort). |
-| tmux 3.0+ | macOS, Linux | Tab | Yes | Yes | `tmux new-window -e … -- …` in the most recently attached session, else in the detached session `agents`; `list-windows -a`; `kill-window`. |
+| tmux 3.0+ | macOS, Linux | Tab | Yes | Yes | `tmux new-window -- /usr/bin/env IDE_AGENT_TABS_LAUNCHER=… IDE_AGENT_TABS_SPEC=… …` in the most recently attached session, else in the detached session `agents`; `list-windows -a`; `kill-window`. |
 
 - The MCP server tracks the tabs it opens in terminals in `~/.ide-agent-tabs/terminal-tabs.json`, with
   the terminal's own tab, pane or window id where it has one, and the shell's pid file otherwise.
 - `open_tab` uses a terminal when the caller names one, or when no IDE is running. The preferred one is
   `"terminal"` in `~/.ide-agent-tabs/config.json`, such as `"terminal": "ghostty"`.
 - A new tab gets the launcher and spec paths in one of two ways. In env mode, the terminal sets
-  `IDE_AGENT_TABS_LAUNCHER` and `IDE_AGENT_TABS_SPEC` in the tab (Ghostty, kitty, tmux). In argv mode, they
-  are positional arguments of the login shell, whose fixed `-c` script sets `IDE_AGENT_TABS_SPEC` and
-  sources the launcher (WezTerm, whose new panes get the GUI's environment, not the caller's). Argv mode
-  with fish needs fish 3.2 or later.
+  `IDE_AGENT_TABS_LAUNCHER` and `IDE_AGENT_TABS_SPEC` in the tab (Ghostty, kitty, and tmux through
+  `/usr/bin/env`, because `new-session -e` needs tmux 3.2). In argv mode, they are positional arguments
+  of the login shell, whose fixed `-c` script sets `IDE_AGENT_TABS_SPEC` and sources the launcher
+  (WezTerm, whose new panes get the GUI's environment, not the caller's). Argv mode with fish needs fish
+  3.2 or later.
 - A command line holds only fixed flags, the server's own paths, the folder and a cleaned title. The
   server refuses a path that holds a control character, and a path with `;` for Windows Terminal and tmux,
   which split commands at `;`. tmux gets no `-c <dir>`, because it expands formats such as `#(…)` there;
@@ -620,8 +621,8 @@ with a 60-second timeout. The hook:
    versions changed or a retry is due.
 2. Creates `~/.ide-agent-tabs/sync.lock`, so two sessions don't sync at once. It treats a lock older than
    five minutes as stale.
-3. Finds each editor command-line tool: `code`, `code-insiders`, `cursor`, `windsurf`, `codium` and
-   `antigravity-ide`, on `PATH` or in the usual install folders. For each, it lists the installed
+3. Finds each editor command-line tool: `code`, `code-insiders`, `cursor`, `windsurf`, `codium`,
+   `antigravity-ide`, `kiro`, `positron` and `trae`, on `PATH` or in the usual install folders. For each, it lists the installed
    extensions, and installs the bundled `.vsix` only where an older version of Agent Tabs is installed.
    It never installs the extension into an editor that doesn't have it.
 4. If `~/.ide-agent-tabs/repository/` exists, copies the zip there as `ide-agent-tabs-<version>.zip`,
