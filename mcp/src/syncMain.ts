@@ -1,9 +1,11 @@
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { refreshDetectionFile } from './detection.js';
 import { agentTabsHome } from './home.js';
 import { agentsReport, registerAgents, unregisterAgents } from './register.js';
 import { appendLog, syncHook, syncInstall, syncStatus, type SyncContext } from './sync.js';
+import { TERMINAL_DRIVERS } from './terminals/index.js';
 
 const print = (text: string) => new Promise<void>((resolve) => process.stdout.write(text, () => resolve()));
 
@@ -24,6 +26,9 @@ const ctx: SyncContext = {
 async function main(args: string[]): Promise<number> {
   const [mode, ...rest] = args;
   if (mode === '--hook') {
+    const detection = refreshDetectionFile({ home: ctx.home, platform: ctx.platform, env: ctx.env, drivers: TERMINAL_DRIVERS }).catch((e: unknown) =>
+      appendLog(ctx.home, `detection: ${(e as Error).message}`).catch(() => undefined),
+    );
     try {
       const message = await syncHook(ctx);
       if (message) {
@@ -34,6 +39,7 @@ async function main(args: string[]): Promise<number> {
     } catch (e) {
       await appendLog(ctx.home, `hook: ${(e as Error).message}`).catch(() => undefined);
     }
+    await detection;
     return 0;
   }
   if (mode === '--status') {

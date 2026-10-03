@@ -13,7 +13,7 @@ import { createServer, SERVER_VERSION } from '../src/server.js';
 import { readPresence } from '../src/messaging/sessions.js';
 import { FRESH_TAB_START_MS, Service } from '../src/service.js';
 import type { LaunchSpec } from '../src/spec.js';
-import type { TerminalDriver, TerminalTab } from '../src/terminals/types.js';
+import type { OpenOptions, TerminalDriver, TerminalTab } from '../src/terminals/types.js';
 
 const TOKEN = 'f'.repeat(64);
 let ideToken = TOKEN;
@@ -78,6 +78,7 @@ function fakeIde(req: http.IncomingMessage, res: http.ServerResponse) {
 }
 
 const opened: { spec: LaunchSpec; title: string }[] = [];
+const openOptions: (OpenOptions | undefined)[] = [];
 const closed: string[] = [];
 const liveTerminalTabs = new Set<string>();
 const fakeTerminal: TerminalDriver = {
@@ -85,8 +86,9 @@ const fakeTerminal: TerminalDriver = {
   label: 'Fake Terminal',
   capabilities: { open: 'tab', list: 'yes', close: 'yes' },
   available: async () => true,
-  open: async (_ctx, spec, title) => {
+  open: async (_ctx, spec, title, options) => {
     opened.push({ spec, title });
+    openOptions.push(options);
     liveTerminalTabs.add(spec.id);
     return { id: spec.id, terminal: 'fake-term', agent: spec.agent, path: spec.cwd, createdAt: Date.now(), terminalId: `t-${spec.id}` };
   },
@@ -158,6 +160,13 @@ test('list_ides reads the registry, drops dead entries and shows terminals', asy
     { id: `jetbrains-${process.pid}`, ide: 'jetbrains', product: 'Fake Studio', version: '1.0', projects: [{ name: 'proj', path: project, focused: true }] },
   );
   assert.deepEqual(json.terminals, [{ id: 'fake-term', name: 'Fake Terminal', capabilities: { open: 'tab', list: 'yes', close: 'yes' }, preferred: false }]);
+  assert.deepEqual(json.shells, []);
+  const detected = JSON.parse(readFileSync(path.join(home, 'detected.json'), 'utf8'));
+  assert.equal(detected.version, 1);
+  assert.equal(detected.platform, 'linux');
+  assert.deepEqual(detected.terminals, [{ id: 'fake-term', name: 'Fake Terminal' }]);
+  assert.deepEqual(detected.shells, []);
+  assert.ok(Date.parse(detected.detectedAt) > 0);
   assert.equal(readdirSync(endpoints).length, 2, 'the dead entry is deleted and the future one kept');
   const info = seen.find((s) => s.route === 'info')!;
   assert.equal(info.headers['content-type'], 'application/json');
@@ -169,7 +178,7 @@ test('list_agents reports profiles, installed state and the default, and warns o
   writeFileSync(path.join(home, 'config.json'), JSON.stringify({ defaultAgent: 'probe' }));
   const { json } = await call('list_agents');
   assert.equal(json.default, 'probe');
-  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'gemini', 'copilot', 'agy', 'probe']);
+  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'probe']);
   assert.equal(json.agents.at(-1).installed, true);
   assert.equal(json.agents[0].installed, false);
 
@@ -300,6 +309,31 @@ test('close_tab with no id closes the caller\'s own tab from IDE_AGENT_TABS_ID',
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(closed.at(-1), term.json.id);
   delete env.IDE_AGENT_TABS_ID;
+});
+
+test("tabRouting caller opens a terminal caller's tab in its own terminal window, even when an IDE has the project", async () => {
+  const caller = await call('open_tab', { path: outside, ide: 'fake-term' });
+  assert.deepEqual(openOptions.at(-1), { window: 'last' });
+  env.IDE_AGENT_TABS_ID = caller.json.id;
+  try {
+    const byProject = await call('open_tab', { path: project, prompt: 'p' });
+    assert.equal(byProject.json.ide, `jetbrains-${process.pid}`, 'the default keeps project routing');
+
+    writeFileSync(path.join(home, 'config.json'), JSON.stringify({ tabRouting: 'caller', terminalWindow: 'dedicated' }));
+    const byCaller = await call('open_tab', { path: project, prompt: 'c' });
+    assert.equal(byCaller.json.ide, 'fake-term');
+    assert.equal(byCaller.json.reason, "tabRouting is caller; the caller's terminal window");
+    assert.equal(openOptions.at(-1)?.window, 'dedicated');
+    assert.equal(openOptions.at(-1)?.near?.id, caller.json.id);
+
+    const named = await call('open_tab', { path: project, prompt: 'n', ide: `jetbrains-${process.pid}` });
+    assert.equal(named.json.ide, `jetbrains-${process.pid}`, 'a named ide wins over tabRouting');
+    for (const id of [byProject.json.id, byCaller.json.id, named.json.id]) assert.ok(!(await call('close_tab', { id })).isError);
+  } finally {
+    delete env.IDE_AGENT_TABS_ID;
+    writeFileSync(path.join(home, 'config.json'), '{}');
+    await call('close_tab', { id: caller.json.id });
+  }
 });
 
 test('with no IDE running, open_tab uses the preferred terminal, or explains why it cannot', async () => {

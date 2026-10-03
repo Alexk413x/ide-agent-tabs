@@ -31,9 +31,9 @@ class AgentProfilesTest {
 
     @Test
     fun `built-in profiles match the design`() {
-        assertEquals(listOf("claude", "codex", "gemini", "copilot", "agy"), settings.profiles().map { it.name })
-        assertEquals(listOf("Claude Code", "Codex", "Gemini CLI", "Copilot CLI", "Antigravity CLI"), settings.profiles().map { it.label })
-        assertEquals(listOf("claude", "codex", "gemini", "copilot", "agy"), settings.profiles().map { it.command })
+        assertEquals(listOf("claude", "codex", "agy", "copilot", "gemini"), settings.profiles().map { it.name })
+        assertEquals(listOf("Claude Code", "Codex", "Antigravity CLI", "Copilot CLI", "Gemini CLI"), settings.profiles().map { it.label })
+        assertEquals(listOf("claude", "codex", "agy", "copilot", "gemini"), settings.profiles().map { it.command })
         assertEquals(listOf(null, null, "-i", "-i", "-i"), settings.profiles().map { it.promptFlag })
         assertEquals(listOf(emptyList(), CODEX_TAB_ARGS, emptyList(), emptyList(), emptyList()), settings.profiles().map { it.args })
         assertEquals(listOf("--no-daemon", "-c"), CODEX_TAB_ARGS.take(2))
@@ -57,7 +57,7 @@ class AgentProfilesTest {
             """.trimIndent(),
         )
         val profiles = settings.profiles()
-        assertEquals(listOf("claude", "codex", "gemini", "copilot", "agy", "opencode-local", "bare"), profiles.map { it.name })
+        assertEquals(listOf("claude", "codex", "agy", "copilot", "gemini", "opencode-local", "bare"), profiles.map { it.name })
         assertEquals(AgentProfile("codex", "Codex (fast)", "codex", listOf("--model", "o4")), settings.profile("codex"))
         assertEquals(
             AgentProfile("opencode-local", "OpenCode (LM Studio)", "opencode", listOf("--model", "lmstudio/qwen3-coder"), "--prompt", mapOf("LMSTUDIO" to "1"), "icons/opencode.svg"),

@@ -17,6 +17,7 @@ export interface TerminalTab {
   terminalId?: string;
   socket?: string;
   serverPid?: number;
+  window?: string;
 }
 
 export type OpenedTab = TerminalTab & { note?: string };
@@ -26,6 +27,14 @@ export interface TerminalContext {
   scriptsDir: string;
   pathVar: string;
   env: NodeJS.ProcessEnv;
+  powerShell?: string;
+}
+
+export type TerminalWindowMode = 'last' | 'dedicated';
+
+export interface OpenOptions {
+  window: TerminalWindowMode;
+  near?: TerminalTab;
 }
 
 // A terminal driver never passes caller text on a command line: the caller's command, arguments, prompt
@@ -38,7 +47,7 @@ export interface TerminalDriver {
   capabilities: TerminalCapabilities;
   currentCapabilities?(ctx: TerminalContext): Promise<TerminalCapabilities>;
   available(ctx: TerminalContext): Promise<boolean>;
-  open(ctx: TerminalContext, spec: LaunchSpec, title: string): Promise<OpenedTab>;
+  open(ctx: TerminalContext, spec: LaunchSpec, title: string, options?: OpenOptions): Promise<OpenedTab>;
   alive(ctx: TerminalContext, tabs: TerminalTab[]): Promise<Set<string>>;
   close(ctx: TerminalContext, tab: TerminalTab): Promise<void>;
   input?(ctx: TerminalContext, tab: TerminalTab, text: string): Promise<void>;

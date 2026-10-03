@@ -53,7 +53,7 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging)
       title: 'List IDEs and terminals',
       description:
         'List the running IDEs that can host agent tabs and the terminal apps open_tab can use. ' +
-        'Returns ides (id, ide, product, version, and the open projects with the focused one marked), terminals (id, name, capabilities, preferred), and errors for IDEs that did not answer. ' +
+        'Returns ides (id, ide, product, version, and the open projects with the focused one marked), terminals (id, name, capabilities, preferred), shells (the PowerShell installs a Windows terminal tab can use), and errors for IDEs that did not answer. ' +
         'Call it for an id to pass as ide to open_tab or list_tabs. It does not list agent tabs; list_tabs does.',
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -95,6 +95,7 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging)
         'Open a new tab that runs an interactive agent CLI session (Claude Code, Codex, Gemini CLI, Copilot CLI, Antigravity CLI or a custom profile from list_agents) in an IDE or a terminal, for the user to work in. ' +
         "It does not return the agent's output: to get an answer, run that CLI headless, or ask in prompt for a reply through send_message. " +
         "Without ide, the tab opens in the IDE whose open project best contains path, else the caller's own IDE, else the most recently started IDE, else the configured terminal. " +
+        "When config.json sets tabRouting to caller, the caller's own IDE, or the caller's terminal window, comes first. " +
         'Returns the tab id, the ide id and product, the agent and the reason for the route, plus a note to pass on when the user must act, such as attaching to tmux.',
       inputSchema: {
         path: z.string().describe('Absolute path of an existing folder. The session starts there.'),

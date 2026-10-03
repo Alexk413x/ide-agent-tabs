@@ -9,9 +9,9 @@ A profile says how to start one agent CLI. Every IDE uses the same built-in prof
 |---|---|---|---|
 | `claude` | Claude Code | `claude` | positional |
 | `codex` | Codex | `codex` and fixed `args` that give the tab its Agent Tabs server and messaging hooks | positional |
-| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
-| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
 | `agy` | Antigravity CLI | `agy` | `-i <prompt>` |
+| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
+| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 
 A profile in `agents.json` with the same name overrides a built-in one. An `agents.json` profile named
 `codex` replaces the built-in `args` too, so its tabs lose messaging unless it copies them.

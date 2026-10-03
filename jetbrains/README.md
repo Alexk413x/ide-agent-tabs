@@ -1,7 +1,7 @@
 # Agent Tabs for JetBrains IDEs
 
 A plugin for IntelliJ IDEA, Android Studio and other JetBrains IDEs that opens AI coding-agent sessions,
-such as Claude Code, Codex, Gemini CLI, Copilot CLI and Antigravity CLI, in editor tabs.
+such as Claude Code, Codex, Antigravity CLI, Copilot CLI and Gemini CLI, in editor tabs.
 
 - Click **New Agent Tab** in the main toolbar or the **Tools** menu, or press **Ctrl+Alt+A** (**⌘⌥A** on
   macOS), to start the default agent in the project root.
@@ -61,9 +61,9 @@ The plugin knows these agents:
 |---|---|---|---|
 | `claude` | Claude Code | `claude` | positional |
 | `codex` | Codex | `codex --no-daemon` and `-c` options that add Agent Tabs messaging; needs Codex 0.158 or later | positional |
-| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
-| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
 | `agy` | Antigravity CLI | `agy` | `-i <prompt>` |
+| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
+| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 
 The menus list only agents whose command is on the IDE's `PATH`. On Windows, the plugin
 also looks for `.exe`, `.cmd`, `.bat` and `.ps1` files.
@@ -111,6 +111,25 @@ Open **Settings > Tools > Agent Tabs**.
 |---|---|
 | Default agent | The agent that **New Agent Tab** opens. Saved in `~/.ide-agent-tabs/config.json`. |
 | Open on startup | When to open the default agent as a project opens. See [Open on startup](#open-on-startup). |
+
+The page has two more groups. Their settings are shared with VS Code and the MCP server, saved in
+`~/.ide-agent-tabs/config.json`. A tab request that names an IDE, a terminal or an agent overrides them.
+The choices in the terminal and shell lists come from `~/.ide-agent-tabs/detected.json`, which the MCP
+server writes. Without that file, only **Automatic** is listed, plus any value already saved.
+
+**IDE tabs**
+
+| Setting | Key | Description |
+|---|---|---|
+| Open new tabs in | `tabRouting` | Where a new agent tab opens when no IDE or terminal is named. `project` (**IDE that has the project open**, the default) or `caller` (**IDE the request came from**). |
+
+**Terminal tabs**
+
+| Setting | Key | Description |
+|---|---|---|
+| Preferred terminal | `terminal` | Terminal for agent tabs when no IDE is running or a terminal is asked for. **Automatic** or a detected terminal. |
+| Shell (Windows) | `shell` | PowerShell that runs agent tabs in a terminal. **Automatic**, a detected PowerShell, or **Custom path…**. Windows only. |
+| Terminal window | `terminalWindow` | Whether terminal tabs join your last window or a window kept for Agent Tabs. `last` (**Use my last window**, the default) or `dedicated` (**A dedicated Agent Tabs window**). |
 
 ### Open on startup
 

@@ -2,8 +2,8 @@
   "name": "ide-agent-tabs",
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
-  "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI, Antigravity CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.20",
+  "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and other agent CLIs in editor tabs, from a button or from another agent.",
+  "version": "0.1.21",
   "publisher": "alexk413x",
   "license": "LicenseRef-Proprietary",
   "repository": {
@@ -21,15 +21,19 @@
     "agent",
     "claude",
     "codex",
-    "gemini",
-    "copilot",
     "agy",
+    "copilot",
+    "gemini",
     "terminal"
   ],
   "main": "./dist/extension.js",
   "capabilities": {
     "untrustedWorkspaces": {
-      "supported": true
+      "supported": true,
+      "restrictedConfigurations": [
+        "ideAgentTabs.preferredTerminal",
+        "ideAgentTabs.windowsShell"
+      ]
     },
     "virtualWorkspaces": false
   },
@@ -37,57 +41,126 @@
     "*"
   ],
   "contributes": {
-    "configuration": {
-      "title": "Agent Tabs",
-      "properties": {
-        "ideAgentTabs.defaultAgent": {
-          "type": "string",
-          "default": "claude",
-          "enum": [
-            "claude",
-            "codex",
-            "gemini",
-            "copilot",
-            "agy"
-          ],
-          "enumItemLabels": [
-            "Claude Code",
-            "Codex",
-            "Gemini CLI",
-            "Copilot CLI",
-            "Antigravity CLI"
-          ],
-          "enumDescriptions": [
-            "Claude Code.",
-            "Codex.",
-            "Gemini CLI.",
-            "Copilot CLI.",
-            "Antigravity CLI."
-          ],
-          "description": "The agent that the editor title button, the status bar item and startup open."
+    "configuration": [
+      {
+        "title": "Agent Tabs",
+        "properties": {
+          "ideAgentTabs.defaultAgent": {
+            "type": "string",
+            "default": "claude",
+            "enum": [
+              "claude",
+              "codex",
+              "agy",
+              "copilot",
+              "gemini"
+            ],
+            "enumItemLabels": [
+              "Claude Code",
+              "Codex",
+              "Antigravity CLI",
+              "Copilot CLI",
+              "Gemini CLI"
+            ],
+            "enumDescriptions": [
+              "Claude Code.",
+              "Codex.",
+              "Antigravity CLI.",
+              "Copilot CLI.",
+              "Gemini CLI."
+            ],
+            "description": "The agent that the editor title button, the status bar item and startup open.",
+            "order": 1
+          },
+          "ideAgentTabs.openOnStartup": {
+            "type": "string",
+            "default": "claudeFolder",
+            "enum": [
+              "claudeFolder",
+              "always",
+              "never"
+            ],
+            "enumItemLabels": [
+              "When the project has a .claude folder",
+              "Always",
+              "Never"
+            ],
+            "enumDescriptions": [
+              "Open the default agent when a window or added folder has a .claude folder at its root.",
+              "Open the default agent when a window with a folder opens, or a folder is added.",
+              "Don't open an agent tab on startup."
+            ],
+            "description": "When to open the default agent in an editor tab without a click.",
+            "order": 2
+          }
         },
-        "ideAgentTabs.openOnStartup": {
-          "type": "string",
-          "default": "claudeFolder",
-          "enum": [
-            "claudeFolder",
-            "always",
-            "never"
-          ],
-          "enumItemLabels": [
-            "When the project has a .claude folder",
-            "Always",
-            "Never"
-          ],
-          "enumDescriptions": [
-            "Open the default agent when a window or added folder has a .claude folder at its root.",
-            "Open the default agent when a window with a folder opens, or a folder is added.",
-            "Don't open an agent tab on startup."
-          ],
-          "description": "When to open the default agent in an editor tab without a click."
+        "order": 1
+      },
+      {
+        "title": "Agent Tabs: IDE tabs",
+        "order": 2,
+        "properties": {
+          "ideAgentTabs.openNewTabsIn": {
+            "type": "string",
+            "scope": "machine",
+            "default": "project",
+            "enum": [
+              "project",
+              "caller"
+            ],
+            "enumItemLabels": [
+              "IDE that has the project open",
+              "IDE the request came from"
+            ],
+            "enumDescriptions": [
+              "Open the tab in the IDE that has the project open, then in the IDE the request came from, then in the most recent IDE, then in a terminal.",
+              "Open the tab in the IDE the request came from, even if another IDE has the project. Match the project only when the request doesn't come from an IDE. A request from a terminal tab opens the new tab in that terminal window."
+            ],
+            "description": "Where a new agent tab opens when no IDE or terminal is named.",
+            "order": 1
+          }
+        }
+      },
+      {
+        "title": "Agent Tabs: Terminal tabs",
+        "order": 3,
+        "properties": {
+          "ideAgentTabs.preferredTerminal": {
+            "type": "string",
+            "scope": "machine",
+            "default": "auto",
+            "markdownDescription": "Terminal for agent tabs when no IDE is running or a terminal is asked for. `auto` picks the first installed terminal. [Choose…](command:ideAgentTabs.choosePreferredTerminal)",
+            "order": 1
+          },
+          "ideAgentTabs.windowsShell": {
+            "type": "string",
+            "scope": "machine",
+            "default": "auto",
+            "markdownDescription": "PowerShell that runs agent tabs in a terminal. Windows only. `auto` picks the newest PowerShell 7, else Windows PowerShell 5.1. [Choose…](command:ideAgentTabs.chooseWindowsShell)",
+            "order": 2
+          },
+          "ideAgentTabs.terminalWindow": {
+            "type": "string",
+            "scope": "machine",
+            "default": "last",
+            "enum": [
+              "last",
+              "dedicated"
+            ],
+            "enumItemLabels": [
+              "Use my last window",
+              "A dedicated Agent Tabs window"
+            ],
+            "enumDescriptions": [
+              "Open terminal tabs in the terminal window you used last.",
+              "Open terminal tabs in a window kept for Agent Tabs."
+            ],
+            "description": "Whether terminal tabs join your last window or a window kept for Agent Tabs.",
+            "order": 3
+          }
         }
       }
-    },
+    ],
     "commands": [
       {
         "command": "ideAgentTabs.newTab",
@@ -114,6 +187,11 @@
         }
       },
       {
+        "command": "ideAgentTabs.open.claude",
+        "title": "Claude Code",
+        "category": "Agent Tabs"
+      },
+      {
         "command": "ideAgentTabs.newTab.codex",
         "title": "New Codex Tab",
         "category": "Agent Tabs",
@@ -123,22 +201,9 @@
         }
       },
       {
-        "command": "ideAgentTabs.newTab.gemini",
-        "title": "New Gemini CLI Tab",
-        "category": "Agent Tabs",
-        "icon": {
-          "light": "resources/icons/agents/gemini_new.svg",
-          "dark": "resources/icons/agents/gemini_new_dark.svg"
-        }
-      },
-      {
-        "command": "ideAgentTabs.newTab.copilot",
-        "title": "New Copilot CLI Tab",
-        "category": "Agent Tabs",
-        "icon": {
-          "light": "resources/icons/agents/copilot_new.svg",
-          "dark": "resources/icons/agents/copilot_new_dark.svg"
-        }
+        "command": "ideAgentTabs.open.codex",
+        "title": "Codex",
+        "category": "Agent Tabs"
       },
       {
         "command": "ideAgentTabs.newTab.agy",
@@ -159,19 +224,18 @@
         }
       },
       {
-        "command": "ideAgentTabs.open.claude",
-        "title": "Claude Code",
+        "command": "ideAgentTabs.open.agy",
+        "title": "Antigravity CLI",
         "category": "Agent Tabs"
       },
       {
-        "command": "ideAgentTabs.open.codex",
-        "title": "Codex",
-        "category": "Agent Tabs"
-      },
-      {
-        "command": "ideAgentTabs.open.gemini",
-        "title": "Gemini CLI",
-        "category": "Agent Tabs"
+        "command": "ideAgentTabs.newTab.copilot",
+        "title": "New Copilot CLI Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/copilot_new.svg",
+          "dark": "resources/icons/agents/copilot_new_dark.svg"
+        }
       },
       {
         "command": "ideAgentTabs.open.copilot",
@@ -179,8 +243,27 @@
         "category": "Agent Tabs"
       },
       {
-        "command": "ideAgentTabs.open.agy",
-        "title": "Antigravity CLI",
+        "command": "ideAgentTabs.newTab.gemini",
+        "title": "New Gemini CLI Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/gemini_new.svg",
+          "dark": "resources/icons/agents/gemini_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.open.gemini",
+        "title": "Gemini CLI",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.choosePreferredTerminal",
+        "title": "Choose Preferred Terminal…",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.chooseWindowsShell",
+        "title": "Choose Windows Shell…",
         "category": "Agent Tabs"
       },
       {
@@ -209,10 +292,10 @@
         "when": "ideAgentTabs.buttonAgent == codex"
       },
       {
-        "command": "ideAgentTabs.newTab.gemini",
+        "command": "ideAgentTabs.newTab.agy",
         "key": "ctrl+alt+a",
         "mac": "cmd+alt+a",
-        "when": "ideAgentTabs.buttonAgent == gemini"
+        "when": "ideAgentTabs.buttonAgent == agy"
       },
       {
         "command": "ideAgentTabs.newTab.copilot",
@@ -221,10 +304,10 @@
         "when": "ideAgentTabs.buttonAgent == copilot"
       },
       {
-        "command": "ideAgentTabs.newTab.agy",
+        "command": "ideAgentTabs.newTab.gemini",
         "key": "ctrl+alt+a",
         "mac": "cmd+alt+a",
-        "when": "ideAgentTabs.buttonAgent == agy"
+        "when": "ideAgentTabs.buttonAgent == gemini"
       },
       {
         "command": "ideAgentTabs.newTab.other",
@@ -246,8 +329,8 @@
           "group": "navigation@-0.2"
         },
         {
-          "command": "ideAgentTabs.newTab.gemini",
-          "when": "ideAgentTabs.buttonAgent == gemini",
+          "command": "ideAgentTabs.newTab.agy",
+          "when": "ideAgentTabs.buttonAgent == agy",
           "group": "navigation@-0.2"
         },
         {
@@ -256,8 +339,8 @@
           "group": "navigation@-0.2"
         },
         {
-          "command": "ideAgentTabs.newTab.agy",
-          "when": "ideAgentTabs.buttonAgent == agy",
+          "command": "ideAgentTabs.newTab.gemini",
+          "when": "ideAgentTabs.buttonAgent == gemini",
           "group": "navigation@-0.2"
         },
         {
@@ -276,15 +359,15 @@
           "when": "false"
         },
         {
+          "command": "ideAgentTabs.open.claude",
+          "when": "false"
+        },
+        {
           "command": "ideAgentTabs.newTab.codex",
           "when": "false"
         },
         {
-          "command": "ideAgentTabs.newTab.gemini",
-          "when": "false"
-        },
-        {
-          "command": "ideAgentTabs.newTab.copilot",
+          "command": "ideAgentTabs.open.codex",
           "when": "false"
         },
         {
@@ -296,15 +379,11 @@
           "when": "false"
         },
         {
-          "command": "ideAgentTabs.open.claude",
+          "command": "ideAgentTabs.open.agy",
           "when": "false"
         },
         {
-          "command": "ideAgentTabs.open.codex",
-          "when": "false"
-        },
-        {
-          "command": "ideAgentTabs.open.gemini",
+          "command": "ideAgentTabs.newTab.copilot",
           "when": "false"
         },
         {
@@ -312,8 +391,16 @@
           "when": "false"
         },
         {
-          "command": "ideAgentTabs.open.agy",
+          "command": "ideAgentTabs.newTab.gemini",
           "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.gemini",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.chooseWindowsShell",
+          "when": "isWindows"
         }
       ],
       "ideAgentTabs.agents": [
@@ -328,8 +415,8 @@
           "group": "1_agents@1"
         },
         {
-          "command": "ideAgentTabs.open.gemini",
-          "when": "ideAgentTabs.installed.gemini",
+          "command": "ideAgentTabs.open.agy",
+          "when": "ideAgentTabs.installed.agy",
           "group": "1_agents@2"
         },
         {
@@ -338,8 +425,8 @@
           "group": "1_agents@3"
         },
         {
-          "command": "ideAgentTabs.open.agy",
-          "when": "ideAgentTabs.installed.agy",
+          "command": "ideAgentTabs.open.gemini",
+          "when": "ideAgentTabs.installed.gemini",
           "group": "1_agents@4"
         },
         {

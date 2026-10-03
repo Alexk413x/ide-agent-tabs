@@ -6,13 +6,22 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 
 ## 0.6.0
 
-Plugin and MCP server 0.6.0, with VS Code extension 0.1.20 and JetBrains plugin 0.4.3 bundled. Both IDE
-packages add the `agy` profile and icon and the Codex `Interrupt` hook.
+Plugin and MCP server 0.6.0, with VS Code extension 0.1.21 and JetBrains plugin 0.4.4 bundled. Both IDE
+packages add the `agy` profile and icon, the Codex `Interrupt` hook and the tab settings.
 
 ### Fixed
 
-- `send_message` wakes a fresh tab. A Claude tab reports idle at `SessionStart`, and a tab that
-  `open_tab` starts without a prompt counts as idle 10 seconds after launch.
+- `send_message` wakes a fresh tab. A Claude tab reports idle at `SessionStart` with source `startup`,
+  and a tab that `open_tab` starts without a prompt counts as idle 10 seconds after launch.
+- A wake line no longer lands in a prompt the user is typing in a Claude tab. Claude Code's `Stop` fires
+  while the user may already be typing, so `Stop`, `StopFailure` and `SessionStart` with source `clear`
+  or `resume` record `inputIdle: false`, and a sender queues the message instead of typing. The
+  follow-up retry types the wake line after Claude's `idle_prompt` notification (about 60 seconds with no
+  input) sets `inputIdle: true`. Codex, Gemini CLI, Copilot CLI and Antigravity CLI expose no input idle
+  signal, so they wake at turn end, and a line can still land in a prompt the user is typing.
+- Copilot CLI's `agent_idle` notification reports a background agent, so it no longer marks the session
+  idle. `elicitation_dialog` counts as `permission`, so no wake line answers a question.
+- The VS Code status bar tooltip puts each line on its own line.
 - The sender retries a queued wake-up every 15 seconds until the recipient reads the message, ends, or
   10 minutes pass. A lost wake line no longer needs `wait_for_message` to be retried.
 - `read_messages` and `wait_for_message` return at most 40,000 characters and leave the rest unread. A
@@ -48,6 +57,28 @@ packages add the `agy` profile and icon and the Codex `Interrupt` hook.
 
 ### Added
 
+- Four tab settings in `~/.ide-agent-tabs/config.json`, shared by the VS Code extension, the JetBrains
+  plugin, the MCP server and the setup skill. VS Code groups them as **Agent Tabs: IDE tabs** and
+  **Agent Tabs: Terminal tabs**, and JetBrains as **IDE tabs** and **Terminal tabs**. An explicit `ide`,
+  agent or terminal name always wins.
+  - `tabRouting`: `project` (default) or `caller`. With `caller`, a new tab opens in the IDE the request
+    came from, and a request from a terminal tab opens in that terminal window.
+  - `terminal`: `auto` or a detected terminal id.
+  - `shell` (Windows): `auto` or the path of a PowerShell executable.
+  - `terminalWindow`: `last` (default) or `dedicated`.
+  VS Code settings are machine-scoped, and only the user-level value reaches `config.json`.
+- `~/.ide-agent-tabs/detected.json` lists the detected terminals and PowerShell installs for the IDE
+  settings. The server writes it at start, on `list_ides` and from the session start hook. `list_ides`
+  also returns `shells`.
+- PowerShell detection on Windows: `pwsh.exe` and `powershell.exe` on `PATH`, plus the MSI, winget,
+  preview and Microsoft Store installs and Windows PowerShell 5.1 in their standard folders. `auto`
+  picks the newest PowerShell 7 or later, else Windows PowerShell 5.1.
+- Dedicated window mode, `"terminalWindow": "dedicated"`: Windows Terminal uses the window `agent-tabs`,
+  WezTerm and kitty with remote control a window the server remembers, tmux the session `agent-tabs`,
+  and iTerm2 and Ghostty on macOS a window the server remembers. Ghostty on Linux and kitty without
+  remote control are unchanged.
+- Agents appear in one order everywhere: Claude, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, then
+  custom profiles.
 - Antigravity CLI (`agy`) is a built-in agent profile, labelled "Antigravity CLI", that starts with
   `agy -i <prompt>`. `--register agy` writes the server entry to `~/.gemini/config/mcp_config.json`, the
   `ide-agent-tabs` hook group (`PreInvocation`, `PostToolUse`, `Stop`) to `~/.gemini/config/hooks.json`,

@@ -1,7 +1,7 @@
 # Agent Tabs MCP server
 
 This MCP server lets an agent open, list and close agent tabs, and message other agent sessions. A tab
-runs an interactive agent CLI session, such as Claude Code, Codex, Gemini CLI, Copilot CLI or Antigravity CLI. The tab
+runs an interactive agent CLI session, such as Claude Code, Codex, Antigravity CLI, Copilot CLI or Gemini CLI. The tab
 opens in a running IDE that has the Agent Tabs extension, or in a terminal app when no IDE is running.
 
 The server speaks MCP over stdio. It reads the registry and calls each IDE's HTTP API, as described in
@@ -13,7 +13,7 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 
 | Tool | Input | Returns |
 |---|---|---|
-| `list_ides` | none | Running IDEs (`id`, `product`, `version`, `projects` with `focused`), and the terminals this machine supports with their capabilities |
+| `list_ides` | none | Running IDEs (`id`, `product`, `version`, `projects` with `focused`), the terminals this machine supports with their capabilities, and `shells`: the PowerShell installs a Windows terminal tab can use |
 | `list_agents` | none | Profiles (`name`, `label`, `command`, `installed`), the `default` agent, and any warnings about your config files |
 | `list_tabs` | `ide` (optional) | Open tabs across all IDEs and terminals, or in one |
 | `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, and a `note` when you need to act, such as attaching to tmux |
@@ -33,13 +33,16 @@ unchanged.
 ### How `open_tab` picks a place
 
 1. If you pass `ide`, the tab opens there.
-2. Otherwise, the tab opens in the IDE with an open project that contains `path`. The deepest project
+2. With `"tabRouting": "caller"` in `config.json`, the tab opens where the caller runs: in the caller's
+   own IDE, even when another IDE has the project open, or in a new tab of the caller's terminal window
+   when the caller runs in an Agent Tabs terminal tab. A caller outside an Agent Tabs tab goes on to step 3.
+3. Otherwise, the tab opens in the IDE with an open project that contains `path`. The deepest project
    wins; on a tie, the caller's own IDE, then the focused window, then the most recently started IDE.
-3. Otherwise, the tab opens in the caller's own IDE, when the caller runs in an Agent Tabs tab of a running
+4. Otherwise, the tab opens in the caller's own IDE, when the caller runs in an Agent Tabs tab of a running
    IDE.
-4. Otherwise, the tab opens in the most recently started IDE that has a project open.
-5. Otherwise, the tab opens in the terminal named by `"terminal"` in `config.json`.
-6. Otherwise, the tab opens in the first installed terminal in the platform's order: Windows Terminal,
+5. Otherwise, the tab opens in the most recently started IDE that has a project open.
+6. Otherwise, the tab opens in the terminal named by `"terminal"` in `config.json`.
+7. Otherwise, the tab opens in the first installed terminal in the platform's order: Windows Terminal,
    then WezTerm on Windows; Ghostty, iTerm2, kitty, WezTerm, then tmux on macOS; Ghostty, kitty,
    WezTerm, then tmux on Linux.
 
@@ -95,9 +98,9 @@ to answer a message that needs no answer.
 |---|---|---|---|---|
 | Claude Code | From the plugin | Yes | Yes | Yes |
 | Codex | In Codex tabs only, from the tab's arguments; trusted, with no `/hooks` review | Yes | Yes | Yes |
-| Gemini CLI | Added by `--register gemini` | Yes | Yes | Yes |
-| Copilot CLI | Added by `--register copilot` | No: Copilot CLI drops that hook's output | Yes | Yes |
 | Antigravity CLI | Added by `--register agy` | Yes, before each model call | Yes, through the same hook; Antigravity CLI ignores a `PostToolUse` hook's output | Yes |
+| Copilot CLI | Added by `--register copilot` | No: Copilot CLI drops that hook's output | Yes | Yes |
+| Gemini CLI | Added by `--register gemini` | Yes | Yes | Yes |
 | OpenCode | None | No | No | No |
 
 | Where the recipient runs | Wake-up |
@@ -144,7 +147,9 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 |---|---|
 | `endpoints/*.json` | One registry entry per running IDE. The server skips entries with an unknown `protocol` or a URL that isn't on the loopback address, and deletes entries whose process has ended. |
 | `agents.json` | Your own agent profiles. The rules match the JetBrains plugin exactly. |
-| `config.json` | `defaultAgent`; `terminal`, the preferred terminal when no IDE is running; and `jev`, the Jev settings. |
+| `config.json` | `defaultAgent`, `jev` (the Jev settings) and the tab settings below. The JetBrains plugin and the VS Code extension edit the same keys. |
+| `detected.json` | The terminals and, on Windows, the PowerShell installs this machine has, for the IDE settings lists. The server writes it at start, on each `list_ides` and from the Claude Code session start hook; don't edit it. |
+| `terminal-windows.json` | The windows kept for Agent Tabs with `"terminalWindow": "dedicated"`. The server writes it; don't edit it. |
 | `jev/ledger.jsonl` | One line per Jev call: time, tool, agent, tab, model, question count, input tokens and result. |
 | `terminal-tabs.json` | The terminal tabs this server opened. The server writes it; don't edit it. |
 | `sessions/*.json` | One presence file per running server: session id, agent, folder, process id, host and state. |
@@ -152,20 +157,30 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `launch/` | Short-lived launch files. Each is deleted as soon as its tab starts. |
 | `mcp/` | A copy of the server for other agent CLIs. See [Other agents](#other-agents). |
 
+| `config.json` key | Values | Default |
+|---|---|---|
+| `tabRouting` | `"project"`: the IDE that has the project open. `"caller"`: the IDE or terminal window the request came from. | `"project"` |
+| `terminal` | `"auto"`, or a terminal id such as `windows-terminal`, `wezterm`, `kitty`, `tmux`, `ghostty` or `iterm2` | `"auto"`: the platform's order |
+| `shell` | Windows only. `"auto"`, or the absolute path of a PowerShell executable | `"auto"`: the newest PowerShell 7 or later, else Windows PowerShell 5.1 |
+| `terminalWindow` | `"last"`: your last window. `"dedicated"`: a window kept for Agent Tabs. | `"last"` |
+
+An `ide` passed to `open_tab` always wins over these settings. The server ignores a value it doesn't know,
+uses the default, and reports a warning in `list_agents`.
+
 `list_agents` reads the profile files itself instead of asking an IDE. A terminal tab uses the same
 profiles, so the answer holds whether or not an IDE is running. `installed` reflects the server's `PATH`,
 which is the calling agent's `PATH`.
 
 ## Other agents
 
-Codex, Gemini CLI, Copilot CLI, Antigravity CLI and OpenCode can run this server too. The setup skill
-registers it with the agents you choose, through `sync-ides.mjs`. For Gemini CLI, Copilot CLI and
-Antigravity CLI, registering also adds the messaging hooks. Codex tabs bring their own server and hooks,
+Codex, Antigravity CLI, Copilot CLI, Gemini CLI and OpenCode can run this server too. The setup skill
+registers it with the agents you choose, through `sync-ides.mjs`. For Antigravity CLI, Copilot CLI and
+Gemini CLI, registering also adds the messaging hooks. Codex tabs bring their own server and hooks,
 so Codex needs registering only for Codex sessions outside tabs, and only on macOS and Linux:
 
 ```sh
 node dist/sync-ides.mjs --agents
-node dist/sync-ides.mjs --register codex gemini copilot agy opencode
+node dist/sync-ides.mjs --register codex agy copilot gemini opencode
 node dist/sync-ides.mjs --unregister codex
 ```
 
@@ -179,9 +194,9 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
 | Agent | Where the entry goes | How |
 |---|---|---|
 | Codex, not on Windows | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- node <path>` |
-| Gemini CLI | `~/.gemini/settings.json`, user scope | `gemini mcp add --scope user ide-agent-tabs node <path>` |
-| Copilot CLI | `mcpServers` in `~/.copilot/mcp-config.json`, or `$COPILOT_HOME/mcp-config.json` | The script edits the file. |
 | Antigravity CLI | `mcpServers` in `~/.gemini/config/mcp_config.json` | The script edits the file. |
+| Copilot CLI | `mcpServers` in `~/.copilot/mcp-config.json`, or `$COPILOT_HOME/mcp-config.json` | The script edits the file. |
+| Gemini CLI | `~/.gemini/settings.json`, user scope | `gemini mcp add --scope user ide-agent-tabs node <path>` |
 | OpenCode | `mcp` in `~/.config/opencode/opencode.json`, or under `$XDG_CONFIG_HOME` | The script edits the file. |
 
 - `~/.ide-agent-tabs/mcp/` holds `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt`, in the same
@@ -217,9 +232,9 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
 
   | Agent | Where the hooks go |
   |---|---|
-  | Gemini CLI | `hooks` in `~/.gemini/settings.json` |
-  | Copilot CLI | Its own file, `~/.copilot/hooks/ide-agent-tabs.json`, or under `$COPILOT_HOME` |
   | Antigravity CLI | The `ide-agent-tabs` group in `~/.gemini/config/hooks.json` |
+  | Copilot CLI | Its own file, `~/.copilot/hooks/ide-agent-tabs.json`, or under `$COPILOT_HOME` |
+  | Gemini CLI | `hooks` in `~/.gemini/settings.json` |
 
   `--unregister` removes only the Agent Tabs entries and leaves your other hooks in place.
 - Antigravity CLI notes:
@@ -274,6 +289,26 @@ Linux) with `-l -i -c`. It sources `agent-launch.sh` or `agent-launch.fish`, and
 with an interactive login shell, so the tab stays open after the agent exits. The environment variable
 names you pass in `env` must be shell identifiers.
 
+### Terminal window
+
+With `"terminalWindow": "dedicated"`, terminal tabs open in a window kept for Agent Tabs instead of your
+last window. When that window is closed, the next tab opens a new one.
+
+| Terminal | Dedicated window |
+|---|---|
+| Windows Terminal | The named window `agent-tabs` (`wt.exe -w agent-tabs`) |
+| WezTerm | A window the server opens with `wezterm cli spawn --new-window`, then targets with `--window-id` |
+| kitty, remote control on | An OS window the server opens with `--type=os-window`, then targets by one of its windows |
+| tmux | The session `agent-tabs`; `open_tab` returns a `note` to attach to it when no client is attached |
+| iTerm2, Ghostty on macOS | A window the server opens, then targets by its AppleScript `id` |
+| Ghostty on Linux, kitty with remote control off | No change: each agent already gets its own window |
+
+The server keeps the WezTerm, kitty, iTerm2 and Ghostty window ids in `terminal-windows.json`. With
+`"tabRouting": "caller"`, a caller in a terminal tab gets the new tab in its own window, whatever
+`terminalWindow` says. Windows Terminal can't name the window a tab runs in, so a caller's tab there opens
+in the `agent-tabs` window when the caller's tab opened there, and otherwise in the most recently used
+window.
+
 A terminal that the server starts, such as a first Windows Terminal window, a new Ghostty or kitty
 process, a WezTerm GUI or a tmux server, gets the server's environment without the variables that
 identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
@@ -281,7 +316,15 @@ identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 ### Windows Terminal
 
 - The server runs `wt.exe -w 0 new-tab`, which opens the tab in the most recently used window. The tab
-  starts `pwsh` if it's installed, or Windows PowerShell otherwise, with `agent-launch.ps1`.
+  runs `agent-launch.ps1` in the PowerShell that `"shell"` in `config.json` names, or by default in the
+  newest PowerShell 7 or later, else Windows PowerShell 5.1.
+- The server looks for PowerShell on `PATH` (`pwsh.exe`, `powershell.exe`), and in the standard folders
+  even when `PATH` doesn't list them: `%ProgramFiles%\PowerShell\<version>\pwsh.exe` (MSI or winget, and
+  `7-preview`), the Microsoft Store alias `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, and
+  `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`. It reads a version from the folder or
+  Store package name where it can, and otherwise runs that PowerShell once during detection, never when it
+  opens a tab. A stable release wins over a preview of the same or a lower version. WezTerm on Windows uses
+  the same PowerShell.
 - A new tab starts in a Windows Terminal process that is already running, so it doesn't inherit the
   server's environment. The launch file carries everything the tab needs.
 - If Windows Terminal isn't running, `wt.exe` starts it with the server's environment, and every later
@@ -307,7 +350,8 @@ identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
   the Claude desktop app, may control iTerm. Allow it. To change the answer later, use **System Settings >
   Privacy & Security > Automation**. If the permission is denied, `open_tab` returns an error that names
   this setting, and the server skips iTerm2 when it picks a terminal until the server restarts.
-- A new tab opens in the current iTerm2 window, or in a new window when none is open. If iTerm2 isn't
+- A new tab opens in the current iTerm2 window, or in a new window when none is open, unless
+  `terminalWindow` or `tabRouting` picks another window. If iTerm2 isn't
   running, AppleScript starts it.
 - Each tab is tracked by its session's `unique ID`. `list_tabs` reads every session's id, and
   `close_tab` closes the session with the recorded id.

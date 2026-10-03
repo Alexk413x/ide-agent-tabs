@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up Agent Tabs on this machine - check Node.js, install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and terminal, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin and turn on Jev judgments. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
+description: Set up Agent Tabs on this machine - check Node.js, install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and where new tabs open, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin and turn on Jev judgments. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
 argument-hint: "[--check]"
 disable-model-invocation: true
 ---
@@ -104,7 +104,7 @@ The JSON report lists each editor with `ok`, or an `error`. Tell the user to rel
 
 ## 6. Other agents
 
-Codex, Gemini CLI, Copilot CLI, Antigravity CLI and OpenCode can use Agent Tabs too. With it, they can list IDEs, open,
+Codex, Antigravity CLI, Copilot CLI, Gemini CLI and OpenCode can use Agent Tabs too. With it, they can list IDEs, open,
 list and close agent tabs, and message any other agent session on this machine, including this one.
 
 A Codex agent tab needs no registration: it starts Codex with its own Agent Tabs server and messaging
@@ -134,9 +134,9 @@ config and would open a console window each time it starts the server.
    node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --register <agent> [<agent>...]
    ```
 
-   Registering also adds the messaging hooks: to `~/.gemini/settings.json` for Gemini CLI, as
-   `~/.copilot/hooks/ide-agent-tabs.json` for Copilot CLI, and as the `ide-agent-tabs` group in
-   `~/.gemini/config/hooks.json` for Antigravity CLI. For Antigravity CLI, it also adds the allow rule
+   Registering also adds the messaging hooks: as the `ide-agent-tabs` group in
+   `~/.gemini/config/hooks.json` for Antigravity CLI, as `~/.copilot/hooks/ide-agent-tabs.json` for
+   Copilot CLI, and to `~/.gemini/settings.json` for Gemini CLI. For Antigravity CLI, it also adds the allow rule
    `mcp(ide-agent-tabs/*)` to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`, so the
    agent doesn't ask before each Agent Tabs tool call. For Codex, it sets `env_vars` and
    `tool_timeout_sec` in the server's table in `~/.codex/config.toml`, and removes Agent Tabs hooks that
@@ -149,13 +149,49 @@ config and would open a console window each time it starts the server.
 4. Tell the user to restart open sessions of those agents, so they load the server and the hooks. Tell
    them that Codex sessions get messaging hooks only in Codex agent tabs.
 
-## 7. Terminal
+## 7. Tab settings and terminal
 
-Ask whether the user wants agent tabs outside IDEs, in a terminal app. If not, skip this step.
+Four settings in `~/.ide-agent-tabs/config.json` decide where a new tab opens when a request names no
+IDE or terminal. An explicit name always wins: an `open_tab` call that names `ide` or an agent, or a
+user who names an IDE or terminal, overrides these settings. A missing key means the default.
 
-`mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_ides` shows the terminal apps installed here. Ask which one `open_tab` uses when no IDE fits, and
-write the choice to `~/.ide-agent-tabs/config.json` as `"terminal"`. Without one, the server uses the
-first installed terminal in this order:
+**IDE tabs**
+
+| Setting | Key | Values | Default |
+|---|---|---|---|
+| Open new tabs in | `tabRouting` | `project` (IDE that has the project open), `caller` (IDE the request came from) | `project` |
+
+- Open new tabs in: Where a new agent tab opens when no IDE or terminal is named.
+
+**Terminal tabs**
+
+| Setting | Key | Values | Default |
+|---|---|---|---|
+| Preferred terminal | `terminal` | `auto`, or a terminal id such as `windows-terminal`, `wezterm`, `kitty`, `tmux`, `ghostty` or `iterm2` | `auto` |
+| Shell (Windows) | `shell` | `auto`, or the absolute path to a PowerShell executable | `auto` |
+| Terminal window | `terminalWindow` | `last` (use my last window), `dedicated` (a dedicated Agent Tabs window) | `last` |
+
+- Preferred terminal: Terminal for agent tabs when no IDE is running or a terminal is asked for.
+- Shell (Windows): PowerShell that runs agent tabs in a terminal. `auto` picks the newest PowerShell 7
+  of any install (Store, MSI or winget), else Windows PowerShell 5.1.
+- Terminal window: Whether terminal tabs join your last window or a window kept for Agent Tabs.
+
+To change a setting, use the IDE settings or edit `config.json` and keep every other key:
+
+- VS Code and editors built on it: **Settings > Extensions > Agent Tabs**, in the sections **Agent Tabs:
+  IDE tabs** and **Agent Tabs: Terminal tabs**. The terminal and shell settings have a **Choose…** link
+  that lists the detected options.
+- JetBrains IDEs: **Settings > Tools > Agent Tabs**, in the groups **IDE tabs** and **Terminal tabs**.
+  The Shell row shows on Windows only.
+
+The lists of terminals and PowerShell installs come from `~/.ide-agent-tabs/detected.json`, which the
+MCP server writes. `mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_ides` shows the same `terminals`, and
+on Windows the `shells`.
+
+Ask whether the user wants to change any of them. Ask whether they want agent tabs outside IDEs, in a
+terminal app. If not, skip the rest of this step. Otherwise ask which terminal `open_tab` uses when no
+IDE fits, and write the choice as `"terminal"`. Without one, the server uses the first installed
+terminal in this order:
 
 - Windows: `windows-terminal`, `wezterm`.
 - macOS: `ghostty`, `iterm2`, `kitty`, `wezterm`, `tmux`.

@@ -210,9 +210,9 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
     before.agents.map((a) => [a.agent, a.installed, a.registered, a.hooks, a.error]),
     [
       ['codex', true, false, null, undefined],
-      ['gemini', true, false, false, undefined],
-      ['copilot', true, false, false, undefined],
       ['agy', true, false, false, undefined],
+      ['copilot', true, false, false, undefined],
+      ['gemini', true, false, false, undefined],
       ['opencode', true, false, null, undefined],
     ],
   );
@@ -316,7 +316,7 @@ test('refuses configs it cannot edit safely and agents that are missing', async 
   assert.match(byAgent.copilot!.error!, /isn't plain JSON/);
   assert.match(byAgent.opencode!.error!, /opencode\.jsonc isn't plain JSON/);
   assert.equal(byAgent.codex!.error, 'not installed');
-  assert.ok(report.errors.includes('nope: unknown agent; use codex, gemini, copilot, agy, opencode'));
+  assert.ok(report.errors.includes('nope: unknown agent; use codex, agy, copilot, gemini, opencode'));
   assert.equal(readFileSync(copilotFile, 'utf8'), '{ "mcpServers": ');
   assert.equal(readFileSync(jsoncFile, 'utf8'), jsonc);
   assert.ok(!existsSync(path.join(path.dirname(jsoncFile), 'opencode.json')));

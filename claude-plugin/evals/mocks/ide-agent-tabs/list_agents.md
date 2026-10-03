@@ -17,10 +17,10 @@
       "installed": true
     },
     {
-      "name": "gemini",
-      "label": "Gemini CLI",
-      "command": "gemini",
-      "installed": true
+      "name": "agy",
+      "label": "Antigravity CLI",
+      "command": "agy",
+      "installed": false
     },
     {
       "name": "copilot",
@@ -29,10 +29,10 @@
       "installed": false
     },
     {
-      "name": "agy",
-      "label": "Antigravity CLI",
-      "command": "agy",
-      "installed": false
+      "name": "gemini",
+      "label": "Gemini CLI",
+      "command": "gemini",
+      "installed": true
     }
   ]
 }

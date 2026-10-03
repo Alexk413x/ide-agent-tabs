@@ -6,8 +6,10 @@ import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, powerShellSpec, type LaunchSpec } from '../spec.js';
 import { findExecutable, GUI_SETTLE_MS, startDetached, STARTUP_GRACE_MS, terminalEnvironment } from './processes.js';
 import { argvModeCommand, checkArgvPaths, checkInputLine, ENTER_DELAY_MS, launcherName, loginShell } from './shell.js';
-import type { TerminalContext, TerminalDriver, TerminalTab } from './types.js';
-import { findPowerShell, LAUNCHER_PS1, powerShellArgv } from './windowsTerminal.js';
+import type { OpenOptions, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
+import { readWindow, rememberWindow, type RememberedWindow } from './windowMemory.js';
+import { defaultPowerShell } from './powershell.js';
+import { LAUNCHER_PS1, powerShellArgv } from './windowsTerminal.js';
 
 export const WEZTERM = 'wezterm';
 const START_WAIT_MS = 10_000;
@@ -84,9 +86,19 @@ function cli(exe: string, socket: string, args: string[], env: NodeJS.ProcessEnv
   return run(exe, weztermCliArgs(args), { env: { ...env, WEZTERM_UNIX_SOCKET: socket }, timeoutMs });
 }
 
-export function weztermSpawnArgs(cwd: string, argv: string[]): string[] {
+export type WeztermPlace = { paneId: string } | { windowId: string } | { newWindow: true };
+
+function placeArgs(place: WeztermPlace | undefined): string[] {
+  if (!place) return [];
+  if ('newWindow' in place) return ['--new-window'];
+  const [flag, id] = 'paneId' in place ? ['--pane-id', place.paneId] : ['--window-id', place.windowId];
+  if (!/^\d+$/.test(id)) throw new Error(`not a WezTerm id: ${id}`);
+  return [flag, id];
+}
+
+export function weztermSpawnArgs(cwd: string, argv: string[], place?: WeztermPlace): string[] {
   checkArgvPaths('WezTerm', [cwd]);
-  return ['spawn', '--cwd', cwd, '--', ...argv];
+  return ['spawn', ...placeArgs(place), '--cwd', cwd, '--', ...argv];
 }
 
 export function weztermStartArgs(cwd: string, argv: string[]): string[] {
@@ -109,24 +121,34 @@ export function parsePaneId(stdout: string): string {
   return id;
 }
 
-export function parseWeztermPanes(stdout: string): string[] {
+export function parseWeztermPaneWindows(stdout: string): Map<string, string> {
   const panes: unknown = JSON.parse(stdout);
   if (!Array.isArray(panes)) throw new Error('unexpected answer from wezterm cli list');
-  return panes
-    .map((p) => (typeof p === 'object' && p !== null ? (p as { pane_id?: unknown }).pane_id : undefined))
-    .filter((id): id is number => typeof id === 'number')
-    .map(String);
+  const windows = new Map<string, string>();
+  for (const p of panes as { pane_id?: unknown; window_id?: unknown }[]) {
+    if (typeof p?.pane_id === 'number') windows.set(String(p.pane_id), typeof p.window_id === 'number' ? String(p.window_id) : '');
+  }
+  return windows;
+}
+
+export function parseWeztermPanes(stdout: string): string[] {
+  return [...parseWeztermPaneWindows(stdout).keys()];
 }
 
 export function isNoGuiError(stderr: string): boolean {
   return /connect|socket|no running|not running/i.test(stderr);
 }
 
-async function listPanes(exe: string, socket: string, env: NodeJS.ProcessEnv): Promise<Set<string> | undefined> {
+async function listPaneWindows(exe: string, socket: string, env: NodeJS.ProcessEnv): Promise<Map<string, string> | undefined> {
   const result = await cli(exe, socket, ['list', '--format', 'json'], env);
-  if (result.code === 0) return new Set(parseWeztermPanes(result.stdout));
+  if (result.code === 0) return parseWeztermPaneWindows(result.stdout);
   if (isNoGuiError(result.stderr)) return undefined;
   throw new Error(`wezterm cli list failed: ${result.stderr.trim()}`);
+}
+
+async function listPanes(exe: string, socket: string, env: NodeJS.ProcessEnv): Promise<Set<string> | undefined> {
+  const panes = await listPaneWindows(exe, socket, env);
+  return panes && new Set(panes.keys());
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -147,7 +169,7 @@ async function startGui(exe: string, args: string[], env: NodeJS.ProcessEnv): Pr
 
 function paneArgv(ctx: TerminalContext, spec: LaunchSpec, specFile: string): string[] {
   if (process.platform === 'win32') {
-    const argv = powerShellArgv(findPowerShell(ctx.pathVar), path.join(ctx.scriptsDir, LAUNCHER_PS1), specFile);
+    const argv = powerShellArgv(ctx.powerShell ?? defaultPowerShell(ctx.env), path.join(ctx.scriptsDir, LAUNCHER_PS1), specFile);
     checkArgvPaths('WezTerm', argv);
     return argv;
   }
@@ -156,13 +178,54 @@ function paneArgv(ctx: TerminalContext, spec: LaunchSpec, specFile: string): str
   return argvModeCommand(shell, path.join(ctx.scriptsDir, launcherName(shell)), specFile);
 }
 
+async function spawnOn(exe: string, socket: string, args: string[], env: NodeJS.ProcessEnv): Promise<{ socket: string; paneId: string } | undefined> {
+  const result = await cli(exe, socket, args, env, 30_000);
+  if (result.code === 0) return { socket, paneId: parsePaneId(result.stdout) };
+  if (!isNoGuiError(result.stderr)) throw new Error(`wezterm cli spawn failed: ${result.stderr.trim()}`);
+  return undefined;
+}
+
 async function spawnInGui(exe: string, args: string[], env: NodeJS.ProcessEnv): Promise<{ socket: string; paneId: string } | undefined> {
   for (const socket of guiSockets(env)) {
-    const result = await cli(exe, socket, args, env, 30_000);
-    if (result.code === 0) return { socket, paneId: parsePaneId(result.stdout) };
-    if (!isNoGuiError(result.stderr)) throw new Error(`wezterm cli spawn failed: ${result.stderr.trim()}`);
+    const pane = await spawnOn(exe, socket, args, env);
+    if (pane) return pane;
   }
   return undefined;
+}
+
+export interface WeztermTarget {
+  socket?: string;
+  place?: WeztermPlace;
+  remember: boolean;
+}
+
+export function planWeztermTargets(
+  options: OpenOptions | undefined,
+  nearPanes: Map<string, string> | undefined,
+  remembered: RememberedWindow | undefined,
+  rememberedPanes: Map<string, string> | undefined,
+): WeztermTarget[] {
+  const targets: WeztermTarget[] = [];
+  const near = options?.near;
+  if (near?.socket && near.terminalId && nearPanes?.has(near.terminalId)) targets.push({ socket: near.socket, place: { paneId: near.terminalId }, remember: false });
+  if (options?.window !== 'dedicated') return [...targets, { remember: false }];
+  if (remembered?.socket && [...(rememberedPanes?.values() ?? [])].includes(remembered.id)) {
+    targets.push({ socket: remembered.socket, place: { windowId: remembered.id }, remember: false });
+  }
+  return [...targets, { place: { newWindow: true }, remember: true }];
+}
+
+async function weztermTargets(exe: string, home: string, env: NodeJS.ProcessEnv, options: OpenOptions | undefined): Promise<WeztermTarget[]> {
+  const near = options?.near?.socket ? await listPaneWindows(exe, options.near.socket, env).catch(() => undefined) : undefined;
+  const remembered = options?.window === 'dedicated' ? await readWindow(home, WEZTERM) : undefined;
+  const panes = remembered?.socket ? await listPaneWindows(exe, remembered.socket, env).catch(() => undefined) : undefined;
+  return planWeztermTargets(options, near, remembered, panes);
+}
+
+async function rememberPaneWindow(exe: string, home: string, env: NodeJS.ProcessEnv, pane: { socket: string; paneId?: string }): Promise<void> {
+  const panes = await listPaneWindows(exe, pane.socket, env);
+  const windowId = pane.paneId !== undefined ? panes?.get(pane.paneId) : panes?.size ? [...panes.values()][0] : undefined;
+  if (windowId) await rememberWindow(home, WEZTERM, { id: windowId, socket: pane.socket });
 }
 
 function weztermPath(ctx: TerminalContext): string {
@@ -180,21 +243,28 @@ export const wezterm: TerminalDriver = {
     return findWezterm(ctx) !== undefined;
   },
 
-  async open(ctx, spec: LaunchSpec) {
+  async open(ctx, spec: LaunchSpec, _title, options) {
     const exe = weztermPath(ctx);
     const windows = process.platform === 'win32';
     const specFile = path.join(ctx.home, 'launch', `${spec.id}${windows ? '.json' : '.spec'}`);
     const argv = paneArgv(ctx, spec, specFile);
     const env = terminalEnvironment(ctx.env);
-    const spawnArgs = weztermSpawnArgs(spec.cwd, argv);
+    const targets = (await weztermTargets(exe, ctx.home, env, options)).map((t) => ({ ...t, args: weztermSpawnArgs(spec.cwd, argv, t.place) }));
+    const startArgs = weztermStartArgs(spec.cwd, argv);
     await writeNewPrivateFile(specFile, windows ? powerShellSpec(spec) : posixSpec(spec));
     let pane: { socket: string; paneId?: string } | undefined;
+    let used: WeztermTarget | undefined;
     try {
-      pane = (await spawnInGui(exe, spawnArgs, env)) ?? (await startGui(exe, weztermStartArgs(spec.cwd, argv), env));
+      for (const t of targets) {
+        used = t;
+        pane = t.socket ? await spawnOn(exe, t.socket, t.args, env) : ((await spawnInGui(exe, t.args, env)) ?? (await startGui(exe, startArgs, env)));
+        if (pane) break;
+      }
     } catch (e) {
       await fs.rm(specFile, { force: true });
       throw e;
     }
+    if (used?.remember && pane) await rememberPaneWindow(exe, ctx.home, env, pane).catch(() => undefined);
     return {
       id: spec.id,
       terminal: WEZTERM,

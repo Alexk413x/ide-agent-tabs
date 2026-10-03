@@ -15,6 +15,7 @@ interface Action {
   notification?: boolean;
   failure?: boolean;
   invocation?: boolean;
+  inputIdle?: boolean;
 }
 
 const BUSY: Action = { state: 'busy' };
@@ -27,13 +28,13 @@ const INVOCATION: Action = { invocation: true, state: 'busy', remind: true };
 
 export const HOOK_EVENTS: Record<HookCli, Record<string, Action>> = {
   claude: {
-    SessionStart: STARTED,
-    UserPromptSubmit: PROMPT,
+    SessionStart: { ...STARTED, inputIdle: false },
+    UserPromptSubmit: { ...PROMPT, inputIdle: false },
     PostToolUse: AFTER_TOOL,
     PostToolUseFailure: TOOL_FAILED,
     Notification: { notification: true },
-    Stop: STOP,
-    StopFailure: { state: 'idle' },
+    Stop: { ...STOP, inputIdle: false },
+    StopFailure: { state: 'idle', inputIdle: false },
   },
   codex: { UserPromptSubmit: PROMPT, PermissionRequest: { state: 'permission' }, PostToolUse: AFTER_TOOL, Stop: STOP, Interrupt: { state: 'idle' } },
   gemini: { BeforeAgent: PROMPT, BeforeTool: BUSY, Notification: { notification: true }, AfterTool: AFTER_TOOL, AfterAgent: STOP },
@@ -52,8 +53,8 @@ export const isHookCli = (cli: string): cli is HookCli => (HOOK_CLIS as readonly
 
 function notificationState(input: Record<string, unknown>): SessionState | undefined {
   const type = [input.notification_type, input.notificationType, input.type].find((v) => typeof v === 'string') as string | undefined;
-  if (type === 'permission_prompt' || type === 'ToolPermission') return 'permission';
-  if (type === 'idle_prompt' || type === 'agent_idle') return 'idle';
+  if (type === 'permission_prompt' || type === 'ToolPermission' || type === 'elicitation_dialog') return 'permission';
+  if (type === 'idle_prompt') return 'idle';
   return undefined;
 }
 
@@ -85,6 +86,14 @@ function ownedBy(cli: HookCli, base: PresenceFile, action: Action, input: Record
   return IN_TURN.includes(effectiveState(base, now)) ? false : session;
 }
 
+// Claude Code's turn end comes while the user may already be typing the next prompt; its idle_prompt
+// notification is the one signal that the input has sat unused. A session that just started has no typing yet.
+function inputIdleAfter(cli: HookCli, action: Action, input: Record<string, unknown>): boolean | undefined {
+  if (action.notification) return cli === 'claude' && notificationState(input) === 'idle' ? true : undefined;
+  if (action.start && action.inputIdle !== undefined) return input.source === 'startup';
+  return action.inputIdle;
+}
+
 export interface HookRun {
   cli: string;
   event: string;
@@ -100,6 +109,7 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
   const action = HOOK_EVENTS[cli][event];
   if (!action) return undefined;
   const now = run.now ?? Date.now();
+  const inputIdle = inputIdleAfter(cli, action, run.input);
   const state = action.notification ? notificationState(run.input) : action.failure ? (run.input.is_interrupt === true ? 'idle' : 'busy') : action.state;
   const unread = action.remind || action.stop ? await peekUnread(home, sessionId) : [];
   const reminder = unreadReminder(unread);
@@ -113,13 +123,17 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
       foreign = true;
       return current;
     }
-    const base: PresenceFile = { ...(current ?? { id: sessionId }), ...(owned !== undefined ? { owner: owned } : {}) };
+    const base: PresenceFile = {
+      ...(current ?? { id: sessionId }),
+      ...(owned !== undefined ? { owner: owned } : {}),
+      ...(inputIdle !== undefined ? { inputIdle } : {}),
+    };
     if (action.stop) {
       const nudges = base.nudges ?? 0;
       block = reminder !== undefined && nudges < MAX_NUDGES;
       return block ? withState(base, 'busy', now, nudges + 1) : withState(base, 'idle', now, reminder === undefined ? 0 : nudges);
     }
-    if (state === undefined) return owned === undefined || current?.owner === owned ? current : base;
+    if (state === undefined) return (owned === undefined || current?.owner === owned) && (inputIdle === undefined || current?.inputIdle === inputIdle) ? current : base;
     const prompt = action.prompt || (action.invocation && run.input.invocationNum === 0);
     const next = withState(base, state, now, prompt ? 0 : undefined);
     if (!action.remind) return next;

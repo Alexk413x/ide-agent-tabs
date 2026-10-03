@@ -223,3 +223,29 @@ test('a hook from another CLI than the tab agent is ignored', async () => {
   assert.equal(await hook(home, 'claude', 'SessionStart', { source: 'startup', session_id: 'child' }), undefined);
   assert.equal(await state(home), 'busy');
 });
+
+test('Claude marks its input busy at a turn end, /clear or resume, and idle at startup or after idle_prompt', async () => {
+  const home = tempDir('iat-hook-');
+  const inputIdle = async () => (await readPresence(home, ID))?.inputIdle;
+  await hook(home, 'claude', 'SessionStart', { source: 'startup' });
+  assert.equal(await inputIdle(), true, 'a fresh tab has no typing yet');
+  await hook(home, 'claude', 'UserPromptSubmit');
+  await hook(home, 'claude', 'Stop');
+  assert.equal(await state(home), 'idle');
+  assert.equal(await inputIdle(), false);
+  await hook(home, 'claude', 'Notification', { notification_type: 'idle_prompt' });
+  assert.equal(await inputIdle(), true);
+  await hook(home, 'claude', 'SessionStart', { source: 'clear' });
+  assert.equal(await inputIdle(), false);
+  await hook(home, 'claude', 'Notification', { notification_type: 'permission_prompt' });
+  assert.equal(await inputIdle(), false);
+});
+
+test('a Copilot background agent going idle leaves the session state alone, and a question to the user counts as a prompt', async () => {
+  const home = tempDir('iat-hook-');
+  await hook(home, 'copilot', 'userPromptSubmitted');
+  await hook(home, 'copilot', 'notification', { notification_type: 'agent_idle' });
+  assert.equal(await state(home), 'busy');
+  await hook(home, 'copilot', 'notification', { notification_type: 'elicitation_dialog' });
+  assert.equal(await state(home), 'permission');
+});

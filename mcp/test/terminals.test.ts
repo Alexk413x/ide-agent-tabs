@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { tempDir } from './tempDir.js';
@@ -7,6 +7,7 @@ import {
   appleScriptString,
   closeScript,
   ghosttyCapabilities,
+  ghosttyPlace,
   ghosttyLinuxArgs,
   ghosttyLinuxLocations,
   inputScript,
@@ -17,7 +18,9 @@ import {
 import { defaultTerminalName } from '../src/terminals/index.js';
 import { isShellName, pidTabsAlive, terminalEnvironment } from '../src/terminals/processes.js';
 import { argvModeCommand, checkArgvPaths, loginShell, surfaceArgv, surfaceCommand, tabTitle } from '../src/terminals/shell.js';
-import { findPowerShell, parseTasklist, powerShellArgv, wtArgs, wtTitle } from '../src/terminals/windowsTerminal.js';
+import type { TerminalTab } from '../src/terminals/types.js';
+import { readWindow, rememberWindow, WINDOWS_FILE } from '../src/terminals/windowMemory.js';
+import { parseTasklist, powerShellArgv, wtArgs, wtTitle, wtWindow } from '../src/terminals/windowsTerminal.js';
 
 test('Windows Terminal gets only fixed strings and our own paths', () => {
   assert.deepEqual(
@@ -48,19 +51,6 @@ test('a Windows Terminal started by the server does not inherit the calling sess
     }),
     { PATH: 'p', CLAUDE_CODE_USE_BEDROCK: '1', IDE_AGENT_TABS_HOME: 'h', CODEX_HOME: 'c', COPILOT_HOME: 'g' },
   );
-});
-
-test('prefers pwsh, then Windows PowerShell', () => {
-  const dir = tempDir('iat-ps-');
-  const a = path.join(dir, 'a');
-  const b = path.join(dir, 'b');
-  mkdirSync(a);
-  mkdirSync(b);
-  writeFileSync(path.join(a, 'powershell.exe'), '');
-  assert.equal(findPowerShell(a), path.join(a, 'powershell.exe'));
-  writeFileSync(path.join(b, 'pwsh.exe'), '');
-  assert.equal(findPowerShell([a, b].join(path.delimiter)), path.join(b, 'pwsh.exe'));
-  assert.equal(findPowerShell(''), 'powershell.exe');
 });
 
 test('reads process images from tasklist CSV', () => {
@@ -234,4 +224,56 @@ test('Ghostty types the line into the recorded terminal, then presses Enter as a
   );
   assert.equal(inputScript('x"y', 'hi').split('\n')[1], '\tset t to terminal id "x\\"y"');
   assert.throws(() => inputScript('x', 'a\rb'), /one line/);
+});
+
+const nearTab = (over: Partial<TerminalTab>): TerminalTab => ({ id: 'caller', terminal: 'x', agent: 'claude', path: '/w', createdAt: 0, ...over });
+
+test('Windows Terminal opens in the last window, a named Agent Tabs window, or the caller tab\'s window', () => {
+  const o = { title: 't', shell: 'C:\\pwsh.exe', launcher: 'C:\\l.ps1', spec: 'C:\\s.json' };
+  assert.equal(wtWindow(undefined), '0');
+  assert.equal(wtWindow({ window: 'last' }), '0');
+  assert.equal(wtWindow({ window: 'dedicated' }), 'agent-tabs');
+  assert.equal(wtWindow({ window: 'dedicated', near: nearTab({ terminal: 'windows-terminal' }) }), '0');
+  assert.equal(wtWindow({ window: 'last', near: nearTab({ terminal: 'windows-terminal', window: 'agent-tabs' }) }), 'agent-tabs');
+  assert.deepEqual(wtArgs({ ...o, window: 'agent-tabs' }).slice(0, 3), ['-w', 'agent-tabs', 'new-tab']);
+  assert.deepEqual(wtArgs(o).slice(0, 3), ['-w', '0', 'new-tab']);
+});
+
+test('Ghostty on macOS keeps its script for the last window, and targets a remembered or the caller\'s window otherwise', () => {
+  const env = { IDE_AGENT_TABS_LAUNCHER: '/l.sh', IDE_AGENT_TABS_SPEC: '/s.spec' };
+  assert.equal(ghosttyPlace(undefined, undefined), undefined);
+  assert.equal(ghosttyPlace({ window: 'last' }, { id: '5' }), undefined);
+  assert.deepEqual(ghosttyPlace({ window: 'dedicated' }, { id: '5' }), { dedicated: '5' });
+  assert.deepEqual(ghosttyPlace({ window: 'dedicated' }, undefined), { dedicated: undefined });
+  assert.deepEqual(ghosttyPlace({ window: 'dedicated', near: nearTab({ terminal: 'ghostty', terminalTabId: 'tab-9' }) }, { id: '5' }), { nearTab: 'tab-9' });
+  assert.deepEqual(ghosttyPlace({ window: 'last', near: nearTab({ terminal: 'ghostty', pidFile: '/p.pid' }) }, undefined), undefined);
+
+  assert.equal(openScript('/bin/zsh', env), openScript('/bin/zsh', env, undefined));
+  assert.ok(!openScript('/bin/zsh', env).includes('id of w'));
+  const dedicated = openScript('/bin/zsh', env, { dedicated: '5' });
+  assert.match(dedicated, /if \(id of cw as text\) is "5" then set w to \(contents of cw\)/);
+  assert.ok(!dedicated.includes('front window'), 'a dedicated window never falls back to the front window');
+  assert.match(dedicated, /& linefeed & \(id of w as text\)/);
+  const fresh = openScript('/bin/zsh', env, { dedicated: undefined });
+  assert.ok(!fresh.includes('repeat with cw'));
+  assert.match(fresh, /set w to new window with configuration cfg/);
+  const near = openScript('/bin/zsh', env, { nearTab: 'a"b' });
+  assert.match(near, /if \(id of ct as text\) is "a\\"b" then set w to \(contents of cw\)/);
+  assert.match(near, /if w is missing value and \(count of windows\) > 0 then set w to front window/);
+  assert.deepEqual(parseOpenResult('tab-1\nterm-2\n7\n'), { tabId: 'tab-1', terminalId: 'term-2', windowId: '7' });
+});
+
+test('the remembered terminal windows live in one file under the Agent Tabs home, one per terminal', async () => {
+  const home = tempDir('iat-win-');
+  assert.equal(await readWindow(home, 'wezterm'), undefined);
+  await rememberWindow(home, 'wezterm', { id: '3', socket: '/s/gui-sock-1' });
+  await rememberWindow(home, 'iterm2', { id: '41' });
+  await rememberWindow(home, 'wezterm', { id: '4', socket: '/s/gui-sock-2' });
+  assert.deepEqual(await readWindow(home, 'wezterm'), { id: '4', socket: '/s/gui-sock-2' });
+  assert.deepEqual(await readWindow(home, 'iterm2'), { id: '41' });
+  writeFileSync(path.join(home, WINDOWS_FILE), '{"wezterm": {"id": 3}, "kitty": {"id": "1"}}');
+  assert.equal(await readWindow(home, 'wezterm'), undefined);
+  assert.deepEqual(await readWindow(home, 'kitty'), { id: '1' });
+  writeFileSync(path.join(home, WINDOWS_FILE), 'not json');
+  assert.equal(await readWindow(home, 'kitty'), undefined);
 });

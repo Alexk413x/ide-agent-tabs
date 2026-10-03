@@ -9,8 +9,22 @@ import { AgentProfile, AgentSettings, CONFIG_FILE, isInstalled, launchOf } from 
 import { endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { closestBase } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
+import { AUTO, SHARED_DEFAULTS, SharedSettings, userSettingValue } from './sharedSettings';
 
-const BUILTIN_ICONS = new Set(['claude', 'codex', 'gemini', 'copilot', 'agy']);
+const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'gemini']);
+
+const SHARED_SETTING_NAMES: Record<keyof SharedSettings, string> = {
+  tabRouting: 'openNewTabsIn',
+  terminal: 'preferredTerminal',
+  shell: 'windowsShell',
+  terminalWindow: 'terminalWindow',
+};
+
+const SHARED_KEYS = Object.keys(SHARED_SETTING_NAMES) as (keyof SharedSettings)[];
+
+interface Choice extends vscode.QuickPickItem {
+  value: string | undefined;
+}
 
 interface Tab extends TabInfo {
   terminal: vscode.Terminal;
@@ -166,7 +180,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
     void vscode.commands.executeCommand('setContext', 'ideAgentTabs.customInstalled', installed.some(p => !BUILTIN_ICONS.has(p.name)));
     const lines = [
-      installed.length > 0 ? `Open an agent in an editor tab. New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No agent CLI found on PATH.',
+      installed.length > 0 ? `Open an agent in an editor tab.  
+New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No agent CLI found on PATH.',
       links.join('  \n'),
       missing.length > 0 ? `Not installed: ${missing.map(p => escape(p.label)).join(', ')}` : '',
       '[$(gear) Settings](command:ideAgentTabs.openSettings)',
@@ -198,6 +213,69 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       .then(undefined, e => log.warn(`Could not update ideAgentTabs.defaultAgent: ${(e as Error).message}`));
   };
 
+  const sharedValue = (key: keyof SharedSettings): string => userSettingValue(key, config().inspect<string>(SHARED_SETTING_NAMES[key]));
+
+  const shareSettings = () => {
+    const found = settings.sharedFound();
+    if (found === undefined) return;
+    for (const key of SHARED_KEYS) {
+      const value = sharedValue(key);
+      if ((found[key] ?? SHARED_DEFAULTS[key]) !== value) settings.setShared(key, value);
+    }
+  };
+
+  const followSharedSettings = async () => {
+    const found = settings.sharedFound();
+    if (found === undefined) return;
+    for (const key of SHARED_KEYS) {
+      const shared = found[key];
+      if (shared === undefined) {
+        if (sharedValue(key) !== SHARED_DEFAULTS[key]) settings.setShared(key, sharedValue(key));
+      } else if (sharedValue(key) !== shared) {
+        await config()
+          .update(SHARED_SETTING_NAMES[key], shared, vscode.ConfigurationTarget.Global)
+          .then(undefined, e => log.warn(`Could not update ideAgentTabs.${SHARED_SETTING_NAMES[key]}: ${(e as Error).message}`));
+      }
+    }
+  };
+
+  const choose = async (key: 'terminal' | 'shell', title: string, options: Choice[], custom?: () => Promise<string | undefined>) => {
+    const current = sharedValue(key);
+    const items: Choice[] = [{ label: 'Automatic', description: current === AUTO ? 'current' : undefined, value: AUTO }];
+    for (const option of options) items.push({ ...option, description: option.value === current ? 'current' : option.description });
+    if (current !== AUTO && !options.some(o => o.value === current)) items.push({ label: current, description: 'current, not detected', value: current });
+    if (custom) items.push({ label: 'Custom path…', value: undefined });
+    const picked = await vscode.window.showQuickPick(items, { title, placeHolder: current });
+    if (!picked) return;
+    const value = picked.value ?? (await custom?.());
+    if (value === undefined) return;
+    await config().update(SHARED_SETTING_NAMES[key], value, vscode.ConfigurationTarget.Global);
+  };
+
+  const chooseTerminal = () =>
+    choose(
+      'terminal',
+      'Preferred Terminal',
+      settings.detected().terminals.map(t => ({ label: t.name, description: t.id, value: t.id })),
+    );
+
+  const chooseShell = async () => {
+    if (!isWindows) {
+      void vscode.window.showInformationMessage('The shell setting applies on Windows only.');
+      return;
+    }
+    await choose(
+      'shell',
+      'Windows Shell',
+      settings.detected().shells.map(s => ({ label: s.label, description: s.path, value: s.path })),
+      async () => {
+        const [file] =
+          (await vscode.window.showOpenDialog({ canSelectMany: false, openLabel: 'Use Shell', filters: { Executables: ['exe'] } })) ?? [];
+        return file?.fsPath;
+      },
+    );
+  };
+
   const chooseAgent = async () => {
     const items = settings
       .profiles()
@@ -219,6 +297,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.registerCommand(`ideAgentTabs.newTab.${name}`, () => openFromButton(settings.defaultProfile())),
     ),
     vscode.commands.registerCommand('ideAgentTabs.newTabWith', chooseAgent),
+    vscode.commands.registerCommand('ideAgentTabs.choosePreferredTerminal', chooseTerminal),
+    vscode.commands.registerCommand('ideAgentTabs.chooseWindowsShell', chooseShell),
     vscode.commands.registerCommand('ideAgentTabs.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`),
     ),
@@ -239,9 +319,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.onDidChangeWindowState(state => {
       if (!state.focused) return;
       void followSharedDefault();
+      void followSharedSettings();
       refreshStatus();
     }),
     vscode.workspace.onDidChangeConfiguration(e => {
+      if (SHARED_KEYS.some(key => e.affectsConfiguration(`ideAgentTabs.${SHARED_SETTING_NAMES[key]}`))) shareSettings();
       if (!e.affectsConfiguration('ideAgentTabs.defaultAgent')) return;
       shareDefault();
       refreshStatus();
@@ -250,11 +332,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   await followSharedDefault();
+  await followSharedSettings();
   const sharedConfig = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(home), CONFIG_FILE));
   context.subscriptions.push(
     sharedConfig,
-    sharedConfig.onDidChange(() => void followSharedDefault()),
-    sharedConfig.onDidCreate(() => void followSharedDefault()),
+    sharedConfig.onDidChange(() => {
+      void followSharedDefault();
+      void followSharedSettings();
+    }),
+    sharedConfig.onDidCreate(() => {
+      void followSharedDefault();
+      void followSharedSettings();
+    }),
   );
   refreshStatus();
   openOnStartup(fileFolders());
