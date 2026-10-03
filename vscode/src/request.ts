@@ -138,17 +138,29 @@ export function isAbsolutePath(p: string, windows = process.platform === 'win32'
   return p.startsWith('/');
 }
 
+export const MODEL_PATTERN = /^[A-Za-z0-9._:/@+-]{1,200}$/;
+
 export interface OpenRequest {
   path: string;
   prompt?: string;
   args: string[];
   env: Record<string, string>;
   agent?: string;
+  model?: string;
+  via?: 'ori' | 'direct';
 }
 
 export function parseOpenRequest(body: string): OpenRequest {
   const obj = parseObject(body);
-  return openRequestOf(optString(obj, 'path'), optString(obj, 'prompt'), optStringList(obj, 'args'), optStringMap(obj, 'env'), optString(obj, 'agent'));
+  return openRequestOf(
+    optString(obj, 'path'),
+    optString(obj, 'prompt'),
+    optStringList(obj, 'args'),
+    optStringMap(obj, 'env'),
+    optString(obj, 'agent'),
+    optString(obj, 'model'),
+    optString(obj, 'via'),
+  );
 }
 
 export function openRequestOf(
@@ -157,6 +169,8 @@ export function openRequestOf(
   args: string[] = [],
   env: Record<string, string> = {},
   agent?: string,
+  model?: string,
+  via?: string,
 ): OpenRequest {
   if (dir === undefined || isBlank(dir)) throw new BadRequest('path is required');
   if (dir.includes('\0') || !isAbsolutePath(dir)) throw new BadRequest('path must be absolute');
@@ -174,12 +188,18 @@ export function openRequestOf(
   if (prompt !== undefined && prompt.includes('\0')) throw new BadRequest('prompt holds a NUL');
   checkEnv(env, 'env');
   if (agent !== undefined && isBlank(agent)) throw new BadRequest('agent must not be blank');
+  if (model !== undefined && !MODEL_PATTERN.test(model)) {
+    throw new BadRequest('model must be 1 to 200 characters from letters, digits and . _ : / @ + -');
+  }
+  if (via !== undefined && via !== 'ori' && via !== 'direct') throw new BadRequest("via must be 'ori' or 'direct'");
   return {
     path: stripTrailingSeparator(path.normalize(dir)),
     prompt: prompt !== undefined && !isBlank(prompt) ? prompt : undefined,
     args,
     env,
     agent,
+    model,
+    via,
   };
 }
 

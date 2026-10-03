@@ -71,6 +71,11 @@ test('maps MCP client names to agent names', () => {
   assert.equal(agentFromClient('github-copilot-cli'), 'copilot');
   assert.equal(agentFromClient('opencode'), 'opencode');
   assert.equal(agentFromClient('antigravity-client'), 'agy');
+  assert.equal(agentFromClient('grok-shell-ide-agent-tabs'), 'grok');
+  assert.equal(agentFromClient('qwen-cli-mcp-client-ide-agent-tabs'), 'qwen');
+  assert.equal(agentFromClient('goose-cli'), 'goose');
+  assert.equal(agentFromClient('pi'), 'pi');
+  assert.equal(agentFromClient('pipeline'), 'pipeline', 'pi matches only as the whole name');
   assert.equal(agentFromClient('My Agent!'), 'MyAgent');
   assert.equal(agentFromClient(undefined), 'unknown');
 });

@@ -53,7 +53,8 @@ class AgentTabHttpHandler : HttpRequestHandler() {
                     val profile = open.agent?.let {
                         Agents.settings.profile(it) ?: throw IllegalArgumentException("unknown agent: $it")
                     } ?: Agents.settings.defaultProfile()
-                    onEdt(context) { open(open, profile) }
+                    val launch = Agents.launchFor(profile, open)
+                    onEdt(context) { open(open, profile, launch) }
                 }
                 "close" -> parseCloseId(body).let { onEdt(context) { close(it) } }
                 "input" -> parseInput(body).let { onEdt(context) { input(it) } }
@@ -96,14 +97,15 @@ class AgentTabHttpHandler : HttpRequestHandler() {
         Reply(500, error(e.toString()))
     }
 
-    private fun open(request: OpenRequest, profile: AgentProfile): Reply {
+    private fun open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch): Reply {
         val project = chooseProject(request.path) ?: return Reply(409, error("no open project to host the tab"))
-        val id = AgentTabLauncher.open(project, request.path.toString(), profile, request.prompt, focus = false, request.args, request.env)
+        val id = AgentTabLauncher.open(project, request.path.toString(), profile, launch, focus = false)
         return Reply(200, ok().apply {
             addProperty("id", id)
             addProperty("agent", profile.name)
             addProperty("project", project.name)
             addProperty("path", request.path.toString())
+            addProperty("via", launch.via.value)
         })
     }
 

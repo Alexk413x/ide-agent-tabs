@@ -2,6 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { CallToolResult, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { MAX_BRIEF_CHARS, type Handoffs } from './handoff.js';
+import { MODEL_PATTERN } from './launchPlan.js';
 import type { Jev } from './jev/service.js';
 import { JEV_INSTRUCTIONS, JEV_TOOLS } from './jev/tools.js';
 import { MAX_TEXT_CHARS } from './messaging/mailbox.js';
@@ -39,7 +41,7 @@ export function serverInstructions(jev: boolean, messaging: boolean): string {
     .join('\n\n');
 }
 
-export function createServer(service: Service, jev?: Jev, messaging?: Messaging): McpServer {
+export function createServer(service: Service, jev?: Jev, messaging?: Messaging, handoffs?: Handoffs): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: serverInstructions(!!jev, !!messaging) });
   const reply: Reply = (extra, work) =>
     answer(async () => {
@@ -92,7 +94,7 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging)
     {
       title: 'Open an agent tab',
       description:
-        'Open a new tab that runs an interactive agent CLI session (Claude Code, Codex, Gemini CLI, Copilot CLI, Antigravity CLI or a custom profile from list_agents) in an IDE or a terminal, for the user to work in. ' +
+        'Open a new tab that runs an interactive agent CLI session (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose, Codex local or a custom profile from list_agents) in an IDE or a terminal, for the user to work in. ' +
         "It does not return the agent's output: to get an answer, run that CLI headless, or ask in prompt for a reply through send_message. " +
         "Without ide, the tab opens in the IDE whose open project best contains path, else the caller's own IDE, else the most recently started IDE, else the configured terminal. " +
         "When config.json sets tabRouting to caller, the caller's own IDE, or the caller's terminal window, comes first. " +
@@ -111,6 +113,15 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging)
           .optional()
           .describe('Environment variables for the session. Names starting with IDE_AGENT_TABS_ or JEDITERM_SOURCE are refused.'),
         ide: z.string().optional().describe(`${IDE_ID} Leave out to route automatically.`),
+        model: z
+          .string()
+          .regex(MODEL_PATTERN)
+          .optional()
+          .describe('Model for the agent, passed with its model flag. Through Ori, an OpenRouter model id. Leave out for the agent default.'),
+        via: z
+          .enum(['ori', 'direct'])
+          .optional()
+          .describe('ori starts the agent with `ori <agent>`, billed through OpenRouter; direct starts it as is. Leave out to follow launchVia in config.json.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -127,10 +138,15 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging)
       inputSchema: { id: z.string().optional().describe('Tab id from open_tab or list_tabs.') },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    ({ id }, extra) => reply(extra, () => service.closeTab(id)),
+    ({ id }, extra) =>
+      reply(extra, async () => {
+        if (handoffs && messaging) await handoffs.checkClose(id, messaging.id);
+        return service.closeTab(id);
+      }),
   );
 
   if (messaging) registerMessaging(server, messaging, reply);
+  if (messaging && handoffs) registerHandoff(server, handoffs, reply);
 
   for (const t of jev ? JEV_TOOLS : []) {
     server.registerTool(
@@ -193,7 +209,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply
     {
       title: 'List agent sessions',
       description:
-        'List the live agent sessions on this machine that can exchange messages: id, agent, path, host (the IDE or terminal of its tab), state (idle, busy, permission, waking or unknown), and self for this session. ' +
+        'List the live agent sessions on this machine that can exchange messages: id, agent, path, host (the IDE or terminal of its tab), state (idle, busy, permission, waking or unknown), handedOffTo for a session that handed its work to another, and self for this session. ' +
         "Call it before send_message for the recipient's id; don't guess ids. To start a new session instead, call open_tab.",
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -247,5 +263,35 @@ function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     (input, extra) => reply(extra, () => messaging.wait(input, extra.signal)),
+  );
+}
+
+function registerHandoff(server: McpServer, handoffs: Handoffs, reply: Reply): void {
+  const text = (what: string) => z.string().max(MAX_BRIEF_CHARS).optional().describe(what);
+  server.registerTool(
+    'handoff',
+    {
+      title: 'Hand off to a new tab',
+      description:
+        "Hand this session's work to a new agent tab: write a brief to ~/.ide-agent-tabs/handoffs/<id>.md and open the tab with a first prompt that has the new session read it, message this session that it takes over, wait for this session's reply that it stopped, and then close this session's tab. " +
+        'Use it to continue in a fresh session, in another folder or agent, or after a CLI or plugin update that only a new session loads. For a side task, call open_tab or send_message instead. ' +
+        'Give brief, or goal, done, next, files and openQuestions. Returns the handoff id, the brief path, the new tab id and next: the steps this session follows to wait for the takeover and stop. ' +
+        'If the tab fails to open, nothing is closed. config.json closeAfterHandoff false keeps this tab open, marked as handed off.',
+      inputSchema: {
+        brief: text('The whole brief as Markdown. Leave out to build it from the fields below.'),
+        goal: text('What the work is for.'),
+        done: text('What is finished, with results.'),
+        next: text('The next steps, in order.'),
+        files: z.array(z.string()).max(MAX_ENTRIES).optional().describe('Files, branches and worktrees the work touches.'),
+        openQuestions: z.array(z.string()).max(MAX_ENTRIES).optional().describe('Questions still open.'),
+        path: z.string().describe('Absolute path of an existing folder. The new session starts there.'),
+        agent: z.string().optional().describe('Profile name from list_agents. Defaults to the configured default agent.'),
+        model: z.string().regex(MODEL_PATTERN).optional().describe('Model for the new agent, as for open_tab.'),
+        via: z.enum(['ori', 'direct']).optional().describe('ori or direct, as for open_tab.'),
+        ide: z.string().optional().describe(`${IDE_ID} Leave out to route automatically.`),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    (input, extra) => reply(extra, () => handoffs.start(input)),
   );
 }

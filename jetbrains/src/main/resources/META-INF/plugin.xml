@@ -3,7 +3,7 @@
     <name>Agent Tabs</name>
     <vendor>Alexk413x</vendor>
     <description><![CDATA[
-    Opens AI coding-agent sessions (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and others) in editor tabs:
+    Opens AI coding-agent sessions (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose and others) in editor tabs:
     from a toolbar button, the Tools menu, a keyboard shortcut, or a loopback-only HTTP request another agent can send.
     ]]></description>
 

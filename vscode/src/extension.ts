@@ -5,19 +5,24 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { typeLine } from './input';
 import { launchScripts, terminalEnv, unixShell, windowsShell } from './launch';
-import { AgentProfile, AgentSettings, CONFIG_FILE, isInstalled, launchOf } from './profiles';
+import { AgentLaunch, AgentProfile, AgentSettings, CONFIG_FILE, isInstalled, planLaunch } from './profiles';
 import { endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { closestBase } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
 import { AUTO, SHARED_DEFAULTS, SharedSettings, userSettingValue } from './sharedSettings';
 
-const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'gemini']);
+const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
+const ICON_FILES: Record<string, string> = { 'codex-local': 'codex' };
+
+const commandKey = (name: string) => name.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
 
 const SHARED_SETTING_NAMES: Record<keyof SharedSettings, string> = {
   tabRouting: 'openNewTabsIn',
   terminal: 'preferredTerminal',
   shell: 'windowsShell',
   terminalWindow: 'terminalWindow',
+  launchVia: 'launchVia',
+  closeAfterHandoff: 'closeAfterHandoff',
 };
 
 const SHARED_KEYS = Object.keys(SHARED_SETTING_NAMES) as (keyof SharedSettings)[];
@@ -31,11 +36,11 @@ interface Tab extends TabInfo {
 }
 
 interface OpenOptions {
-  prompt?: string;
-  args?: string[];
-  env?: Record<string, string>;
+  launch: AgentLaunch;
   focus: boolean;
 }
+
+const VIA_LABEL = 'via OpenRouter';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const log = vscode.window.createOutputChannel('Agent Tabs', { log: true });
@@ -58,10 +63,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return neutralIcon;
     }
     if (BUILTIN_ICONS.has(profile.name)) {
-      return { light: iconUri('agents', `${profile.name}.svg`), dark: iconUri('agents', `${profile.name}_dark.svg`) };
+      const file = ICON_FILES[profile.name] ?? profile.name;
+      return { light: iconUri('agents', `${file}.svg`), dark: iconUri('agents', `${file}_dark.svg`) };
     }
     return neutralIcon;
   };
+
+  const launchFor = (profile: AgentProfile) =>
+    planLaunch(profile, {
+      setting: settings.shared().launchVia,
+      ori: settings.detected().ori,
+      windows: isWindows,
+      searchPath: searchPath(),
+    });
 
   const fileFolders = () => (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === 'file');
   const folderPath = (folder: vscode.WorkspaceFolder) => {
@@ -72,9 +86,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const openTab = (dir: string, project: string, profile: AgentProfile, options: OpenOptions): TabInfo => {
     const id = randomUUID();
     const shell = isWindows ? windowsShell(searchPath(), scripts) : unixShell(process.env.SHELL, process.platform === 'darwin', scripts);
-    const launch = launchOf(profile, options.prompt, options.args, options.env);
+    const { launch } = options;
     const terminal = vscode.window.createTerminal({
-      name: profile.label,
+      name: launch.via === 'ori' ? `${profile.label} (${VIA_LABEL})` : profile.label,
       cwd: dir,
       env: terminalEnv(shell.kind, launch, id, process.env),
       shellPath: shell.path,
@@ -90,7 +104,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const openInFolder = (folder: vscode.WorkspaceFolder | undefined, profile: AgentProfile) => {
     const dir = folder ? folderPath(folder) : os.homedir();
-    openTab(dir, folder?.name ?? path.basename(dir), profile, { focus: true });
+    openTab(dir, folder?.name ?? path.basename(dir), profile, { launch: launchFor(profile), focus: true });
   };
 
   const openFromButton = (profile: AgentProfile) => {
@@ -127,12 +141,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       };
     },
     isInstalled: profile => isInstalled(profile.command, searchPath(), isWindows),
-    open: (request, profile) => {
+    open: (request, profile, launch) => {
       const folders = fileFolders();
       if (folders.length === 0) return undefined;
       const index = closestBase(request.path, folders.map(folderPath));
       const project = index !== undefined ? folders[index].name : (vscode.workspace.name ?? folders[0].name);
-      return openTab(request.path, project, profile, { prompt: request.prompt, args: request.args, env: request.env, focus: false });
+      return openTab(request.path, project, profile, { launch, focus: false });
     },
     close: id => {
       const tab = tabs.get(id);
@@ -155,7 +169,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   status.command = 'ideAgentTabs.newTab';
   const refreshStatus = () => {
     const profile = settings.defaultProfile();
-    void vscode.commands.executeCommand('setContext', 'ideAgentTabs.buttonAgent', BUILTIN_ICONS.has(profile.name) ? profile.name : 'other');
+    void vscode.commands.executeCommand('setContext', 'ideAgentTabs.buttonAgent', BUILTIN_ICONS.has(profile.name) ? commandKey(profile.name) : 'other');
     status.text = `$(agent-tabs) ${profile.label}`;
     const escape = (text: string) => text.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
     const all = settings.profiles();
@@ -169,14 +183,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const uri = dark ? path.dark : path.light;
       return uri instanceof vscode.Uri ? uri : undefined;
     };
+    const viaLogo = iconUri(dark ? 'openrouter_dark.svg' : 'openrouter.svg');
     const links = installed.map(p => {
       const logo = iconFor(p);
       const args = encodeURIComponent(JSON.stringify([p.name]));
       const img = logo ? `<img src="${logo.toString()}" width="16" height="16" align="absmiddle"> ` : '';
-      return `${img}[${escape(p.label)}](command:ideAgentTabs.openAgent?${args})`;
+      const via = launchFor(p).via === 'ori' ? ` <img src="${viaLogo.toString()}" width="16" height="16" align="absmiddle"> ${VIA_LABEL}` : '';
+      return `${img}[${escape(p.label)}](command:ideAgentTabs.openAgent?${args})${via}`;
     });
     for (const name of BUILTIN_ICONS) {
-      void vscode.commands.executeCommand('setContext', `ideAgentTabs.installed.${name}`, installed.some(p => p.name === name));
+      void vscode.commands.executeCommand('setContext', `ideAgentTabs.installed.${commandKey(name)}`, installed.some(p => p.name === name));
     }
     void vscode.commands.executeCommand('setContext', 'ideAgentTabs.customInstalled', installed.some(p => !BUILTIN_ICONS.has(p.name)));
     const lines = [
@@ -213,7 +229,8 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
       .then(undefined, e => log.warn(`Could not update ideAgentTabs.defaultAgent: ${(e as Error).message}`));
   };
 
-  const sharedValue = (key: keyof SharedSettings): string => userSettingValue(key, config().inspect<string>(SHARED_SETTING_NAMES[key]));
+  const sharedValue = <K extends keyof SharedSettings>(key: K): SharedSettings[K] =>
+    userSettingValue(key, config().inspect<SharedSettings[K]>(SHARED_SETTING_NAMES[key]));
 
   const shareSettings = () => {
     const found = settings.sharedFound();
@@ -280,7 +297,7 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
     const items = settings
       .profiles()
       .filter(p => isInstalled(p.command, searchPath(), isWindows))
-      .map(p => ({ label: p.label, iconPath: icon(p), profile: p }));
+      .map(p => ({ label: p.label, description: launchFor(p).via === 'ori' ? VIA_LABEL : undefined, iconPath: icon(p), profile: p }));
     if (items.length === 0) {
       void vscode.window.showInformationMessage('No agent CLI found on PATH.');
       return;
@@ -293,7 +310,7 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
     log,
     status,
     vscode.commands.registerCommand('ideAgentTabs.newTab', () => openFromButton(settings.defaultProfile())),
-    ...[...BUILTIN_ICONS, 'other'].map(name =>
+    ...[...BUILTIN_ICONS].map(commandKey).concat('other').map(name =>
       vscode.commands.registerCommand(`ideAgentTabs.newTab.${name}`, () => openFromButton(settings.defaultProfile())),
     ),
     vscode.commands.registerCommand('ideAgentTabs.newTabWith', chooseAgent),
@@ -303,7 +320,7 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
       vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`),
     ),
     ...[...BUILTIN_ICONS].map(name =>
-      vscode.commands.registerCommand(`ideAgentTabs.open.${name}`, () => {
+      vscode.commands.registerCommand(`ideAgentTabs.open.${commandKey(name)}`, () => {
         const profile = settings.profile(name);
         if (profile) openFromButton(profile);
       }),

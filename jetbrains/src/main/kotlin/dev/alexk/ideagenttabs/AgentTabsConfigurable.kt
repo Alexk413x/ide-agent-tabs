@@ -8,6 +8,7 @@ import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.CollectionComboBoxModel
 import com.intellij.ui.dsl.builder.bindItem
+import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.ui.dsl.listCellRenderer.listCellRenderer
 import com.intellij.ui.dsl.listCellRenderer.textListCellRenderer
@@ -57,6 +58,26 @@ class AgentTabsConfigurable : BoundConfigurable("Agent Tabs") {
                         if (profile != null && profile != Agents.settings.defaultProfile()) saved(Agents.setDefaultAgent(profile))
                     })
                     .comment("Every IDE with Agent Tabs shares this setting, saved in ${configFile()}.")
+            }
+            if (detected.ori != null) {
+                row("Launch through OpenRouter (Ori):") {
+                    comboBox(LaunchVia.entries, listCellRenderer {
+                        val via = value ?: return@listCellRenderer
+                        if (via == LaunchVia.ORI) icon(Agents.viaIcon)
+                        text(via.label)
+                    })
+                        .bindItem({ Agents.settings.shared().launchVia }, { value ->
+                            if (value != null && value != Agents.settings.shared().launchVia) saved(Agents.settings.setLaunchVia(value))
+                        })
+                        .comment("Start supported agents with <code>ori &lt;agent&gt;</code>, which bills model usage through OpenRouter.")
+                }
+            }
+            row {
+                checkBox("Close the old tab after a handoff")
+                    .bindSelected({ Agents.settings.shared().closeAfterHandoff }, { value ->
+                        if (value != Agents.settings.shared().closeAfterHandoff) saved(Agents.settings.setCloseAfterHandoff(value))
+                    })
+                    .comment("After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off.")
             }
             row("Open on startup:") {
                 comboBox(OpenOnStartup.entries, textListCellRenderer { it?.label })

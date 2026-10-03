@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Handoffs } from './handoff.js';
 import { agentTabsHome } from './home.js';
 import { ideCaller } from './ideClient.js';
 import { runJevCli } from './jev/cli.js';
@@ -47,6 +48,13 @@ if (command === 'jev') {
   // Windows sends no SIGTERM to a child; a client ends the server by closing its stdin.
   process.stdin.on('end', () => stop());
   process.stdin.on('close', () => stop());
-  await createServer(service, jev, messaging).connect(new StdioServerTransport());
+  const handoffs = new Handoffs({
+    home,
+    env: process.env,
+    sessionId: () => messaging.id,
+    openTab: (input) => service.openTab(input),
+    findHost: (id) => service.findHost(id),
+  });
+  await createServer(service, jev, messaging, handoffs).connect(new StdioServerTransport());
   void service.refreshDetection().catch(() => undefined);
 }

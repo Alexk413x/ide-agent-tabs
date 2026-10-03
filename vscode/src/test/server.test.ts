@@ -4,7 +4,7 @@ import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, before, test } from 'node:test';
-import { AgentProfile, AgentSettings } from '../profiles';
+import { AgentLaunch, AgentProfile, AgentSettings } from '../profiles';
 import { newToken } from '../registry';
 import { OpenRequest } from '../request';
 import { apiUrl, createApiServer, Host, listen, route, TabInfo } from '../server';
@@ -15,7 +15,7 @@ fs.mkdirSync(home);
 fs.writeFileSync(path.join(home, 'agents.json'), JSON.stringify({ probe: { label: 'Probe', command: 'probe-cli', promptFlag: '-p' } }));
 const token = newToken();
 const settings = new AgentSettings(home, () => {});
-const opened: { request: OpenRequest; profile: AgentProfile }[] = [];
+const opened: { request: OpenRequest; profile: AgentProfile; launch: AgentLaunch }[] = [];
 const tabs = new Map<string, TabInfo>();
 const typed: { id: string; text: string }[] = [];
 let folderOpen = true;
@@ -23,9 +23,9 @@ let folderOpen = true;
 const host: Host = {
   info: () => ({ ide: 'vscode', product: 'Test Code', version: '1.100.0', pid: 7, projects: [{ name: 'repo', path: dir, focused: true }] }),
   isInstalled: p => p.name === 'probe',
-  open: (request, profile) => {
+  open: (request, profile, launch) => {
     if (!folderOpen) return undefined;
-    opened.push({ request, profile });
+    opened.push({ request, profile, launch });
     const tab = { id: `tab-${tabs.size + 1}`, agent: profile.name, project: 'repo', path: request.path };
     tabs.set(tab.id, tab);
     return tab;
@@ -88,14 +88,16 @@ test('agents lists every profile with the default and installed flags', async ()
   assert.equal(status, 200);
   assert.equal(json.default, 'claude');
   assert.deepEqual(json.agents.at(-1), { name: 'probe', label: 'Probe', command: 'probe-cli', installed: true });
-  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'probe']);
+  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'probe']);
 });
 
 test('open, list, close, and close again', async () => {
   const opening = await call('open', { path: dir, agent: 'probe', prompt: 'hi', args: ['--x'], env: { FOO: 'bar' } });
   assert.equal(opening.status, 200);
-  assert.deepEqual(opening.json, { ok: true, id: 'tab-1', agent: 'probe', project: 'repo', path: dir });
-  assert.deepEqual(opened.at(-1), { request: { path: dir, prompt: 'hi', args: ['--x'], env: { FOO: 'bar' }, agent: 'probe' }, profile: settings.profile('probe') });
+  assert.deepEqual(opening.json, { ok: true, id: 'tab-1', agent: 'probe', project: 'repo', path: dir, via: 'direct' });
+  assert.deepEqual(opened.at(-1)?.request, { path: dir, prompt: 'hi', args: ['--x'], env: { FOO: 'bar' }, agent: 'probe', model: undefined, via: undefined });
+  assert.equal(opened.at(-1)?.profile, settings.profile('probe'));
+  assert.deepEqual(opened.at(-1)?.launch, { agent: 'probe', command: 'probe-cli', args: ['--x', '-p'], prompt: 'hi', env: { FOO: 'bar' }, via: 'direct' });
 
   assert.deepEqual((await call('list', {})).json, { ok: true, tabs: [{ id: 'tab-1', agent: 'probe', project: 'repo', path: dir }] });
   assert.deepEqual((await call('close', { id: 'tab-1' })).json, { ok: true, id: 'tab-1' });
@@ -118,6 +120,43 @@ test('input types into an open tab and 404s once it closes', async () => {
   assert.equal(gone.json.ok, false);
   assert.match(gone.json.error, /no open agent tab/);
   assert.equal(typed.length, 1);
+});
+
+test('open passes the model to the launch line and reports via', async () => {
+  const { status, json } = await call('open', { path: dir, agent: 'claude', model: 'opus' });
+  assert.equal(status, 200);
+  assert.equal(json.via, 'direct');
+  assert.deepEqual(opened.at(-1)?.launch.args, ['--model', 'opus']);
+  const noOption = await call('open', { path: dir, agent: 'probe', model: 'opus' });
+  assert.equal(noOption.status, 400);
+  assert.equal(noOption.json.error, 'probe has no model option; open it without model, or set modelFlag for it in agents.json');
+  assert.equal((await call('open', { path: dir, model: 'bad model' })).status, 400);
+});
+
+test('open through Ori follows via, then the launchVia setting, then Ori detection', async () => {
+  const noOri = await call('open', { path: dir, agent: 'claude', via: 'ori' });
+  assert.equal(noOri.status, 400);
+  assert.equal(noOri.json.error, "claude can't launch through Ori: Ori is not installed");
+
+  fs.writeFileSync(path.join(home, 'detected.json'), JSON.stringify({ ori: { path: '/x/ori', version: '0.14.3', agents: ['claude'] } }));
+  try {
+    const explicit = await call('open', { path: dir, agent: 'claude', via: 'ori', model: 'anthropic/claude-sonnet-4.5' });
+    assert.equal(explicit.json.via, 'ori');
+    assert.equal(opened.at(-1)?.launch.command, 'ori');
+    assert.deepEqual(opened.at(-1)?.launch.args, ['claude', '--model', 'anthropic/claude-sonnet-4.5']);
+    assert.equal(opened.at(-1)?.launch.agent, 'claude');
+
+    assert.equal((await call('open', { path: dir, agent: 'claude' })).json.via, 'direct');
+    fs.writeFileSync(path.join(home, 'config.json'), '{"launchVia":"ori"}');
+    assert.equal((await call('open', { path: dir, agent: 'claude' })).json.via, 'ori');
+    assert.equal((await call('open', { path: dir, agent: 'claude', via: 'direct' })).json.via, 'direct');
+    const fallback = await call('open', { path: dir, agent: 'probe' });
+    assert.equal(fallback.status, 200);
+    assert.equal(fallback.json.via, 'direct');
+  } finally {
+    fs.rmSync(path.join(home, 'detected.json'), { force: true });
+    fs.rmSync(path.join(home, 'config.json'), { force: true });
+  }
 });
 
 test('open without an agent uses the default', async () => {

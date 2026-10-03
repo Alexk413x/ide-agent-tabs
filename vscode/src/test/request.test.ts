@@ -89,6 +89,21 @@ test('parses an optional agent', () => {
   }
 });
 
+test('parses an optional model and via', () => {
+  const request = parseOpenRequest(body({ model: 'anthropic/claude-sonnet-4.5:beta', via: 'ori' }));
+  assert.equal(request.model, 'anthropic/claude-sonnet-4.5:beta');
+  assert.equal(request.via, 'ori');
+  assert.equal(parseOpenRequest(body({ via: 'direct' })).via, 'direct');
+  const bare = parseOpenRequest(body({}));
+  assert.equal(bare.model, undefined);
+  assert.equal(bare.via, undefined);
+  assert.equal(parseOpenRequest(body({ model: null, via: null })).model, undefined);
+  for (const bad of [{ model: '' }, { model: 'has space' }, { model: 'a;b' }, { model: 'x'.repeat(201) }, { model: 1 }, { via: 'cloud' }, { via: 'ORI' }, { via: 1 }]) {
+    assert.throws(() => parseOpenRequest(body(bad)), BadRequest, JSON.stringify(bad));
+  }
+  assert.equal(parseOpenRequest(body({ model: 'x'.repeat(200) })).model?.length, 200);
+});
+
 test('args and env are optional', () => {
   const request = parseOpenRequest(body({}));
   assert.deepEqual(request.args, []);

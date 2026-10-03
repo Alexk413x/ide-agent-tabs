@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { MAX_WAIT_S } from '../src/messaging/messaging.js';
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -52,7 +53,7 @@ test('finds each agent config file, honoring the relocation variables', () => {
 test('adds, keeps and removes the server entry in a JSON config', () => {
   assert.equal(
     withServerEntry(undefined, 'f', 'mcp', opencodeEntry(SERVER), { $schema: 's' }),
-    `{\n  "$schema": "s",\n  "mcp": {\n    "ide-agent-tabs": {\n      "type": "local",\n      "command": [\n        "node",\n        "${SERVER}"\n      ],\n      "enabled": true\n    }\n  }\n}\n`,
+    `{\n  "$schema": "s",\n  "mcp": {\n    "ide-agent-tabs": {\n      "type": "local",\n      "command": [\n        "node",\n        "${SERVER}"\n      ],\n      "enabled": true,\n      "timeout": 660000\n    }\n  }\n}\n`,
   );
   const existing = '{\r\n    "mcpServers": {\r\n        "other": { "command": "x" }\r\n    },\r\n    "theme": "dark"\r\n}\r\n';
   const added = withServerEntry(existing, 'f', 'mcpServers', copilotEntry(SERVER))!;
@@ -213,7 +214,12 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
       ['agy', true, false, false, undefined],
       ['copilot', true, false, false, undefined],
       ['gemini', true, false, false, undefined],
+      ['grok', false, false, false, undefined],
+      ['pi', false, false, null, undefined],
+      ['hermes', false, false, false, undefined],
       ['opencode', true, false, null, undefined],
+      ['qwen', false, false, false, undefined],
+      ['goose', false, false, false, undefined],
     ],
   );
 
@@ -272,7 +278,7 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   );
   assert.deepEqual(JSON.parse(readFileSync(opencodeFile, 'utf8')), {
     $schema: 'https://opencode.ai/config.json',
-    mcp: { 'ide-agent-tabs': { type: 'local', command: ['node', server], enabled: true } },
+    mcp: { 'ide-agent-tabs': { type: 'local', command: ['node', server], enabled: true, timeout: 660_000 } },
   });
 
   const again = await registerAgents(ctx, ['codex', 'gemini', 'copilot', 'agy']);
@@ -316,7 +322,7 @@ test('refuses configs it cannot edit safely and agents that are missing', async 
   assert.match(byAgent.copilot!.error!, /isn't plain JSON/);
   assert.match(byAgent.opencode!.error!, /opencode\.jsonc isn't plain JSON/);
   assert.equal(byAgent.codex!.error, 'not installed');
-  assert.ok(report.errors.includes('nope: unknown agent; use codex, agy, copilot, gemini, opencode'));
+  assert.ok(report.errors.includes('nope: unknown agent; use codex, agy, copilot, gemini, grok, pi, hermes, opencode, qwen, goose'));
   assert.equal(readFileSync(copilotFile, 'utf8'), '{ "mcpServers": ');
   assert.equal(readFileSync(jsoncFile, 'utf8'), jsonc);
   assert.ok(!existsSync(path.join(path.dirname(jsoncFile), 'opencode.json')));
@@ -399,4 +405,9 @@ test('an Antigravity CLI hook command holds the path bare and refuses one cmd.ex
   for (const bad of ['C:\Users\John Smith\h.mjs', 'C:\a&b\h.mjs', 'C:\%X%\h.mjs', 'C:\Program Files (x86)\h.mjs']) {
     assert.throws(() => agyHookCommand(bad, 'Stop'), /Antigravity CLI/);
   }
+});
+
+test('the OpenCode entry sets a tool timeout above the longest wait_for_message', () => {
+  const entry = opencodeEntry(SERVER) as { timeout?: number };
+  assert.ok((entry.timeout ?? 0) >= (MAX_WAIT_S + 60) * 1000, 'OpenCode would cut wait_for_message at its own default');
 });

@@ -53,6 +53,31 @@ test('hooks set busy, permission and idle for each CLI', async () => {
     ['agy', 'Stop', { fullyIdle: true, terminationReason: 'NO_TOOL_CALL' }, 'idle'],
     ['agy', 'PostToolUse', {}, 'busy'],
     ['agy', 'Stop', { fullyIdle: true }, 'idle'],
+    ['grok', 'UserPromptSubmit', {}, 'busy'],
+    ['grok', 'Notification', { notificationType: 'permission_prompt' }, 'permission'],
+    ['grok', 'PreToolUse', {}, 'busy'],
+    ['grok', 'PostToolUse', {}, 'busy'],
+    ['grok', 'Stop', {}, 'idle'],
+    ['grok', 'UserPromptSubmit', {}, 'busy'],
+    ['grok', 'StopCancelled', {}, 'idle'],
+    ['grok', 'UserPromptSubmit', {}, 'busy'],
+    ['grok', 'StopFailure', {}, 'idle'],
+    ['hermes', 'pre_llm_call', {}, 'busy'],
+    ['hermes', 'pre_approval_request', {}, 'permission'],
+    ['hermes', 'post_approval_response', {}, 'busy'],
+    ['hermes', 'post_tool_call', {}, 'busy'],
+    ['hermes', 'pre_verify', {}, 'idle'],
+    ['hermes', 'pre_llm_call', {}, 'busy'],
+    ['hermes', 'on_session_end', { extra: { interrupted: true } }, 'idle'],
+    ['qwen', 'UserPromptSubmit', {}, 'busy'],
+    ['qwen', 'PermissionRequest', {}, 'permission'],
+    ['qwen', 'PreToolUse', {}, 'busy'],
+    ['qwen', 'Notification', { notification_type: 'permission_prompt' }, 'permission'],
+    ['qwen', 'PostToolUse', {}, 'busy'],
+    ['qwen', 'Stop', {}, 'idle'],
+    ['goose', 'UserPromptSubmit', {}, 'busy'],
+    ['goose', 'PostToolUse', {}, 'busy'],
+    ['goose', 'Stop', {}, 'idle'],
   ];
   const home = tempDir('iat-hook-');
   for (const [cli, event, input, want] of cases) {
@@ -78,6 +103,16 @@ test('each CLI gets the reminder in its own context format after a prompt and a 
     ['copilot', 'postToolUse', { additionalContext: REMINDER }],
     ['agy', 'PreInvocation', { injectSteps: [{ ephemeralMessage: REMINDER }] }],
     ['agy', 'PostToolUse', undefined],
+    ['grok', 'UserPromptSubmit', undefined],
+    ['grok', 'PreToolUse', undefined],
+    ['grok', 'PostToolUse', context('PostToolUse')],
+    ['hermes', 'pre_llm_call', { context: REMINDER }],
+    ['hermes', 'post_tool_call', undefined],
+    ['qwen', 'UserPromptSubmit', context('UserPromptSubmit')],
+    ['qwen', 'PostToolUse', context('PostToolUse')],
+    ['qwen', 'PreToolUse', undefined],
+    ['goose', 'UserPromptSubmit', undefined],
+    ['goose', 'PostToolUse', undefined],
   ];
   for (const [cli, event, want] of cases) {
     const home = tempDir('iat-hook-');
@@ -122,6 +157,17 @@ test('turn end blocks at most three times in a row, and a prompt or a read reset
   assert.deepEqual(await hook(home, 'copilot', 'agentStop'), block);
   await hook(home, 'agy', 'PreInvocation', { invocationNum: 0 });
   assert.deepEqual(await hook(home, 'agy', 'Stop'), { decision: 'continue', reason: block.reason });
+  await hook(home, 'agy', 'PreInvocation', { invocationNum: 0 });
+  for (const [cli, prompt, stop] of [['grok', 'UserPromptSubmit', 'Stop'], ['hermes', 'pre_llm_call', 'pre_verify'], ['qwen', 'UserPromptSubmit', 'Stop'], ['goose', 'UserPromptSubmit', 'Stop']]) {
+    await hook(home, cli!, prompt!);
+    assert.deepEqual(await hook(home, cli!, stop!), block, cli);
+  }
+  await hook(home, 'grok', 'UserPromptSubmit');
+  assert.equal(await hook(home, 'grok', 'StopCancelled'), undefined, 'an interrupted Grok turn settles without a nudge');
+  assert.equal(await state(home), 'idle');
+  await hook(home, 'hermes', 'pre_llm_call');
+  assert.equal(await hook(home, 'hermes', 'on_session_end'), undefined);
+  assert.equal(await state(home), 'idle');
 
   await takeMessages(home, ID);
   assert.equal(await hook(home, 'claude', 'Stop'), undefined);
@@ -135,7 +181,7 @@ test('a hook without a session id, or for an unknown CLI or event, does nothing'
   assert.equal(await hook(home, 'vim', 'Stop'), undefined);
   assert.equal(await hook(home, 'claude', 'SessionEnd'), undefined);
   assert.ok(!existsSync(presencePath(home, ID)));
-  assert.deepEqual(Object.keys(HOOK_EVENTS).sort(), ['agy', 'claude', 'codex', 'copilot', 'gemini']);
+  assert.deepEqual(Object.keys(HOOK_EVENTS).sort(), ['agy', 'claude', 'codex', 'copilot', 'gemini', 'goose', 'grok', 'hermes', 'qwen']);
 });
 
 test('the hook script reads stdin, prints one JSON line, and exits 0 even on bad input', async () => {
@@ -248,4 +294,24 @@ test('a Copilot background agent going idle leaves the session state alone, and 
   assert.equal(await state(home), 'busy');
   await hook(home, 'copilot', 'notification', { notification_type: 'elicitation_dialog' });
   assert.equal(await state(home), 'permission');
+});
+
+test('Grok marks its input busy at a turn end and idle after idle_prompt, like Claude; Qwen Code does not', async () => {
+  const home = tempDir('iat-hook-');
+  const inputIdle = async () => (await readPresence(home, ID))?.inputIdle;
+  await hook(home, 'grok', 'UserPromptSubmit');
+  await hook(home, 'grok', 'Stop');
+  assert.equal(await state(home), 'idle');
+  assert.equal(await inputIdle(), false);
+  await hook(home, 'grok', 'Notification', { notificationType: 'idle_prompt' });
+  assert.equal(await inputIdle(), true);
+  await hook(home, 'grok', 'UserPromptSubmit');
+  await hook(home, 'grok', 'StopCancelled');
+  assert.equal(await inputIdle(), false);
+
+  const qwen = tempDir('iat-hook-');
+  await hook(qwen, 'qwen', 'UserPromptSubmit');
+  await hook(qwen, 'qwen', 'Stop');
+  await hook(qwen, 'qwen', 'Notification', { notification_type: 'idle_prompt' });
+  assert.equal((await readPresence(qwen, ID))?.inputIdle, undefined);
 });

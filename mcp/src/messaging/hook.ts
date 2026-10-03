@@ -2,7 +2,7 @@ import { peekUnread } from './mailbox.js';
 import { unreadReminder } from './notice.js';
 import { effectiveState, isSessionId, updatePresence, withState, type PresenceFile, type SessionState } from './sessions.js';
 
-export const HOOK_CLIS = ['claude', 'codex', 'gemini', 'copilot', 'agy'] as const;
+export const HOOK_CLIS = ['claude', 'codex', 'gemini', 'copilot', 'agy', 'grok', 'hermes', 'qwen', 'goose'] as const;
 export type HookCli = (typeof HOOK_CLIS)[number];
 export const MAX_NUDGES = 3;
 
@@ -25,6 +25,8 @@ const STOP: Action = { stop: true };
 const STARTED: Action = { start: true, state: 'idle', remind: true };
 const TOOL_FAILED: Action = { failure: true, remind: true };
 const INVOCATION: Action = { invocation: true, state: 'busy', remind: true };
+const SETTLED: Action = { state: 'idle' };
+const PERMISSION: Action = { state: 'permission' };
 
 export const HOOK_EVENTS: Record<HookCli, Record<string, Action>> = {
   claude: {
@@ -47,7 +49,29 @@ export const HOOK_EVENTS: Record<HookCli, Record<string, Action>> = {
     agentStop: STOP,
   },
   agy: { PreInvocation: INVOCATION, PostToolUse: BUSY, Stop: STOP },
+  grok: {
+    UserPromptSubmit: { state: 'busy', prompt: true, inputIdle: false },
+    PreToolUse: BUSY,
+    PostToolUse: AFTER_TOOL,
+    Notification: { notification: true },
+    Stop: { ...STOP, inputIdle: false },
+    StopCancelled: { ...SETTLED, inputIdle: false },
+    StopFailure: { ...SETTLED, inputIdle: false },
+  },
+  hermes: {
+    pre_llm_call: PROMPT,
+    post_tool_call: BUSY,
+    pre_approval_request: PERMISSION,
+    post_approval_response: BUSY,
+    pre_verify: STOP,
+    on_session_end: SETTLED,
+  },
+  qwen: { UserPromptSubmit: PROMPT, PreToolUse: BUSY, PostToolUse: AFTER_TOOL, PermissionRequest: PERMISSION, Notification: { notification: true }, Stop: STOP },
+  goose: { UserPromptSubmit: { state: 'busy', prompt: true }, PostToolUse: BUSY, Stop: STOP },
 };
+
+// Claude Code and Grok Build send idle_prompt once the input has sat unused after a turn end.
+const INPUT_IDLE_CLIS: readonly HookCli[] = ['claude', 'grok'];
 
 export const isHookCli = (cli: string): cli is HookCli => (HOOK_CLIS as readonly string[]).includes(cli);
 
@@ -60,6 +84,7 @@ function notificationState(input: Record<string, unknown>): SessionState | undef
 
 function contextOutput(cli: HookCli, event: string, text: string): object {
   if (cli === 'agy') return { injectSteps: [{ ephemeralMessage: text }] };
+  if (cli === 'hermes') return { context: text };
   return cli === 'copilot' ? { additionalContext: text } : { hookSpecificOutput: { hookEventName: event, additionalContext: text } };
 }
 
@@ -86,10 +111,10 @@ function ownedBy(cli: HookCli, base: PresenceFile, action: Action, input: Record
   return IN_TURN.includes(effectiveState(base, now)) ? false : session;
 }
 
-// Claude Code's turn end comes while the user may already be typing the next prompt; its idle_prompt
-// notification is the one signal that the input has sat unused. A session that just started has no typing yet.
+// A turn end comes while the user may already be typing the next prompt; the idle_prompt notification of
+// Claude Code and Grok Build is the one signal that the input has sat unused. A session that just started has no typing yet.
 function inputIdleAfter(cli: HookCli, action: Action, input: Record<string, unknown>): boolean | undefined {
-  if (action.notification) return cli === 'claude' && notificationState(input) === 'idle' ? true : undefined;
+  if (action.notification) return INPUT_IDLE_CLIS.includes(cli) && notificationState(input) === 'idle' ? true : undefined;
   if (action.start && action.inputIdle !== undefined) return input.source === 'startup';
   return action.inputIdle;
 }

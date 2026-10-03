@@ -104,7 +104,8 @@ The JSON report lists each editor with `ok`, or an `error`. Tell the user to rel
 
 ## 6. Other agents
 
-Codex, Antigravity CLI, Copilot CLI, Gemini CLI and OpenCode can use Agent Tabs too. With it, they can list IDEs, open,
+Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code and Goose can use
+Agent Tabs too. With it, they can list IDEs, open,
 list and close agent tabs, and message any other agent session on this machine, including this one.
 
 A Codex agent tab needs no registration: it starts Codex with its own Agent Tabs server and messaging
@@ -120,7 +121,7 @@ config and would open a console window each time it starts the server.
 
    The JSON lists each agent with `installed`, `registered`, the server `path` it's registered with,
    `stable`, which is `true` when that path is the copy in `~/.ide-agent-tabs/mcp/`, and `hooks`, which
-   is `true` when the messaging hooks are in place (`null` for Codex and OpenCode, which get none). Claude Code
+   is `true` when the messaging hooks are in place (`null` for Codex, Pi and OpenCode, which get none). Claude Code
    isn't listed, because it gets the server and the hooks from this plugin.
 
 2. Show the installed agents and whether each can already use Agent Tabs. Treat an agent with
@@ -136,7 +137,10 @@ config and would open a console window each time it starts the server.
 
    Registering also adds the messaging hooks: as the `ide-agent-tabs` group in
    `~/.gemini/config/hooks.json` for Antigravity CLI, as `~/.copilot/hooks/ide-agent-tabs.json` for
-   Copilot CLI, and to `~/.gemini/settings.json` for Gemini CLI. For Antigravity CLI, it also adds the allow rule
+   Copilot CLI, to `~/.gemini/settings.json` for Gemini CLI, to `$GROK_HOME/hooks/ide-agent-tabs.json`
+   for Grok Build, to `hooks` in `config.yaml` (and the allowlist `shell-hooks-allowlist.json`) under
+   `HERMES_HOME` for Hermes, to `~/.qwen/settings.json` for Qwen Code, and as a plugin in
+   `~/.agents/plugins/ide-agent-tabs/` for Goose. For Antigravity CLI, it also adds the allow rule
    `mcp(ide-agent-tabs/*)` to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`, so the
    agent doesn't ask before each Agent Tabs tool call. For Codex, it sets `env_vars` and
    `tool_timeout_sec` in the server's table in `~/.codex/config.toml`, and removes Agent Tabs hooks that
@@ -149,11 +153,19 @@ config and would open a console window each time it starts the server.
 4. Tell the user to restart open sessions of those agents, so they load the server and the hooks. Tell
    them that Codex sessions get messaging hooks only in Codex agent tabs.
 
+   Tell them also that Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose and Codex (local) are untested:
+   they come from each CLI's documentation. Pi and OpenCode get no hooks, so a session of either reads a
+   message only when it calls `read_messages` or `wait_for_message`. Goose runs hooks with `sh -c`, so
+   Windows needs Git Bash. Codex (local) needs Ollama 0.13.4 or later and needs no registration.
+   Registering Hermes adds an allowlist entry for each of Agent Tabs' own hook commands and nothing else;
+   never set `hooks_auto_accept` or `HERMES_ACCEPT_HOOKS`.
+
 ## 7. Tab settings and terminal
 
-Four settings in `~/.ide-agent-tabs/config.json` decide where a new tab opens when a request names no
-IDE or terminal. An explicit name always wins: an `open_tab` call that names `ide` or an agent, or a
-user who names an IDE or terminal, overrides these settings. A missing key means the default.
+Settings in `~/.ide-agent-tabs/config.json` decide where a new tab opens when a request names no IDE or
+terminal, how an agent starts, and what happens to the old tab after a handoff. An explicit request
+always wins: an `open_tab` call that names `ide`, an agent or `via`, or a user who names an IDE, a
+terminal or a launch, overrides these settings. A missing key means the default.
 
 **IDE tabs**
 
@@ -176,19 +188,39 @@ user who names an IDE or terminal, overrides these settings. A missing key means
   of any install (Store, MSI or winget), else Windows PowerShell 5.1.
 - Terminal window: Whether terminal tabs join your last window or a window kept for Agent Tabs.
 
+**Agents**
+
+| Setting | Key | Values | Default |
+|---|---|---|---|
+| Launch through OpenRouter (Ori) | `launchVia` | `direct`, `ori` | `direct` |
+| Close the old tab after a handoff | `closeAfterHandoff` | `true`, `false` | `true` |
+
+- Launch through OpenRouter (Ori): Start supported agents with `ori <agent>`, which bills model usage
+  through OpenRouter. Offer it only when `~/.ide-agent-tabs/detected.json` has a non-null `ori`, or
+  `list_agents` shows `ori: true` for an agent. Ori launches `claude`, `codex`, `grok`, `hermes`,
+  `opencode`, `pi` and `prime-agent`, only those it lists as installed. When Ori can't launch an agent,
+  the tab starts directly. Tell the user that usage through Ori is billed through OpenRouter, and keep
+  the setting `direct` unless they ask for `ori`. An `open_tab` call with `via` overrides it. A
+  Codex tab doesn't launch through Ori with an npm Codex on Windows, and `ori claude` may fail with
+  `401 Missing Authentication header` in Ori 0.14.3; both are Ori limits.
+- Close the old tab after a handoff: After a handoff, the new session closes the old tab once both
+  sides confirm. `false` leaves the old tab open, marked as handed off.
+
 To change a setting, use the IDE settings or edit `config.json` and keep every other key:
 
 - VS Code and editors built on it: **Settings > Extensions > Agent Tabs**, in the sections **Agent Tabs:
   IDE tabs** and **Agent Tabs: Terminal tabs**. The terminal and shell settings have a **Choose…** link
-  that lists the detected options.
+  that lists the detected options. The launch and handoff settings are in the **Agent Tabs** section,
+  and the launch setting shows only when Ori is detected.
 - JetBrains IDEs: **Settings > Tools > Agent Tabs**, in the groups **IDE tabs** and **Terminal tabs**.
-  The Shell row shows on Windows only.
+  The Shell row shows on Windows only. The launch setting sits next to **Default agent** and shows only
+  when Ori is detected.
 
 The lists of terminals and PowerShell installs come from `~/.ide-agent-tabs/detected.json`, which the
 MCP server writes. `mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_ides` shows the same `terminals`, and
 on Windows the `shells`.
 
-Ask whether the user wants to change any of them. Ask whether they want agent tabs outside IDEs, in a
+Ask whether the user wants to change any of them. Write only the keys they change. Ask whether they want agent tabs outside IDEs, in a
 terminal app. If not, skip the rest of this step. Otherwise ask which terminal `open_tab` uses when no
 IDE fits, and write the choice as `"terminal"`. Without one, the server uses the first installed
 terminal in this order:

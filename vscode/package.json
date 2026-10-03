@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "publisher": "alexk413x",
   "license": "LicenseRef-Proprietary",
   "repository": {
@@ -32,7 +32,8 @@
       "supported": true,
       "restrictedConfigurations": [
         "ideAgentTabs.preferredTerminal",
-        "ideAgentTabs.windowsShell"
+        "ideAgentTabs.windowsShell",
+        "ideAgentTabs.launchVia"
       ]
     },
     "virtualWorkspaces": false
@@ -53,21 +54,42 @@
               "codex",
               "agy",
               "copilot",
-              "gemini"
+              "gemini",
+              "grok",
+              "pi",
+              "hermes",
+              "opencode",
+              "qwen",
+              "goose",
+              "codex-local"
             ],
             "enumItemLabels": [
               "Claude Code",
               "Codex",
               "Antigravity CLI",
               "Copilot CLI",
-              "Gemini CLI"
+              "Gemini CLI",
+              "Grok Build",
+              "Pi",
+              "Hermes",
+              "OpenCode",
+              "Qwen Code",
+              "Goose",
+              "Codex (local)"
             ],
             "enumDescriptions": [
               "Claude Code.",
               "Codex.",
               "Antigravity CLI.",
               "Copilot CLI.",
-              "Gemini CLI."
+              "Gemini CLI.",
+              "Grok Build.",
+              "Pi.",
+              "Hermes.",
+              "OpenCode.",
+              "Qwen Code.",
+              "Goose.",
+              "Codex (local)."
             ],
             "description": "The agent that the editor title button, the status bar item and startup open.",
             "order": 1
@@ -92,6 +114,32 @@
             ],
             "description": "When to open the default agent in an editor tab without a click.",
             "order": 2
+          },
+          "ideAgentTabs.launchVia": {
+            "type": "string",
+            "scope": "machine",
+            "default": "direct",
+            "enum": [
+              "direct",
+              "ori"
+            ],
+            "enumItemLabels": [
+              "Directly",
+              "Through Ori"
+            ],
+            "enumDescriptions": [
+              "Start each agent with its own command.",
+              "Start supported agents with `ori <agent>`."
+            ],
+            "markdownDescription": "Launch through OpenRouter (Ori). Start supported agents with `ori <agent>`, which bills model usage through OpenRouter. Needs Ori (`ori`) installed.",
+            "order": 3
+          },
+          "ideAgentTabs.closeAfterHandoff": {
+            "type": "boolean",
+            "scope": "machine",
+            "default": true,
+            "markdownDescription": "Close the old tab after a handoff. After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off.",
+            "order": 4
           }
         },
         "order": 1
@@ -257,6 +305,104 @@
         "category": "Agent Tabs"
       },
       {
+        "command": "ideAgentTabs.newTab.grok",
+        "title": "New Grok Build Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/grok_new.svg",
+          "dark": "resources/icons/agents/grok_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.open.grok",
+        "title": "Grok Build",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.newTab.pi",
+        "title": "New Pi Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/pi_new.svg",
+          "dark": "resources/icons/agents/pi_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.open.pi",
+        "title": "Pi",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.newTab.hermes",
+        "title": "New Hermes Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/hermes_new.svg",
+          "dark": "resources/icons/agents/hermes_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.open.hermes",
+        "title": "Hermes",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.newTab.opencode",
+        "title": "New OpenCode Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/opencode_new.svg",
+          "dark": "resources/icons/agents/opencode_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.open.opencode",
+        "title": "OpenCode",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.newTab.qwen",
+        "title": "New Qwen Code Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/qwen_new.svg",
+          "dark": "resources/icons/agents/qwen_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.open.qwen",
+        "title": "Qwen Code",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.newTab.goose",
+        "title": "New Goose Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/goose_new.svg",
+          "dark": "resources/icons/agents/goose_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.open.goose",
+        "title": "Goose",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.newTab.codexLocal",
+        "title": "New Codex (local) Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/codex_new.svg",
+          "dark": "resources/icons/agents/codex_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.open.codexLocal",
+        "title": "Codex (local)",
+        "category": "Agent Tabs"
+      },
+      {
         "command": "ideAgentTabs.choosePreferredTerminal",
         "title": "Choose Preferred Terminal…",
         "category": "Agent Tabs"
@@ -310,6 +456,48 @@
         "when": "ideAgentTabs.buttonAgent == gemini"
       },
       {
+        "command": "ideAgentTabs.newTab.grok",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == grok"
+      },
+      {
+        "command": "ideAgentTabs.newTab.pi",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == pi"
+      },
+      {
+        "command": "ideAgentTabs.newTab.hermes",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == hermes"
+      },
+      {
+        "command": "ideAgentTabs.newTab.opencode",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == opencode"
+      },
+      {
+        "command": "ideAgentTabs.newTab.qwen",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == qwen"
+      },
+      {
+        "command": "ideAgentTabs.newTab.goose",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == goose"
+      },
+      {
+        "command": "ideAgentTabs.newTab.codexLocal",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == codexLocal"
+      },
+      {
         "command": "ideAgentTabs.newTab.other",
         "key": "ctrl+alt+a",
         "mac": "cmd+alt+a",
@@ -341,6 +529,41 @@
         {
           "command": "ideAgentTabs.newTab.gemini",
           "when": "ideAgentTabs.buttonAgent == gemini",
+          "group": "navigation@-0.2"
+        },
+        {
+          "command": "ideAgentTabs.newTab.grok",
+          "when": "ideAgentTabs.buttonAgent == grok",
+          "group": "navigation@-0.2"
+        },
+        {
+          "command": "ideAgentTabs.newTab.pi",
+          "when": "ideAgentTabs.buttonAgent == pi",
+          "group": "navigation@-0.2"
+        },
+        {
+          "command": "ideAgentTabs.newTab.hermes",
+          "when": "ideAgentTabs.buttonAgent == hermes",
+          "group": "navigation@-0.2"
+        },
+        {
+          "command": "ideAgentTabs.newTab.opencode",
+          "when": "ideAgentTabs.buttonAgent == opencode",
+          "group": "navigation@-0.2"
+        },
+        {
+          "command": "ideAgentTabs.newTab.qwen",
+          "when": "ideAgentTabs.buttonAgent == qwen",
+          "group": "navigation@-0.2"
+        },
+        {
+          "command": "ideAgentTabs.newTab.goose",
+          "when": "ideAgentTabs.buttonAgent == goose",
+          "group": "navigation@-0.2"
+        },
+        {
+          "command": "ideAgentTabs.newTab.codexLocal",
+          "when": "ideAgentTabs.buttonAgent == codexLocal",
           "group": "navigation@-0.2"
         },
         {
@@ -399,6 +622,62 @@
           "when": "false"
         },
         {
+          "command": "ideAgentTabs.newTab.grok",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.grok",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.pi",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.pi",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.hermes",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.hermes",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.opencode",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.opencode",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.qwen",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.qwen",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.goose",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.goose",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.newTab.codexLocal",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.codexLocal",
+          "when": "false"
+        },
+        {
           "command": "ideAgentTabs.chooseWindowsShell",
           "when": "isWindows"
         }
@@ -428,6 +707,41 @@
           "command": "ideAgentTabs.open.gemini",
           "when": "ideAgentTabs.installed.gemini",
           "group": "1_agents@4"
+        },
+        {
+          "command": "ideAgentTabs.open.grok",
+          "when": "ideAgentTabs.installed.grok",
+          "group": "1_agents@5"
+        },
+        {
+          "command": "ideAgentTabs.open.pi",
+          "when": "ideAgentTabs.installed.pi",
+          "group": "1_agents@6"
+        },
+        {
+          "command": "ideAgentTabs.open.hermes",
+          "when": "ideAgentTabs.installed.hermes",
+          "group": "1_agents@7"
+        },
+        {
+          "command": "ideAgentTabs.open.opencode",
+          "when": "ideAgentTabs.installed.opencode",
+          "group": "1_agents@8"
+        },
+        {
+          "command": "ideAgentTabs.open.qwen",
+          "when": "ideAgentTabs.installed.qwen",
+          "group": "1_agents@9"
+        },
+        {
+          "command": "ideAgentTabs.open.goose",
+          "when": "ideAgentTabs.installed.goose",
+          "group": "1_agents@10"
+        },
+        {
+          "command": "ideAgentTabs.open.codexLocal",
+          "when": "ideAgentTabs.installed.codexLocal",
+          "group": "1_agents@11"
         },
         {
           "command": "ideAgentTabs.newTabWith",

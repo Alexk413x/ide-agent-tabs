@@ -5,15 +5,19 @@ export const AUTO = 'auto';
 
 export const TAB_ROUTINGS = ['project', 'caller'] as const;
 export const TERMINAL_WINDOWS = ['last', 'dedicated'] as const;
+export const LAUNCH_VIA = ['direct', 'ori'] as const;
 
 export type TabRouting = (typeof TAB_ROUTINGS)[number];
 export type TerminalWindow = (typeof TERMINAL_WINDOWS)[number];
+export type LaunchVia = (typeof LAUNCH_VIA)[number];
 
 export interface SharedSettings {
   tabRouting: TabRouting;
   terminal: string;
   shell: string;
   terminalWindow: TerminalWindow;
+  launchVia: LaunchVia;
+  closeAfterHandoff: boolean;
 }
 
 export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
@@ -21,6 +25,8 @@ export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
   terminal: AUTO,
   shell: AUTO,
   terminalWindow: 'last',
+  launchVia: 'direct',
+  closeAfterHandoff: true,
 });
 
 export interface DetectedTerminal {
@@ -33,9 +39,16 @@ export interface DetectedShell {
   label: string;
 }
 
+export interface DetectedOri {
+  path: string;
+  version?: string;
+  agents: string[];
+}
+
 export interface Detected {
   terminals: DetectedTerminal[];
   shells: DetectedShell[];
+  ori: DetectedOri | null;
 }
 
 function oneOf<T extends string>(allowed: readonly T[], value: unknown): T | undefined {
@@ -58,12 +71,18 @@ export function readSharedSettings(text: string, file: string): Partial<SharedSe
   if (shell !== undefined) found.shell = shell;
   const terminalWindow = oneOf(TERMINAL_WINDOWS, root.terminalWindow);
   if (terminalWindow !== undefined) found.terminalWindow = terminalWindow;
+  const launchVia = oneOf(LAUNCH_VIA, root.launchVia);
+  if (launchVia !== undefined) found.launchVia = launchVia;
+  if (typeof root.closeAfterHandoff === 'boolean') found.closeAfterHandoff = root.closeAfterHandoff;
   return found;
 }
 
-export function withSharedValue(existing: string | undefined, file: string, key: keyof SharedSettings, value: string): string {
+export function withSharedValue(existing: string | undefined, file: string, key: keyof SharedSettings, value: string | boolean): string {
   const root = existing === undefined || existing.trim() === '' ? {} : parseObject(existing, file);
-  if (value === AUTO || value.trim() === '') delete root[key];
+  if (typeof value === 'boolean') {
+    if (value === SHARED_DEFAULTS[key]) delete root[key];
+    else root[key] = value;
+  } else if (value === AUTO || value.trim() === '') delete root[key];
   else root[key] = value;
   return JSON.stringify(root, null, 2) + '\n';
 }
@@ -86,7 +105,18 @@ export function parseDetected(text: string): Detected {
       if (typeof path === 'string' && path !== '') shells.push({ path, label: typeof label === 'string' && label !== '' ? label : path });
     }
   }
-  return { terminals, shells };
+  return { terminals, shells, ori: parseOri(root.ori) };
+}
+
+function parseOri(value: unknown): DetectedOri | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const { path, version, agents } = value as Record<string, unknown>;
+  if (typeof path !== 'string' || path === '') return null;
+  return {
+    path,
+    version: typeof version === 'string' && version !== '' ? version : undefined,
+    agents: Array.isArray(agents) ? agents.filter((a): a is string => typeof a === 'string' && a !== '') : [],
+  };
 }
 
 export interface InspectedSetting {
@@ -95,7 +125,9 @@ export interface InspectedSetting {
   workspaceFolderValue?: unknown;
 }
 
-export function userSettingValue(key: keyof SharedSettings, inspected: InspectedSetting | undefined): string {
+export function userSettingValue<K extends keyof SharedSettings>(key: K, inspected: InspectedSetting | undefined): SharedSettings[K] {
   const value = inspected?.globalValue;
-  return typeof value === 'string' && value.trim() !== '' ? value : SHARED_DEFAULTS[key];
+  const fallback = SHARED_DEFAULTS[key];
+  if (typeof fallback === 'boolean') return (typeof value === 'boolean' ? value : fallback) as SharedSettings[K];
+  return (typeof value === 'string' && value.trim() !== '' ? value : fallback) as SharedSettings[K];
 }

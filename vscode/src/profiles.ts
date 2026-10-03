@@ -2,7 +2,17 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { BadRequest, checkEnv, isAbsolutePath, MAX_ENTRIES, optString, optStringList, optStringMap, parseObject } from './request';
 import { writeAtomically } from './registry';
-import { Detected, DETECTED_FILE, parseDetected, readSharedSettings, SHARED_DEFAULTS, SharedSettings, withSharedValue } from './sharedSettings';
+import {
+  Detected,
+  DETECTED_FILE,
+  DetectedOri,
+  LaunchVia,
+  parseDetected,
+  readSharedSettings,
+  SHARED_DEFAULTS,
+  SharedSettings,
+  withSharedValue,
+} from './sharedSettings';
 
 export const DEFAULT_AGENT = 'claude';
 export const AGENTS_FILE = 'agents.json';
@@ -17,6 +27,7 @@ export interface AgentProfile {
   command: string;
   args: string[];
   promptFlag?: string;
+  modelFlag?: string;
   env: Record<string, string>;
   icon?: string;
 }
@@ -27,21 +38,97 @@ export interface AgentLaunch {
   args: string[];
   prompt?: string;
   env: Record<string, string>;
+  via?: LaunchVia;
 }
 
 export function profile(name: string, label: string, command: string, extra: Partial<AgentProfile> = {}): AgentProfile {
   return { name, label, command, args: [], env: {}, ...extra };
 }
 
-export function launchOf(p: AgentProfile, prompt?: string, callerArgs: string[] = [], callerEnv: Record<string, string> = {}): AgentLaunch {
+export function launchOf(
+  p: AgentProfile,
+  prompt?: string,
+  callerArgs: string[] = [],
+  callerEnv: Record<string, string> = {},
+  model?: string,
+): AgentLaunch {
   const flag = prompt !== undefined && p.promptFlag !== undefined ? [p.promptFlag] : [];
+  const modelArgs = model !== undefined && p.modelFlag !== undefined ? [p.modelFlag, model] : [];
   return {
     agent: p.name,
     command: p.command,
-    args: [...p.args, ...callerArgs, ...flag],
+    args: [...p.args, ...modelArgs, ...callerArgs, ...flag],
     prompt,
     env: { ...p.env, ...callerEnv },
+    via: 'direct',
   };
+}
+
+export const ORI_COMMAND = 'ori';
+export const ORI_PROFILES: readonly string[] = ['claude', 'codex', 'grok', 'hermes', 'opencode', 'pi', 'prime-agent'];
+const ORI_CMD_UNSAFE = /[|"%^&<>]/;
+const SHIM_EXTENSIONS = ['.exe', '.cmd', '.bat'];
+
+export interface LaunchContext {
+  prompt?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  model?: string;
+  via?: LaunchVia;
+  setting: LaunchVia;
+  ori: DetectedOri | null;
+  windows: boolean;
+  searchPath: string;
+}
+
+function isCmdShim(command: string, searchPath: string): boolean {
+  const lower = command.toLowerCase();
+  if (/\.(cmd|bat)$/.test(lower)) return true;
+  if (/\.(exe|com|ps1)$/.test(lower)) return false;
+  for (const raw of searchPath.split(path.delimiter)) {
+    const dir = raw.trim().replace(/^"+|"+$/g, '');
+    if (dir === '') continue;
+    const hit = SHIM_EXTENSIONS.find(ext => exists(path.join(dir, command + ext)));
+    if (hit !== undefined) return hit !== '.exe';
+  }
+  return true;
+}
+
+function oriRefusal(p: AgentProfile, ctx: LaunchContext, oriArgs: string[]): string | undefined {
+  if (ctx.ori === null) return 'Ori is not installed';
+  if (!ORI_PROFILES.includes(p.name)) return `Ori does not support ${p.name}`;
+  if (!ctx.ori.agents.includes(p.name)) return `Ori does not list ${p.name} as launchable`;
+  if (ctx.windows && isCmdShim(p.command, ctx.searchPath) && oriArgs.some(a => ORI_CMD_UNSAFE.test(a))) {
+    return 'Ori refuses an argument with | " % ^ & < or > when the agent is a .cmd shim on Windows';
+  }
+  return undefined;
+}
+
+const GOOSE_RUN_ARGS: readonly string[] = ['run', '-s'];
+const GOOSE_EMPTY_ARGS: readonly string[] = ['session'];
+
+function withoutPrompt(p: AgentProfile, prompt: string | undefined): AgentProfile {
+  const builtinGoose = p.command === 'goose' && p.args.length === GOOSE_RUN_ARGS.length && p.args.every((a, i) => a === GOOSE_RUN_ARGS[i]);
+  return prompt === undefined && builtinGoose ? { ...p, args: [...GOOSE_EMPTY_ARGS] } : p;
+}
+
+export function planLaunch(profile: AgentProfile, ctx: LaunchContext): AgentLaunch {
+  const p = withoutPrompt(profile, ctx.prompt);
+  const callerArgs = ctx.args ?? [];
+  const callerEnv = ctx.env ?? {};
+  if ((ctx.via ?? ctx.setting) === 'ori') {
+    const flag = ctx.prompt !== undefined && p.promptFlag !== undefined ? [p.promptFlag] : [];
+    const args = [p.name, ...(ctx.model !== undefined ? ['--model', ctx.model] : []), ...p.args, ...callerArgs, ...flag];
+    const refusal = oriRefusal(p, ctx, ctx.prompt !== undefined ? [...args, ctx.prompt] : args);
+    if (refusal === undefined) {
+      return { agent: p.name, command: ORI_COMMAND, args, prompt: ctx.prompt, env: { ...p.env, ...callerEnv }, via: 'ori' };
+    }
+    if (ctx.via === 'ori') throw new BadRequest(`${p.name} can't launch through Ori: ${refusal}`);
+  }
+  if (ctx.model !== undefined && p.modelFlag === undefined) {
+    throw new BadRequest(`${p.name} has no model option; open it without model, or set modelFlag for it in agents.json`);
+  }
+  return launchOf(p, ctx.prompt, callerArgs, callerEnv, ctx.model);
 }
 
 // Same strings as CODEX_TAB_ARGS in mcp/src/profiles.ts, which explains them; mcp/test/codexTab.test.ts checks both.
@@ -64,11 +151,19 @@ export const CODEX_TAB_ARGS: readonly string[] = Object.freeze([
 ]);
 
 export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
-  profile('claude', 'Claude Code', 'claude'),
-  profile('codex', 'Codex', 'codex', { args: [...CODEX_TAB_ARGS] }),
-  profile('agy', 'Antigravity CLI', 'agy', { promptFlag: '-i' }),
-  profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i' }),
-  profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i' }),
+  profile('claude', 'Claude Code', 'claude', { modelFlag: '--model' }),
+  profile('codex', 'Codex', 'codex', { args: [...CODEX_TAB_ARGS], modelFlag: '-m' }),
+  profile('agy', 'Antigravity CLI', 'agy', { promptFlag: '-i', modelFlag: '--model' }),
+  profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i', modelFlag: '--model' }),
+  profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i', modelFlag: '-m' }),
+  profile('grok', 'Grok Build', 'grok', { modelFlag: '-m' }),
+  profile('pi', 'Pi', 'pi', { modelFlag: '--model' }),
+  profile('hermes', 'Hermes', 'hermes', { args: ['chat'], promptFlag: '-q', modelFlag: '-m' }),
+  profile('opencode', 'OpenCode', 'opencode', { promptFlag: '--prompt', modelFlag: '-m' }),
+  profile('qwen', 'Qwen Code', 'qwen', { promptFlag: '-i', modelFlag: '-m' }),
+  profile('goose', 'Goose', 'goose', { args: ['run', '-s'], promptFlag: '-t', modelFlag: '--model' }),
+  // Without --local-provider, --oss stops at a picker between LM Studio and Ollama.
+  profile('codex-local', 'Codex (local)', 'codex', { args: [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama'], modelFlag: '-m' }),
 ]);
 
 export function parseProfiles(text: string): AgentProfile[] {
@@ -86,6 +181,10 @@ export function parseProfiles(text: string): AgentProfile[] {
     if (promptFlag !== undefined && (promptFlag.trim() === '' || promptFlag.includes('\0'))) {
       throw new BadRequest(`${name}.promptFlag must not be blank`);
     }
+    const modelFlag = optString(obj, 'modelFlag', `${name}.modelFlag`);
+    if (modelFlag !== undefined && (modelFlag.trim() === '' || modelFlag.includes('\0'))) {
+      throw new BadRequest(`${name}.modelFlag must not be blank`);
+    }
     const env = optStringMap(obj, 'env', `${name}.env`);
     checkEnv(env, `${name}.env`);
     const label = optString(obj, 'label', `${name}.label`);
@@ -96,6 +195,7 @@ export function parseProfiles(text: string): AgentProfile[] {
       command,
       args,
       promptFlag,
+      modelFlag,
       env,
       icon: icon !== undefined && icon.trim() !== '' ? icon : undefined,
     };
@@ -188,7 +288,7 @@ export class AgentSettings {
     }
   }
 
-  setShared(key: keyof SharedSettings, value: string): boolean {
+  setShared(key: keyof SharedSettings, value: string | boolean): boolean {
     try {
       let existing: string | undefined;
       try {
@@ -228,7 +328,7 @@ export class AgentSettings {
     try {
       return parseDetected(fs.readFileSync(file, 'utf8'));
     } catch {
-      return { terminals: [], shells: [] };
+      return { terminals: [], shells: [], ori: null };
     }
   }
 
