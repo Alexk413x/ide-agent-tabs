@@ -12,6 +12,7 @@ import {
   TAB_ID_ENV,
   type AgentSettings,
 } from './profiles.js';
+import { isSessionId, updatePresence, withState } from './messaging/sessions.js';
 import { isProcessAlive, readRegistry, type Endpoint } from './registry.js';
 import { validateOpen, type OpenInput, type OpenRequest } from './request.js';
 import { chooseIde, chooseTerminal, type IdeCandidate, type Project } from './routing.js';
@@ -42,6 +43,7 @@ interface IdeInfo {
 }
 
 const SPEC_MAX_AGE_MS = 60 * 60 * 1000;
+export const FRESH_TAB_START_MS = 10_000;
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -211,6 +213,7 @@ export class Service {
     } catch (e) {
       throw new ToolError(errorText(e));
     }
+    if (request.prompt === undefined) await this.markFresh(reply.id, endpoint.id);
     return { id: reply.id, ide: endpoint.id, product: endpoint.product, agent: reply.agent, project: reply.project, path: reply.path, reason };
   }
 
@@ -233,6 +236,7 @@ export class Service {
     }
     const { note, ...tab } = opened;
     await this.store.add(tab);
+    if (request.prompt === undefined) await this.markFresh(tab.id, driver.name);
     return {
       id: tab.id,
       ide: driver.name,
@@ -242,6 +246,16 @@ export class Service {
       reason,
       ...(note !== undefined ? { note } : {}),
     };
+  }
+
+  // Some CLIs, such as Codex, run no start hook until their first turn, so a tab opened without a prompt would
+  // stay unknown and never be woken. It waits at its prompt once the CLI has had FRESH_TAB_START_MS to start.
+  private async markFresh(id: unknown, host: string): Promise<void> {
+    if (typeof id !== 'string' || !isSessionId(id)) return;
+    const at = Date.now() + FRESH_TAB_START_MS;
+    await updatePresence(this.deps.home, id, (current) =>
+      current?.state !== undefined && current.state !== 'unknown' ? current : withState({ ...(current ?? { id }), host }, 'idle', at),
+    ).catch(() => undefined);
   }
 
   private async terminalTabs(only?: TerminalDriver) {

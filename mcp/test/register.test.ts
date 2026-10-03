@@ -231,7 +231,7 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   const copilotHooks = JSON.parse(readFileSync(copilotHooksFile, 'utf8'));
   assert.equal(copilotHooks.version, 1);
   assert.deepEqual(copilotHooks.hooks.agentStop, [{ type: 'command', exec: 'node', args: [hook, 'copilot', 'agentStop'], timeoutSec: 5 }]);
-  assert.deepEqual(Object.keys(copilotHooks.hooks), ['userPromptSubmitted', 'preToolUse', 'notification', 'postToolUse', 'agentStop']);
+  assert.deepEqual(Object.keys(copilotHooks.hooks), ['sessionStart', 'userPromptSubmitted', 'preToolUse', 'notification', 'postToolUse', 'agentStop']);
 
 
   const calls = readFileSync(path.join(bin, 'calls.txt'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { agent: string; args: string[]; cwd: string });

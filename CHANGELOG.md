@@ -4,6 +4,40 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 `mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
 `ide-agent-tabs--v<version>`.
 
+## 0.6.0
+
+Plugin and MCP server 0.6.0. The VS Code and JetBrains profile sources add the Codex `Interrupt` hook;
+the bundled IDE packages are not rebuilt yet.
+
+### Fixed
+
+- `send_message` wakes a fresh tab. A Claude tab reports idle at `SessionStart`, and a tab that
+  `open_tab` starts without a prompt counts as idle 10 seconds after launch.
+- The sender retries a queued wake-up every 15 seconds until the recipient reads the message, ends, or
+  10 minutes pass. A lost wake line no longer needs `wait_for_message` to be retried.
+- `read_messages` and `wait_for_message` return at most 40,000 characters and leave the rest unread. A
+  cancelled read puts its messages back. A message file that holds no valid message moves to `bad/` and
+  is reported instead of dropped.
+- A headless agent started inside a tab no longer changes the tab's state. Only the agent session that
+  owns the tab updates it; `/clear` and resume hand ownership on.
+- `busy` with no hook activity for 15 minutes counts as idle. An interrupt sets idle: Claude
+  `PostToolUseFailure` with `is_interrupt`, Claude `StopFailure`, and Codex `Interrupt`. A restarted
+  server resets a dead server's state.
+- A wake-up that fails on a cached host looks the host up again and retries once.
+- A failed delivery gives its rate-limit slot back. The same message sent again within 60 seconds
+  returns the first id with `duplicate: true` and is not delivered twice.
+- File locks record their owner. A lock whose owner is dead is broken at once, and waiters wait longer
+  than the stale limit.
+- Each server refreshes its presence every 60 seconds, so a reused pid no longer keeps a dead session
+  alive.
+- Copilot CLI tabs map `sessionStart` to idle; existing Copilot installs re-sync their hook file.
+- A Windows test race that wrote presence without the lock.
+
+### Added
+
+- `scripts/check.mjs` runs typecheck, tests, the bundle check, the plugin version check and both
+  `claude plugin validate --strict` runs.
+
 ## 0.5.3
 
 Plugin and MCP server 0.5.3. The IDE extensions are unchanged.

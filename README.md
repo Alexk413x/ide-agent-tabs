@@ -61,6 +61,12 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 [docs/design.md](docs/design.md) describes the registry, the HTTP API, agent profiles, distribution
 and possible future work. Change the design before you change the protocol.
 
+## Checks
+
+Before you commit, run `node scripts/check.mjs` from the repo root. It runs the MCP typecheck and tests,
+confirms `claude-plugin/dist` matches a fresh bundle, checks the plugin version, and runs
+`claude plugin validate --strict`. Pass `--skip-tests` to skip the tests.
+
 ## License
 
 Proprietary. See [LICENSE](LICENSE). The bundled third-party licenses are in

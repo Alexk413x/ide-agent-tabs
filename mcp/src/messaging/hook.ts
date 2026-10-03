@@ -7,23 +7,36 @@ export type HookCli = (typeof HOOK_CLIS)[number];
 export const MAX_NUDGES = 3;
 
 interface Action {
+  start?: boolean;
   state?: SessionState;
   prompt?: boolean;
   remind?: boolean;
   stop?: boolean;
   notification?: boolean;
+  failure?: boolean;
 }
 
 const BUSY: Action = { state: 'busy' };
 const PROMPT: Action = { state: 'busy', prompt: true, remind: true };
 const AFTER_TOOL: Action = { state: 'busy', remind: true };
 const STOP: Action = { stop: true };
+const STARTED: Action = { start: true, state: 'idle', remind: true };
+const TOOL_FAILED: Action = { failure: true, remind: true };
 
 export const HOOK_EVENTS: Record<HookCli, Record<string, Action>> = {
-  claude: { UserPromptSubmit: PROMPT, PostToolUse: AFTER_TOOL, Notification: { notification: true }, Stop: STOP },
-  codex: { UserPromptSubmit: PROMPT, PermissionRequest: { state: 'permission' }, PostToolUse: AFTER_TOOL, Stop: STOP },
+  claude: {
+    SessionStart: STARTED,
+    UserPromptSubmit: PROMPT,
+    PostToolUse: AFTER_TOOL,
+    PostToolUseFailure: TOOL_FAILED,
+    Notification: { notification: true },
+    Stop: STOP,
+    StopFailure: { state: 'idle' },
+  },
+  codex: { UserPromptSubmit: PROMPT, PermissionRequest: { state: 'permission' }, PostToolUse: AFTER_TOOL, Stop: STOP, Interrupt: { state: 'idle' } },
   gemini: { BeforeAgent: PROMPT, BeforeTool: BUSY, Notification: { notification: true }, AfterTool: AFTER_TOOL, AfterAgent: STOP },
   copilot: {
+    sessionStart: STARTED,
     userPromptSubmitted: { state: 'busy', prompt: true },
     preToolUse: BUSY,
     notification: { notification: true },
@@ -49,6 +62,19 @@ function stopOutput(cli: HookCli, reason: string): object {
   return { decision: cli === 'gemini' ? 'deny' : 'block', reason };
 }
 
+function agentSession(input: Record<string, unknown>): string | undefined {
+  const id = [input.session_id, input.sessionId].find((v) => typeof v === 'string' && v !== '');
+  return id as string | undefined;
+}
+
+// A headless agent started from inside a tab inherits IDE_AGENT_TABS_ID, so its hooks name the tab too; only
+// the agent session that claimed the tab first may change it, until a clear or resume in the tab hands it on.
+function ownedBy(base: PresenceFile, action: Action, input: Record<string, unknown>): string | undefined | false {
+  const session = agentSession(input);
+  if (session === undefined || base.owner === undefined || base.owner === session) return session;
+  return action.start && input.source !== undefined && input.source !== 'startup' ? session : false;
+}
+
 export interface HookRun {
   cli: string;
   event: string;
@@ -64,20 +90,26 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
   const action = HOOK_EVENTS[cli][event];
   if (!action) return undefined;
   const now = run.now ?? Date.now();
-  const state = action.notification ? notificationState(run.input) : action.state;
+  const state = action.notification ? notificationState(run.input) : action.failure ? (run.input.is_interrupt === true ? 'idle' : 'busy') : action.state;
   const unread = action.remind || action.stop ? await peekUnread(home, sessionId) : [];
   const reminder = unreadReminder(unread);
 
   let block = false;
   let remind = false;
+  let foreign = false;
   await updatePresence(home, sessionId, (current) => {
-    const base: PresenceFile = current ?? { id: sessionId };
+    const owned = ownedBy(current ?? { id: sessionId }, action, run.input);
+    if (owned === false) {
+      foreign = true;
+      return current;
+    }
+    const base: PresenceFile = { ...(current ?? { id: sessionId }), ...(owned !== undefined ? { owner: owned } : {}) };
     if (action.stop) {
       const nudges = base.nudges ?? 0;
       block = reminder !== undefined && nudges < MAX_NUDGES;
       return block ? withState(base, 'busy', now, nudges + 1) : withState(base, 'idle', now, reminder === undefined ? 0 : nudges);
     }
-    if (state === undefined) return current;
+    if (state === undefined) return owned === undefined || current?.owner === owned ? current : base;
     const next = withState(base, state, now, action.prompt ? 0 : undefined);
     if (!action.remind) return next;
     const seen = new Set(base.reminded);
@@ -86,6 +118,7 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
     return unread.length ? { ...rest, reminded: unread.map((m) => m.id) } : rest;
   });
 
+  if (foreign) return undefined;
   if (action.stop) return block ? stopOutput(cli, `Agent Tabs kept this turn open. ${reminder}`) : undefined;
   if (remind && reminder !== undefined) return contextOutput(cli, event, reminder);
   return undefined;

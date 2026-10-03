@@ -227,7 +227,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply
         'Call it when an Agent Tabs notice says messages wait. To wait for a reply you expect, call wait_for_message instead.',
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    (extra) => reply(extra, () => messaging.read()),
+    (extra) => reply(extra, () => messaging.read(extra.signal)),
   );
 
   server.registerTool(
