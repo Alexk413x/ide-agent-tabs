@@ -14,7 +14,7 @@ export const JETBRAINS_PLUGIN_ID = 'dev.alexk.ide-agent-tabs';
 export const JETBRAINS_SINCE_BUILD = '262.10315';
 export const VSIX_NAME = 'ide-agent-tabs.vsix';
 export const JETBRAINS_ZIP_NAME = 'ide-agent-tabs-jetbrains.zip';
-export const EDITOR_CLIS = ['code', 'code-insiders', 'cursor', 'windsurf', 'codium', 'antigravity-ide'];
+export const EDITOR_CLIS = ['code', 'code-insiders', 'cursor', 'windsurf', 'codium', 'antigravity-ide', 'kiro', 'positron', 'trae'];
 export const MAX_ATTEMPTS = 3;
 export const LOCK_STALE_MS = 5 * 60_000;
 const LIST_TIMEOUT_MS = 15_000;
@@ -91,6 +91,23 @@ export function repositoryVersion(xml: string): string | undefined {
   return undefined;
 }
 
+// A macOS bundle keeps the upstream `code` shim unless the fork renamed it. Each editor's cask or package names it.
+const MAC_APPS: [cli: string, app: string, shims: string[]][] = [
+  ['code', 'Visual Studio Code', ['code']],
+  ['code-insiders', 'Visual Studio Code - Insiders', ['code']],
+  ['cursor', 'Cursor', ['code', 'cursor']],
+  ['windsurf', 'Windsurf', ['windsurf', 'code']],
+  ['codium', 'VSCodium', ['codium']],
+  ['antigravity-ide', 'Antigravity IDE', ['antigravity-ide']],
+  ['antigravity-ide', 'Antigravity', ['antigravity-ide']],
+  ['kiro', 'Kiro', ['code']],
+  ['positron', 'Positron', ['code']],
+  ['trae', 'Trae', ['code', 'trae']],
+];
+
+const LINUX_SNAPS = new Set(['code', 'code-insiders', 'codium']);
+const LINUX_FLATPAKS: Record<string, string> = { code: 'com.visualstudio.code', codium: 'com.vscodium.codium' };
+
 export function editorCliLocations(platform: NodeJS.Platform, env: NodeJS.ProcessEnv, userHome: string): Record<string, string[]> {
   const locations: Record<string, string[]> = Object.fromEntries(EDITOR_CLIS.map((cli) => [cli, []]));
   if (platform === 'win32') {
@@ -108,20 +125,28 @@ export function editorCliLocations(platform: NodeJS.Platform, env: NodeJS.Proces
     add('codium', programs, 'VSCodium', 'bin');
     add('codium', programFiles, 'VSCodium', 'bin');
     add('antigravity-ide', programs, 'Antigravity IDE', 'bin');
+    add('kiro', programs, 'Kiro', 'bin');
+    add('positron', programs, 'Positron', 'bin');
+    add('positron', programFiles, 'Positron', 'bin');
+    add('trae', programs, 'Trae', 'bin');
   } else if (platform === 'darwin') {
-    const apps: [string, string][] = [
-      ['code', 'Visual Studio Code'],
-      ['code-insiders', 'Visual Studio Code - Insiders'],
-      ['cursor', 'Cursor'],
-      ['windsurf', 'Windsurf'],
-      ['codium', 'VSCodium'],
-      ['antigravity-ide', 'Antigravity IDE'],
-      ['antigravity-ide', 'Antigravity'],
-    ];
     for (const root of ['/Applications', path.posix.join(userHome, 'Applications')]) {
-      for (const [cli, app] of apps) {
-        locations[cli]!.push(path.posix.join(root, `${app}.app`, 'Contents', 'Resources', 'app', 'bin', cli));
+      for (const [cli, app, shims] of MAC_APPS) {
+        for (const shim of shims) locations[cli]!.push(path.posix.join(root, `${app}.app`, 'Contents', 'Resources', 'app', 'bin', shim));
       }
+    }
+  } else if (platform === 'linux') {
+    for (const cli of EDITOR_CLIS) {
+      const flatpak = LINUX_FLATPAKS[cli];
+      locations[cli]!.push(
+        path.posix.join('/usr/share', cli, 'bin', cli),
+        path.posix.join('/opt', cli, 'bin', cli),
+        ...(LINUX_SNAPS.has(cli) ? [path.posix.join('/snap/bin', cli)] : []),
+        path.posix.join(userHome, '.local', 'bin', cli),
+        ...(flatpak
+          ? [path.posix.join('/var/lib/flatpak/exports/bin', flatpak), path.posix.join(userHome, '.local', 'share', 'flatpak', 'exports', 'bin', flatpak)]
+          : []),
+      );
     }
   }
   return locations;

@@ -5,7 +5,7 @@ editor tabs. You open a tab with one button. Another agent opens, lists and clos
 HTTP API, the same API the JetBrains plugin serves.
 
 The extension runs in VS Code 1.100 or later, and in editors built on it, such as Cursor, Windsurf,
-VSCodium and Antigravity.
+VSCodium, Antigravity, Kiro, Positron and Trae.
 
 ## Install
 
@@ -39,6 +39,9 @@ Common command-line tools:
 | Windsurf | `windsurf` |
 | VSCodium | `codium` |
 | Antigravity | `antigravity-ide` |
+| Kiro | `kiro` |
+| Positron | `positron` |
+| Trae | `trae` |
 
 Without the Claude Code plugin, an extension installed by hand doesn't update by itself.
 
