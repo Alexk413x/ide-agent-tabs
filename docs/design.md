@@ -1,6 +1,6 @@
 # Agent Tabs design
 
-Agent Tabs opens AI coding-agent sessions (Claude Code, Codex, Gemini CLI, Copilot CLI, Antigravity CLI and others) in
+Agent Tabs opens AI coding-agent sessions (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and others) in
 IDE editor tabs. A person opens them with one button. An agent opens, lists and closes them in any IDE
 running on the same machine.
 
@@ -102,15 +102,17 @@ session for a new message.
 
 ## Agent profiles
 
-A profile says how to start one agent CLI. Every IDE uses the same built-in profiles:
+A profile says how to start one agent CLI. Every IDE uses the same built-in profiles. Every list of agents,
+in this document and in the menus, uses this order: Claude, Codex, Antigravity CLI, Copilot CLI, Gemini CLI,
+then custom profiles.
 
 | Name | Label | Command | First prompt |
 |---|---|---|---|
 | `claude` | Claude Code | `claude` | positional |
 | `codex` | Codex | `codex` and fixed `args` (see [Codex tabs](#codex-tabs)) | positional |
-| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
-| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
 | `agy` | Antigravity CLI | `agy` | `-i <prompt>` |
+| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
+| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 
 The `claude`, `codex` and `agy` rows match each CLI's help. The `gemini` and `copilot` rows come from each
 CLI's docs and are untested. `antigravity` is the Antigravity IDE's command, so the profile is named `agy`. A profile in `agents.json` with the same name overrides a built-in one.
@@ -246,15 +248,62 @@ registry and calls the HTTP API.
 `open_tab` routing, first match wins:
 
 1. The IDE or terminal named by `ide`, using its id from `list_ides`.
-2. The IDE with an open project that contains `path`. The deepest such project wins; on a tie, the
+2. With `"tabRouting": "caller"`, where the caller runs: the caller's own IDE, even when another IDE has
+   the project open, or a new tab in the caller's terminal window when the caller runs in an Agent Tabs
+   terminal tab. A caller outside an Agent Tabs tab goes on to rule 3.
+3. The IDE with an open project that contains `path`. The deepest such project wins; on a tie, the
    caller's own IDE, then the focused window, then the most recently started IDE.
-3. The caller's own IDE, when the caller runs in an Agent Tabs tab of a running IDE.
-4. The most recently started IDE.
-5. When no IDE is running: the preferred terminal from `config.json`, then the first installed terminal
+4. The caller's own IDE, when the caller runs in an Agent Tabs tab of a running IDE.
+5. The most recently started IDE.
+6. When no IDE is running: the preferred terminal from `config.json`, then the first installed terminal
    in the platform's order: Windows Terminal, then WezTerm on Windows; Ghostty, iTerm2, kitty, WezTerm,
    then tmux on macOS; Ghostty, kitty, WezTerm, then tmux on Linux.
 
 The reply includes a `reason` that says which rule chose the target.
+
+### Settings
+
+Four settings in `~/.ide-agent-tabs/config.json` decide where a new tab opens when a request names
+nothing. The MCP server, the VS Code extension, the JetBrains plugin and the setup skill read and write
+the same keys, keep every key they don't know, and treat a missing key as the default. VS Code shows the
+groups as **Agent Tabs: IDE tabs** and **Agent Tabs: Terminal tabs**. JetBrains shows them as **IDE tabs**
+and **Terminal tabs**.
+
+| Group | Setting | Key | Values | Default |
+|---|---|---|---|---|
+| IDE tabs | Open new tabs in | `tabRouting` | `project`: the IDE that has the project open (rules 3 to 5). `caller`: the IDE the request came from (rule 2). | `project` |
+| Terminal tabs | Preferred terminal | `terminal` | `auto` or absent: the platform's order. Otherwise a terminal id from detection, such as `windows-terminal`, `wezterm`, `kitty`, `tmux`, `ghostty` or `iterm2`. | `auto` |
+| Terminal tabs | Shell (Windows only) | `shell` | `auto` or absent: the newest PowerShell 7 or later, else Windows PowerShell 5.1. Otherwise the absolute path of a shell executable, either a detected one or a custom path. | `auto` |
+| Terminal tabs | Terminal window | `terminalWindow` | `last`: the user's last window. `dedicated`: a window kept for Agent Tabs. | `last` |
+
+An explicit name always wins. An `open_tab` call that names `ide` or an agent, or a user who names an IDE
+or a terminal, overrides these settings. They apply only when nothing is named. The server ignores a value
+it doesn't know, uses the default, and reports a warning in `list_agents`.
+
+The VS Code settings have machine scope, so only the user-level value reaches `config.json`. A workspace's
+`.vscode/settings.json` can't set the shell or the terminal, and an untrusted workspace can't change them.
+
+### Detection file
+
+`~/.ide-agent-tabs/detected.json` is the single source for the terminal and shell lists in the IDE
+settings. An IDE doesn't run its own detection. The MCP server writes the file atomically at server start,
+in the background; on every `list_ides` call; and from the Claude Code session start hook.
+
+```json
+{
+  "version": 1,
+  "detectedAt": "2026-10-03T19:30:00.000Z",
+  "platform": "win32",
+  "terminals": [{ "id": "windows-terminal", "name": "Windows Terminal" }],
+  "shells": [
+    { "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe", "label": "PowerShell 7.5.2 (MSI)", "version": "7.5.2", "source": "msi" }
+  ]
+}
+```
+
+`source` is `path`, `msi`, `store`, `preview` or `windows`. `shells` is empty off Windows. `list_ides`
+returns `shells` next to `terminals`. An IDE whose detection file is missing lists only **Automatic**
+(and **Custom path…** for the shell), and keeps a value already in `config.json` visible.
 
 Results are compact JSON. An IDE error keeps the HTTP status and the IDE's `error` text and adds the
 next step: on 409 from `open`, pass a terminal id as `ide`; on 503 or a timeout, ask the user to close
@@ -278,7 +327,7 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
 
 | Terminal | OS | Open | List | Close | How |
 |---|---|---|---|---|---|
-| Windows Terminal | Windows | Tab | Tracked | Best effort | `wt.exe -w 0 new-tab` with `pwsh` and `agent-launch.ps1`. No outside API to query tabs, so `list_tabs` shows only the tabs this server opened, while their launcher's shell runs. `close_tab` ends that shell, which may leave the tab open with an exit message. |
+| Windows Terminal | Windows | Tab | Tracked | Best effort | `wt.exe -w 0 new-tab` with the configured PowerShell and `agent-launch.ps1`. No outside API to query tabs, so `list_tabs` shows only the tabs this server opened, while their launcher's shell runs. `close_tab` ends that shell, which may leave the tab open with an exit message. |
 | Ghostty 1.3+ | macOS | Tab | Yes | Yes | AppleScript: `new tab` with a surface configuration (command and environment variables); query `terminals` by id; `close`. |
 | Ghostty | Linux | Window | Tracked | Best effort | A new process per agent: `ghostty --gtk-single-instance=false --working-directory=<dir> --confirm-close-surface=false --wait-after-command=false -e <shell> -l -i -c …`. Ghostty can't open a tab in a running instance from outside ([ghostty#12136](https://github.com/ghostty-org/ghostty/issues/12136)). The launcher writes its shell's pid; `list_tabs` checks that the shell runs, and `close_tab` sends it `SIGHUP`. |
 | iTerm2 | macOS | Tab | Yes | Yes | AppleScript through `/usr/bin/osascript -` with fixed `on run argv` scripts: `create tab with default profile command <cmd>` in the current window, or `create window` when none is open, returns the session's `unique ID`; list every session's `unique ID`; `close` the session with that id. |
@@ -310,6 +359,14 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
   it restarts.
 - A terminal the server starts gets the server's environment without the variables that identify the
   calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
+- PowerShell on Windows: `"shell"` in `config.json` picks the PowerShell that runs `agent-launch.ps1`, in
+  Windows Terminal and in WezTerm. With `auto`, the server picks the newest PowerShell 7 or later, else
+  Windows PowerShell 5.1. It looks on `PATH` (`pwsh.exe`, `powershell.exe`) and in the standard folders
+  even when `PATH` doesn't list them: `%ProgramFiles%\PowerShell\<version>\pwsh.exe` (MSI or winget,
+  and `7-preview`), the Microsoft Store alias `%LOCALAPPDATA%\Microsoft\WindowsApps\pwsh.exe`, and
+  `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`. It reads a version from the folder or
+  Store package name where it can, and otherwise runs that PowerShell once during detection, never when it
+  opens a tab. A stable release wins over a preview of the same or a lower version.
 - The POSIX launchers write the shell's pid to `launch/<id>.pid` when the spec names a pid file. The
   shell then replaces itself with an interactive login shell, so the pid stays the same after the agent
   exits.
@@ -329,6 +386,29 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
 - tmux: the server uses the default tmux server. When no client is attached, `open_tab` adds a `note` to
   its reply: run `tmux attach -t agents`. The server records the tmux socket and server pid with each
   window id, so a restarted tmux server doesn't match old ids.
+
+### Terminal window
+
+`"terminalWindow": "last"` opens a terminal tab in the user's last window, as each terminal does by
+default. `"terminalWindow": "dedicated"` opens it in a window kept for Agent Tabs. When the user closes
+that window, the next tab opens a new one.
+
+| Terminal | Dedicated window |
+|---|---|
+| Windows Terminal | The named window `agent-tabs`: `wt.exe -w agent-tabs new-tab`. |
+| WezTerm | A window the server opens with `cli spawn --new-window`, then targets with the remembered `--window-id`. |
+| kitty with remote control | An OS window the server opens with `--type=os-window`, then targets through one of its remembered windows. |
+| tmux | The session `agent-tabs`. `open_tab` adds a `note` to attach to it when no client is attached. |
+| iTerm2 and Ghostty on macOS | A window the server opens, then targets by the AppleScript window `id` it remembers. |
+| Ghostty on Linux, kitty without remote control | No change: each agent already gets its own window. |
+
+The server keeps the remembered WezTerm, kitty, iTerm2 and Ghostty window ids in
+`~/.ide-agent-tabs/terminal-windows.json`.
+
+With `"tabRouting": "caller"`, a caller that runs in a terminal tab gets the new tab in its own window,
+whatever `terminalWindow` says. Windows Terminal can't name the window that holds a tab. There, a tab opens
+in the `agent-tabs` window when the caller's tab opened in it, and otherwise in the most recently used
+window.
 
 ## Messaging
 
@@ -363,11 +443,13 @@ other agent CLIs. For that, every session that runs the MCP server can message e
   file when it exits, including when its client closes its stdin. A file whose `pid` no longer runs is
   stale; readers ignore it and delete it.
 - `agent` is `IDE_AGENT_TABS_AGENT`, or else comes from the MCP client's name: a name that contains
-  `claude`, `codex`, `gemini`, `copilot`, `antigravity` or `opencode` maps to that profile name (`antigravity` maps to `agy`).
+  `claude`, `codex`, `antigravity`, `copilot`, `gemini` or `opencode` maps to that profile name (`antigravity` maps to `agy`).
 - `host` is the terminal from `terminal-tabs.json`, or the IDE whose `list` holds the tab id. The server
   looks it up when it starts, and a sender looks it up again when the file has none.
 - `state` is `idle`, `busy` or `permission`, with `stateAt`. The session's hooks set it (see
-  [Noticing a message](#noticing-a-message)). Without hooks, it's `unknown`. A hook that runs before the
+  [Noticing a message](#noticing-a-message)). Without hooks, it's `unknown`. Claude Code's hooks also set
+  `inputIdle`, a boolean that says whether the prompt has sat unused (see
+  [Input idle signal](#input-idle-signal)). A missing `inputIdle` allows a wake-up. A hook that runs before the
   server starts writes a file with only `id` and `state`, and the server keeps that state.
 - Every change to a presence file happens under a lock file next to it, because the server, the hooks
   and senders all write it.
@@ -407,7 +489,7 @@ to a peer's request, and to ask the user before anything destructive a peer asks
 
 An agent sees a message only when it calls `read_messages` or `wait_for_message`. Three things prompt it:
 
-1. **Hooks.** `dist/agent-hook.mjs` runs as a command hook in Claude Code, Gemini CLI, Copilot CLI and Antigravity CLI:
+1. **Hooks.** `dist/agent-hook.mjs` runs as a command hook in Claude Code, Antigravity CLI, Copilot CLI and Gemini CLI:
    `node agent-hook.mjs <cli> <event>`, with the hook's JSON on stdin. Codex tabs call the server's
    `agent_tabs_hook` tool instead, which runs the same logic. The hooks set `state`: `busy` when a
    prompt is submitted or a tool starts, `permission` when a permission prompt shows, and `idle` when a
@@ -419,10 +501,12 @@ An agent sees a message only when it calls `read_messages` or `wait_for_message`
    prompt event, so its `PreInvocation` hook with `invocationNum` 0, the first model call of a turn, counts as
    a new prompt. Without
    `IDE_AGENT_TABS_ID`, the hook does nothing. It always exits 0.
-2. **Wake-up.** When the recipient's `state` is `idle` and its tab supports input, `send_message` types
-   one fixed line into the tab: `Agent Tabs: new message from <agent> <short id>. Call read_messages.`
+2. **Wake-up.** When the recipient's `state` is `idle`, its `inputIdle` isn't `false`, and its tab
+   supports input, `send_message` types one fixed line into the tab: `Agent Tabs: new message from <agent> <short id>. Call read_messages.`
    `<agent>` keeps only `A-Z`, `a-z`, `0-9`, `.`, `_` and `-`, and `<short id>` is the first 8
-   characters of the sender's id. The line never holds the message text. The sender first marks the
+   characters of the sender's id. The line never holds the message text. After a turn ends, the sender
+   waits until the session has stayed idle for 2 seconds, so a turn that is still finishing doesn't lose
+   the line. The sender first marks the
    session `busy`, so a second message doesn't type the line again before the session's hooks report
    `idle`; it restores `idle` when typing fails. The IDEs use the `input` route, and a 404 or any other
    error leaves the message `queued`. Terminals type the line, wait 200 ms, then send Enter separately,
@@ -438,20 +522,49 @@ An agent sees a message only when it calls `read_messages` or `wait_for_message`
      input from outside, so their sessions rely on hooks.
 3. **Waiting.** An agent that asked a question calls `wait_for_message` for the reply.
 
-Nothing types into a session whose `state` is `busy`, `permission` or `unknown`.
+Nothing types into a session whose `state` is `busy`, `permission` or `unknown`, or into a Claude Code
+session whose `inputIdle` is `false`.
+
+A sender that can't type yet leaves the message `queued` and retries every 15 seconds until the recipient
+reads the message, ends, or 10 minutes pass. A tab that `open_tab` starts without a prompt counts as idle
+10 seconds after launch, so the first message reaches a fresh tab.
+
+#### Input idle signal
+
+A wake line goes into the input box as if the user typed it. If the user is writing a prompt, the line
+lands in that prompt. A CLI can avoid this only when it reports that its input sat unused.
+
+Claude Code's `Stop` event fires while the user may already be typing the next prompt. So `Stop`,
+`StopFailure`, and `SessionStart` with `source` `clear` or `resume` record `inputIdle: false`, and a
+sender queues the message instead of typing. Claude Code's `idle_prompt` notification fires after about
+60 seconds with no input. It records `inputIdle: true`, and the follow-up retry then types the wake line.
+`SessionStart` with `source` `startup` records `inputIdle: true`, because a fresh tab has no typing yet.
+`UserPromptSubmit` records `inputIdle: false`. A `Notification` of another type leaves `inputIdle`
+as it is.
+
+| CLI | Input idle signal | When a message wakes the session |
+|---|---|---|
+| Claude Code | `Stop`, `StopFailure` and `SessionStart` (`clear`, `resume`) set `inputIdle: false`. `Notification` `idle_prompt` and `SessionStart` (`startup`) set it to `true`. | After `idle_prompt`, about 60 seconds with no input. |
+| Codex | None | At turn end, after the 2-second settle. |
+| Antigravity CLI | None | At turn end, after the 2-second settle. |
+| Copilot CLI | None | At turn end, after the 2-second settle. |
+| Gemini CLI | None | At turn end, after the 2-second settle. |
+
+Codex, Antigravity CLI, Copilot CLI and Gemini CLI expose no input idle signal. A line typed into one of
+them can still land in a prompt the user is writing.
 
 Hook events for each CLI:
 
 | CLI | Config | `busy` | `permission` | `idle` | Reminder after | Turn-end nudge |
 |---|---|---|---|---|---|---|
-| Claude Code | The plugin's `hooks/hooks.json` | `UserPromptSubmit`, `PostToolUse` | `Notification` `permission_prompt` | `Stop`, `Notification` `idle_prompt` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
+| Claude Code | The plugin's `hooks/hooks.json` | `UserPromptSubmit`, `PostToolUse` | `Notification` `permission_prompt`, `elicitation_dialog` | `Stop`, `Notification` `idle_prompt` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
 | Codex | The tab's `-c` arguments, as `mcp_tool` hooks | `UserPromptSubmit`, `PostToolUse` | `PermissionRequest` | `Stop` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
-| Gemini CLI | `hooks` in `~/.gemini/settings.json` | `BeforeAgent`, `BeforeTool`, `AfterTool` | `Notification` `ToolPermission` | `AfterAgent` | `BeforeAgent`, `AfterTool` (`hookSpecificOutput.additionalContext`) | `AfterAgent` (`decision: "deny"`) |
-| Copilot CLI | `~/.copilot/hooks/ide-agent-tabs.json` | `userPromptSubmitted`, `preToolUse`, `postToolUse` | `notification` `permission_prompt` | `agentStop`, `notification` `agent_idle` | `postToolUse` only (`additionalContext`) | `agentStop` (`decision: "block"`) |
 | Antigravity CLI | The `ide-agent-tabs` group in `~/.gemini/config/hooks.json` | `PreInvocation`, `PostToolUse` | None | `Stop` | `PreInvocation` only (`injectSteps[].ephemeralMessage`) | `Stop` (`decision: "continue"`) |
+| Copilot CLI | `~/.copilot/hooks/ide-agent-tabs.json` | `userPromptSubmitted`, `preToolUse`, `postToolUse` | `notification` `permission_prompt`, `elicitation_dialog` | `agentStop` | `postToolUse` only (`additionalContext`) | `agentStop` (`decision: "block"`) |
+| Gemini CLI | `hooks` in `~/.gemini/settings.json` | `BeforeAgent`, `BeforeTool`, `AfterTool` | `Notification` `ToolPermission` | `AfterAgent` | `BeforeAgent`, `AfterTool` (`hookSpecificOutput.additionalContext`) | `AfterAgent` (`decision: "deny"`) |
 
-- The Claude Code plugin ships its hooks. `sync-ides.mjs --register gemini|copilot|agy` adds the Gemini CLI,
-  Copilot CLI and Antigravity CLI hooks, pointing at `~/.ide-agent-tabs/mcp/agent-hook.mjs`, and
+- The Claude Code plugin ships its hooks. `sync-ides.mjs --register agy|copilot|gemini` adds the Antigravity CLI,
+  Copilot CLI and Gemini CLI hooks, pointing at `~/.ide-agent-tabs/mcp/agent-hook.mjs`, and
   `--unregister` removes only those entries. It doesn't change a file that isn't plain JSON.
 - Antigravity CLI:
   - `--register agy` writes the server entry `mcpServers.ide-agent-tabs = { command: "node", args: [<server>] }`
@@ -480,6 +593,10 @@ Hook events for each CLI:
     model call and tool call.
 - Copilot CLI drops the output of a `userPromptSubmitted` command hook, so it gets no reminder after a
   prompt.
+- Copilot CLI's `agent_idle` notification reports a background agent, not the session
+  ([hooks configuration](https://docs.github.com/en/copilot/reference/hooks-configuration)), so it doesn't
+  mark the session idle. `elicitation_dialog` means the CLI asks the user a question, so it sets
+  `permission`, and no wake line answers it.
 - Only Codex tabs get Codex hooks (see [Codex tabs](#codex-tabs)). Global hooks in `~/.codex/hooks.json`
   would run under the shared daemon with another tab's `IDE_AGENT_TABS_ID`, and on Windows the Codex
   desktop app runs each command hook in a new console window. `--register codex` removes the command
@@ -536,11 +653,11 @@ question to another agent CLI in headless mode and reads the answer back. The Cl
 
 | Agent | Run once | Answer | Follow-up | Tested |
 |---|---|---|---|---|
-| Codex | `codex exec -s read-only -C <dir> -o <answer> --json - < prompt.md` | `-o` file | `codex exec -s <sandbox> resume <thread_id> - < followup.md`; the id is in the `thread.started` event, and `-s` must come before `resume` | Yes, 0.154.0 |
 | Claude | `claude -p --output-format json --permission-mode plan < prompt.md` | `.result`; cost in `.total_cost_usd` | `--permission-mode <mode> --resume <session_id>` | Flags checked in help |
-| Gemini CLI | `gemini -p "<instruction>" --output-format json < prompt.md` | `.response` | Unreliable in headless mode | No |
-| Copilot CLI | `copilot -p …` | Output | `--resume` has open Windows bugs | No |
+| Codex | `codex exec -s read-only -C <dir> -o <answer> --json - < prompt.md` | `-o` file | `codex exec -s <sandbox> resume <thread_id> - < followup.md`; the id is in the `thread.started` event, and `-s` must come before `resume` | Yes, 0.154.0 |
 | Antigravity CLI | `agy -p "<instruction>" --output-format json` | `.response` | `--conversation <.conversation_id>` | `-p` and `--conversation` run in 1.2.16; `--mode plan` not run |
+| Copilot CLI | `copilot -p …` | Output | `--resume` has open Windows bugs | No |
+| Gemini CLI | `gemini -p "<instruction>" --output-format json < prompt.md` | `.response` | Unreliable in headless mode | No |
 | OpenCode | `opencode run … --format json` | JSON events | `opencode run -c` | No |
 
 ### Later
@@ -574,10 +691,11 @@ Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before eac
   user two one-time steps for each JetBrains IDE: add the repository's `file:///` URL in **Settings >
   Plugins > ⚙ > Manage Plugin Repositories**, then install **Agent Tabs** from the **Marketplace** tab
   and restart the IDE;
-- reports which agent CLIs are installed, and writes the default agent and the preferred terminal to
-  `~/.ide-agent-tabs/config.json`;
-- registers the MCP server with the other agent CLIs the user picks (Codex, Gemini CLI, Copilot CLI,
-  Antigravity CLI, OpenCode) with `sync-ides.mjs --register <agent>…`;
+- reports which agent CLIs are installed, and writes the default agent to `~/.ide-agent-tabs/config.json`;
+- shows the four tab settings (see [Settings](#settings)) and writes the ones the user changes, including
+  the preferred terminal, to `~/.ide-agent-tabs/config.json`;
+- registers the MCP server with the other agent CLIs the user picks (Codex, Antigravity CLI, Copilot CLI,
+  Gemini CLI, OpenCode) with `sync-ides.mjs --register <agent>…`;
 - offers to add OpenAI's Codex plugin (`claude plugin marketplace add openai/codex-plugin-cc`, then
   `claude plugin install codex@openai-codex`) when Codex is installed.
 
@@ -630,7 +748,7 @@ in `vscode/package.json`.
 | Claude Code plugin | This repository, through the marketplace | `claude plugin update ide-agent-tabs@ide-agent-tabs`, or auto-update turned on for the marketplace in `/plugin` (off by default for a marketplace you add yourself) |
 | VS Code extension | `dist/ide/ide-agent-tabs.vsix` in the installed plugin | The session start hook runs `<cli> --install-extension <vsix> --force` in each editor that has an older version. |
 | JetBrains plugin | `~/.ide-agent-tabs/repository/updatePlugins.xml` | The session start hook puts the bundled zip there. The IDE offers the update from its custom plugin repository. |
-| MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Gemini CLI, Copilot CLI, Antigravity CLI and OpenCode run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. `version.json` records the plugin version it came from, and an older plugin never replaces a copy from a newer one, because every Claude Code install on the machine shares the copy. |
+| MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Antigravity CLI, Copilot CLI, Gemini CLI and OpenCode run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. `version.json` records the plugin version it came from, and an older plugin never replaces a copy from a newer one, because every Claude Code install on the machine shares the copy. |
 
 ### Session start hook
 
@@ -655,6 +773,9 @@ with a 60-second timeout. The hook:
    file in use fails the copy, and the next session tries again.
 6. Writes `synced.json`, appends any errors to `~/.ide-agent-tabs/sync.log`, and prints a message for the
    session when it updated something.
+
+The hook also refreshes `~/.ide-agent-tabs/detected.json` (see [Detection file](#detection-file)) at each
+run, whether or not the versions changed.
 
 The hook always exits with code 0, so a failed sync never blocks a session.
 
@@ -697,7 +818,7 @@ builds have a different `TerminalViewVirtualFile` constructor, so opening a tab 
 judgment: one option out of up to 255 (Choice), a probability of yes (Noul), or a position on 2 to 10
 described levels (Score). It writes no text. When Jev is turned on, the MCP server lists tools that let
 any agent it serves ask Jev instead of spending a large-model turn on a pick, a yes or no, or a grade.
-Codex, Gemini CLI, Copilot CLI, Antigravity CLI and OpenCode get them through the same registration as the tab tools.
+Codex, Antigravity CLI, Copilot CLI, Gemini CLI and OpenCode get them through the same registration as the tab tools.
 
 ### Turning it on
 

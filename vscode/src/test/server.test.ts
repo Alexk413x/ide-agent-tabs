@@ -88,7 +88,7 @@ test('agents lists every profile with the default and installed flags', async ()
   assert.equal(status, 200);
   assert.equal(json.default, 'claude');
   assert.deepEqual(json.agents.at(-1), { name: 'probe', label: 'Probe', command: 'probe-cli', installed: true });
-  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'gemini', 'copilot', 'agy', 'probe']);
+  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'probe']);
 });
 
 test('open, list, close, and close again', async () => {

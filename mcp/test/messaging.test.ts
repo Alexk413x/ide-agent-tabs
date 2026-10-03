@@ -21,6 +21,7 @@ import {
   type Message,
 } from '../src/messaging/mailbox.js';
 import { AGY_MAX_WAIT_S, Messaging, type Hosts } from '../src/messaging/messaging.js';
+import { runHook } from '../src/messaging/hook.js';
 import { unreadReminder, wakeLine } from '../src/messaging/notice.js';
 import {
   agentFromClient,
@@ -573,4 +574,36 @@ test('an Antigravity CLI session waits at most AGY_MAX_WAIT_S, inside its 3-minu
   assert.equal((await agy.wait({ timeout: 600 }, cancel.signal)).waitedSeconds, AGY_MAX_WAIT_S);
   assert.ok(AGY_MAX_WAIT_S < 180);
   agy.stopHeartbeat();
+});
+
+test('a Claude tab whose turn just ended is not typed into until its prompt has sat idle', async () => {
+  const typed: Typed[] = [];
+  const home = tempDir('iat-pair-');
+  const a = session(home, 'tab-a', 1, { hosts: hosts(typed), rewakeEveryMs: 20 });
+  const b = session(home, 'tab-b', 2, { env: { IDE_AGENT_TABS_ID: 'tab-b', IDE_AGENT_TABS_AGENT: 'claude' } });
+  await a.start();
+  await b.start();
+  const at = Date.now() - 10_000;
+  await runHook({ cli: 'claude', event: 'Stop', input: {}, home, sessionId: 'tab-b', now: at });
+  try {
+    assert.equal((await a.send({ to: 'tab-b', text: 'hi' })).delivery, 'queued', 'the user may be typing a new prompt');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(typed.length, 0);
+    await runHook({ cli: 'claude', event: 'Notification', input: { notification_type: 'idle_prompt' }, home, sessionId: 'tab-b', now: at });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(typed.length, 1, 'the follow-up wakes it once the prompt is idle');
+  } finally {
+    a.stopFollowUps();
+  }
+});
+
+test('a CLI without an input-idle signal is woken as soon as its turn ends', async () => {
+  const typed: Typed[] = [];
+  const home = tempDir('iat-pair-');
+  const a = session(home, 'tab-a', 1, { hosts: hosts(typed) });
+  await a.start();
+  await session(home, 'tab-b', 2).start();
+  await runHook({ cli: 'codex', event: 'Stop', input: {}, home, sessionId: 'tab-b', now: Date.now() - 10_000 });
+  assert.equal((await a.send({ to: 'tab-b', text: 'hi' })).delivery, 'woken');
+  a.stopFollowUps();
 });

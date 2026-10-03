@@ -5,7 +5,8 @@ import { writeNewPrivateFile } from '../files.js';
 import { run, type RunResult } from '../process.js';
 import { checkPosixEnvNames, posixSpec, type LaunchSpec } from '../spec.js';
 import { argvModeCommand, checkArgvPaths, checkInputLine, launcherName, loginShell, tabTitle } from './shell.js';
-import type { TerminalCapabilities, TerminalDriver, TerminalTab } from './types.js';
+import type { OpenOptions, TerminalCapabilities, TerminalDriver, TerminalTab } from './types.js';
+import { readWindow, rememberWindow, type RememberedWindow } from './windowMemory.js';
 
 export const ITERM2 = 'iterm2';
 export const ITERM2_BUNDLE_ID = 'com.googlecode.iterm2';
@@ -37,9 +38,28 @@ export const OPEN_SCRIPT = [
   'on run argv',
   '\tset agentCommand to item 1 of argv',
   '\tset agentTitle to item 2 of argv',
+  '\tset placement to "last"',
+  '\tset placeRef to ""',
+  '\tif (count of argv) > 3 then',
+  '\t\tset placement to item 3 of argv',
+  '\t\tset placeRef to item 4 of argv',
+  '\tend if',
   `\ttell ${APP}`,
   '\t\tset w to missing value',
-  '\t\tif (count of windows) > 0 then set w to current window',
+  '\t\tif placement is "session" then',
+  '\t\t\trepeat with cw in windows',
+  '\t\t\t\trepeat with ct in tabs of cw',
+  '\t\t\t\t\trepeat with cs in sessions of ct',
+  '\t\t\t\t\t\tif (unique ID of cs) is placeRef then set w to (contents of cw)',
+  '\t\t\t\t\tend repeat',
+  '\t\t\t\tend repeat',
+  '\t\t\tend repeat',
+  '\t\telse if placement is "dedicated" then',
+  '\t\t\trepeat with cw in windows',
+  '\t\t\t\tif ((id of cw) as text) is placeRef then set w to (contents of cw)',
+  '\t\t\tend repeat',
+  '\t\tend if',
+  '\t\tif w is missing value and placement is not "dedicated" and (count of windows) > 0 then set w to current window',
   '\t\tif w is missing value then',
   '\t\t\tset w to (create window with default profile command agentCommand)',
   '\t\t\tset s to current session of current tab of w',
@@ -48,7 +68,7 @@ export const OPEN_SCRIPT = [
   '\t\t\tset s to current session of t',
   '\t\tend if',
   '\t\tset name of s to agentTitle',
-  '\t\treturn unique ID of s',
+  '\t\treturn (unique ID of s) & linefeed & ((id of w) as text)',
   '\tend tell',
   'end run',
   '',
@@ -117,6 +137,18 @@ export function parseSessionId(stdout: string): string {
   return id;
 }
 
+export function parseOpenAnswer(stdout: string): { sessionId: string; windowId?: string } {
+  const [first = '', second = ''] = stdout.trim().split(/\r?\n/);
+  const windowId = second.trim();
+  return { sessionId: parseSessionId(first), ...(/^\d+$/.test(windowId) ? { windowId } : {}) };
+}
+
+export function iterm2Placement(options: OpenOptions | undefined, remembered: RememberedWindow | undefined): string[] {
+  if (options?.near?.terminal === ITERM2 && options.near.terminalId) return ['session', options.near.terminalId];
+  if (options?.window === 'dedicated') return ['dedicated', remembered?.id ?? ''];
+  return [];
+}
+
 export function parseSessionList(stdout: string): Set<string> {
   return new Set(stdout.split(/\r?\n/).filter((l) => l !== ''));
 }
@@ -155,6 +187,8 @@ export interface Iterm2Deps {
   osascript: OsascriptRunner;
   writeSpec: (file: string, content: Buffer) => Promise<void>;
   removeSpec: (file: string) => Promise<void>;
+  readWindow: (home: string) => Promise<RememberedWindow | undefined>;
+  rememberWindow: (home: string, window: RememberedWindow) => Promise<void>;
 }
 
 const defaultDeps: Iterm2Deps = {
@@ -163,6 +197,8 @@ const defaultDeps: Iterm2Deps = {
   osascript: (script, args) => run('/usr/bin/osascript', ['-', ...args], { input: script, timeoutMs: 30_000 }),
   writeSpec: writeNewPrivateFile,
   removeSpec: (file) => fs.rm(file, { force: true }),
+  readWindow: (home) => readWindow(home, ITERM2),
+  rememberWindow: (home, window) => rememberWindow(home, ITERM2, window),
 };
 
 export function createIterm2(overrides: Partial<Iterm2Deps> = {}): TerminalDriver {
@@ -193,7 +229,7 @@ export function createIterm2(overrides: Partial<Iterm2Deps> = {}): TerminalDrive
       return deps.platform === 'darwin' && blocked === undefined && deps.findApp() !== undefined;
     },
 
-    async open(ctx, spec: LaunchSpec, title) {
+    async open(ctx, spec: LaunchSpec, title, options) {
       if (deps.platform !== 'darwin') throw new Error('iTerm2 runs on macOS only');
       if (blocked) throw new Error(blocked);
       checkPosixEnvNames(spec.env);
@@ -202,15 +238,29 @@ export function createIterm2(overrides: Partial<Iterm2Deps> = {}): TerminalDrive
       const launcher = path.posix.join(ctx.scriptsDir, launcherName(shell));
       checkArgvPaths('iTerm2', [launcher, specFile], COMMAND_REFUSED);
       const command = iterm2Command(argvModeCommand(shell, launcher, specFile));
+      const dedicated = options?.window === 'dedicated' && !options.near;
+      const remembered = dedicated ? await deps.readWindow(ctx.home).catch(() => undefined) : undefined;
+      const placement = iterm2Placement(options, remembered);
       await deps.writeSpec(specFile, posixSpec(spec));
-      let id: string;
+      let answer: { sessionId: string; windowId?: string };
       try {
-        id = parseSessionId(await osascript(OPEN_SCRIPT, [command, tabTitle(title)]));
+        answer = parseOpenAnswer(await osascript(OPEN_SCRIPT, [command, tabTitle(title), ...placement]));
       } catch (e) {
         await deps.removeSpec(specFile);
         throw e;
       }
-      return { id: spec.id, terminal: ITERM2, agent: spec.agent, path: spec.cwd, createdAt: Date.now(), terminalId: id };
+      if (dedicated && answer.windowId !== undefined && answer.windowId !== remembered?.id) {
+        await deps.rememberWindow(ctx.home, { id: answer.windowId }).catch(() => undefined);
+      }
+      return {
+        id: spec.id,
+        terminal: ITERM2,
+        agent: spec.agent,
+        path: spec.cwd,
+        createdAt: Date.now(),
+        terminalId: answer.sessionId,
+        ...(answer.windowId !== undefined ? { window: answer.windowId } : {}),
+      };
     },
 
     async alive(_ctx, tabs) {

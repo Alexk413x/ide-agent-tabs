@@ -16,12 +16,15 @@ import {
   iterm2,
   iterm2Command,
   iterm2Locations,
+  iterm2Placement,
   LIST_SCRIPT,
   OPEN_SCRIPT,
+  parseOpenAnswer,
   parseSessionId,
   type Iterm2Deps,
 } from '../src/terminals/iterm2.js';
 import type { TerminalContext } from '../src/terminals/types.js';
+import type { RememberedWindow } from '../src/terminals/windowMemory.js';
 import { tempDir } from './tempDir.js';
 
 const GUID = '4B5E6F70-1A2B-4C3D-8E9F-0123456789AB';
@@ -209,3 +212,38 @@ test(
     assert.ok(!(await iterm2.alive(live, [opened])).has(opened.id));
   },
 );
+
+test('iTerm2 keeps a dedicated window: it opens one, remembers its id, and targets it next time', async () => {
+  const saved: RememberedWindow[] = [];
+  let remembered: RememberedWindow | undefined;
+  const memory = {
+    readWindow: async () => remembered,
+    rememberWindow: async (_home: string, w: RememberedWindow) => {
+      saved.push(w);
+      remembered = w;
+    },
+  };
+  const { driver, calls } = fake([ok(`${GUID}\n41\n`), ok(`${GUID}\n41\n`), ok(`${GUID}\n52\n`)], memory);
+  const first = await driver.open(ctx, spec, 't', { window: 'dedicated' });
+  assert.deepEqual(calls[0]!.args.slice(2), ['dedicated', '']);
+  assert.equal(first.window, '41');
+  assert.deepEqual(saved, [{ id: '41' }]);
+  await driver.open(ctx, { ...spec, id: 'tab-2' }, 't', { window: 'dedicated' });
+  assert.deepEqual(calls[1]!.args.slice(2), ['dedicated', '41']);
+  assert.equal(saved.length, 1, 'the same window is not written again');
+  await driver.open(ctx, { ...spec, id: 'tab-3' }, 't', { window: 'dedicated' });
+  assert.deepEqual(saved.at(-1), { id: '52' }, 'a closed window is made again and remembered');
+  assert.match(OPEN_SCRIPT, /else if placement is "dedicated" then\n\t+repeat with cw in windows\n\t+if \(\(id of cw\) as text\) is placeRef then set w to \(contents of cw\)/);
+  assert.match(OPEN_SCRIPT, /if w is missing value and placement is not "dedicated" and \(count of windows\) > 0 then set w to current window/);
+});
+
+test("iTerm2 opens next to the caller's session, and the last mode passes no placement", async () => {
+  const { driver, calls } = fake([ok(GUID), ok(GUID)], { readWindow: async () => assert.fail('the last mode reads no window') });
+  await driver.open(ctx, spec, 't', { window: 'dedicated', near: { ...tab, id: 'caller', terminalId: 'CALLER-GUID' } });
+  assert.deepEqual(calls[0]!.args.slice(2), ['session', 'CALLER-GUID']);
+  await driver.open(ctx, { ...spec, id: 'tab-2' }, 't', { window: 'last' });
+  assert.equal(calls[1]!.args.length, 2);
+  assert.deepEqual(iterm2Placement({ window: 'last', near: { ...tab, terminal: 'kitty' } }, undefined), []);
+  assert.deepEqual(parseOpenAnswer(`${GUID}\n7\n`), { sessionId: GUID, windowId: '7' });
+  assert.deepEqual(parseOpenAnswer(`${GUID}\nmissing value\n`), { sessionId: GUID });
+});

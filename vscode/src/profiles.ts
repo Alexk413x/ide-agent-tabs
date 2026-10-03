@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { BadRequest, checkEnv, isAbsolutePath, MAX_ENTRIES, optString, optStringList, optStringMap, parseObject } from './request';
 import { writeAtomically } from './registry';
+import { Detected, DETECTED_FILE, parseDetected, readSharedSettings, SHARED_DEFAULTS, SharedSettings, withSharedValue } from './sharedSettings';
 
 export const DEFAULT_AGENT = 'claude';
 export const AGENTS_FILE = 'agents.json';
@@ -65,9 +66,9 @@ export const CODEX_TAB_ARGS: readonly string[] = Object.freeze([
 export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
   profile('claude', 'Claude Code', 'claude'),
   profile('codex', 'Codex', 'codex', { args: [...CODEX_TAB_ARGS] }),
-  profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i' }),
-  profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i' }),
   profile('agy', 'Antigravity CLI', 'agy', { promptFlag: '-i' }),
+  profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i' }),
+  profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i' }),
 ]);
 
 export function parseProfiles(text: string): AgentProfile[] {
@@ -184,6 +185,50 @@ export class AgentSettings {
       writeAtomically(this.configFile, withDefaultAgent(existing, name));
     } catch (e) {
       this.warn(`Could not save the default agent to ${this.configFile}: ${(e as Error).message}`);
+    }
+  }
+
+  setShared(key: keyof SharedSettings, value: string): boolean {
+    try {
+      let existing: string | undefined;
+      try {
+        existing = fs.readFileSync(this.configFile, 'utf8');
+      } catch {
+        existing = undefined;
+      }
+      writeAtomically(this.configFile, withSharedValue(existing, CONFIG_FILE, key, value));
+      return true;
+    } catch (e) {
+      this.warn(`Could not save ${key} to ${this.configFile}: ${(e as Error).message}`);
+      return false;
+    }
+  }
+
+  sharedFound(): Partial<SharedSettings> | undefined {
+    let text: string;
+    try {
+      text = fs.readFileSync(this.configFile, 'utf8');
+    } catch {
+      return {};
+    }
+    try {
+      return readSharedSettings(text, CONFIG_FILE);
+    } catch (e) {
+      this.warn(`Ignoring ${this.configFile}: ${(e as Error).message}`);
+      return undefined;
+    }
+  }
+
+  shared(): SharedSettings {
+    return { ...SHARED_DEFAULTS, ...this.sharedFound() };
+  }
+
+  detected(): Detected {
+    const file = path.join(this.home, DETECTED_FILE);
+    try {
+      return parseDetected(fs.readFileSync(file, 'utf8'));
+    } catch {
+      return { terminals: [], shells: [] };
     }
   }
 

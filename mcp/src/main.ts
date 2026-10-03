@@ -48,4 +48,5 @@ if (command === 'jev') {
   process.stdin.on('end', () => stop());
   process.stdin.on('close', () => stop());
   await createServer(service, jev, messaging).connect(new StdioServerTransport());
+  void service.refreshDetection().catch(() => undefined);
 }

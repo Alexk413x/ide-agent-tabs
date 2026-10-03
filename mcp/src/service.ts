@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { detect, readDetection, writeDetection, type Detection } from './detection.js';
 import { readTextIfExists, removeStaleFiles } from './files.js';
 import { IdeError, type IdeCall, type Route } from './ideClient.js';
 import { isInstalled } from './installed.js';
@@ -19,6 +20,7 @@ import { chooseIde, chooseTerminal, type IdeCandidate, type Project } from './ro
 import { launchSpec } from './spec.js';
 import { TabStore } from './tabStore.js';
 import { defaultTerminalName } from './terminals/index.js';
+import { listPowerShells, pickPowerShell, systemProbe, type ShellProbe } from './terminals/powershell.js';
 import type { OpenedTab, TerminalContext, TerminalDriver, TerminalTab } from './terminals/types.js';
 
 export interface ServiceDeps {
@@ -31,6 +33,7 @@ export interface ServiceDeps {
   isAlive?: (pid: number) => boolean;
   newId?: () => string;
   selfCloseDelayMs?: number;
+  shellProbe?: (runShells: boolean) => ShellProbe;
 }
 
 export class ToolError extends Error {}
@@ -121,11 +124,25 @@ export class Service {
     return this.deps.drivers.filter((_, i) => flags[i]);
   }
 
+  async refreshDetection(available?: TerminalDriver[]): Promise<Detection> {
+    const drivers = available ?? (await this.availableDrivers());
+    const detection = await detect({
+      home: this.deps.home,
+      platform: this.deps.platform,
+      env: this.deps.env,
+      terminals: drivers.map((d) => ({ id: d.name, name: d.label })),
+      ...(this.deps.shellProbe ? { probe: this.deps.shellProbe(true) } : {}),
+    });
+    await writeDetection(this.deps.home, detection).catch(() => undefined);
+    return detection;
+  }
+
   async listIdes() {
     const [{ endpoints, warnings }, settings, drivers] = await Promise.all([this.registry(), this.settings(), this.availableDrivers()]);
-    const [{ infos, errors }, capabilities] = await Promise.all([
+    const [{ infos, errors }, capabilities, detection] = await Promise.all([
       this.infos(endpoints),
       Promise.all(drivers.map((d) => d.currentCapabilities?.(this.ctx).catch(() => d.capabilities) ?? d.capabilities)),
+      this.refreshDetection(drivers).catch(() => undefined),
     ]);
     return {
       ides: infos.map((i) => ({
@@ -141,6 +158,7 @@ export class Service {
         capabilities: capabilities[i],
         preferred: settings.preferredTerminal === d.name,
       })),
+      shells: detection?.shells ?? [],
       ...(errors.length ? { errors } : {}),
       ...(warnings.length ? { warnings } : {}),
     };
@@ -182,14 +200,19 @@ export class Service {
       }
       return this.openInIde(endpoint, request, 'named by ide');
     }
+    const settings = await this.settings();
+    const own = this.deps.env[TAB_ID_ENV];
+    const callerHost = own ? await this.findHost(own).catch(() => undefined) : undefined;
+    const callerTerminal = this.deps.drivers.find((d) => d.name === callerHost);
+    if (settings.tabRouting === 'caller' && callerTerminal && (await callerTerminal.available(this.ctx).catch(() => false))) {
+      const near = (await this.store.read()).find((t) => t.id === own);
+      return this.openInTerminal(callerTerminal, request, "tabRouting is caller; the caller's terminal window", near);
+    }
     const { infos, errors } = await this.infos(endpoints);
     const candidates: IdeCandidate[] = infos.map((i) => ({ id: i.endpoint.id, startedAt: i.endpoint.startedAt, projects: i.projects }));
-    const own = this.deps.env[TAB_ID_ENV];
-    const callerIde = own ? await this.findHost(own).catch(() => undefined) : undefined;
-    const choice = chooseIde(candidates, request.path, this.isWindows, callerIde);
+    const choice = chooseIde(candidates, request.path, this.isWindows, callerHost, settings.tabRouting);
     if (choice) return this.openInIde(infos.find((i) => i.endpoint.id === choice.id)!.endpoint, request, choice.reason);
 
-    const settings = await this.settings();
     const available = (await this.availableDrivers()).map((d) => d.name);
     const terminal = chooseTerminal(settings.preferredTerminal, defaultTerminalName(this.deps.platform, available), available);
     if ('error' in terminal) {
@@ -217,7 +240,15 @@ export class Service {
     return { id: reply.id, ide: endpoint.id, product: endpoint.product, agent: reply.agent, project: reply.project, path: reply.path, reason };
   }
 
-  private async openInTerminal(driver: TerminalDriver, request: OpenRequest, reason: string) {
+  private async powerShell(configured: string | undefined): Promise<string | undefined> {
+    if (!this.isWindows) return undefined;
+    const probe = this.deps.shellProbe?.(false) ?? systemProbe(this.deps.env, false);
+    const detected = (await readDetection(this.deps.home))?.shells ?? [];
+    const shells = detected.some((s) => probe.exists(s.path)) ? detected : listPowerShells(probe);
+    return pickPowerShell(shells, configured, probe.exists);
+  }
+
+  private async openInTerminal(driver: TerminalDriver, request: OpenRequest, reason: string, near?: TerminalTab) {
     const settings = await this.settings();
     const profile =
       request.agent === undefined ? settings.defaultAgent : settings.profiles.find((p) => p.name === request.agent);
@@ -228,9 +259,11 @@ export class Service {
       launchOf(profile, request.prompt, request.args, request.env),
     );
     await removeStaleFiles(path.join(this.deps.home, 'launch'), ['.json', '.spec'], SPEC_MAX_AGE_MS);
+    const powerShell = await this.powerShell(settings.shell);
+    const ctx = powerShell === undefined ? this.ctx : { ...this.ctx, powerShell };
     let opened: OpenedTab;
     try {
-      opened = await driver.open(this.ctx, spec, profile.label);
+      opened = await driver.open(ctx, spec, profile.label, { window: settings.terminalWindow, ...(near ? { near } : {}) });
     } catch (e) {
       throw new ToolError(`${driver.label}: ${errorText(e)}`);
     }

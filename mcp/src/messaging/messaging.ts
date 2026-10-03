@@ -147,6 +147,7 @@ export class Messaging {
       state: current?.state ?? 'unknown',
       ...(current?.stateAt !== undefined ? { stateAt: current.stateAt } : {}),
       ...(current?.nudges !== undefined ? { nudges: current.nudges } : {}),
+      ...(current?.inputIdle !== undefined ? { inputIdle: current.inputIdle } : {}),
       ...(this.threadId !== undefined ? { threadId: this.threadId } : {}),
       beatMs: this.beatMs,
     };
@@ -338,7 +339,8 @@ export class Messaging {
   }
 
   private async wake(recipient: Presence, now: number): Promise<{ delivery: 'woken' | 'queued'; note?: string }> {
-    if (effectiveState(recipient, now) !== 'idle') return { delivery: 'queued' };
+    // A line typed while the user writes a prompt lands in that prompt; see inputIdleAfter in hook.ts.
+    if (effectiveState(recipient, now) !== 'idle' || recipient.inputIdle === false) return { delivery: 'queued' };
     // An agent reports idle when its turn-end hook runs, but it can still be finishing the turn, and a
     // line typed then is lost; typing only after the session stays idle for IDLE_SETTLE_MS avoids that.
     const settle = IDLE_SETTLE_MS - (now - Date.parse(recipient.stateAt ?? ''));
@@ -352,7 +354,7 @@ export class Messaging {
     if (host === undefined) return { delivery: 'queued' };
     let claimed: PresenceFile | undefined;
     await updatePresence(this.deps.home, recipient.id, (current) => {
-      if (current?.pid !== recipient.pid || current.stateAt !== recipient.stateAt || effectiveState(current, now) !== 'idle') return current;
+      if (current?.pid !== recipient.pid || current.stateAt !== recipient.stateAt || effectiveState(current, now) !== 'idle' || current.inputIdle === false) return current;
       claimed = withState({ ...current, host }, 'waking', now);
       return claimed;
     });

@@ -1,6 +1,6 @@
 # Agent Tabs
 
-Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI, Copilot CLI and Antigravity CLI,
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Antigravity CLI, Copilot CLI and Gemini CLI,
 in IDE editor tabs. You open a tab with one button. An agent opens, lists and closes tabs in any IDE
 that runs on the same computer.
 
@@ -36,7 +36,7 @@ the new plugin as a normal plugin update.
 - Or, without an IDE, a terminal: Windows Terminal or WezTerm on Windows; Ghostty, iTerm2, kitty, WezTerm
   or tmux on macOS; Ghostty, kitty, WezTerm or tmux on Linux. iTerm2 and Ghostty on macOS need the
   Automation permission that macOS asks for on the first tab.
-- At least one agent CLI, such as Claude Code, Codex, Gemini CLI, Copilot CLI or Antigravity CLI.
+- At least one agent CLI, such as Claude Code, Codex, Antigravity CLI, Copilot CLI or Gemini CLI.
 
 ## Where it works
 

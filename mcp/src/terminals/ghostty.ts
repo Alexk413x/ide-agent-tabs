@@ -6,7 +6,8 @@ import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, type LaunchSpec } from '../spec.js';
 import { findExecutable, GUI_SETTLE_MS, hangUp, pidTabsAlive, startDetached, terminalEnvironment } from './processes.js';
 import { checkArgvPaths, checkInputLine, launcherName, loginShell, surfaceArgv, surfaceCommand, type LoginShell } from './shell.js';
-import type { OpenedTab, TerminalCapabilities, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
+import type { OpenedTab, OpenOptions, TerminalCapabilities, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
+import { readWindow, rememberWindow, type RememberedWindow } from './windowMemory.js';
 
 export const GHOSTTY = 'ghostty';
 
@@ -43,23 +44,69 @@ export function appleScriptString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
 
-export function openScript(command: string, env: Record<string, string>): string {
-  const vars = Object.entries(env).map(([k, v]) => appleScriptString(`${k}=${v}`));
+export type GhosttyPlace = { nearTab: string } | { dedicated: string | undefined };
+
+function findWindowLines(place: GhosttyPlace): string[] {
+  if ('nearTab' in place) {
+    return [
+      '\trepeat with cw in windows',
+      '\t\trepeat with ct in tabs of cw',
+      `\t\t\tif (id of ct as text) is ${appleScriptString(place.nearTab)} then set w to (contents of cw)`,
+      '\t\tend repeat',
+      '\tend repeat',
+      '\tif w is missing value and (count of windows) > 0 then set w to front window',
+    ];
+  }
+  if (place.dedicated === undefined) return [];
   return [
+    '\trepeat with cw in windows',
+    `\t\tif (id of cw as text) is ${appleScriptString(place.dedicated)} then set w to (contents of cw)`,
+    '\tend repeat',
+  ];
+}
+
+export function openScript(command: string, env: Record<string, string>, place?: GhosttyPlace): string {
+  const vars = Object.entries(env).map(([k, v]) => appleScriptString(`${k}=${v}`));
+  const head = [
     'tell application "Ghostty"',
     '\tset cfg to new surface configuration',
     `\tset command of cfg to ${appleScriptString(command)}`,
     `\tset environment variables of cfg to {${vars.join(', ')}}`,
-    '\tif (count of windows) > 0 then',
-    '\t\tset t to new tab in front window with configuration cfg',
+  ];
+  if (!place) {
+    return [
+      ...head,
+      '\tif (count of windows) > 0 then',
+      '\t\tset t to new tab in front window with configuration cfg',
+      '\telse',
+      '\t\tset w to new window with configuration cfg',
+      '\t\tset t to selected tab of w',
+      '\tend if',
+      '\treturn (id of t as text) & linefeed & (id of (focused terminal of t) as text)',
+      'end tell',
+      '',
+    ].join('\n');
+  }
+  return [
+    ...head,
+    '\tset w to missing value',
+    ...findWindowLines(place),
+    '\tif w is not missing value then',
+    '\t\tset t to new tab in w with configuration cfg',
     '\telse',
     '\t\tset w to new window with configuration cfg',
     '\t\tset t to selected tab of w',
     '\tend if',
-    '\treturn (id of t as text) & linefeed & (id of (focused terminal of t) as text)',
+    '\treturn (id of t as text) & linefeed & (id of (focused terminal of t) as text) & linefeed & (id of w as text)',
     'end tell',
     '',
   ].join('\n');
+}
+
+export function ghosttyPlace(options: OpenOptions | undefined, remembered: RememberedWindow | undefined): GhosttyPlace | undefined {
+  if (options?.near?.terminal === GHOSTTY && options.near.terminalTabId) return { nearTab: options.near.terminalTabId };
+  if (options?.window === 'dedicated') return { dedicated: remembered?.id };
+  return undefined;
 }
 
 export function listScript(): string {
@@ -106,10 +153,10 @@ export function inputScript(terminalId: string, text: string): string {
   ].join('\n');
 }
 
-export function parseOpenResult(stdout: string): { tabId: string; terminalId: string } {
-  const [tabId, terminalId] = stdout.trim().split(/\r?\n/);
+export function parseOpenResult(stdout: string): { tabId: string; terminalId: string; windowId?: string } {
+  const [tabId, terminalId, windowId] = stdout.trim().split(/\r?\n/);
   if (!tabId || !terminalId) throw new Error(`unexpected answer from Ghostty: ${stdout.trim()}`);
-  return { tabId, terminalId };
+  return { tabId, terminalId, ...(windowId ? { windowId } : {}) };
 }
 
 async function osascript(script: string): Promise<string> {
@@ -148,23 +195,29 @@ export const ghostty: TerminalDriver = {
     return process.platform === 'darwin' && ghosttyApp(os.homedir()) !== undefined;
   },
 
-  async open(ctx, spec: LaunchSpec) {
+  async open(ctx, spec: LaunchSpec, _title, options) {
     checkPosixEnvNames(spec.env);
     const shell = loginShell(ctx.env.SHELL, process.platform);
     const specFile = path.join(ctx.home, 'launch', `${spec.id}.spec`);
     const launcher = path.join(ctx.scriptsDir, launcherName(shell));
     if (process.platform === 'linux') return openOnLinux(ctx, spec, shell, specFile, launcher);
-    const script = openScript(surfaceCommand(shell), {
-      IDE_AGENT_TABS_LAUNCHER: launcher,
-      IDE_AGENT_TABS_SPEC: specFile,
-    });
+    const dedicated = options?.window === 'dedicated' && !options.near;
+    const remembered = dedicated ? await readWindow(ctx.home, GHOSTTY).catch(() => undefined) : undefined;
+    const script = openScript(
+      surfaceCommand(shell),
+      { IDE_AGENT_TABS_LAUNCHER: launcher, IDE_AGENT_TABS_SPEC: specFile },
+      ghosttyPlace(options, remembered),
+    );
     await writeNewPrivateFile(specFile, posixSpec(spec));
-    let ids: { tabId: string; terminalId: string };
+    let ids: { tabId: string; terminalId: string; windowId?: string };
     try {
       ids = parseOpenResult(await osascript(script));
     } catch (e) {
       await fs.rm(specFile, { force: true });
       throw e;
+    }
+    if (dedicated && ids.windowId !== undefined && ids.windowId !== remembered?.id) {
+      await rememberWindow(ctx.home, GHOSTTY, { id: ids.windowId }).catch(() => undefined);
     }
     return {
       id: spec.id,
@@ -174,6 +227,7 @@ export const ghostty: TerminalDriver = {
       createdAt: Date.now(),
       terminalTabId: ids.tabId,
       terminalId: ids.terminalId,
+      ...(ids.windowId !== undefined ? { window: ids.windowId } : {}),
     };
   },
 

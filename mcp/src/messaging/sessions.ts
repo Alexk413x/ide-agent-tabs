@@ -28,6 +28,7 @@ export interface PresenceFile {
   threadId?: string;
   owner?: string;
   beatMs?: number;
+  inputIdle?: boolean;
 }
 
 export interface Presence extends PresenceFile {
@@ -92,6 +93,7 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...str('threadId'),
     ...str('owner'),
     ...beatMs,
+    ...(typeof o.inputIdle === 'boolean' ? { inputIdle: o.inputIdle } : {}),
   };
 }
 

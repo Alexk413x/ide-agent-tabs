@@ -24,7 +24,7 @@ import type { RunResult } from './process.js';
 import { cliFailure, findCliOnPath, runCliResult, type SyncContext } from './sync.js';
 
 export const SERVER_NAME = 'ide-agent-tabs';
-export const AGENTS = ['codex', 'gemini', 'copilot', 'agy', 'opencode'] as const;
+export const AGENTS = ['codex', 'agy', 'copilot', 'gemini', 'opencode'] as const;
 export type AgentName = (typeof AGENTS)[number];
 const CLI_TIMEOUT_MS = 30_000;
 const OPENCODE_SCHEMA = 'https://opencode.ai/config.json';

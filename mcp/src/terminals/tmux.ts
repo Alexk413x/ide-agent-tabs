@@ -5,10 +5,12 @@ import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, type LaunchSpec } from '../spec.js';
 import { findExecutable, terminalEnvironment } from './processes.js';
 import { checkArgvPaths, checkInputLine, ENTER_DELAY_MS, launcherName, loginShell, sleep, surfaceArgv, tabTitle } from './shell.js';
-import type { TerminalContext, TerminalDriver, TerminalTab } from './types.js';
+import type { OpenOptions, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
+import { DEDICATED_NAME } from './windowMemory.js';
 
 export const TMUX = 'tmux';
 export const TMUX_SESSION = 'agents';
+export const TMUX_DEDICATED_SESSION = DEDICATED_NAME;
 const TMUX_LOCATIONS = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux', '/home/linuxbrew/.linuxbrew/bin/tmux'];
 const ENV = '/usr/bin/env';
 const SESSION_FORMAT = '#{session_attached} #{session_last_attached} #{session_id} #{session_name}';
@@ -22,7 +24,7 @@ export interface TmuxSession {
   name: string;
 }
 
-export type TmuxTarget = { session: string; detached: boolean } | { newSession: string };
+export type TmuxTarget = { session: string; detached: boolean } | { newSession: string } | { after: string; socket: string };
 
 export interface TmuxWindow {
   windowId: string;
@@ -52,6 +54,11 @@ export function planTmuxTarget(sessions: TmuxSession[]): TmuxTarget {
   return agents ? { session: agents.id, detached: true } : { newSession: TMUX_SESSION };
 }
 
+export function planDedicatedTmuxTarget(sessions: TmuxSession[]): TmuxTarget {
+  const own = sessions.find((s) => s.name === TMUX_DEDICATED_SESSION);
+  return own ? { session: own.id, detached: own.attached === 0 } : { newSession: TMUX_DEDICATED_SESSION };
+}
+
 // tmux expands formats in -n and reads an argument that ends in ';' as a command separator, so the title
 // drops '#' and ';'. The folder isn't passed with -c, which tmux also expands; the launcher changes to it.
 export function tmuxTitle(label: string): string {
@@ -61,9 +68,11 @@ export function tmuxTitle(label: string): string {
 export function tmuxOpenArgs(target: TmuxTarget, o: { title: string; launcher: string; spec: string; argv: string[] }): string[] {
   checkArgvPaths('tmux', [o.launcher, o.spec], ';');
   const head =
-    'session' in target
-      ? ['new-window', '-P', '-F', WINDOW_FORMAT, '-t', `${target.session}:`]
-      : ['new-session', '-d', '-s', target.newSession, '-P', '-F', WINDOW_FORMAT];
+    'after' in target
+      ? ['-S', target.socket, 'new-window', '-a', '-t', target.after, '-P', '-F', WINDOW_FORMAT]
+      : 'session' in target
+        ? ['new-window', '-P', '-F', WINDOW_FORMAT, '-t', `${target.session}:`]
+        : ['new-session', '-d', '-s', target.newSession, '-P', '-F', WINDOW_FORMAT];
   // /usr/bin/env sets the paths instead of -e: new-session -e needs tmux 3.2, and it would also leave them
   // in the session environment for later windows.
   return [
@@ -131,6 +140,18 @@ function isOpen(tab: TerminalTab, live: { serverPid: number | undefined; windows
   return live.serverPid !== undefined && tab.serverPid === live.serverPid && live.windows.has(tab.terminalId ?? '');
 }
 
+async function chooseTarget(exe: string, env: NodeJS.ProcessEnv, options: OpenOptions | undefined): Promise<TmuxTarget> {
+  const near = options?.near;
+  if (near?.socket && near.terminalId && /^@\d+$/.test(near.terminalId)) {
+    const live = await liveWindows(exe, near.socket, env).catch(() => undefined);
+    if (live && isOpen(near, live)) return { after: near.terminalId, socket: near.socket };
+  }
+  const listed = await run(exe, ['list-sessions', '-F', SESSION_FORMAT], { env, timeoutMs: 15_000 });
+  if (listed.code !== 0 && !isNoServerError(listed.stderr)) throw new Error(`tmux list-sessions failed: ${listed.stderr.trim()}`);
+  const sessions = listed.code === 0 ? parseTmuxSessions(listed.stdout) : [];
+  return options?.window === 'dedicated' ? planDedicatedTmuxTarget(sessions) : planTmuxTarget(sessions);
+}
+
 export const tmux: TerminalDriver = {
   name: TMUX,
   label: 'tmux',
@@ -140,16 +161,14 @@ export const tmux: TerminalDriver = {
     return (process.platform === 'darwin' || process.platform === 'linux') && findTmux(ctx) !== undefined;
   },
 
-  async open(ctx, spec: LaunchSpec, title) {
+  async open(ctx, spec: LaunchSpec, title, options) {
     const exe = tmuxPath(ctx);
     checkPosixEnvNames(spec.env);
     const shell = loginShell(ctx.env.SHELL, process.platform);
     const specFile = path.join(ctx.home, 'launch', `${spec.id}.spec`);
     const launcher = path.join(ctx.scriptsDir, launcherName(shell));
     const env = terminalEnvironment(ctx.env);
-    const listed = await run(exe, ['list-sessions', '-F', SESSION_FORMAT], { env, timeoutMs: 15_000 });
-    if (listed.code !== 0 && !isNoServerError(listed.stderr)) throw new Error(`tmux list-sessions failed: ${listed.stderr.trim()}`);
-    const target = planTmuxTarget(listed.code === 0 ? parseTmuxSessions(listed.stdout) : []);
+    const target = await chooseTarget(exe, env, options);
     const args = tmuxOpenArgs(target, { title, launcher, spec: specFile, argv: surfaceArgv(shell) });
     await writeNewPrivateFile(specFile, posixSpec(spec));
     let window: TmuxWindow;
@@ -161,7 +180,8 @@ export const tmux: TerminalDriver = {
       await fs.rm(specFile, { force: true });
       throw e;
     }
-    const detached = 'newSession' in target || target.detached;
+    const detached = 'newSession' in target || ('detached' in target && target.detached);
+    const session = options?.window === 'dedicated' && !options.near ? TMUX_DEDICATED_SESSION : TMUX_SESSION;
     return {
       id: spec.id,
       terminal: TMUX,
@@ -172,7 +192,7 @@ export const tmux: TerminalDriver = {
       socket: window.socket,
       serverPid: window.serverPid,
       ...(detached
-        ? { note: `No tmux client is attached, so the tab opened in the detached session "${TMUX_SESSION}". Run: tmux attach -t ${TMUX_SESSION}` }
+        ? { note: `No tmux client is attached, so the tab opened in the detached session "${session}". Run: tmux attach -t ${session}` }
         : {}),
     };
   },

@@ -16,6 +16,7 @@ import {
   readDefaultAgent,
 } from '../profiles';
 import { BadRequest, checkEnv } from '../request';
+import { DETECTED_FILE, parseDetected, SHARED_DEFAULTS, userSettingValue, withSharedValue } from '../sharedSettings';
 
 function fixture() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-agents-'));
@@ -34,9 +35,9 @@ function fixture() {
 test('built-in profiles match the design', () => {
   const { settings, warnings } = fixture();
   const profiles = settings.profiles();
-  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'gemini', 'copilot', 'agy']);
-  assert.deepEqual(profiles.map(p => p.label), ['Claude Code', 'Codex', 'Gemini CLI', 'Copilot CLI', 'Antigravity CLI']);
-  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'gemini', 'copilot', 'agy']);
+  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'gemini']);
+  assert.deepEqual(profiles.map(p => p.label), ['Claude Code', 'Codex', 'Antigravity CLI', 'Copilot CLI', 'Gemini CLI']);
+  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'agy', 'copilot', 'gemini']);
   assert.deepEqual(profiles.map(p => p.promptFlag), [undefined, undefined, '-i', '-i', '-i']);
   assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0, 0]);
   assert.deepEqual(profiles[1]!.args, CODEX_TAB_ARGS);
@@ -56,7 +57,7 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     },
     "bare": {"command": "bare-cli"}
   }`);
-  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'gemini', 'copilot', 'agy', 'opencode-local', 'bare']);
+  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'opencode-local', 'bare']);
   assert.deepEqual(settings.profile('codex'), profile('codex', 'Codex (fast)', 'codex', { args: ['--model', 'o4'], promptFlag: undefined, icon: undefined }));
   assert.deepEqual(
     settings.profile('opencode-local'),
@@ -225,4 +226,95 @@ test('finds the Microsoft Store pwsh alias', t => {
   if (process.platform !== 'win32' || !present) return t.skip('Store pwsh not installed');
   assert.equal(fs.existsSync(alias), false, 'existsSync follows the alias and misses it');
   assert.equal(findOnPath(windowsApps, 'pwsh.exe'), alias);
+});
+
+test('shared settings default when config.json is missing or lacks the keys', () => {
+  const { settings, write, warnings } = fixture();
+  assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
+  assert.deepEqual(settings.sharedFound(), {});
+  write(CONFIG_FILE, '{"defaultAgent": "codex"}');
+  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last' });
+  assert.deepEqual(warnings, []);
+});
+
+test('shared settings read the four keys and drop invalid values', () => {
+  const { settings, write, warnings } = fixture();
+  write(CONFIG_FILE, '{"tabRouting": "caller", "terminal": "wezterm", "shell": "/opt/pwsh", "terminalWindow": "dedicated"}');
+  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated' });
+  write(CONFIG_FILE, '{"tabRouting": "nowhere", "terminal": 3, "shell": " ", "terminalWindow": ""}');
+  assert.deepEqual(settings.sharedFound(), { shell: 'auto' });
+  assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
+  write(CONFIG_FILE, 'broken');
+  assert.equal(settings.sharedFound(), undefined);
+  assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
+  assert.equal(warnings.length, 2);
+});
+
+test('saving a shared setting keeps unknown keys', () => {
+  const { settings, home } = fixture();
+  const config = path.join(home, CONFIG_FILE);
+  assert.ok(settings.setShared('tabRouting', 'caller'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { tabRouting: 'caller' });
+
+  fs.writeFileSync(config, '{"defaultAgent": "codex", "jev": {"enabled": true, "tiers": {"codex": "x"}}, "terminal": "kitty"}');
+  assert.ok(settings.setShared('terminalWindow', 'dedicated'));
+  assert.ok(settings.setShared('shell', '/opt/microsoft/powershell/7/pwsh'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), {
+    defaultAgent: 'codex',
+    jev: { enabled: true, tiers: { codex: 'x' } },
+    terminal: 'kitty',
+    terminalWindow: 'dedicated',
+    shell: '/opt/microsoft/powershell/7/pwsh',
+  });
+  assert.deepEqual(fs.readdirSync(home), [CONFIG_FILE]);
+});
+
+test('choosing Automatic removes the terminal and shell keys', () => {
+  const { settings, home } = fixture();
+  const config = path.join(home, CONFIG_FILE);
+  fs.writeFileSync(config, '{"terminal": "tmux", "shell": "/opt/pwsh", "other": 1}');
+  assert.ok(settings.setShared('terminal', 'auto'));
+  assert.ok(settings.setShared('shell', ''));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { other: 1 });
+  assert.equal(withSharedValue(undefined, CONFIG_FILE, 'terminal', 'auto'), '{}' + String.fromCharCode(10));
+});
+
+test('saving a shared setting leaves a broken config alone', () => {
+  const { settings, home, warnings } = fixture();
+  const config = path.join(home, CONFIG_FILE);
+  fs.writeFileSync(config, '{broken');
+  assert.equal(settings.setShared('terminal', 'wezterm'), false);
+  assert.equal(fs.readFileSync(config, 'utf8'), '{broken');
+  assert.equal(warnings.length, 1);
+});
+
+test('detection lists terminals and shells, and is empty when the file is missing or broken', () => {
+  const { settings, write } = fixture();
+  assert.deepEqual(settings.detected(), { terminals: [], shells: [] });
+  write(
+    DETECTED_FILE,
+    JSON.stringify({
+      version: 1,
+      terminals: [{ id: 'wezterm', name: 'WezTerm' }, { id: 'kitty' }, { name: 'no id' }, 7],
+      shells: [{ path: '/opt/pwsh', label: 'PowerShell 7.5.2 (MSI)', source: 'msi' }, { path: '/opt/ps' }, { label: 'no path' }],
+    }),
+  );
+  assert.deepEqual(settings.detected(), {
+    terminals: [{ id: 'wezterm', name: 'WezTerm' }, { id: 'kitty', name: 'kitty' }],
+    shells: [{ path: '/opt/pwsh', label: 'PowerShell 7.5.2 (MSI)' }, { path: '/opt/ps', label: '/opt/ps' }],
+  });
+  write(DETECTED_FILE, '{"terminals": "none", "shells": {}}');
+  assert.deepEqual(settings.detected(), { terminals: [], shells: [] });
+  write(DETECTED_FILE, 'broken');
+  assert.deepEqual(settings.detected(), { terminals: [], shells: [] });
+  assert.deepEqual(parseDetected('{}'), { terminals: [], shells: [] });
+});
+
+test('only the user-level value of a shared setting is shared; workspace values are ignored', () => {
+  const workspace = { workspaceValue: '/tmp/evil', workspaceFolderValue: '/tmp/evil' };
+  assert.equal(userSettingValue('shell', workspace), 'auto');
+  assert.equal(userSettingValue('terminal', { ...workspace, globalValue: 'wezterm' }), 'wezterm');
+  assert.equal(userSettingValue('tabRouting', { workspaceValue: 'caller' }), 'project');
+  assert.equal(userSettingValue('terminalWindow', { globalValue: ' ', workspaceValue: 'dedicated' }), 'last');
+  assert.equal(userSettingValue('shell', undefined), 'auto');
 });

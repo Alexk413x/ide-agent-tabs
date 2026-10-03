@@ -68,9 +68,9 @@ val CODEX_TAB_ARGS = listOf(
 val BUILTIN_PROFILES = listOf(
     AgentProfile("claude", "Claude Code", "claude"),
     AgentProfile("codex", "Codex", "codex", CODEX_TAB_ARGS),
-    AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i"),
-    AgentProfile("copilot", "Copilot CLI", "copilot", promptFlag = "-i"),
     AgentProfile("agy", "Antigravity CLI", "agy", promptFlag = "-i"),
+    AgentProfile("copilot", "Copilot CLI", "copilot", promptFlag = "-i"),
+    AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i"),
 )
 
 fun parseProfiles(text: String): List<AgentProfile> {
@@ -131,7 +131,7 @@ fun withDefaultAgent(existing: String?, name: String): String {
     return GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n"
 }
 
-private fun parseJsonObject(text: String, file: String): JsonObject {
+internal fun parseJsonObject(text: String, file: String): JsonObject {
     val json = try {
         JsonParser.parseString(text)
     } catch (e: Exception) {
@@ -211,6 +211,39 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
         true
     } catch (e: Exception) {
         warn("Could not save the default agent to $configFile: ${e.message}")
+        false
+    }
+
+    fun shared(): SharedSettings {
+        if (!Files.isRegularFile(configFile)) return SharedSettings()
+        return try {
+            readSharedSettings(Files.readString(configFile))
+        } catch (e: Exception) {
+            warn("Ignoring $configFile: ${e.message}")
+            SharedSettings()
+        }
+    }
+
+    fun setTabRouting(value: TabRouting): Boolean = saveShared("tabRouting", value.value)
+
+    fun setTerminal(value: String): Boolean = saveShared("terminal", value)
+
+    fun setShell(value: String): Boolean = saveShared("shell", value)
+
+    fun setTerminalWindow(value: TerminalWindow): Boolean = saveShared("terminalWindow", value.value)
+
+    fun detected(): Detected = try {
+        parseDetected(Files.readString(home.resolve(DETECTED_FILE)))
+    } catch (e: Exception) {
+        Detected()
+    }
+
+    private fun saveShared(key: String, value: String): Boolean = try {
+        val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null
+        writeAtomically(configFile, withSharedValue(existing, key, value))
+        true
+    } catch (e: Exception) {
+        warn("Could not save $key to $configFile: ${e.message}")
         false
     }
 

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { JEV_OFF, parseJevSettings, type JevSettings } from './jev/settings.js';
 
 export const DEFAULT_AGENT = 'claude';
@@ -62,9 +63,9 @@ export const CODEX_TAB_ARGS: readonly string[] = Object.freeze([
 export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
   profile('claude', 'Claude Code', 'claude'),
   profile('codex', 'Codex', 'codex', undefined, CODEX_TAB_ARGS),
-  profile('gemini', 'Gemini CLI', 'gemini', '-i'),
-  profile('copilot', 'Copilot CLI', 'copilot', '-i'),
   profile('agy', 'Antigravity CLI', 'agy', '-i'),
+  profile('copilot', 'Copilot CLI', 'copilot', '-i'),
+  profile('gemini', 'Gemini CLI', 'gemini', '-i'),
 ]);
 
 export function launchOf(p: AgentProfile, prompt?: string, callerArgs: string[] = [], callerEnv: Env = {}): AgentLaunch {
@@ -191,23 +192,53 @@ export function readDefaultAgent(text: string): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-export function readPreferredTerminal(text: string): string | undefined {
-  const value = field(parseJsonObject(text, CONFIG_FILE), 'terminal');
-  return typeof value === 'string' && !isBlank(value) ? value : undefined;
-}
-
 export function readJevSettings(text: string): JevSettings {
   return parseJevSettings(field(parseJsonObject(text, CONFIG_FILE), 'jev'));
 }
 
-export interface AgentSettings {
+export type TabRouting = 'project' | 'caller';
+export type TerminalWindow = 'last' | 'dedicated';
+const AUTO = 'auto';
+
+export interface TerminalSettings {
+  tabRouting: TabRouting;
+  preferredTerminal?: string;
+  shell?: string;
+  terminalWindow: TerminalWindow;
+}
+
+function choice<T extends string>(config: Record<string, unknown>, key: string, values: readonly T[], warnings: string[]): T {
+  const value = field(config, key);
+  if (value === undefined || value === null) return values[0]!;
+  if (typeof value === 'string' && (values as readonly string[]).includes(value)) return value as T;
+  warnings.push(`Ignoring ${key} in ${CONFIG_FILE}: it must be ${values.map((v) => `"${v}"`).join(' or ')}`);
+  return values[0]!;
+}
+
+export function readTerminalSettings(config: Record<string, unknown>, warnings: string[]): TerminalSettings {
+  const tabRouting = choice(config, 'tabRouting', ['project', 'caller'] as const, warnings);
+  const terminalWindow = choice(config, 'terminalWindow', ['last', 'dedicated'] as const, warnings);
+  let preferredTerminal: string | undefined;
+  const terminal = field(config, 'terminal');
+  if (typeof terminal === 'string') preferredTerminal = !isBlank(terminal) && terminal !== AUTO ? terminal : undefined;
+  else if (terminal !== undefined && terminal !== null) warnings.push(`Ignoring terminal in ${CONFIG_FILE}: it must be a string`);
+  let shell: string | undefined;
+  const shellValue = field(config, 'shell');
+  if (typeof shellValue === 'string' && (isBlank(shellValue) || shellValue === AUTO)) shell = undefined;
+  else if (typeof shellValue === 'string' && !shellValue.includes('\0') && (path.win32.isAbsolute(shellValue) || path.posix.isAbsolute(shellValue))) {
+    shell = shellValue;
+  } else if (shellValue !== undefined && shellValue !== null) {
+    warnings.push(`Ignoring shell in ${CONFIG_FILE}: it must be "auto" or the absolute path of a shell executable`);
+  }
+  return { tabRouting, terminalWindow, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
+}
+
+export interface AgentSettings extends TerminalSettings {
   profiles: AgentProfile[];
   defaultAgent: AgentProfile;
-  preferredTerminal?: string;
   jev: JevSettings;
   warnings: string[];
 }
-
 export function resolveSettings(
   agentsText: string | undefined,
   configText: string | undefined,
@@ -224,13 +255,13 @@ export function resolveSettings(
     }
   }
   let configured: string | undefined;
-  let preferredTerminal: string | undefined;
+  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last' };
   let jev = JEV_OFF;
   if (configText !== undefined) {
     let readable = true;
     try {
       configured = readDefaultAgent(configText);
-      preferredTerminal = readPreferredTerminal(configText);
+      terminal = readTerminalSettings(parseJsonObject(configText, CONFIG_FILE), warnings);
     } catch (e) {
       readable = false;
       warnings.push(`Ignoring ${configPath}: ${(e as Error).message}`);
@@ -245,5 +276,5 @@ export function resolveSettings(
   }
   const defaultAgent =
     profiles.find((p) => p.name === configured) ?? profiles.find((p) => p.name === DEFAULT_AGENT)!;
-  return { profiles, defaultAgent, ...(preferredTerminal ? { preferredTerminal } : {}), jev, warnings };
+  return { profiles, defaultAgent, ...terminal, jev, warnings };
 }

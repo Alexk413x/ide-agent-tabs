@@ -1,7 +1,7 @@
 ---
 name: delegate
-description: Hand a task, review, or second opinion to another agent CLI (Codex, Gemini CLI, Copilot CLI, Antigravity CLI, OpenCode, or a second Claude) in headless mode and bring its answer back. Use when the user asks to "ask Codex", "have Gemini look at this", "get a second opinion from another model", or to delegate work to another agent.
-argument-hint: "[codex|gemini|copilot|agy|opencode|claude] <task>"
+description: Hand a task, review, or second opinion to another agent CLI (Codex, Antigravity CLI, Copilot CLI, Gemini CLI, OpenCode, or a second Claude) in headless mode and bring its answer back. Use when the user asks to "ask Codex", "have Gemini look at this", "get a second opinion from another model", or to delegate work to another agent.
+argument-hint: "[codex|agy|copilot|gemini|opencode|claude] <task>"
 ---
 
 Run another agent CLI once, without a terminal UI, and report what it returns. The other agent works on
@@ -65,11 +65,11 @@ Start the command with `IDE_AGENT_TABS_ID= ` (bash) or run `$env:IDE_AGENT_TABS_
 
 | Agent | Read-only | Write | Final answer | Session id for follow-ups |
 |---|---|---|---|---|
-| Codex | `codex exec -s read-only -C "<dir>" -o "$RUN/result.md" --json - < "$RUN/prompt.md" > "$RUN/events.jsonl"` | Same, with `-s workspace-write --worktree` | `$RUN/result.md` | `thread_id` of the `thread.started` event in `events.jsonl` |
 | Claude | `claude -p --output-format json --permission-mode plan < "$RUN/prompt.md" > "$RUN/result.json"` | Same, with `--permission-mode acceptEdits`, run from a worktree | `.result` in `result.json` | `.session_id` in `result.json` |
-| Gemini CLI | `gemini -p "Follow the instructions on stdin." --output-format json < "$RUN/prompt.md" > "$RUN/result.json"` | Same, with `--approval-mode auto_edit`, run from a worktree | `.response` in `result.json` | Not reliable in headless mode. Treat each run as new. |
-| Copilot CLI | Check `copilot --help` for the prompt, tool-permission and output flags | Check `copilot --help` | Its output | Treat each run as new. Resume has open bugs on Windows. |
+| Codex | `codex exec -s read-only -C "<dir>" -o "$RUN/result.md" --json - < "$RUN/prompt.md" > "$RUN/events.jsonl"` | Same, with `-s workspace-write --worktree` | `$RUN/result.md` | `thread_id` of the `thread.started` event in `events.jsonl` |
 | Antigravity CLI | `agy -p "Follow the instructions in $RUN/prompt.md." --output-format json > "$RUN/result.json"` | Same, with `--mode accept-edits`, run from a worktree | `.response` in `result.json` | `.conversation_id` in `result.json`, then `--conversation <id>` |
+| Copilot CLI | Check `copilot --help` for the prompt, tool-permission and output flags | Check `copilot --help` | Its output | Treat each run as new. Resume has open bugs on Windows. |
+| Gemini CLI | `gemini -p "Follow the instructions on stdin." --output-format json < "$RUN/prompt.md" > "$RUN/result.json"` | Same, with `--approval-mode auto_edit`, run from a worktree | `.response` in `result.json` | Not reliable in headless mode. Treat each run as new. |
 | OpenCode | Check `opencode run --help` for the prompt, model and `--format json` flags | Check `opencode run --help` | Its output | `opencode run -c` continues the last session |
 
 Antigravity CLI takes its prompt as the value of `-p`, and whether `-p` reads stdin is untested, so the

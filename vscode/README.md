@@ -1,6 +1,6 @@
 # Agent Tabs for VS Code
 
-Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI, Copilot CLI and Antigravity CLI, in
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Antigravity CLI, Copilot CLI and Gemini CLI, in
 editor tabs. You open a tab with one button. Another agent opens, lists and closes tabs through a local
 HTTP API, the same API the JetBrains plugin serves.
 
@@ -74,8 +74,32 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `gemini`, `copilot`, `agy` | `claude` |
+| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `agy`, `copilot`, `gemini` | `claude` |
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
+
+Two more sections hold the settings that the MCP server and JetBrains IDEs share. They stay in sync with
+`~/.ide-agent-tabs/config.json`. A tab request that names an IDE, a terminal or an agent overrides them.
+The settings are user-level only: a workspace's `.vscode/settings.json` can't set them, and untrusted
+workspaces can't change the terminal or the shell.
+
+**Agent Tabs: IDE tabs**
+
+| Setting | Key | Values | Default |
+| --- | --- | --- | --- |
+| `ideAgentTabs.openNewTabsIn` | `tabRouting` | `project` (IDE that has the project open), `caller` (IDE the request came from) | `project` |
+
+**Agent Tabs: Terminal tabs**
+
+| Setting | Key | Values | Default |
+| --- | --- | --- | --- |
+| `ideAgentTabs.preferredTerminal` | `terminal` | `auto` or a terminal id, such as `windows-terminal` or `wezterm` | `auto` |
+| `ideAgentTabs.windowsShell` | `shell` | `auto` or the path to a PowerShell executable. Windows only. | `auto` |
+| `ideAgentTabs.terminalWindow` | `terminalWindow` | `last` (use my last window), `dedicated` (a dedicated Agent Tabs window) | `last` |
+
+The terminal and shell settings are text settings, because VS Code fixes a dropdown's choices in
+`package.json`. Each has a **Choose…** link, and a command (**Agent Tabs: Choose Preferred Terminal…**,
+**Agent Tabs: Choose Windows Shell…**) that lists the options in `~/.ide-agent-tabs/detected.json`, plus
+**Automatic** and, for the shell, **Custom path…**.
 
 The editor title button, the status bar item and startup all use `ideAgentTabs.defaultAgent`. The
 setting stays in sync with `defaultAgent` in `~/.ide-agent-tabs/config.json`, so a change in the JetBrains
@@ -83,7 +107,7 @@ plugin or any other window shows up here too, and the MCP server uses the same d
 
 ## Agent profiles
 
-The built-in profiles are `claude`, `codex`, `gemini`, `copilot` and `agy`. To add a profile or change a built-in
+The built-in profiles are `claude`, `codex`, `agy`, `copilot` and `gemini`. To add a profile or change a built-in
 one, edit `~/.ide-agent-tabs/agents.json`:
 
 ```json
