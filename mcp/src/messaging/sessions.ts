@@ -10,6 +10,9 @@ export const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const STUB_MAX_AGE_MS = 60 * 60 * 1000;
 export const WAKE_TIMEOUT_MS = 20_000;
 export const IDLE_SETTLE_MS = 2_000;
+export const BUSY_STALE_MS = 15 * 60_000;
+export const HEARTBEAT_MS = 60_000;
+export const PRESENCE_BEATS_MISSED = 5;
 
 export interface PresenceFile {
   id: string;
@@ -23,6 +26,8 @@ export interface PresenceFile {
   nudges?: number;
   reminded?: string[];
   threadId?: string;
+  owner?: string;
+  beatMs?: number;
 }
 
 export interface Presence extends PresenceFile {
@@ -70,6 +75,7 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
   const state = STATES.includes(o.state as SessionState) ? { state: o.state as SessionState } : {};
   const pid = typeof o.pid === 'number' && Number.isSafeInteger(o.pid) && o.pid > 0 ? { pid: o.pid } : {};
   const nudges = typeof o.nudges === 'number' && Number.isSafeInteger(o.nudges) && o.nudges >= 0 ? { nudges: o.nudges } : {};
+  const beatMs = typeof o.beatMs === 'number' && Number.isSafeInteger(o.beatMs) && o.beatMs > 0 ? { beatMs: o.beatMs } : {};
   const reminded = Array.isArray(o.reminded) && o.reminded.every((r) => typeof r === 'string') ? { reminded: o.reminded as string[] } : {};
   return {
     id: o.id,
@@ -83,6 +89,8 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...nudges,
     ...reminded,
     ...str('threadId'),
+    ...str('owner'),
+    ...beatMs,
   };
 }
 
@@ -133,11 +141,13 @@ export async function liveSessions(
     const text = await readTextIfExists(file).catch(() => null);
     if (text === null || text === undefined) continue;
     const presence = parsePresence(text);
-    if (presence && isComplete(presence) && alive(presence.pid)) {
+    const stat = await fs.stat(file).catch(() => undefined);
+    // A pid alone can name a new process once Windows reuses it; a server that beats proves it still runs.
+    const silent = presence?.beatMs !== undefined && stat !== undefined && now - stat.mtimeMs > presence.beatMs * PRESENCE_BEATS_MISSED;
+    if (presence && isComplete(presence) && !silent && alive(presence.pid)) {
       sessions.push({ ...presence, state: effectiveState(presence, now) });
       continue;
     }
-    const stat = await fs.stat(file).catch(() => undefined);
     const dead = presence?.pid !== undefined;
     if (stat && (dead || now - stat.mtimeMs > STUB_MAX_AGE_MS)) await fs.rm(file, { force: true }).catch(() => undefined);
   }
@@ -145,11 +155,14 @@ export async function liveSessions(
 }
 
 // A wake line that never starts a turn, such as one typed while the agent was still finishing, leaves the
-// session waking; after WAKE_TIMEOUT_MS it counts as idle again, so the next send or wait retries.
+// session waking; after WAKE_TIMEOUT_MS it counts as idle again, so the next send or wait retries. A busy turn
+// refreshes its state on every tool call, so one silent for BUSY_STALE_MS was interrupted without a turn-end hook.
 export function effectiveState(p: { state?: SessionState; stateAt?: string }, now: number): SessionState {
   const state = p.state ?? 'unknown';
-  if (state !== 'waking') return state;
+  if (state !== 'waking' && state !== 'busy') return state;
   const at = Date.parse(p.stateAt ?? '');
   const elapsed = now - at;
-  return Number.isFinite(at) && elapsed >= 0 && elapsed < WAKE_TIMEOUT_MS ? 'waking' : 'idle';
+  if (state === 'busy' && !Number.isFinite(at)) return state;
+  const limit = state === 'waking' ? WAKE_TIMEOUT_MS : BUSY_STALE_MS;
+  return Number.isFinite(at) && elapsed >= 0 && elapsed < limit ? state : 'idle';
 }

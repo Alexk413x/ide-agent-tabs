@@ -191,11 +191,11 @@ setup. The `codex` profile's `args`, placed before the caller's `args` and the p
   `env_vars = ["IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_HOME"]`, because Codex passes a
   stdio server only a fixed set of variables, and `tool_timeout_sec = 660`, because Codex's default of
   60 seconds would end `wait_for_message` early.
-- One `-c hooks.<Event>=[…]` for each of `UserPromptSubmit`, `PostToolUse`, `PermissionRequest` and
-  `Stop`. Each is an `mcp_tool` hook that calls the server's `agent_tabs_hook`
-  tool with `input = { event = '<Event>', session_id = '${session_id}', turn_id = '${turn_id}' }`. The call runs over the session's own MCP connection, so no process
+- One `-c hooks.<Event>=[…]` for each of `UserPromptSubmit`, `PostToolUse`, `PermissionRequest`, `Stop` and
+  `Interrupt`. Each is an `mcp_tool` hook that calls the server's `agent_tabs_hook`
+  tool with `input = { event = '<Event>', session_id = '${session_id}', turn_id = '${turn_id}' }`, with `timeout = 10`, or `3` for `Interrupt`, which Codex caps at 3 seconds. The call runs over the session's own MCP connection, so no process
   starts and no console window opens.
-- `-c hooks.state={ … }`, which trusts exactly those four hooks, so Codex runs them without a `/hooks`
+- `-c hooks.state={ … }`, which trusts exactly those five hooks, so Codex runs them without a `/hooks`
   review. Codex keys a hook by its source path, event and position: for `-c` hooks the source is
   `/<session-flags>/config.toml`, or `C:\<session-flags>\config.toml` on Windows, so the profile lists
   both. The trusted hash is Codex's `version_for_toml` of the normalized hook: the SHA-256 of its

@@ -1,9 +1,10 @@
 import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
+import { copilotHooks, hookConfigFile } from './hookConfig.js';
 import { ensurePrivateDir, readTextIfExists, writeAtomically } from './files.js';
 import { findOnPath } from './installed.js';
 import { run, type RunResult } from './process.js';
-import { refreshServerCopy, serverCopyDir, serverHash } from './serverCopy.js';
+import { hookCopyPath, refreshServerCopy, serverCopyDir, serverHash } from './serverCopy.js';
 import { compareVersions } from './version.js';
 
 export { compareVersions };
@@ -342,6 +343,21 @@ async function syncEditors(ctx: SyncContext, bundle: Bundle, errors: string[]) {
   return { updated: updated.filter((c): c is string => c !== undefined), jetbrainsUpdated };
 }
 
+async function refreshCopilotHooks(ctx: SyncContext): Promise<void> {
+  const file = hookConfigFile('copilot', ctx.env, ctx.userHome);
+  const text = await readTextIfExists(file);
+  if (text === undefined) return;
+  const want = copilotHooks(hookCopyPath(ctx.home, ctx.platform));
+  const current: unknown = (() => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return undefined;
+    }
+  })();
+  if (JSON.stringify(current) !== JSON.stringify(want)) await writeAtomically(file, `${JSON.stringify(want, null, 2)}\n`);
+}
+
 export async function syncHook(ctx: SyncContext, now = new Date()): Promise<string | undefined> {
   const bundle = await readBundle(ctx.bundleDir);
   const previous = await readSyncState(ctx.home);
@@ -357,6 +373,7 @@ export async function syncHook(ctx: SyncContext, now = new Date()): Promise<stri
     if (server !== undefined) {
       try {
         await refreshServerCopy(ctx.serverDir, ctx.home);
+        await refreshCopilotHooks(ctx);
         syncedServer = server;
       } catch (e) {
         errors.push(`server copy: ${(e as Error).message}`);

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { serverCopyDir } from '../src/serverCopy.js';
+import { COPILOT_HOOKS_FILE, copilotHooks } from '../src/hookConfig.js';
+import { hookCopyPath, serverCopyDir } from '../src/serverCopy.js';
 import { makeServerDir } from './serverDir.js';
 import { tempDir } from './tempDir.js';
 import {
@@ -283,4 +284,30 @@ test('the hook refreshes an existing server copy when the bundled server changes
   await syncHook(ctx);
   assert.equal(readFileSync(copy, 'utf8'), 'server v2');
   assert.notEqual(parseSyncState(readFileSync(path.join(home, 'synced.json'), 'utf8'))!.server, synced.server);
+});
+
+test('the hook rewrites an existing Copilot hook file when the server copy refreshes', async () => {
+  const bundleDir = makeBundle();
+  const serverDir = makeServerDir('server v1');
+  const home = path.join(tempDir('iat-home-'), '.ide-agent-tabs');
+  const copilotHome = tempDir('iat-copilot-');
+  const file = path.join(copilotHome, 'hooks', COPILOT_HOOKS_FILE);
+  const ctx = { bundleDir, serverDir, home, platform: process.platform, env: { PATH: '', COPILOT_HOME: copilotHome }, userHome: home };
+  mkdirSync(serverCopyDir(home), { recursive: true });
+
+  await syncHook(ctx);
+  assert.ok(!existsSync(file));
+
+  const stale = { version: 1, hooks: { agentStop: [{ type: 'command', exec: 'node', args: ['/old/agent-hook.mjs', 'copilot', 'agentStop'], timeoutSec: 5 }] } };
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify(stale));
+  writeFileSync(path.join(serverDir, 'mcp-server.mjs'), 'server v2');
+  await syncHook(ctx);
+  const want = copilotHooks(hookCopyPath(home, process.platform));
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), want);
+
+  const before = readFileSync(file, 'utf8');
+  writeFileSync(path.join(serverDir, 'mcp-server.mjs'), 'server v3');
+  await syncHook(ctx);
+  assert.equal(readFileSync(file, 'utf8'), before);
 });

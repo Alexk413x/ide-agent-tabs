@@ -10,7 +10,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ideCaller } from '../src/ideClient.js';
 import { createServer, SERVER_VERSION } from '../src/server.js';
-import { Service } from '../src/service.js';
+import { readPresence } from '../src/messaging/sessions.js';
+import { FRESH_TAB_START_MS, Service } from '../src/service.js';
 import type { LaunchSpec } from '../src/spec.js';
 import type { TerminalDriver, TerminalTab } from '../src/terminals/types.js';
 
@@ -185,6 +186,18 @@ test('open_tab routes a path inside an open project to that IDE and forwards the
   assert.equal(json.agent, 'codex');
   assert.match(json.reason, /open project proj contains the path/);
   assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', prompt: 'hi "there"', args: ['--yolo'], env: { A: 'b' } });
+});
+
+test('a tab opened without a prompt counts as idle once it has had time to start, so a message wakes it', async () => {
+  const prompted = await call('open_tab', { path: project, prompt: 'go' });
+  assert.equal(await readPresence(home, prompted.json.id), undefined, 'a tab with a prompt starts busy and reports it itself');
+  const before = Date.now();
+  const fresh = await call('open_tab', { path: project });
+  const presence = (await readPresence(home, fresh.json.id))!;
+  assert.equal(presence.state, 'idle');
+  assert.equal(presence.host, fresh.json.ide);
+  assert.ok(Date.parse(presence.stateAt!) >= before + FRESH_TAB_START_MS);
+  for (const tab of [prompted, fresh]) assert.ok(!(await call('close_tab', { id: tab.json.id })).isError);
 });
 
 test('open_tab falls back to the most recently started IDE and adds the next step to IDE errors', async () => {

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync, rmSync } from 'node:fs';
+import { promises as fs, readFileSync, rmSync } from 'node:fs';
 import { AGENT_ENV, TAB_ID_ENV } from '../profiles.js';
 import { isProcessAlive } from '../registry.js';
 import {
@@ -8,10 +8,14 @@ import {
   deliver,
   MailError,
   peekUnread,
+  MAX_READ_CHARS,
   MAX_TEXT_CHARS,
   newMessageId,
+  putBack,
+  releaseSend,
   reserveSend,
-  takeMessages,
+  sendDigest,
+  takeBatch,
   waitForMessage,
   type Message,
 } from './mailbox.js';
@@ -20,6 +24,7 @@ import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
   agentFromClient,
   effectiveState,
+  HEARTBEAT_MS,
   IDLE_SETTLE_MS,
   isSessionId,
   liveSessions,
@@ -35,7 +40,9 @@ import {
 export const DEFAULT_WAIT_S = 60;
 export const MAX_WAIT_S = 600;
 const CLEAN_EVERY_MS = 60 * 60 * 1000;
+const RESTART_GRACE_MS = 60_000;
 export const REWAKE_EVERY_MS = 15_000;
+export const FOLLOW_UP_MS = MAX_WAIT_S * 1000;
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export interface Hosts {
@@ -53,6 +60,8 @@ export interface MessagingDeps {
   randomId?: () => string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  rewakeEveryMs?: number;
+  heartbeatMs?: number;
 }
 
 export interface SendInput {
@@ -73,6 +82,15 @@ export const CODEX_ID_PREFIX = 'codex-';
 const generatedId = () => `s-${randomBytes(6).toString('hex')}`;
 const mayBeTab = (id: string) => !id.startsWith('s-') && !id.startsWith(CODEX_ID_PREFIX);
 
+interface ReadResult {
+  notice?: string;
+  messages: ReturnType<typeof shown>[];
+  remaining?: number;
+  next?: string;
+  unreadable?: number;
+  unreadableNote?: string;
+}
+
 function shown(m: Message) {
   return { id: m.id, from: m.from, text: m.text, ...(m.replyTo !== undefined ? { replyTo: m.replyTo } : {}), sentAt: m.sentAt };
 }
@@ -86,6 +104,8 @@ export class Messaging {
   private threadId?: string;
   private ownHost?: Promise<string | undefined>;
   private identified: Promise<void> = Promise.resolve();
+  private readonly followUps = new Map<string, ReturnType<typeof setInterval>>();
+  private heartbeat?: ReturnType<typeof setInterval>;
 
   constructor(private readonly deps: MessagingDeps) {
     const tab = deps.env[TAB_ID_ENV];
@@ -126,7 +146,33 @@ export class Messaging {
       ...(current?.stateAt !== undefined ? { stateAt: current.stateAt } : {}),
       ...(current?.nudges !== undefined ? { nudges: current.nudges } : {}),
       ...(this.threadId !== undefined ? { threadId: this.threadId } : {}),
+      beatMs: this.beatMs,
     };
+  }
+
+  private get beatMs(): number {
+    return this.deps.heartbeatMs ?? HEARTBEAT_MS;
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeat = setInterval(() => void this.beat().catch(() => undefined), this.beatMs);
+    this.heartbeat.unref?.();
+  }
+
+  private async beat(): Promise<void> {
+    const file = presencePath(this.deps.home, this.sessionId);
+    const now = new Date(this.now());
+    const touched = await fs.utimes(file, now, now).then(
+      () => true,
+      () => false,
+    );
+    if (!touched || (await readPresence(this.deps.home, this.sessionId))?.pid !== this.deps.pid) await this.updateOwn((p) => p);
+  }
+
+  stopHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
   }
 
   async start(): Promise<void> {
@@ -138,7 +184,7 @@ export class Messaging {
           taken = true;
           return current;
         }
-        return this.presence(current);
+        return this.presence(this.leftByDeadServer(current));
       });
     }
     if (taken) {
@@ -147,7 +193,18 @@ export class Messaging {
     }
     if (!this.isTab) await updatePresence(this.deps.home, this.sessionId, (current) => this.presence(current));
     if (this.isTab) this.ownHost = this.resolveOwnHost();
+    this.startHeartbeat();
     void this.clean().catch(() => undefined);
+  }
+
+  // The agent of this tab can set its state just before this server starts, so only a state older than that
+  // came from the dead server's agent.
+  private leftByDeadServer(current: PresenceFile | undefined): PresenceFile | undefined {
+    if (current?.pid === undefined || current.pid === this.deps.pid || this.alive(current.pid)) return current;
+    const { nudges: _, ...rest } = current;
+    const at = Date.parse(current.stateAt ?? '');
+    const old = !Number.isFinite(at) || at < Date.parse(this.startedAt) - RESTART_GRACE_MS;
+    return old && current.state !== 'idle' ? { ...rest, state: 'unknown' } : rest;
   }
 
   private async resolveOwnHost(): Promise<string | undefined> {
@@ -210,6 +267,7 @@ export class Messaging {
   }
 
   stopSync(): void {
+    this.stopHeartbeat();
     const file = presencePath(this.deps.home, this.sessionId);
     try {
       if (parsePresence(readFileSync(file, 'utf8'))?.pid === this.deps.pid) rmSync(file, { force: true });
@@ -252,17 +310,27 @@ export class Messaging {
     const now = this.now();
     const recipient = (await liveSessions(this.deps.home, this.alive, now)).find((s) => s.id === to);
     if (!recipient) throw new MailError(`no live session with id ${to}; call list_sessions`);
-    await reserveSend(this.deps.home, this.sessionId, now);
+    const id = newMessageId();
+    const { duplicateOf } = await reserveSend(this.deps.home, this.sessionId, now, { id, to, digest: sendDigest(to, text, replyTo) });
+    if (duplicateOf !== undefined) {
+      return { id: duplicateOf, to, delivery: 'queued' as const, duplicate: true, note: 'an identical message went to this session less than a minute ago; it was not sent again' };
+    }
     const message: Message = {
-      id: newMessageId(),
+      id,
       from: { id: this.sessionId, agent: this.agent, path: this.deps.cwd },
       to,
       text,
       ...(replyTo !== undefined ? { replyTo } : {}),
       sentAt: new Date(now).toISOString(),
     };
-    await deliver(this.deps.home, message, now);
+    try {
+      await deliver(this.deps.home, message, now);
+    } catch (e) {
+      await releaseSend(this.deps.home, this.sessionId, id).catch(() => undefined);
+      throw e;
+    }
     const wake = await this.wake(recipient, now).catch((e: unknown) => ({ delivery: 'queued' as const, note: String(e) }));
+    this.followUp(to);
     void this.clean().catch(() => undefined);
     return { id: message.id, to, ...wake };
   }
@@ -272,6 +340,7 @@ export class Messaging {
     // An agent reports idle when its turn-end hook runs, but it can still be finishing the turn, and a
     // line typed then is lost; typing only after the session stays idle for IDLE_SETTLE_MS avoids that.
     const settle = IDLE_SETTLE_MS - (now - Date.parse(recipient.stateAt ?? ''));
+    if (settle > IDLE_SETTLE_MS) return { delivery: 'queued' };
     if (settle > 0) {
       await (this.deps.sleep ?? realSleep)(settle);
       now = this.now();
@@ -286,16 +355,26 @@ export class Messaging {
       return claimed;
     });
     if (!claimed) return { delivery: 'queued' };
-    let typed: Awaited<ReturnType<Hosts['typeInto']>>;
-    try {
-      typed = await this.deps.hosts.typeInto(recipient.id, host, wakeLine(this.agent, this.sessionId));
-    } catch (error) {
-      await this.restoreFailedWake(recipient, claimed);
-      return { delivery: 'queued', note: `the session was idle, but typing the wake line failed: ${String(error)}` };
+    let typed = await this.typeWakeLine(recipient.id, host);
+    if (!typed.ok && recipient.host !== undefined && mayBeTab(recipient.id)) {
+      const found = await this.deps.hosts.findHost(recipient.id).catch(() => undefined);
+      if (found !== undefined && found !== host) {
+        const stateAt = claimed.stateAt;
+        await updatePresence(this.deps.home, recipient.id, (current) => (current !== undefined && current.stateAt === stateAt ? { ...current, host: found } : current));
+        typed = await this.typeWakeLine(recipient.id, found);
+      }
     }
     if (typed.ok) return { delivery: 'woken' };
     await this.restoreFailedWake(recipient, claimed);
     return { delivery: 'queued', note: `the session was idle, but typing the wake line failed: ${typed.reason}` };
+  }
+
+  private async typeWakeLine(id: string, host: string): Promise<Awaited<ReturnType<Hosts['typeInto']>>> {
+    try {
+      return await this.deps.hosts.typeInto(id, host, wakeLine(this.agent, this.sessionId));
+    } catch (error) {
+      return { ok: false, reason: String(error) };
+    }
   }
 
   private async restoreFailedWake(recipient: Presence, claimed: PresenceFile): Promise<void> {
@@ -306,23 +385,54 @@ export class Messaging {
     );
   }
 
-  private async rewake(peer: string): Promise<void> {
+  private async rewake(peer: string): Promise<boolean> {
     const pending = (await peekUnread(this.deps.home, peer)).some((m) => m.from.id === this.sessionId);
-    if (!pending) return;
+    if (!pending) return false;
     const now = this.now();
     const recipient = (await liveSessions(this.deps.home, this.alive, now)).find((s) => s.id === peer);
-    if (recipient) await this.wake(recipient, now);
+    if (!recipient) return false;
+    await this.wake(recipient, now);
+    return true;
+  }
+
+  // A wake line can be lost, or the recipient can be in no state that allows one yet, so the sender keeps
+  // retrying until the recipient reads the message, ends, or FOLLOW_UP_MS passes.
+  private followUp(peer: string): void {
+    if (this.followUps.has(peer)) return;
+    const until = this.now() + FOLLOW_UP_MS;
+    const stop = () => {
+      clearInterval(timer);
+      this.followUps.delete(peer);
+    };
+    const timer = setInterval(() => {
+      if (this.now() >= until) return stop();
+      void this.rewake(peer).then((pending) => pending || stop(), stop);
+    }, this.deps.rewakeEveryMs ?? REWAKE_EVERY_MS);
+    timer.unref?.();
+    this.followUps.set(peer, timer);
+  }
+
+  stopFollowUps(): void {
+    for (const timer of this.followUps.values()) clearInterval(timer);
+    this.followUps.clear();
   }
 
   private async resetNudges(): Promise<void> {
     await this.updateOwn((p) => (p.nudges ? { ...p, nudges: 0 } : p)).catch(() => undefined);
   }
 
-  async read() {
-    const messages = await takeMessages(this.deps.home, this.sessionId);
+  async read(signal?: AbortSignal) {
+    const { messages, names, remaining, unreadable } = await takeBatch(this.deps.home, this.sessionId, { chars: MAX_READ_CHARS });
+    if (signal?.aborted) {
+      await putBack(this.deps.home, this.sessionId, names);
+      throw new MailError('read_messages was cancelled; the messages stay unread');
+    }
     await this.resetNudges();
     void this.clean().catch(() => undefined);
-    return messages.length === 0 ? { messages: [] } : { notice: UNTRUSTED_NOTICE, messages: messages.map(shown) };
+    const result: ReadResult = { ...(messages.length ? { notice: UNTRUSTED_NOTICE } : {}), messages: messages.map(shown) };
+    if (remaining) Object.assign(result, { remaining, next: `${remaining} more unread; call read_messages again` });
+    if (unreadable) Object.assign(result, { unreadable, unreadableNote: `${unreadable} mailbox file(s) held no valid message and were set aside` });
+    return result;
   }
 
   async wait(input: WaitInput, signal?: AbortSignal) {
@@ -331,7 +441,7 @@ export class Messaging {
     const seconds = Math.min(Math.max(input.timeout ?? DEFAULT_WAIT_S, 0), MAX_WAIT_S);
     const filter = { ...(input.from !== undefined ? { from: input.from } : {}), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}) };
     const peer = input.from;
-    const retry = peer === undefined ? undefined : setInterval(() => void this.rewake(peer).catch(() => undefined), REWAKE_EVERY_MS);
+    const retry = peer === undefined ? undefined : setInterval(() => void this.rewake(peer).catch(() => undefined), this.deps.rewakeEveryMs ?? REWAKE_EVERY_MS);
     let message: Message | undefined;
     try {
       message = await waitForMessage(this.deps.home, this.sessionId, filter, seconds * 1000, signal);

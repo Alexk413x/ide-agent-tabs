@@ -24,19 +24,27 @@ const REMINDER = 'Agent Tabs: 1 unread message from codex abcdef01. read_message
 
 test('hooks set busy, permission and idle for each CLI', async () => {
   const cases: [string, string, Record<string, unknown>, string][] = [
+    ['claude', 'SessionStart', { source: 'startup' }, 'idle'],
     ['claude', 'UserPromptSubmit', {}, 'busy'],
     ['claude', 'Notification', { notification_type: 'permission_prompt' }, 'permission'],
     ['claude', 'PostToolUse', {}, 'busy'],
     ['claude', 'Notification', { notification_type: 'idle_prompt' }, 'idle'],
     ['claude', 'Stop', { stop_hook_active: false }, 'idle'],
+    ['claude', 'PostToolUseFailure', { is_interrupt: false }, 'busy'],
+    ['claude', 'PostToolUseFailure', { is_interrupt: true }, 'idle'],
+    ['claude', 'UserPromptSubmit', {}, 'busy'],
+    ['claude', 'StopFailure', { error: 'rate_limit' }, 'idle'],
     ['codex', 'UserPromptSubmit', {}, 'busy'],
     ['codex', 'PermissionRequest', {}, 'permission'],
     ['codex', 'PostToolUse', {}, 'busy'],
     ['codex', 'Stop', {}, 'idle'],
+    ['codex', 'UserPromptSubmit', {}, 'busy'],
+    ['codex', 'Interrupt', {}, 'idle'],
     ['gemini', 'BeforeAgent', {}, 'busy'],
     ['gemini', 'Notification', { notification_type: 'ToolPermission' }, 'permission'],
     ['gemini', 'AfterTool', {}, 'busy'],
     ['gemini', 'AfterAgent', {}, 'idle'],
+    ['copilot', 'sessionStart', { source: 'new' }, 'idle'],
     ['copilot', 'userPromptSubmitted', {}, 'busy'],
     ['copilot', 'notification', { notificationType: 'permission_prompt' }, 'permission'],
     ['copilot', 'postToolUse', {}, 'busy'],
@@ -54,6 +62,7 @@ test('hooks set busy, permission and idle for each CLI', async () => {
 test('each CLI gets the reminder in its own context format after a prompt and a tool call', async () => {
   const context = (event: string) => ({ hookSpecificOutput: { hookEventName: event, additionalContext: REMINDER } });
   const cases: [string, string, object | undefined][] = [
+    ['claude', 'SessionStart', context('SessionStart')],
     ['claude', 'UserPromptSubmit', context('UserPromptSubmit')],
     ['claude', 'PostToolUse', context('PostToolUse')],
     ['codex', 'PreToolUse', undefined],
@@ -135,4 +144,28 @@ test('the hook script reads stdin, prints one JSON line, and exits 0 even on bad
   assert.equal(JSON.parse(garbage.stdout).hookSpecificOutput.additionalContext, REMINDER);
   const noId = run(['claude', 'Stop'], '{}', { IDE_AGENT_TABS_ID: '' });
   assert.deepEqual([noId.status, noId.stdout], [0, '']);
+});
+
+test('a headless agent started inside a tab cannot change the tab session', async () => {
+  const home = tempDir('iat-hook-');
+  await hook(home, 'claude', 'SessionStart', { source: 'startup', session_id: 'tab-agent' });
+  await hook(home, 'claude', 'UserPromptSubmit', { session_id: 'tab-agent' });
+  await mail(home);
+  for (const event of ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'Stop']) {
+    assert.equal(await hook(home, 'claude', event, { source: 'startup', session_id: 'child' }), undefined, event);
+  }
+  assert.equal(await state(home), 'busy');
+  assert.equal((await readPresence(home, ID))?.nudges ?? 0, 0);
+  assert.equal((await hook(home, 'claude', 'Stop', { session_id: 'tab-agent' }) as { decision?: string })?.decision, 'block');
+});
+
+test('a clear or resume in the tab hands the session to the new agent session id', async () => {
+  const home = tempDir('iat-hook-');
+  await hook(home, 'claude', 'UserPromptSubmit', { session_id: 'first' });
+  await hook(home, 'claude', 'SessionStart', { source: 'clear', session_id: 'second' });
+  assert.equal(await state(home), 'idle');
+  await hook(home, 'claude', 'UserPromptSubmit', { session_id: 'second' });
+  assert.equal(await state(home), 'busy');
+  await hook(home, 'claude', 'Stop', { session_id: 'first' });
+  assert.equal(await state(home), 'busy');
 });
