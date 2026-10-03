@@ -60,6 +60,8 @@ command line: long prompts break shell quoting, especially on Windows.
 ## 4. Run it
 
 Pick the command for the agent and mode. `<dir>` is the absolute path of the repository to work in.
+Start the command with `IDE_AGENT_TABS_ID= ` (bash) or run `$env:IDE_AGENT_TABS_ID = $null` first
+(PowerShell). Otherwise a run started inside an agent tab reports its state as that tab's.
 
 | Agent | Read-only | Write | Final answer | Session id for follow-ups |
 |---|---|---|---|---|

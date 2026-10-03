@@ -341,6 +341,17 @@ other agent CLIs. For that, every session that runs the MCP server can message e
 - A session's id is its tab id, `IDE_AGENT_TABS_ID`. A session that Agent Tabs didn't open gets an id
   that starts with `s-` when its MCP server starts. So does a server whose tab id another live server
   already holds, such as the server of a headless agent started from inside the tab.
+- That headless agent's hooks still name the tab, because hooks read `IDE_AGENT_TABS_ID` from the
+  environment. The presence file therefore records the agent session that owns the tab: the
+  `session_id`, `sessionId` or `conversationId` in the hook input. A hook from another agent session
+  changes nothing while the tab is mid-turn (`busy` or `permission`). A child runs inside the tab
+  agent's turn, so it's refused, while a `/clear`, `/new` or resume happens between turns, so it takes the
+  tab over. This needs no session-start hook, which Antigravity CLI lacks and Codex fires only at the
+  first turn. A hook from another CLI than the tab's agent is always ignored. The `delegate` skill also
+  starts its runs with `IDE_AGENT_TABS_ID` cleared.
+- Codex tabs add no `shell_environment_policy.exclude` for the tab id. A `-c` value replaces the user's
+  own `exclude` list for the session, which could pass secrets they exclude to Codex's shell. Codex's
+  default `inherit = "core"` already drops the tab id, and the ownership rule covers `inherit = "all"`.
 - A Codex client sends its thread id in `_meta.threadId` of every tool call, hook calls included. A
   Codex session keeps its `IDE_AGENT_TABS_ID` only when that tab is open: `terminal-tabs.json` or an
   IDE's `list` holds it. Otherwise, such as under the shared Codex daemon, whose environment can name

@@ -1,6 +1,6 @@
 import { peekUnread } from './mailbox.js';
 import { unreadReminder } from './notice.js';
-import { isSessionId, updatePresence, withState, type PresenceFile, type SessionState } from './sessions.js';
+import { effectiveState, isSessionId, updatePresence, withState, type PresenceFile, type SessionState } from './sessions.js';
 
 export const HOOK_CLIS = ['claude', 'codex', 'gemini', 'copilot', 'agy'] as const;
 export type HookCli = (typeof HOOK_CLIS)[number];
@@ -66,22 +66,23 @@ function stopOutput(cli: HookCli, reason: string): object {
   return { decision: cli === 'gemini' ? 'deny' : cli === 'agy' ? 'continue' : 'block', reason };
 }
 
-const OWNED_CLIS: readonly HookCli[] = ['claude', 'copilot'];
+const SESSION_FIELDS = ['session_id', 'sessionId', 'conversationId'];
+const IN_TURN: readonly SessionState[] = ['busy', 'permission'];
 
-// Only CLIs whose start hook fires again when the tab switches sessions can hand ownership on; elsewhere a
-// new session id would lock the tab out of its own hooks.
-function agentSession(cli: HookCli, input: Record<string, unknown>): string | undefined {
-  if (!OWNED_CLIS.includes(cli)) return undefined;
-  const id = [input.session_id, input.sessionId].find((v) => typeof v === 'string' && v !== '');
-  return id as string | undefined;
+function agentSession(input: Record<string, unknown>): string | undefined {
+  return SESSION_FIELDS.map((f) => input[f]).find((v): v is string => typeof v === 'string' && v !== '');
 }
 
-// A headless agent started from inside a tab inherits IDE_AGENT_TABS_ID, so its hooks name the tab too; only
-// the agent session that claimed the tab first may change it, until a clear or resume in the tab hands it on.
-function ownedBy(cli: HookCli, base: PresenceFile, action: Action, input: Record<string, unknown>): string | undefined | false {
-  const session = agentSession(cli, input);
+// A headless agent started from inside a tab inherits IDE_AGENT_TABS_ID, so its hooks name the tab too. Such a
+// child runs inside the tab agent's turn, while a session switch in the tab (/clear, /new, resume) happens
+// between turns, so a new agent session takes the tab over only while it is not mid-turn. That needs no start
+// hook, which Antigravity CLI lacks and Codex fires only at the first turn.
+function ownedBy(cli: HookCli, base: PresenceFile, action: Action, input: Record<string, unknown>, now: number): string | undefined | false {
+  if (base.agent !== undefined && isHookCli(base.agent) && base.agent !== cli) return false;
+  const session = agentSession(input);
   if (session === undefined || base.owner === undefined || base.owner === session) return session;
-  return action.start && input.source !== undefined && input.source !== 'startup' ? session : false;
+  if (action.start && input.source !== undefined && input.source !== 'startup') return session;
+  return IN_TURN.includes(effectiveState(base, now)) ? false : session;
 }
 
 export interface HookRun {
@@ -107,7 +108,7 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
   let remind = false;
   let foreign = false;
   await updatePresence(home, sessionId, (current) => {
-    const owned = ownedBy(cli, current ?? { id: sessionId }, action, run.input);
+    const owned = ownedBy(cli, current ?? { id: sessionId }, action, run.input, now);
     if (owned === false) {
       foreign = true;
       return current;
