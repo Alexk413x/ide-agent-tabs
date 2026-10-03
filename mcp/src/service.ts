@@ -4,11 +4,10 @@ import path from 'node:path';
 import { detect, readDetection, writeDetection, type Detection } from './detection.js';
 import { readTextIfExists, removeStaleFiles } from './files.js';
 import { IdeError, type IdeCall, type Route } from './ideClient.js';
-import { isInstalled } from './installed.js';
+import { isCmdShim, isInstalled } from './installed.js';
 import {
   AGENTS_FILE,
   CONFIG_FILE,
-  launchOf,
   resolveSettings,
   TAB_ID_ENV,
   type AgentSettings,
@@ -17,6 +16,7 @@ import { isSessionId, updatePresence, withState } from './messaging/sessions.js'
 import { isProcessAlive, readRegistry, type Endpoint } from './registry.js';
 import { validateOpen, type OpenInput, type OpenRequest } from './request.js';
 import { chooseIde, chooseTerminal, type IdeCandidate, type Project } from './routing.js';
+import { ORI_AGENTS, planLaunch, type LaunchPlan } from './launchPlan.js';
 import { launchSpec } from './spec.js';
 import { TabStore } from './tabStore.js';
 import { defaultTerminalName } from './terminals/index.js';
@@ -166,6 +166,7 @@ export class Service {
 
   async listAgents() {
     const settings = await this.settings();
+    const ori = (await readDetection(this.deps.home))?.ori;
     return {
       default: settings.defaultAgent.name,
       agents: settings.profiles.map((p) => ({
@@ -173,7 +174,10 @@ export class Service {
         label: p.label,
         command: p.command,
         installed: isInstalled(p.command, this.ctx.pathVar, this.isWindows),
+        model: p.modelFlag !== undefined,
+        ...(ori?.agents.includes(p.name) && ORI_AGENTS.includes(p.name) ? { ori: true } : {}),
       })),
+      launchVia: settings.launchVia,
       ...(settings.warnings.length ? { warnings: settings.warnings } : {}),
     };
   }
@@ -229,6 +233,8 @@ export class Service {
       ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
       ...(request.args.length ? { args: request.args } : {}),
       ...(Object.keys(request.env).length ? { env: request.env } : {}),
+      ...(request.model !== undefined ? { model: request.model } : {}),
+      ...(request.via !== undefined ? { via: request.via } : {}),
     };
     let reply: Record<string, unknown>;
     try {
@@ -237,7 +243,8 @@ export class Service {
       throw new ToolError(errorText(e));
     }
     if (request.prompt === undefined) await this.markFresh(reply.id, endpoint.id);
-    return { id: reply.id, ide: endpoint.id, product: endpoint.product, agent: reply.agent, project: reply.project, path: reply.path, reason };
+    const via = reply.via === 'ori' ? { via: 'ori' } : {};
+    return { id: reply.id, ide: endpoint.id, product: endpoint.product, agent: reply.agent, project: reply.project, path: reply.path, reason, ...via };
   }
 
   private async powerShell(configured: string | undefined): Promise<string | undefined> {
@@ -253,11 +260,19 @@ export class Service {
     const profile =
       request.agent === undefined ? settings.defaultAgent : settings.profiles.find((p) => p.name === request.agent);
     if (!profile) throw new ToolError(`unknown agent: ${request.agent}`);
-    const spec = launchSpec(
-      (this.deps.newId ?? randomUUID)(),
-      request.path,
-      launchOf(profile, request.prompt, request.args, request.env),
-    );
+    let plan: LaunchPlan;
+    try {
+      plan = planLaunch(profile, {
+        ...request,
+        launchVia: settings.launchVia,
+        ori: (await readDetection(this.deps.home))?.ori,
+        platform: this.deps.platform,
+        cmdShim: this.isWindows && isCmdShim(profile.command, this.ctx.pathVar),
+      });
+    } catch (e) {
+      throw new ToolError(errorText(e));
+    }
+    const spec = launchSpec((this.deps.newId ?? randomUUID)(), request.path, plan.launch);
     await removeStaleFiles(path.join(this.deps.home, 'launch'), ['.json', '.spec'], SPEC_MAX_AGE_MS);
     const powerShell = await this.powerShell(settings.shell);
     const ctx = powerShell === undefined ? this.ctx : { ...this.ctx, powerShell };
@@ -277,6 +292,7 @@ export class Service {
       agent: profile.name,
       path: request.path,
       reason,
+      ...(plan.via === 'ori' ? { via: 'ori' } : {}),
       ...(note !== undefined ? { note } : {}),
     };
   }

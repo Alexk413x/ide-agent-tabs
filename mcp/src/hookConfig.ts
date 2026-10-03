@@ -1,19 +1,24 @@
 import path from 'node:path';
 import { HOOK_EVENTS } from './messaging/hook.js';
 import { AGENT_ENV, TAB_ID_ENV } from './profiles.js';
+import { isScalar, isSeq, type Document } from 'yaml';
+import { filterYamlLists, yamlMap } from './yamlConfig.js';
 
-export type HookAgent = 'codex' | 'gemini' | 'copilot' | 'agy';
-export const HOOK_AGENTS: readonly HookAgent[] = ['codex', 'gemini', 'copilot', 'agy'];
+export type HookAgent = 'codex' | 'gemini' | 'copilot' | 'agy' | 'grok' | 'hermes' | 'qwen' | 'goose';
+export const HOOK_AGENTS: readonly HookAgent[] = ['codex', 'gemini', 'copilot', 'agy', 'grok', 'hermes', 'qwen', 'goose'];
+type SettingsAgent = 'codex' | 'gemini' | 'qwen';
 export const AGY_HOOK_GROUP = 'ide-agent-tabs';
 export const AGY_ALLOW_RULE = 'mcp(ide-agent-tabs/*)';
 export const COPILOT_HOOKS_FILE = 'ide-agent-tabs.json';
+export const GROK_HOOKS_FILE = 'ide-agent-tabs.json';
+export const GOOSE_PLUGIN = 'ide-agent-tabs';
 export const CODEX_ENV_VARS = [TAB_ID_ENV, AGENT_ENV, 'IDE_AGENT_TABS_HOME'];
 export const CODEX_TOOL_TIMEOUT_S = 660;
 const HOOK_TIMEOUT_S = 5;
 
 export const isHookAgent = (agent: string): agent is HookAgent => (HOOK_AGENTS as readonly string[]).includes(agent);
 
-export function hookConfigFile(agent: HookAgent, env: NodeJS.ProcessEnv, userHome: string): string {
+export function hookConfigFile(agent: HookAgent, env: NodeJS.ProcessEnv, userHome: string, platform: NodeJS.Platform = process.platform): string {
   switch (agent) {
     case 'codex':
       return path.join(env.CODEX_HOME || path.join(userHome, '.codex'), 'hooks.json');
@@ -23,14 +28,31 @@ export function hookConfigFile(agent: HookAgent, env: NodeJS.ProcessEnv, userHom
       return path.join(env.COPILOT_HOME || path.join(userHome, '.copilot'), 'hooks', COPILOT_HOOKS_FILE);
     case 'agy':
       return path.join(userHome, '.gemini', 'config', 'hooks.json');
+    case 'grok':
+      return path.join(grokHome(env, userHome), 'hooks', GROK_HOOKS_FILE);
+    case 'hermes':
+      return path.join(hermesHome(env, userHome, platform), 'config.yaml');
+    case 'qwen':
+      return path.join(qwenHome(env, userHome), 'settings.json');
+    case 'goose':
+      return path.join(goosePluginDir(env, userHome), 'hooks', 'hooks.json');
   }
 }
 
+export const grokHome = (env: NodeJS.ProcessEnv, userHome: string) => env.GROK_HOME || path.join(userHome, '.grok');
+export const hermesHome = (env: NodeJS.ProcessEnv, userHome: string, platform: NodeJS.Platform) =>
+  env.HERMES_HOME || (platform === 'win32' ? path.join(env.LOCALAPPDATA || path.join(userHome, 'AppData', 'Local'), 'hermes') : path.join(userHome, '.hermes'));
+export const qwenHome = (env: NodeJS.ProcessEnv, userHome: string) => (env.QWEN_HOME ? path.resolve(env.QWEN_HOME.replace(/^~(?=$|[\\/])/, userHome)) : path.join(userHome, '.qwen'));
+export const gooseRoot = (env: NodeJS.ProcessEnv) => (env.GOOSE_PATH_ROOT && path.isAbsolute(env.GOOSE_PATH_ROOT) ? env.GOOSE_PATH_ROOT : undefined);
+export const goosePluginDir = (env: NodeJS.ProcessEnv, userHome: string) => path.join(gooseRoot(env) ?? userHome, '.agents', 'plugins', GOOSE_PLUGIN);
+export const hermesAllowlistFile = (env: NodeJS.ProcessEnv, userHome: string, platform: NodeJS.Platform) =>
+  path.join(hermesHome(env, userHome, platform), 'shell-hooks-allowlist.json');
+
 export const agySettingsFile = (userHome: string) => path.join(userHome, '.gemini', 'antigravity-cli', 'settings.json');
 
-// Codex and Gemini CLI run a hook command through a shell (cmd.exe on Windows), so the path is quoted and may
-// not hold characters either shell expands inside double quotes.
-export function hookCommand(hook: string, agent: 'codex' | 'gemini', event: string): string {
+// Codex, Gemini CLI, Qwen Code and Grok Build run a hook command through a shell (cmd.exe or PowerShell on
+// Windows), so the path is quoted and may not hold characters any of those shells expands inside double quotes.
+export function hookCommand(hook: string, agent: SettingsAgent | 'grok', event: string): string {
   if (/["%$`!\p{Cc}]/u.test(hook)) throw new Error(`can't put the hook path in a shell command: ${hook}`);
   return `node "${hook}" ${agent} ${event}`;
 }
@@ -39,11 +61,11 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const HOOK_PATH_END = /[\\/]agent-hook\.mjs(?:"|$)/;
+const HOOK_PATH_END = /[\\/]agent-hook\.mjs(?:["']|$)/;
 const mentionsHook = (part: unknown) => typeof part === 'string' && HOOK_PATH_END.test(part);
 const isOurs = (h: unknown) => isObject(h) && [h.command, h.exec, ...(Array.isArray(h.args) ? h.args : [])].some(mentionsHook);
 
-function ourHandler(agent: 'codex' | 'gemini', hook: string, event: string): Record<string, unknown> {
+function ourHandler(agent: SettingsAgent, hook: string, event: string): Record<string, unknown> {
   const command = hookCommand(hook, agent, event);
   return agent === 'gemini'
     ? { type: 'command', name: 'ide-agent-tabs', command, timeout: HOOK_TIMEOUT_S * 1000 }
@@ -68,7 +90,7 @@ function withoutOurs(hooks: Record<string, unknown>): Record<string, unknown> {
   return kept;
 }
 
-export function mergeHookSettings(root: Record<string, unknown>, file: string, agent: 'codex' | 'gemini', hook: string | undefined): Record<string, unknown> {
+export function mergeHookSettings(root: Record<string, unknown>, file: string, agent: SettingsAgent, hook: string | undefined): Record<string, unknown> {
   const current = root.hooks ?? {};
   if (!isObject(current)) throw new Error(`${file}: "hooks" isn't an object`);
   const hooks = withoutOurs(current);
@@ -83,7 +105,7 @@ export function mergeHookSettings(root: Record<string, unknown>, file: string, a
   return next;
 }
 
-export function hasOurHooks(root: Record<string, unknown>, agent: 'codex' | 'gemini', hook: string): boolean {
+export function hasOurHooks(root: Record<string, unknown>, agent: SettingsAgent, hook: string): boolean {
   const hooks = root.hooks;
   if (!isObject(hooks)) return false;
   return Object.keys(HOOK_EVENTS[agent]).every((event) => {
@@ -171,4 +193,75 @@ export function hasCodexSettings(text: string | undefined): boolean {
   } catch {
     return false;
   }
+}
+
+const GROK_MATCHERS: Record<string, string> = { Notification: 'permission_prompt|idle_prompt' };
+
+export function grokHooks(hook: string): Record<string, unknown> {
+  return {
+    hooks: Object.fromEntries(
+      Object.keys(HOOK_EVENTS.grok).map((event) => [
+        event,
+        [{ ...(GROK_MATCHERS[event] ? { matcher: GROK_MATCHERS[event] } : {}), hooks: [{ type: 'command', command: hookCommand(hook, 'grok', event), timeout: HOOK_TIMEOUT_S }] }],
+      ]),
+    ),
+  };
+}
+
+// Goose runs a hook command with sh -c and Hermes splits one with shlex.split (shell=False); both take a
+// single-quoted POSIX word literally, backslashes included.
+export const posixQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+
+export function posixHookCommand(hook: string, agent: 'goose' | 'hermes', event: string): string {
+  if (/\p{Cc}/u.test(hook)) throw new Error(`can't put the hook path in a hook command: ${hook}`);
+  return `node ${posixQuote(hook)} ${agent} ${event}`;
+}
+
+export const gooseManifest = () => ({ name: GOOSE_PLUGIN, version: '1.0.0', description: 'Agent Tabs session state and message reminders' });
+
+export function gooseHooks(hook: string): Record<string, unknown> {
+  return {
+    hooks: Object.fromEntries(
+      Object.keys(HOOK_EVENTS.goose).map((event) => [event, [{ hooks: [{ type: 'command', command: posixHookCommand(hook, 'goose', event), timeout: HOOK_TIMEOUT_S }] }]]),
+    ),
+  };
+}
+
+export const hermesHookItems = (hook: string) =>
+  Object.keys(HOOK_EVENTS.hermes).map((event) => ({ event, command: posixHookCommand(hook, 'hermes', event), timeout: HOOK_TIMEOUT_S }));
+
+const isOurHermesHook = (item: unknown) => isObject(item) && mentionsHook(item.command);
+
+export function withHermesHooks(doc: Document, file: string, hook: string | undefined): void {
+  filterYamlLists(doc, 'hooks', file, isOurHermesHook);
+  if (hook === undefined) return;
+  const hooks = yamlMap(doc, 'hooks', file, true)!;
+  for (const { event, command, timeout } of hermesHookItems(hook)) {
+    const list = hooks.get(event, true);
+    if (list === undefined || list === null || (isScalar(list) && list.value === null)) hooks.set(event, doc.createNode([{ command, timeout }]));
+    else if (isSeq(list)) list.add(doc.createNode({ command, timeout }));
+    else throw new Error(`${file}: hooks.${event} isn't a list; edit it by hand`);
+  }
+}
+
+export function hasHermesHooks(root: Record<string, unknown> | undefined, hook: string): boolean {
+  const hooks = root?.hooks;
+  if (!isObject(hooks)) return false;
+  return hermesHookItems(hook).every(({ event, command }) => Array.isArray(hooks[event]) && hooks[event].some((h) => isObject(h) && h.command === command));
+}
+
+// Hermes asks before it first runs each (event, command) pair and skips the hook when nobody can answer; the
+// allowlist approves exactly these pairs and nothing else.
+export function withHermesApprovals(root: Record<string, unknown>, file: string, hook: string | undefined): Record<string, unknown> {
+  const approvals = root.approvals ?? [];
+  if (!Array.isArray(approvals)) throw new Error(`${file}: "approvals" isn't a list`);
+  const kept = approvals.filter((a) => !(isObject(a) && mentionsHook(a.command)));
+  const ours = hook === undefined ? [] : hermesHookItems(hook).map(({ event, command }) => ({ event, command }));
+  if (hook === undefined && kept.length === approvals.length) return root;
+  return { ...root, approvals: [...kept, ...ours] };
+}
+
+export function hasHermesApprovals(root: Record<string, unknown> | undefined, hook: string): boolean {
+  const approvals = root?.approvals;
+  return Array.isArray(approvals) && hermesHookItems(hook).every(({ event, command }) => approvals.some((a) => isObject(a) && a.event === event && a.command === command));
 }

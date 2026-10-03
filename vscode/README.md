@@ -1,7 +1,7 @@
 # Agent Tabs for VS Code
 
-Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Antigravity CLI, Copilot CLI and Gemini CLI, in
-editor tabs. You open a tab with one button. Another agent opens, lists and closes tabs through a local
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode,
+Qwen Code and Goose, in editor tabs. You open a tab with one button. Another agent opens, lists and closes tabs through a local
 HTTP API, the same API the JetBrains plugin serves.
 
 The extension runs in VS Code 1.100 or later, and in editors built on it, such as Cursor, Windsurf,
@@ -74,8 +74,10 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `agy`, `copilot`, `gemini` | `claude` |
+| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `agy`, `copilot`, `gemini`, `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local` | `claude` |
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
+| `ideAgentTabs.launchVia` | `direct`, `ori` (start supported agents with `ori <agent>`, which bills model usage through OpenRouter). Needs Ori (`ori`) installed. | `direct` |
+| `ideAgentTabs.closeAfterHandoff` | `true` (the new session closes the old tab once both sides confirm a handoff), `false` (leave the old tab open, marked as handed off) | `true` |
 
 Two more sections hold the settings that the MCP server and JetBrains IDEs share. They stay in sync with
 `~/.ide-agent-tabs/config.json`. A tab request that names an IDE, a terminal or an agent overrides them.
@@ -101,19 +103,27 @@ The terminal and shell settings are text settings, because VS Code fixes a dropd
 **Agent Tabs: Choose Windows Shell…**) that lists the options in `~/.ide-agent-tabs/detected.json`, plus
 **Automatic** and, for the shell, **Custom path…**.
 
+`ideAgentTabs.launchVia` is user-level only, like the terminal settings, and stays in sync with `launchVia` in
+`config.json`. When it is `ori`, the status bar tooltip and the **New Agent Tab With…** menu tag the agents
+that start through Ori with "via OpenRouter", and the tab name carries the same tag. An agent that Ori can't
+launch starts directly. A request's `via` field overrides the setting for one tab.
+
 The editor title button, the status bar item and startup all use `ideAgentTabs.defaultAgent`. The
 setting stays in sync with `defaultAgent` in `~/.ide-agent-tabs/config.json`, so a change in the JetBrains
 plugin or any other window shows up here too, and the MCP server uses the same default.
 
 ## Agent profiles
 
-The built-in profiles are `claude`, `codex`, `agy`, `copilot` and `gemini`. To add a profile or change a built-in
-one, edit `~/.ide-agent-tabs/agents.json`:
+The built-in profiles are `claude`, `codex`, `agy`, `copilot`, `gemini`, `grok`, `pi`, `hermes`, `opencode`,
+`qwen`, `goose` and `codex-local` (Codex with a local Ollama model). The Grok Build, Pi, Hermes, OpenCode, Qwen
+Code, Goose and Codex (local) profiles come from each CLI's documentation and haven't had a live test. The menus
+list only agents whose command is on `PATH`. To add a profile or change a built-in one, edit
+`~/.ide-agent-tabs/agents.json`:
 
 ```json
 {
-  "opencode": {
-    "label": "OpenCode",
+  "opencode-local": {
+    "label": "OpenCode (local model)",
     "command": "opencode",
     "args": ["--model", "<provider>/<model>"],
     "promptFlag": "--prompt",
@@ -121,6 +131,10 @@ one, edit `~/.ide-agent-tabs/agents.json`:
   }
 }
 ```
+
+Set `modelFlag` to the option that picks a model, such as `"--model"`, to let a request's `model` field
+reach the agent. The built-in profiles set it. A request with `model` for a profile without `modelFlag`
+fails, unless the tab starts through Ori.
 
 A relative `icon` path starts from `~/.ide-agent-tabs`. The extension reads both files again when they
 change.

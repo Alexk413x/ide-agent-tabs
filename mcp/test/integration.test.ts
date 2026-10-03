@@ -178,7 +178,7 @@ test('list_agents reports profiles, installed state and the default, and warns o
   writeFileSync(path.join(home, 'config.json'), JSON.stringify({ defaultAgent: 'probe' }));
   const { json } = await call('list_agents');
   assert.equal(json.default, 'probe');
-  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'probe']);
+  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'probe']);
   assert.equal(json.agents.at(-1).installed, true);
   assert.equal(json.agents[0].installed, false);
 
@@ -361,4 +361,24 @@ test('the server reports the version of its package and of the Claude Code plugi
   const version = (file: string) => JSON.parse(readFileSync(path.join(import.meta.dirname, file), 'utf8')).version;
   assert.equal(SERVER_VERSION, version('../package.json'));
   assert.equal(SERVER_VERSION, version('../../claude-plugin/.claude-plugin/plugin.json'));
+});
+
+test('open_tab passes a model and via to the IDE, and builds the model flag into a terminal launch', async () => {
+  await call('open_tab', { path: project, agent: 'codex', model: 'gpt-5.5', via: 'direct' });
+  assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', model: 'gpt-5.5', via: 'direct' });
+  const term = await call('open_tab', { path: project, agent: 'claude', model: 'opus', ide: 'fake-term' });
+  assert.ok(!term.isError, term.text);
+  assert.deepEqual(opened.at(-1)!.spec.args.slice(0, 2), ['--model', 'opus']);
+  const noOri = await call('open_tab', { path: project, agent: 'claude', via: 'ori', ide: 'fake-term' });
+  assert.ok(noOri.isError);
+  assert.match(noOri.text, /claude can't launch through Ori: Ori isn't installed/);
+  const badModel = await call('open_tab', { path: project, model: 'two words' });
+  assert.ok(badModel.isError);
+  for (const id of [term.json.id]) await call('close_tab', { id });
+});
+
+test('list_agents says which agents take a model', async () => {
+  const { json } = await call('list_agents');
+  assert.equal(json.agents.find((a: { name: string }) => a.name === 'claude').model, true);
+  assert.ok(['direct', 'ori'].includes(json.launchVia));
 });

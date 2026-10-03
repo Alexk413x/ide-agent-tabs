@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   BUILTIN_PROFILES,
   checkEnv,
+  CODEX_TAB_ARGS,
   ConfigError,
   launchOf,
   mergeProfiles,
@@ -22,10 +23,26 @@ const p = (over: Partial<AgentProfile> & { name: string }): AgentProfile => ({
 
 test('built-in profiles match the design', () => {
   const s = resolveSettings(undefined, undefined);
-  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini']);
-  assert.deepEqual(s.profiles.map((x) => x.label), ['Claude Code', 'Codex', 'Antigravity CLI', 'Copilot CLI', 'Gemini CLI']);
-  assert.deepEqual(s.profiles.map((x) => x.command), ['claude', 'codex', 'agy', 'copilot', 'gemini']);
-  assert.deepEqual(s.profiles.map((x) => x.promptFlag), [undefined, undefined, '-i', '-i', '-i']);
+  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
+  assert.deepEqual(s.profiles.map((x) => x.label), [
+    'Claude Code',
+    'Codex',
+    'Antigravity CLI',
+    'Copilot CLI',
+    'Gemini CLI',
+    'Grok Build',
+    'Pi',
+    'Hermes',
+    'OpenCode',
+    'Qwen Code',
+    'Goose',
+    'Codex (local)',
+  ]);
+  assert.deepEqual(s.profiles.map((x) => x.command), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex']);
+  assert.deepEqual(s.profiles.map((x) => x.promptFlag), [undefined, undefined, '-i', '-i', '-i', undefined, undefined, '-q', '--prompt', '-i', '-t', undefined]);
+  assert.deepEqual(s.profiles.find((x) => x.name === 'hermes')!.args, ['chat']);
+  assert.deepEqual(s.profiles.find((x) => x.name === 'goose')!.args, ['run', '-s']);
+  assert.deepEqual(s.profiles.find((x) => x.name === 'codex-local')!.args, [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama']);
   assert.equal(s.defaultAgent.name, 'claude');
   assert.deepEqual(s.warnings, []);
 });
@@ -46,9 +63,9 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     }),
     undefined,
   );
-  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'opencode-local', 'bare']);
+  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'opencode-local', 'bare']);
   assert.deepEqual(s.profiles[1], p({ name: 'codex', label: 'Codex (fast)', args: ['--model', 'o4'] }));
-  assert.deepEqual(s.profiles[5], {
+  assert.deepEqual(s.profiles[12], {
     name: 'opencode-local',
     label: 'OpenCode (LM Studio)',
     command: 'opencode',
@@ -57,7 +74,7 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     env: { LMSTUDIO: '1' },
     icon: 'icons/opencode.svg',
   });
-  assert.equal(s.profiles[6]!.label, 'bare');
+  assert.equal(s.profiles[13]!.label, 'bare');
   assert.deepEqual(s.warnings, []);
 });
 
@@ -173,6 +190,6 @@ test('tab routing, shell and terminal window come from config, with defaults and
 
 test('merge keeps built-in order and appends new profiles in file order', () => {
   const merged = mergeProfiles(BUILTIN_PROFILES, [p({ name: 'z' }), p({ name: 'gemini', label: 'G' }), p({ name: 'a' })]);
-  assert.deepEqual(merged.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'z', 'a']);
+  assert.deepEqual(merged.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'z', 'a']);
   assert.equal(merged[4]!.label, 'G');
 });

@@ -149,6 +149,7 @@ export class Messaging {
       ...(current?.nudges !== undefined ? { nudges: current.nudges } : {}),
       ...(current?.inputIdle !== undefined ? { inputIdle: current.inputIdle } : {}),
       ...(this.threadId !== undefined ? { threadId: this.threadId } : {}),
+      ...(current?.handedOffTo !== undefined ? { handedOffTo: current.handedOffTo } : {}),
       beatMs: this.beatMs,
     };
   }
@@ -298,6 +299,7 @@ export class Messaging {
         state: s.state,
         ...(s.stateAt !== undefined ? { stateAt: s.stateAt } : {}),
         startedAt: s.startedAt,
+        ...(s.handedOffTo !== undefined ? { handedOffTo: s.handedOffTo } : {}),
         self: s.id === this.sessionId,
       })),
     };

@@ -68,10 +68,8 @@ object AgentTabLauncher {
         project: Project,
         directory: String,
         profile: AgentProfile,
-        prompt: String?,
+        agent: AgentLaunch,
         focus: Boolean,
-        args: List<String> = emptyList(),
-        env: Map<String, String> = emptyMap(),
     ): String {
         val id = UUID.randomUUID().toString()
         val shell = if (SystemInfo.isWindows) {
@@ -79,7 +77,6 @@ object AgentTabLauncher {
         } else {
             unixShell(System.getenv("SHELL"), SystemInfo.isMac)
         }
-        val agent = profile.launch(prompt, args, env)
         val launch = when (shell.kind) {
             ShellKind.POWERSHELL -> powerShellLaunch(shell.path, launchScript(shell.kind, SCRIPT_DIR), agent, id)
             else -> sourcedLaunch(shell, launchScript(shell.kind, SCRIPT_DIR), agent, id)
@@ -89,7 +86,7 @@ object AgentTabLauncher {
             .workingDirectory(directory)
             .shellCommand(launch.command)
             .envVariables(launch.env)
-            .tabName(profile.label)
+            .tabName(viaLabel(profile.label, agent.via))
             .requestFocus(false)
             .createTab()
 

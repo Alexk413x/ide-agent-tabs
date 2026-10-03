@@ -21,6 +21,7 @@ export interface AgentProfile {
   command: string;
   args: string[];
   promptFlag?: string;
+  modelFlag?: string;
   env: Env;
   icon?: string;
 }
@@ -35,8 +36,8 @@ export interface AgentLaunch {
 
 export class ConfigError extends Error {}
 
-function profile(name: string, label: string, command: string, promptFlag?: string, args: readonly string[] = []): AgentProfile {
-  return { name, label, command, args: [...args], env: {}, ...(promptFlag ? { promptFlag } : {}) };
+function profile(name: string, label: string, command: string, modelFlag: string | undefined, promptFlag?: string, args: readonly string[] = []): AgentProfile {
+  return { name, label, command, args: [...args], env: {}, ...(promptFlag ? { promptFlag } : {}), ...(modelFlag ? { modelFlag } : {}) };
 }
 
 // Codex's shared daemon runs MCP servers and hooks with its own environment and a stale IDE_AGENT_TABS_ID, so a
@@ -60,12 +61,25 @@ export const CODEX_TAB_ARGS: readonly string[] = Object.freeze([
   "hooks.state={ '/<session-flags>/config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, 'C:\\<session-flags>\\config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, '/<session-flags>/config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, 'C:\\<session-flags>\\config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, '/<session-flags>/config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, 'C:\\<session-flags>\\config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, '/<session-flags>/config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, 'C:\\<session-flags>\\config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, '/<session-flags>/config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' }, 'C:\\<session-flags>\\config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' } }",
 ]);
 
+// goose run -s takes the first message from -t and stays interactive, but refuses to start without one.
+export const GOOSE_RUN_ARGS: readonly string[] = Object.freeze(['run', '-s']);
+export const GOOSE_EMPTY_ARGS: readonly string[] = Object.freeze(['session']);
+
 export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
-  profile('claude', 'Claude Code', 'claude'),
-  profile('codex', 'Codex', 'codex', undefined, CODEX_TAB_ARGS),
-  profile('agy', 'Antigravity CLI', 'agy', '-i'),
-  profile('copilot', 'Copilot CLI', 'copilot', '-i'),
-  profile('gemini', 'Gemini CLI', 'gemini', '-i'),
+  profile('claude', 'Claude Code', 'claude', '--model'),
+  profile('codex', 'Codex', 'codex', '-m', undefined, CODEX_TAB_ARGS),
+  profile('agy', 'Antigravity CLI', 'agy', '--model', '-i'),
+  profile('copilot', 'Copilot CLI', 'copilot', '--model', '-i'),
+  profile('gemini', 'Gemini CLI', 'gemini', '-m', '-i'),
+  profile('grok', 'Grok Build', 'grok', '-m'),
+  profile('pi', 'Pi', 'pi', '--model'),
+  profile('hermes', 'Hermes', 'hermes', '-m', '-q', ['chat']),
+  profile('opencode', 'OpenCode', 'opencode', '-m', '--prompt'),
+  // A positional prompt makes Qwen Code answer once and exit.
+  profile('qwen', 'Qwen Code', 'qwen', '-m', '-i'),
+  profile('goose', 'Goose', 'goose', '--model', '-t', GOOSE_RUN_ARGS),
+  // Without --local-provider, --oss stops at a picker between LM Studio and Ollama.
+  profile('codex-local', 'Codex (local)', 'codex', '-m', undefined, [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama']),
 ]);
 
 export function launchOf(p: AgentProfile, prompt?: string, callerArgs: string[] = [], callerEnv: Env = {}): AgentLaunch {
@@ -163,6 +177,10 @@ export function parseProfiles(text: string): AgentProfile[] {
     if (promptFlag !== undefined && (isBlank(promptFlag) || promptFlag.includes('\0'))) {
       throw new ConfigError(`${name}.promptFlag must not be blank`);
     }
+    const modelFlag = optString(value, `${name}.modelFlag`, 'modelFlag');
+    if (modelFlag !== undefined && (isBlank(modelFlag) || modelFlag.includes(' '))) {
+      throw new ConfigError(`${name}.modelFlag must not be blank`);
+    }
     const env = optStringMap(value, `${name}.env`, 'env');
     checkEnv(env, `${name}.env`);
     const label = optString(value, `${name}.label`, 'label');
@@ -173,6 +191,7 @@ export function parseProfiles(text: string): AgentProfile[] {
       command,
       args,
       ...(promptFlag !== undefined ? { promptFlag } : {}),
+      ...(modelFlag !== undefined ? { modelFlag } : {}),
       env,
       ...(icon !== undefined && !isBlank(icon) ? { icon } : {}),
     };
@@ -205,6 +224,7 @@ export interface TerminalSettings {
   preferredTerminal?: string;
   shell?: string;
   terminalWindow: TerminalWindow;
+  launchVia: 'direct' | 'ori';
 }
 
 function choice<T extends string>(config: Record<string, unknown>, key: string, values: readonly T[], warnings: string[]): T {
@@ -218,6 +238,7 @@ function choice<T extends string>(config: Record<string, unknown>, key: string, 
 export function readTerminalSettings(config: Record<string, unknown>, warnings: string[]): TerminalSettings {
   const tabRouting = choice(config, 'tabRouting', ['project', 'caller'] as const, warnings);
   const terminalWindow = choice(config, 'terminalWindow', ['last', 'dedicated'] as const, warnings);
+  const launchVia = choice(config, 'launchVia', ['direct', 'ori'] as const, warnings);
   let preferredTerminal: string | undefined;
   const terminal = field(config, 'terminal');
   if (typeof terminal === 'string') preferredTerminal = !isBlank(terminal) && terminal !== AUTO ? terminal : undefined;
@@ -230,7 +251,7 @@ export function readTerminalSettings(config: Record<string, unknown>, warnings: 
   } else if (shellValue !== undefined && shellValue !== null) {
     warnings.push(`Ignoring shell in ${CONFIG_FILE}: it must be "auto" or the absolute path of a shell executable`);
   }
-  return { tabRouting, terminalWindow, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
+  return { tabRouting, terminalWindow, launchVia, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
 }
 
 export interface AgentSettings extends TerminalSettings {
@@ -255,7 +276,7 @@ export function resolveSettings(
     }
   }
   let configured: string | undefined;
-  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last' };
+  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last', launchVia: 'direct' };
   let jev = JEV_OFF;
   if (configText !== undefined) {
     let readable = true;

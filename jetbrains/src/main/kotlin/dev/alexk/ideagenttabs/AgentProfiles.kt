@@ -27,15 +27,22 @@ data class AgentProfile(
     val promptFlag: String? = null,
     val env: Map<String, String> = emptyMap(),
     val icon: String? = null,
+    val modelFlag: String? = null,
 ) {
-    fun launch(prompt: String?, callerArgs: List<String> = emptyList(), callerEnv: Map<String, String> = emptyMap()) =
-        AgentLaunch(
-            agent = name,
-            command = command,
-            args = args + callerArgs + listOfNotNull(promptFlag?.takeIf { prompt != null }),
-            prompt = prompt,
-            env = env + callerEnv,
-        )
+    fun launch(
+        prompt: String?,
+        callerArgs: List<String> = emptyList(),
+        callerEnv: Map<String, String> = emptyMap(),
+        model: String? = null,
+    ) = AgentLaunch(
+        agent = name,
+        command = command,
+        args = args + listOfNotNull(modelFlag?.let { flag -> model?.let { listOf(flag, it) } }).flatten() + callerArgs +
+            listOfNotNull(promptFlag?.takeIf { prompt != null }),
+        prompt = prompt,
+        env = env + callerEnv,
+        via = LaunchVia.DIRECT,
+    )
 }
 
 class AgentLaunch(
@@ -44,7 +51,76 @@ class AgentLaunch(
     val args: List<String>,
     val prompt: String?,
     val env: Map<String, String>,
+    val via: LaunchVia = LaunchVia.DIRECT,
 )
+
+const val ORI_COMMAND = "ori"
+val ORI_PROFILES = setOf("claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent")
+private val ORI_CMD_UNSAFE = Regex("[|\"%^&<>]")
+private val SHIM_EXTENSIONS = listOf(".exe", ".cmd", ".bat")
+
+class LaunchContext(
+    val prompt: String? = null,
+    val args: List<String> = emptyList(),
+    val env: Map<String, String> = emptyMap(),
+    val model: String? = null,
+    val via: LaunchVia? = null,
+    val setting: LaunchVia = LaunchVia.DIRECT,
+    val ori: DetectedOri? = null,
+    val windows: Boolean = false,
+    val searchPath: String = "",
+)
+
+private fun isCmdShim(command: String, searchPath: String): Boolean {
+    val lower = command.lowercase()
+    if (lower.endsWith(".cmd") || lower.endsWith(".bat")) return true
+    if (lower.endsWith(".exe") || lower.endsWith(".com") || lower.endsWith(".ps1")) return false
+    for (raw in searchPath.split(File.pathSeparatorChar)) {
+        val dir = raw.trim().trim('"')
+        if (dir.isEmpty()) continue
+        val hit = SHIM_EXTENSIONS.firstOrNull { ext ->
+            runCatching { Path.of(dir, command + ext) }.getOrNull()?.let { Files.exists(it, LinkOption.NOFOLLOW_LINKS) } == true
+        }
+        if (hit != null) return hit != ".exe"
+    }
+    return true
+}
+
+private fun oriRefusal(profile: AgentProfile, context: LaunchContext, oriArgs: List<String>): String? {
+    val ori = context.ori ?: return "Ori is not installed"
+    if (profile.name !in ORI_PROFILES) return "Ori does not support ${profile.name}"
+    if (profile.name !in ori.agents) return "Ori does not list ${profile.name} as launchable"
+    if (context.windows && isCmdShim(profile.command, context.searchPath) && oriArgs.any { ORI_CMD_UNSAFE.containsMatchIn(it) }) {
+        return "Ori refuses an argument with | \" % ^ & < or > when the agent is a .cmd shim on Windows"
+    }
+    return null
+}
+
+private val GOOSE_RUN_ARGS = listOf("run", "-s")
+private val GOOSE_EMPTY_ARGS = listOf("session")
+
+private fun withoutPrompt(profile: AgentProfile, prompt: String?): AgentProfile =
+    if (prompt == null && profile.command == "goose" && profile.args == GOOSE_RUN_ARGS) profile.copy(args = GOOSE_EMPTY_ARGS) else profile
+
+fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
+    val profile = withoutPrompt(requested, context.prompt)
+    if ((context.via ?: context.setting) == LaunchVia.ORI) {
+        val flag = listOfNotNull(profile.promptFlag?.takeIf { context.prompt != null })
+        val model = context.model?.let { listOf("--model", it) }.orEmpty()
+        val args = listOf(profile.name) + model + profile.args + context.args + flag
+        val refusal = oriRefusal(profile, context, args + listOfNotNull(context.prompt))
+        if (refusal == null) {
+            return AgentLaunch(profile.name, ORI_COMMAND, args, context.prompt, profile.env + context.env, LaunchVia.ORI)
+        }
+        if (context.via == LaunchVia.ORI) throw IllegalArgumentException("${profile.name} can't launch through Ori: $refusal")
+    }
+    if (context.model != null && profile.modelFlag == null) {
+        throw IllegalArgumentException(
+            "${profile.name} has no model option; open it without model, or set modelFlag for it in agents.json",
+        )
+    }
+    return profile.launch(context.prompt, context.args, context.env, context.model)
+}
 
 // Same strings as CODEX_TAB_ARGS in mcp/src/profiles.ts, which explains them; mcp/test/codexTab.test.ts checks both.
 val CODEX_TAB_ARGS = listOf(
@@ -66,11 +142,19 @@ val CODEX_TAB_ARGS = listOf(
 )
 
 val BUILTIN_PROFILES = listOf(
-    AgentProfile("claude", "Claude Code", "claude"),
-    AgentProfile("codex", "Codex", "codex", CODEX_TAB_ARGS),
-    AgentProfile("agy", "Antigravity CLI", "agy", promptFlag = "-i"),
-    AgentProfile("copilot", "Copilot CLI", "copilot", promptFlag = "-i"),
-    AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i"),
+    AgentProfile("claude", "Claude Code", "claude", modelFlag = "--model"),
+    AgentProfile("codex", "Codex", "codex", CODEX_TAB_ARGS, modelFlag = "-m"),
+    AgentProfile("agy", "Antigravity CLI", "agy", promptFlag = "-i", modelFlag = "--model"),
+    AgentProfile("copilot", "Copilot CLI", "copilot", promptFlag = "-i", modelFlag = "--model"),
+    AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i", modelFlag = "-m"),
+    AgentProfile("grok", "Grok Build", "grok", modelFlag = "-m"),
+    AgentProfile("pi", "Pi", "pi", modelFlag = "--model"),
+    AgentProfile("hermes", "Hermes", "hermes", listOf("chat"), promptFlag = "-q", modelFlag = "-m"),
+    AgentProfile("opencode", "OpenCode", "opencode", promptFlag = "--prompt", modelFlag = "-m"),
+    AgentProfile("qwen", "Qwen Code", "qwen", promptFlag = "-i", modelFlag = "-m"),
+    AgentProfile("goose", "Goose", "goose", listOf("run", "-s"), promptFlag = "-t", modelFlag = "--model"),
+    // Without --local-provider, --oss stops at a picker between LM Studio and Ollama.
+    AgentProfile("codex-local", "Codex (local)", "codex", CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "ollama"), modelFlag = "-m"),
 )
 
 fun parseProfiles(text: String): List<AgentProfile> {
@@ -88,6 +172,10 @@ fun parseProfiles(text: String): List<AgentProfile> {
         if (promptFlag != null && (promptFlag.isBlank() || '\u0000' in promptFlag)) {
             throw IllegalArgumentException("$name.promptFlag must not be blank")
         }
+        val modelFlag = obj.optString("$name.modelFlag", "modelFlag")
+        if (modelFlag != null && (modelFlag.isBlank() || '\u0000' in modelFlag)) {
+            throw IllegalArgumentException("$name.modelFlag must not be blank")
+        }
         val env = obj.optStringMap("$name.env", "env")
         checkEnv(env, "$name.env")
         AgentProfile(
@@ -98,6 +186,7 @@ fun parseProfiles(text: String): List<AgentProfile> {
             promptFlag = promptFlag,
             env = env,
             icon = obj.optString("$name.icon", "icon")?.takeIf { it.isNotBlank() },
+            modelFlag = modelFlag,
         )
     }
 }
@@ -231,6 +320,17 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
     fun setShell(value: String): Boolean = saveShared("shell", value)
 
     fun setTerminalWindow(value: TerminalWindow): Boolean = saveShared("terminalWindow", value.value)
+
+    fun setLaunchVia(value: LaunchVia): Boolean = saveShared("launchVia", value.value)
+
+    fun setCloseAfterHandoff(value: Boolean): Boolean = try {
+        val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null
+        writeAtomically(configFile, withSharedFlag(existing, "closeAfterHandoff", value, default = true))
+        true
+    } catch (e: Exception) {
+        warn("Could not save closeAfterHandoff to $configFile: ${e.message}")
+        false
+    }
 
     fun detected(): Detected = try {
         parseDetected(Files.readString(home.resolve(DETECTED_FILE)))

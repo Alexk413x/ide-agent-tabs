@@ -6,8 +6,9 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 
 ## 0.6.0
 
-Plugin and MCP server 0.6.0, with VS Code extension 0.1.21 and JetBrains plugin 0.4.4 bundled. Both IDE
-packages add the `agy` profile and icon, the Codex `Interrupt` hook and the tab settings.
+Plugin and MCP server 0.6.0, with VS Code extension 0.1.22 and JetBrains plugin 0.4.5 bundled. Both IDE
+packages add the `agy` profile and icon, the profiles and icons of seven more agents, the Codex
+`Interrupt` hook and the tab settings.
 
 ### Fixed
 
@@ -54,6 +55,9 @@ packages add the `agy` profile and icon, the Codex `Interrupt` hook and the tab 
 - Ghostty and WezTerm on Linux are found in `/usr/bin`, `/usr/local/bin` and `~/.local/bin` when they
   aren't on `PATH`, and also in `/snap/bin` (Ghostty) and `/home/linuxbrew/.linuxbrew/bin` (WezTerm).
 - The setup skill looks for JetBrains Toolbox 1.x installs, including the macOS Toolbox folder.
+- The OpenCode MCP entry sets `timeout: 660000` (milliseconds). OpenCode applies it to tool calls, and
+  its default would end `wait_for_message` early. Run `--register opencode` again to update an entry
+  written earlier.
 
 ### Added
 
@@ -77,8 +81,9 @@ packages add the `agy` profile and icon, the Codex `Interrupt` hook and the tab 
   WezTerm and kitty with remote control a window the server remembers, tmux the session `agent-tabs`,
   and iTerm2 and Ghostty on macOS a window the server remembers. Ghostty on Linux and kitty without
   remote control are unchanged.
-- Agents appear in one order everywhere: Claude, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, then
-  custom profiles.
+- Agents appear in one order everywhere: Claude, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok
+  Build, Pi, Hermes, then the agents built for local models (OpenCode, Qwen Code, Goose and Codex
+  (local)), then custom profiles.
 - Antigravity CLI (`agy`) is a built-in agent profile, labelled "Antigravity CLI", that starts with
   `agy -i <prompt>`. `--register agy` writes the server entry to `~/.gemini/config/mcp_config.json`, the
   `ide-agent-tabs` hook group (`PreInvocation`, `PostToolUse`, `Stop`) to `~/.gemini/config/hooks.json`,
@@ -99,6 +104,79 @@ packages add the `agy` profile and icon, the Codex `Interrupt` hook and the tab 
   through AppleScript. The first tab asks for the macOS Automation permission. A denied permission
   returns an error that names the setting, and later tabs open in the next terminal in the platform
   order until the server restarts.
+- `open_tab` takes `model`, which the server passes with the profile's `modelFlag`: `--model` for
+  `claude`, `agy`, `copilot`, `pi` and `goose`, `-m` for `codex`, `gemini`, `grok`, `hermes`, `opencode`,
+  `qwen` and `codex-local`. A custom profile sets `modelFlag` in
+  `agents.json`. A `model` for a profile without one is an error, never ignored. `list_agents` reports
+  `model: true` for a profile that takes one.
+- Launching through Ori (`ori <agent>`), which bills model usage through OpenRouter:
+  - `open_tab` takes `via: "ori"` or `"direct"`, and the result carries `via: "ori"` for a tab started
+    through Ori. The tab's identity stays the inner agent (`claude`, `codex`), so hooks, wake rules and
+    messaging don't change.
+  - The setting **Launch through OpenRouter (Ori)**, `launchVia` in `config.json` (`direct` by default),
+    sets the launch for tabs that pass no `via`. It shows in the VS Code and JetBrains settings only when
+    Ori is detected. An explicit `via` beats the setting. When Ori can't launch the agent, the setting
+    falls back to a direct launch, and an explicit `via: "ori"` returns an error.
+  - `detected.json` has an `ori` field (`path`, `version` and `agents`, or `null`), and `list_agents`
+    marks launchable agents with `ori: true` and reports `launchVia`. Ori launches `claude`, `codex`,
+    `grok`, `hermes`, `opencode`, `pi` and `prime-agent`, and only those Ori lists as installed.
+  - Checked on Ori 0.14.3 on Windows (2026-10-03): Ori starts the agent as a child process and the
+    environment passes through, so `IDE_AGENT_TABS_ID` reached the Codex MCP server. `ori claude` fails
+    with `401 Missing Authentication header`, because Ori's per-launch Claude settings set
+    `ANTHROPIC_AUTH_TOKEN` to an empty string. That is an Ori issue. On Windows, Ori refuses an argument
+    that holds `"`, `%`, `^`, `&`, `|`, `<` or `>` when the agent is a `.cmd` shim, and Codex tab
+    arguments hold `<session-flags>` keys, so Codex tabs through Ori don't work with an npm (`.cmd`)
+    Codex on Windows.
+- The `handoff` tool and skill move a session's work to a new tab: the old session writes a brief to
+  `~/.ide-agent-tabs/handoffs/`, the server opens the new tab, and the new session takes over and closes
+  the old tab.
+  - The brief holds notes, not instructions. The new session confirms with the user before anything
+    destructive.
+  - `close_tab` refuses the old tab until the takeover message and the old session's reply that it
+    stopped both exist, within a 10-minute confirmation window. If the new tab fails to open, nothing
+    closes. The brief and the record stay on disk.
+  - `closeAfterHandoff` in `config.json` (`true` by default) controls the close. With `false`, the old
+    tab stays open and `list_sessions` shows it with `handedOffTo`.
+- Seven built-in agents. All seven are untested: they come from each CLI's documentation, and none is
+  installed on the development machine. A table of what each agent gets is in
+  [Agent support](mcp/README.md#agent-support).
+  - Grok Build (`grok`): `grok`, positional prompt, `-m`. `--register grok` writes the
+    `[mcp_servers.ide-agent-tabs]` table to `$GROK_HOME/config.toml` and the hooks to
+    `$GROK_HOME/hooks/ide-agent-tabs.json`. Its hooks set `idle`, `busy` and `permission`, remind after a
+    tool call and nudge at `Stop`. Its `idle_prompt` notification is an input idle signal, as in Claude
+    Code. Ori launches it.
+  - Pi (`pi`): `pi`, positional prompt, `--model`. `--register pi` writes `mcpServers.ide-agent-tabs` to
+    `~/.pi/agent/mcp.json` with `timeout: 660`, `exposure: "direct"` and an `env` that forwards the tab
+    variables. Pi gets no hooks, so it has no state. Ori launches it.
+  - Hermes (`hermes`): `hermes chat -q <prompt>`, `-m`. `--register hermes` edits `config.yaml` under
+    `HERMES_HOME` (an `env` map, `timeout: 660`, and shell hooks), and adds an allowlist entry for each
+    of its own hook commands and nothing else. It never sets `hooks_auto_accept` or `HERMES_ACCEPT_HOOKS`.
+    Hermes nudges only after a turn that edited code, through `pre_verify`, and counts the blocks against
+    its `max_verify_nudges`. Ori launches it.
+  - OpenCode (`opencode`): `opencode --prompt <prompt>`, `-m`. Its MCP registration was already there,
+    now with `timeout: 660000` and no state. Ori launches it.
+  - Qwen Code (`qwen`): `qwen -i <prompt>`, `-m`. `--register qwen` edits `~/.qwen/settings.json`: an
+    `env` map, `timeout: 700000` and hooks. It reports `idle`, `busy` and `permission`, reminds after a
+    prompt and a tool call, and nudges at `Stop`.
+  - Goose (`goose`): `goose run -s -t <prompt>`, or `goose session` when there is no prompt, because
+    `goose run -s` refuses to start without a message. `--model`. `--register goose` adds an extension
+    with `timeout: 700` to `config.yaml`, and the hooks as an Open Plugins plugin in
+    `~/.agents/plugins/ide-agent-tabs/`. Goose runs the hooks with `sh -c`, so Windows needs Git Bash.
+  - Codex (local) (`codex-local`): the Codex tab arguments plus `--oss --local-provider ollama`, `-m`. It
+    needs Ollama 0.13.4 or later, and needs no registration. Its hooks and state are Codex's.
+  - Hook support for `grok`, `hermes`, `qwen` and `goose` in `agent-hook.mjs`, and the MCP client names
+    `grok`, `qwen`, `goose` and `pi` map to their agents.
+  - Icons: Grok Build uses the official SpaceXAI PNGs, embedded unchanged. Pi uses `pi.dev/favicon.svg`.
+    Hermes uses the official `icon-master` (`.svg` and `-dark`). OpenCode uses its official light and
+    dark square SVGs. Qwen Code uses the official #6D44E8 logo in both themes. Goose uses the official
+    `goose.svg` (#101010) in both themes, which is hard to see on a dark theme. Codex (local) reuses the
+    Codex icon.
+  - `--agents` reports `hooks: null` for Codex, Pi and OpenCode, which get none.
+  - New dependency: the `yaml` npm package (ISC), which edits the Hermes and Goose YAML and keeps
+    comments and other keys.
+- Two agents are not included. Crush's hooks cover only `PreToolUse`, it has no first-prompt flag, and
+  its licence is FSL. Prime Agent runs its sessions in a daemon, and its documentation isn't researched.
+  Ori can launch `prime-agent`, but there is no profile for it.
 - `scripts/check.mjs` runs typecheck, tests, the bundle check, the plugin version check and both
   `claude plugin validate --strict` runs.
 

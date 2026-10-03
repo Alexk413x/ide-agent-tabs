@@ -12,6 +12,10 @@ import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.Icon
 
+const val VIA_LABEL = "via OpenRouter"
+
+fun viaLabel(text: String, via: LaunchVia) = if (via == LaunchVia.ORI) "$text ($VIA_LABEL)" else text
+
 object Agents {
 
     private val LOG = logger<Agents>()
@@ -26,9 +30,18 @@ object Agents {
         "gemini" to "/icons/agents/gemini.svg",
         "copilot" to "/icons/agents/copilot.svg",
         "agy" to "/icons/agents/agy.svg",
+        "grok" to "/icons/agents/grok.svg",
+        "pi" to "/icons/agents/pi.svg",
+        "hermes" to "/icons/agents/hermes.svg",
+        "opencode" to "/icons/agents/opencode.svg",
+        "qwen" to "/icons/agents/qwen.svg",
+        "goose" to "/icons/agents/goose.svg",
+        "codex-local" to "/icons/agents/codex.svg",
     )
 
     private val neutralButtonIcon: Icon = IconLoader.getIcon("/icons/agentTab_new.svg", Agents::class.java)
+
+    val viaIcon: Icon = IconLoader.getIcon("/icons/openrouter.svg", Agents::class.java)
 
     private val badge: Icon = IconLoader.getIcon("/icons/newBadge.svg", Agents::class.java)
 
@@ -38,6 +51,22 @@ object Agents {
 
     private val searchPath: String
         get() = EnvironmentUtil.getValue("PATH") ?: System.getenv("PATH").orEmpty()
+
+    fun launchFor(profile: AgentProfile, request: OpenRequest? = null): AgentLaunch =
+        planLaunch(
+            profile,
+            LaunchContext(
+                prompt = request?.prompt,
+                args = request?.args.orEmpty(),
+                env = request?.env.orEmpty(),
+                model = request?.model,
+                via = request?.via,
+                setting = settings.shared().launchVia,
+                ori = settings.detected().ori,
+                windows = SystemInfo.isWindows,
+                searchPath = searchPath,
+            ),
+        )
 
     fun isInstalled(profile: AgentProfile): Boolean = isInstalled(profile.command, searchPath, SystemInfo.isWindows)
 
@@ -81,6 +110,6 @@ object Agents {
     @RequiresEdt
     fun open(project: Project, profile: AgentProfile) {
         val directory = project.basePath ?: System.getProperty("user.home")
-        AgentTabLauncher.open(project, directory, profile, prompt = null, focus = true)
+        AgentTabLauncher.open(project, directory, profile, launchFor(profile), focus = true)
     }
 }

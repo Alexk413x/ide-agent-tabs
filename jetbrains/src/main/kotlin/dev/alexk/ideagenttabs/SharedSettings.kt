@@ -29,18 +29,36 @@ enum class TerminalWindow(val value: String, val label: String) {
     }
 }
 
+enum class LaunchVia(val value: String, val label: String) {
+    DIRECT("direct", "Directly"),
+    ORI("ori", "Through Ori"),
+    ;
+
+    companion object {
+        fun of(value: String?): LaunchVia? = entries.firstOrNull { it.value == value }
+    }
+}
+
 data class SharedSettings(
     val tabRouting: TabRouting = TabRouting.PROJECT,
     val terminal: String = AUTO,
     val shell: String = AUTO,
     val terminalWindow: TerminalWindow = TerminalWindow.LAST,
+    val launchVia: LaunchVia = LaunchVia.DIRECT,
+    val closeAfterHandoff: Boolean = true,
 )
 
 data class DetectedTerminal(val id: String, val name: String)
 
 data class DetectedShell(val path: String, val label: String)
 
-data class Detected(val terminals: List<DetectedTerminal> = emptyList(), val shells: List<DetectedShell> = emptyList())
+data class DetectedOri(val path: String, val version: String?, val agents: List<String>)
+
+data class Detected(
+    val terminals: List<DetectedTerminal> = emptyList(),
+    val shells: List<DetectedShell> = emptyList(),
+    val ori: DetectedOri? = null,
+)
 
 fun readSharedSettings(text: String): SharedSettings {
     val root = parseJsonObject(text, CONFIG_FILE)
@@ -49,12 +67,20 @@ fun readSharedSettings(text: String): SharedSettings {
         terminal = root.stringOrNull("terminal")?.ifBlank { AUTO } ?: AUTO,
         shell = root.stringOrNull("shell")?.ifBlank { AUTO } ?: AUTO,
         terminalWindow = TerminalWindow.of(root.stringOrNull("terminalWindow")) ?: TerminalWindow.LAST,
+        launchVia = LaunchVia.of(root.stringOrNull("launchVia")) ?: LaunchVia.DIRECT,
+        closeAfterHandoff = root.booleanOrNull("closeAfterHandoff") ?: true,
     )
 }
 
 fun withSharedValue(existing: String?, key: String, value: String): String {
     val root = if (existing.isNullOrBlank()) JsonObject() else parseJsonObject(existing, CONFIG_FILE)
     if (value == AUTO || value.isBlank()) root.remove(key) else root.addProperty(key, value)
+    return GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n"
+}
+
+fun withSharedFlag(existing: String?, key: String, value: Boolean, default: Boolean): String {
+    val root = if (existing.isNullOrBlank()) JsonObject() else parseJsonObject(existing, CONFIG_FILE)
+    if (value == default) root.remove(key) else root.addProperty(key, value)
     return GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n"
 }
 
@@ -68,12 +94,27 @@ fun parseDetected(text: String): Detected {
         val path = entry.stringOrNull("path")?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
         DetectedShell(path, entry.stringOrNull("label")?.takeIf { it.isNotEmpty() } ?: path)
     }
-    return Detected(terminals, shells)
+    return Detected(terminals, shells, parseOri(root))
+}
+
+private fun parseOri(root: JsonObject): DetectedOri? {
+    val ori = root.get("ori")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+    val path = ori.stringOrNull("path")?.takeIf { it.isNotEmpty() } ?: return null
+    val agents = ori.get("agents")?.takeIf { it.isJsonArray }?.asJsonArray
+        ?.filter { it.isJsonPrimitive && it.asJsonPrimitive.isString && it.asString.isNotEmpty() }
+        ?.map { it.asString }
+        .orEmpty()
+    return DetectedOri(path, ori.stringOrNull("version")?.takeIf { it.isNotEmpty() }, agents)
 }
 
 private fun JsonObject.stringOrNull(key: String): String? {
     val value = get(key) ?: return null
     return if (value.isJsonPrimitive && value.asJsonPrimitive.isString) value.asString else null
+}
+
+private fun JsonObject.booleanOrNull(key: String): Boolean? {
+    val value = get(key) ?: return null
+    return if (value.isJsonPrimitive && value.asJsonPrimitive.isBoolean) value.asBoolean else null
 }
 
 private fun JsonObject.objects(key: String): List<JsonObject> {

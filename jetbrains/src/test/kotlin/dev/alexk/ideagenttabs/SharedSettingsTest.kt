@@ -3,6 +3,7 @@ package dev.alexk.ideagenttabs
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
@@ -97,5 +98,67 @@ class SharedSettingsTest {
         assertEquals(Detected(), settings.detected())
         write(DETECTED_FILE, "broken")
         assertEquals(Detected(), settings.detected())
+    }
+
+    @Test
+    fun `launchVia defaults to direct and reads direct or ori`() {
+        assertEquals(LaunchVia.DIRECT, settings.shared().launchVia)
+        write(CONFIG_FILE, """{"launchVia": "ori"}""")
+        assertEquals(LaunchVia.ORI, settings.shared().launchVia)
+        write(CONFIG_FILE, """{"launchVia": "both"}""")
+        assertEquals(LaunchVia.DIRECT, settings.shared().launchVia)
+    }
+
+    @Test
+    fun `launchVia saves to config and keeps other keys`() {
+        Files.writeString(config, """{"defaultAgent": "codex", "launchVia": "ori"}""")
+        assertTrue(settings.setLaunchVia(LaunchVia.DIRECT))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex", "launchVia": "direct"}"""), saved())
+        assertTrue(settings.setLaunchVia(LaunchVia.ORI))
+        assertEquals("ori", saved().get("launchVia").asString)
+    }
+
+    @Test
+    fun `closeAfterHandoff defaults to true, reads a boolean and drops other values`() {
+        assertTrue(settings.shared().closeAfterHandoff)
+        write(CONFIG_FILE, """{"closeAfterHandoff": false}""")
+        assertFalse(settings.shared().closeAfterHandoff)
+        write(CONFIG_FILE, """{"closeAfterHandoff": "false"}""")
+        assertTrue(settings.shared().closeAfterHandoff)
+        write(CONFIG_FILE, """{"closeAfterHandoff": 0}""")
+        assertTrue(settings.shared().closeAfterHandoff)
+    }
+
+    @Test
+    fun `closeAfterHandoff writes false only when unchecked and removes the key when checked`() {
+        Files.writeString(config, """{"defaultAgent": "codex"}""")
+        assertTrue(settings.setCloseAfterHandoff(true))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex"}"""), saved())
+        assertTrue(settings.setCloseAfterHandoff(false))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex", "closeAfterHandoff": false}"""), saved())
+        assertTrue(settings.setCloseAfterHandoff(true))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex"}"""), saved())
+    }
+
+    @Test
+    fun `closeAfterHandoff leaves a broken config alone`() {
+        Files.writeString(config, "{broken")
+        assertFalse(settings.setCloseAfterHandoff(false))
+        assertEquals("{broken", Files.readString(config))
+        assertEquals(1, warnings.size)
+    }
+
+    @Test
+    fun `detection reads the Ori entry and is null without it`() {
+        write(DETECTED_FILE, """{"ori": {"path": "/x/ori", "version": "0.14.3", "agents": ["claude", 3, "codex"]}}""")
+        assertEquals(DetectedOri("/x/ori", "0.14.3", listOf("claude", "codex")), settings.detected().ori)
+        write(DETECTED_FILE, """{"ori": null}""")
+        assertNull(settings.detected().ori)
+        write(DETECTED_FILE, """{"ori": {"agents": ["claude"]}}""")
+        assertNull(settings.detected().ori)
+        write(DETECTED_FILE, """{"ori": []}""")
+        assertNull(settings.detected().ori)
+        write(DETECTED_FILE, """{"ori": {"path": "/x/ori"}}""")
+        assertEquals(DetectedOri("/x/ori", null, emptyList()), settings.detected().ori)
     }
 }

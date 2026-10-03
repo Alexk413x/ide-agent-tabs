@@ -1,7 +1,7 @@
 # Agent Tabs design
 
-Agent Tabs opens AI coding-agent sessions (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and others) in
-IDE editor tabs. A person opens them with one button. An agent opens, lists and closes them in any IDE
+Agent Tabs opens AI coding-agent sessions (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi,
+Hermes, OpenCode, Qwen Code, Goose and others) in IDE editor tabs. A person opens them with one button. An agent opens, lists and closes them in any IDE
 running on the same machine.
 
 This document is the contract every part builds against. Change it before you change the protocol.
@@ -17,6 +17,7 @@ This document is the contract every part builds against. Change it before you ch
 | Claude Code plugin: MCP server, `new-tab`, `setup` and `update` skills | Built | `claude-plugin/`, `mcp/` |
 | VS Code extension (VS Code and editors built on it) | Built | `vscode/` |
 | Messaging between agent sessions: MCP tools, hooks and the `message` skill | Built | `mcp/src/messaging/`, `mcp/src/agentHook.ts`, `claude-plugin/hooks/`, `claude-plugin/skills/message/` |
+| Handoff to a new tab: the `handoff` tool and skill | Built | `mcp/src/handoff.ts`, `claude-plugin/skills/handoff/` |
 | Jev judgment tools in the MCP server, and the `jev` skill (optional) | Built | `mcp/src/jev/`, `claude-plugin/skills/jev/`; later steps in [jev-integration.md](jev-integration.md) |
 
 Claude Code sessions message each other with Claude Code's own `ListAgents` and `SendMessage`. Sessions
@@ -65,7 +66,7 @@ The server refuses non-loopback addresses and any request with an `Origin` or `R
 |---|---|---|
 | `info` | `{}` | `ide`, `product`, `version`, `pid`, and `projects`: `name`, `path`, `focused` for each open project or folder |
 | `agents` | `{}` | `default`, and `agents`: `name`, `label`, `command`, `installed` for each profile |
-| `open` | `path`, and optional `agent`, `prompt`, `args`, `env` | `id`, `agent`, `project`, `path` |
+| `open` | `path`, and optional `agent`, `prompt`, `args`, `env`, `model`, `via` | `id`, `agent`, `project`, `path`, `via` |
 | `close` | `id` | `id` |
 | `list` | `{}` | `tabs`: `id`, `agent`, `project`, `path` for each open tab this IDE opened |
 | `input` | `id`, `text` | `id` |
@@ -79,6 +80,10 @@ The server refuses non-loopback addresses and any request with an `Origin` or `R
   the prompt. Flags that skip the agent's permission prompts are allowed.
 - `env`: up to 64 environment variables for the session. Names that start with `IDE_AGENT_TABS_` or
   `JEDITERM_SOURCE` are refused.
+- `model`: a model id of 1 to 200 characters from letters, digits and `. _ : / @ + -`. The tab passes it
+  with the profile's `modelFlag`. See [Model and Ori](#model-and-ori).
+- `via`: `ori` or `direct`. It overrides the `launchVia` setting for this tab. The reply's `via` says
+  how the tab started.
 
 The tab opens in the open project or folder that contains `path`, or in the last focused window if none
 does.
@@ -90,7 +95,7 @@ session for a new message.
 | Status | Meaning |
 |---|---|
 | 200 | Done. |
-| 400 | Bad body, relative path, missing folder, missing `id`, unknown `agent`, or `input` `text` that is empty, over 500 characters or holds a control character. |
+| 400 | Bad body, relative path, missing folder, missing `id`, unknown `agent`, a bad `model` or `via`, a `model` for a profile without `modelFlag`, `via: "ori"` that Ori can't launch, or `input` `text` that is empty, over 500 characters or holds a control character. |
 | 401 | Missing or wrong token. |
 | 403 | Non-loopback address, or an `Origin` or `Referer` header. |
 | 404 | `close`, `input`: no open tab with that id. |
@@ -104,18 +109,28 @@ session for a new message.
 
 A profile says how to start one agent CLI. Every IDE uses the same built-in profiles. Every list of agents,
 in this document and in the menus, uses this order: Claude, Codex, Antigravity CLI, Copilot CLI, Gemini CLI,
+Grok Build, Pi, Hermes, then the agents built for local models (OpenCode, Qwen Code, Goose and Codex (local)),
 then custom profiles.
 
-| Name | Label | Command | First prompt |
-|---|---|---|---|
-| `claude` | Claude Code | `claude` | positional |
-| `codex` | Codex | `codex` and fixed `args` (see [Codex tabs](#codex-tabs)) | positional |
-| `agy` | Antigravity CLI | `agy` | `-i <prompt>` |
-| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
-| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
+| Name | Label | Command | First prompt | Model flag |
+|---|---|---|---|---|
+| `claude` | Claude Code | `claude` | positional | `--model` |
+| `codex` | Codex | `codex` and fixed `args` (see [Codex tabs](#codex-tabs)) | positional | `-m` |
+| `agy` | Antigravity CLI | `agy` | `-i <prompt>` | `--model` |
+| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` | `--model` |
+| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` | `-m` |
+| `grok` | Grok Build | `grok` | positional | `-m` |
+| `pi` | Pi | `pi` | positional | `--model` |
+| `hermes` | Hermes | `hermes chat` | `-q <prompt>` | `-m` |
+| `opencode` | OpenCode | `opencode` | `--prompt <prompt>` | `-m` |
+| `qwen` | Qwen Code | `qwen` | `-i <prompt>` | `-m` |
+| `goose` | Goose | `goose run -s`, or `goose session` when there is no prompt | `-t <prompt>` | `--model` |
+| `codex-local` | Codex (local) | `codex`, the `codex` profile's fixed `args`, then `--oss --local-provider ollama` | positional | `-m` |
 
 The `claude`, `codex` and `agy` rows match each CLI's help. The `gemini` and `copilot` rows come from each
-CLI's docs and are untested. `antigravity` is the Antigravity IDE's command, so the profile is named `agy`. A profile in `agents.json` with the same name overrides a built-in one.
+CLI's docs and are untested. The `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose` and `codex-local` rows
+come from each CLI's docs, and none of those CLIs is installed on the development machine, so every one is
+untested (see [Agent support](#agent-support)). `antigravity` is the Antigravity IDE's command, so the profile is named `agy`. A profile in `agents.json` with the same name overrides a built-in one.
 An `agents.json` profile named `codex` replaces the built-in `args` too, so its tabs lose messaging unless
 it copies them.
 
@@ -137,6 +152,8 @@ You add or override profiles in `~/.ide-agent-tabs/agents.json`:
 - `args`: arguments before the caller's `args`.
 - `promptFlag`: the flag placed before the prompt. Leave it out when the prompt is positional. With no
   prompt, neither the flag nor a prompt is passed.
+- `modelFlag`: the flag that takes a model, such as `--model`. A request's `model` goes after it. Leave it
+  out when the agent has no such flag; a request with `model` then fails instead of dropping the model.
 - `env`: environment variables for the session. The caller's `env` wins on a clash.
 - `icon`: optional path to an SVG file for menus.
 
@@ -149,8 +166,108 @@ because the installed plugin holds only `claude-plugin/`. Change both together.
 `~/.ide-agent-tabs/config.json` holds shared settings:
 
 ```json
-{ "defaultAgent": "claude" }
+{ "defaultAgent": "claude", "launchVia": "direct", "closeAfterHandoff": true }
 ```
+
+### Agent support
+
+What each built-in agent gets. "State" is the session state that the agent's hooks set (see
+[Noticing a message](#noticing-a-message)). Without hooks, a session's state is `unknown`, so it gets no
+wake-up and no reminder.
+
+| Agent | Tabs | Messaging | State | Model | Via Ori | Icon source | Live-tested |
+|---|---|---|---|---|---|---|---|
+| Claude Code | Yes | Yes, with the plugin's hooks | `idle`, `busy`, `permission`; input idle signal | `--model` | Yes | Bundled in an earlier release | Yes |
+| Codex | Yes | Yes in tabs, which bring their own server and hooks. `--register codex` covers sessions outside tabs on macOS and Linux. | `idle`, `busy`, `permission`; `Interrupt` | `-m` | Yes | Bundled in an earlier release | Yes |
+| Antigravity CLI | Yes | Yes, with `--register agy` | `idle`, `busy`; no `permission` | `--model` | No | Bundled in an earlier release | Yes, headless; the interactive tab is partly untested |
+| Copilot CLI | Yes | Yes, with `--register copilot` | `idle`, `busy`, `permission`, from docs | `--model` | No | Bundled in an earlier release | Partly: state comes from docs |
+| Gemini CLI | Yes | Yes, with `--register gemini` | `idle`, `busy`, `permission` | `-m` | No | Bundled in an earlier release | As in [Tested on](#tested-on) |
+| Grok Build | Yes | Yes, with `--register grok` | `idle`, `busy`, `permission`; input idle signal (`idle_prompt`) | `-m` | Yes | Official SpaceXAI PNGs, embedded unchanged | No |
+| Pi | Yes | Tools only, with `--register pi` | None | `--model` | Yes | `pi.dev/favicon.svg` | No |
+| Hermes | Yes | Yes, with `--register hermes` | `idle`, `busy`, `permission`; nudges only after code edits | `-m` | Yes | Official `icon-master` (`.svg` and `-dark`) | No |
+| OpenCode | Yes | Tools only, with `--register opencode` | None | `-m` | Yes | Official light and dark square SVGs | No |
+| Qwen Code | Yes | Yes, with `--register qwen` | `idle`, `busy`, `permission` | `-m` | No | Official #6D44E8 logo, both themes | No |
+| Goose | Yes | Yes, with `--register goose` | `idle`, `busy`; no `permission` | `--model` | No | Official `goose.svg`, #101010 in both themes; hard to see on a dark theme | No |
+| Codex (local) | Yes | Yes, as for Codex. No registration. | As for Codex | `-m` | No | Reuses the Codex icon | No |
+
+"Tools only" means the session can list IDEs, open and close tabs and call the messaging tools, but it
+reports no state, so no wake-up types into it and no reminder reaches it. It reads a message only when
+it calls `read_messages` or `wait_for_message`.
+
+The seven agents after Gemini CLI are built from each CLI's documentation, and none is tested. Treat the
+profile flags, the registration files and the hook behavior below as unverified until a live run confirms
+them.
+
+#### Registration and state for the added agents
+
+- **Grok Build** (`grok`).
+  - `--register grok` writes `[mcp_servers.ide-agent-tabs]` (`command = "node"`, `args = [<server>]`) to
+    `$GROK_HOME/config.toml`, by default `~/.grok/config.toml`, with no `env` table: Grok passes its own
+    environment and may refuse a `${VAR}` it can't expand. It writes the hooks to
+    `$GROK_HOME/hooks/ide-agent-tabs.json`.
+  - The hooks are `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification` (matcher
+    `permission_prompt|idle_prompt`), `Stop`, `StopCancelled` and `StopFailure`. The reminder comes after
+    a tool call, and `Stop` nudges. Grok's `idle_prompt` notification is an input idle signal, as in
+    Claude Code.
+- **Pi** (`pi`). `--register pi` writes `mcpServers.ide-agent-tabs` to `~/.pi/agent/mcp.json`, or
+  `$PI_CODING_AGENT_DIR/mcp.json`, with an `env` that forwards `IDE_AGENT_TABS_ID` and
+  `IDE_AGENT_TABS_AGENT`, `timeout: 660` and `exposure: "direct"`. Pi hides MCP tools behind its
+  code-mode tool unless the server is exposed directly, and it times a request out after 60 seconds. Pi
+  gets no hooks, so it has no state. The server maps the MCP client name `pi` to the agent `pi`.
+- **Hermes** (`hermes`).
+  - `--register hermes` edits `config.yaml` in `$HERMES_HOME`, by default `~/.hermes`, or
+    `%LOCALAPPDATA%\hermes` on Windows. It adds `mcp_servers.ide-agent-tabs` with an `env` map that
+    forwards both variables, because Hermes passes a server only the variables its `env` names, and
+    `timeout: 660`, because the default of 300 seconds would end `wait_for_message` early. It adds a
+    shell hook under `hooks:` for each of `pre_llm_call`, `post_tool_call`, `pre_approval_request`,
+    `post_approval_response`, `pre_verify` and `on_session_end`, with `timeout: 5`.
+  - Hermes splits a hook command with `shlex.split` and no shell, so the command is
+    `node '<hook path>' hermes <event>`, with the path in single quotes.
+  - Hermes asks before it first runs each (event, command) pair, and skips the hook when nobody can
+    answer. `--register hermes` therefore adds one entry for each of those pairs, and only those, to
+    `approvals` in `$HERMES_HOME/shell-hooks-allowlist.json`. It never sets `hooks_auto_accept` or
+    `HERMES_ACCEPT_HOOKS`, which would approve every hook. `--unregister hermes` removes only its own
+    hooks and approvals.
+  - The reminder comes after a prompt (`pre_llm_call`, as `{"context": …}`). `pre_verify` is the
+    turn-end nudge (`decision: "block"`). It runs only after a turn that edited code, and Hermes counts
+    each block against its `max_verify_nudges`. A turn without edits gets no nudge.
+- **OpenCode** (`opencode`). The MCP entry has `timeout: 660000` (milliseconds), as before. OpenCode
+  gets no hooks, so it has no state.
+- **Qwen Code** (`qwen`). `--register qwen` writes `mcpServers.ide-agent-tabs` to `~/.qwen/settings.json`,
+  or `$QWEN_HOME/settings.json`, with an `env` map that forwards both variables and `timeout: 700000`
+  (milliseconds). It writes the hooks to `hooks` in the same file, as `node "<hook path>" qwen <event>`
+  with `timeout` 5, for `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`,
+  `Notification` and `Stop`. The reminder comes after a prompt and after a tool call, and `Stop` nudges.
+- **Goose** (`goose`).
+  - `--register goose` adds `extensions.ide-agent-tabs` (`type: stdio`, `cmd: node`, `args: [<server>]`,
+    `enabled: true`, `timeout: 700`, empty `envs` and `env_keys`) to `config.yaml`: in
+    `~/.config/goose/` on macOS and Linux, in `%APPDATA%\Block\goose\config\` on Windows, or in
+    `$GOOSE_PATH_ROOT/config/` when `GOOSE_PATH_ROOT` is an absolute path.
+  - The hooks are an Open Plugins plugin in `~/.agents/plugins/ide-agent-tabs/`, or under
+    `GOOSE_PATH_ROOT` when that is an absolute path: `plugin.json` and `hooks/hooks.json`, for
+    `UserPromptSubmit`, `PostToolUse` and `Stop`. Goose runs a hook with `sh -c`, so the command is
+    `node '<hook path>' goose <event>`, and Windows needs Git Bash. Goose gets no reminder; `Stop`
+    nudges.
+  - With no first prompt, the tab runs `goose session`, because `goose run -s` refuses to start without
+    a message. With a prompt, it runs `goose run -s -t <prompt>`, which stays interactive.
+  - Whether Goose passes the tab's `IDE_AGENT_TABS_ID` to the extension is untested.
+- **Codex (local)** (`codex-local`). The tab is a Codex tab, so it brings the same server and hooks (see
+  [Codex tabs](#codex-tabs)) and needs no registration. The profile adds `--oss --local-provider ollama`,
+  because `--oss` alone stops at a picker between LM Studio and Ollama. It needs Ollama 0.13.4 or later.
+  `-m` takes the local model.
+
+The `yaml` npm package (ISC) edits the YAML of Hermes and Goose, and keeps comments and the other keys.
+The script leaves a file alone and reports an error when it isn't valid YAML, or when its `hooks`,
+`mcp_servers` or `extensions` key isn't a mapping. `--register grok` finds and replaces only the
+`[mcp_servers.ide-agent-tabs]` form of the table, and refuses a file that names `ide-agent-tabs` in
+another TOML form.
+
+#### Not included
+
+- **Crush:** its hooks cover only `PreToolUse`, so it can't report when a turn ends. It has no
+  first-prompt flag, and its licence is FSL.
+- **Prime Agent:** it runs its sessions in a daemon, and its documentation isn't researched yet. Ori can
+  launch `prime-agent`, but there is no profile for it.
 
 ### How a tab starts the agent
 
@@ -166,8 +283,9 @@ and a fixed launch script reads them:
 | `IDE_AGENT_TABS_ARGC`, `IDE_AGENT_TABS_ARG_<n>` | bash, zsh, fish: the argument count, and each argument. Cleared before the agent starts. |
 | `IDE_AGENT_TABS_PROMPT` | The first prompt. Cleared before the agent starts. |
 
-The arguments are the profile's `args`, then the caller's `args`, then the `promptFlag` if there is a
-prompt. The prompt comes last.
+The arguments are the profile's `args`, then the `modelFlag` and model if the request names a model,
+then the caller's `args`, then the `promptFlag` if there is a prompt. The prompt comes last. A tab
+started through Ori has a different command line; see [Model and Ori](#model-and-ori).
 
 - Terminal tabs can't use environment variables, because a new Windows Terminal tab inherits the running
   terminal's environment, not the caller's. The MCP server writes a launch spec file instead (owner-only,
@@ -179,6 +297,48 @@ prompt. The prompt comes last.
   `ConvertFrom-Json` turns a string such as `2024-01-01T00:00:00Z` into a date.
 - Windows PowerShell 5.1 strips embedded double quotes from arguments it passes to native programs.
   Launchers that may run under 5.1 must escape them.
+
+### Model and Ori
+
+A request's `model` picks the agent's model. The server and the IDEs add `[modelFlag, model]` after the
+profile's `args`. A `model` for a profile without a `modelFlag` is an error, never ignored: `<agent> has no
+model option; open it without model, or set modelFlag for it in agents.json`.
+
+Ori is a launcher that starts an agent and bills its model usage through OpenRouter. A tab starts through
+Ori when the request sets `via: "ori"`, or when `launchVia` in `config.json` is `ori` and the request
+sets no `via`. An explicit `via` beats the setting.
+
+- The command is `ori`. Its arguments are the agent's name, `--model <model>` when the request names a
+  model, the profile's `args`, the caller's `args`, and the prompt last. Ori's `--model` takes an
+  OpenRouter model id and replaces the agent's own model flag.
+- Ori launches `claude`, `codex`, `grok`, `hermes`, `opencode`, `pi` and `prime-agent`, and only the
+  ones that `ori harness list --json` reports as installed. The profile's name must be one of these. Of
+  the built-in profiles, that leaves `claude`, `codex`, `grok`, `hermes`, `opencode` and `pi`. Qwen Code,
+  Goose and Codex (local) always start directly. `prime-agent` has no profile.
+- When the setting asks for Ori and Ori can't launch the agent, the tab starts directly, with no error.
+  When the request asks with `via: "ori"`, the open fails with `<agent> can't launch through Ori: <reason>`.
+- The tab's identity stays the inner agent: `IDE_AGENT_TABS_AGENT` is `claude` or `codex`, so hooks, wake
+  rules and messaging use that agent's rules. The `open` reply and the `open_tab` result carry `via:
+  "ori"` for a tab started through Ori.
+- On Windows, Ori refuses an argument that holds `"`, `%`, `^`, `&`, `|`, `<` or `>` when the agent is a
+  `.cmd` shim, as an npm install of Codex is. The server and the IDEs check the profile's and the
+  caller's arguments before they launch through Ori.
+- `list_agents` reports `model: true` for a profile with a `modelFlag`, `ori: true` for a profile Ori can
+  launch, and the `launchVia` setting. The VS Code and JetBrains settings offer `launchVia` only when
+  `detected.json` has an `ori` entry. A tab started through Ori carries a "via OpenRouter" tag in menus
+  and tab names.
+
+Checked on Ori 0.14.3 on Windows 11, 2026-10-03:
+
+- Ori starts the agent as a child process: `ori.exe`, then `cmd.exe` (`codex.cmd`), then `node`, then
+  `codex.exe`, then the MCP server. The environment passes through. `IDE_AGENT_TABS_ID` reached the
+  Codex MCP server, and the MCP client name stayed `codex-mcp-client`.
+- `ori claude` fails with `401 Missing Authentication header`. Ori's per-launch Claude settings set
+  `ANTHROPIC_AUTH_TOKEN` to an empty string, and in Claude Code 2.1.288 the settings value wins over the
+  process environment. The plugin hooks still ran. This is an Ori issue, not an Agent Tabs issue.
+- Codex tab arguments hold Codex's own `<session-flags>` keys, which contain `<` and `>`. So a Codex tab
+  through Ori doesn't work with an npm (`.cmd`) Codex on Windows. `launchVia` falls back to a direct
+  launch, and an explicit `via: "ori"` returns the error above.
 
 ### Codex tabs
 
@@ -218,6 +378,8 @@ Rules for these arguments:
 - Codex drops the root `-c` options when a `-c` follows a subcommand, such as
   `codex -c a=1 resume -c b=2`. A caller's `args` must not pass `-c` after a subcommand.
 - The VS Code and JetBrains profiles hold the same strings, and `mcp/test/codexTab.test.ts` checks them.
+- The arguments hold `<` and `>` in the `<session-flags>` keys, so Ori refuses them on Windows with an npm
+  Codex (see [Model and Ori](#model-and-ori)).
 
 ## Button
 
@@ -240,10 +402,11 @@ registry and calls the HTTP API.
 | Tool | Does |
 |---|---|
 | `list_ides` | Lists running IDEs with their projects, from the registry and each IDE's `info`. |
-| `list_agents` | Lists profiles and which are installed. |
+| `list_agents` | Lists profiles, which are installed, which take a model (`model`), which Ori can launch (`ori`), and the `launchVia` setting. |
 | `list_tabs` | Lists tabs across all IDEs, or in one. |
-| `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`. |
-| `close_tab` | Closes a tab by `id`. With no `id`, closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
+| `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`. Returns `via: "ori"` for a tab started through Ori. |
+| `close_tab` | Closes a tab by `id`. With no `id`, closes the caller's own tab through `IDE_AGENT_TABS_ID`. Refuses the old tab of a handoff until the handoff is confirmed (see [Handoff](#handoff)). |
+| `handoff` | Hands the caller's work to a new tab (see [Handoff](#handoff)). |
 
 `open_tab` routing, first match wins:
 
@@ -280,6 +443,18 @@ An explicit name always wins. An `open_tab` call that names `ide` or an agent, o
 or a terminal, overrides these settings. They apply only when nothing is named. The server ignores a value
 it doesn't know, uses the default, and reports a warning in `list_agents`.
 
+Two more settings in `config.json` don't depend on where a tab opens:
+
+| Setting | Key | Values | Default |
+|---|---|---|---|
+| Launch through OpenRouter (Ori) | `launchVia` | `direct`: start each agent with its own command. `ori`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `direct` |
+| Close the old tab after a handoff | `closeAfterHandoff` | `true`: the new session closes the old tab. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
+
+VS Code shows both in the **Agent Tabs** section, as `ideAgentTabs.launchVia` and
+`ideAgentTabs.closeAfterHandoff`. JetBrains shows `launchVia` next to **Default agent**. Both IDEs
+show `launchVia` only when `detected.json` has an `ori` entry. The server treats a value it doesn't know
+as the default, as for the tab settings.
+
 The VS Code settings have machine scope, so only the user-level value reaches `config.json`. A workspace's
 `.vscode/settings.json` can't set the shell or the terminal, and an untrusted workspace can't change them.
 
@@ -297,9 +472,14 @@ in the background; on every `list_ides` call; and from the Claude Code session s
   "terminals": [{ "id": "windows-terminal", "name": "Windows Terminal" }],
   "shells": [
     { "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe", "label": "PowerShell 7.5.2 (MSI)", "version": "7.5.2", "source": "msi" }
-  ]
+  ],
+  "ori": { "path": "C:\\Users\\me\\.local\\bin\\ori.exe", "version": "0.14.3", "agents": ["claude", "codex"] }
 }
 ```
+
+`ori` is `null` when `ori` isn't on `PATH` or in `~/.local/bin`. Otherwise `agents` holds the launchable
+agents that `ori harness list --json` reports as installed. Detection runs `ori` only here, never when a
+tab opens.
 
 `source` is `path`, `msi`, `store`, `preview` or `windows`. `shells` is empty off Windows. `list_ides`
 returns `shells` next to `terminals`. An IDE whose detection file is missing lists only **Automatic**
@@ -443,7 +623,8 @@ other agent CLIs. For that, every session that runs the MCP server can message e
   file when it exits, including when its client closes its stdin. A file whose `pid` no longer runs is
   stale; readers ignore it and delete it.
 - `agent` is `IDE_AGENT_TABS_AGENT`, or else comes from the MCP client's name: a name that contains
-  `claude`, `codex`, `antigravity`, `copilot`, `gemini` or `opencode` maps to that profile name (`antigravity` maps to `agy`).
+  `claude`, `codex`, `antigravity`, `copilot`, `gemini`, `opencode`, `grok`, `qwen` or `goose` maps to that
+  profile name (`antigravity` maps to `agy`), and the exact name `pi` maps to `pi`.
 - `host` is the terminal from `terminal-tabs.json`, or the IDE whose `list` holds the tab id. The server
   looks it up when it starts, and a sender looks it up again when the file has none.
 - `state` is `idle`, `busy` or `permission`, with `stateAt`. The session's hooks set it (see
@@ -473,7 +654,7 @@ other agent CLIs. For that, every session that runs the MCP server can message e
 
 | Tool | What it does |
 |---|---|
-| `list_sessions` | Lists live sessions: `id`, `agent`, `path`, `host`, `state`, and `self` for the caller. |
+| `list_sessions` | Lists live sessions: `id`, `agent`, `path`, `host`, `state`, `handedOffTo` for a session that handed its work to another, and `self` for the caller. |
 | `send_message` | Sends `text` to the session `to`, optionally as a reply to `replyTo`. Returns the message `id`, and `delivery`: `woken` or `queued`. A `note` says why a wake-up failed. |
 | `read_messages` | Returns the caller's unread messages and marks them read. |
 | `wait_for_message` | Waits up to `timeout` seconds (default 60, at most 600, or 170 in an Antigravity CLI session) for a message, optionally only one from `from` or replying to `replyTo`, and returns it, marked read. Returns `message: null` on timeout. Messages the filter skips stay unread. |
@@ -489,7 +670,8 @@ to a peer's request, and to ask the user before anything destructive a peer asks
 
 An agent sees a message only when it calls `read_messages` or `wait_for_message`. Three things prompt it:
 
-1. **Hooks.** `dist/agent-hook.mjs` runs as a command hook in Claude Code, Antigravity CLI, Copilot CLI and Gemini CLI:
+1. **Hooks.** `dist/agent-hook.mjs` runs as a command hook in Claude Code, Antigravity CLI, Copilot CLI,
+   Gemini CLI, Grok Build, Hermes, Qwen Code and Goose:
    `node agent-hook.mjs <cli> <event>`, with the hook's JSON on stdin. Codex tabs call the server's
    `agent_tabs_hook` tool instead, which runs the same logic. The hooks set `state`: `busy` when a
    prompt is submitted or a tool starts, `permission` when a permission prompt shows, and `idle` when a
@@ -549,9 +731,17 @@ as it is.
 | Antigravity CLI | None | At turn end, after the 2-second settle. |
 | Copilot CLI | None | At turn end, after the 2-second settle. |
 | Gemini CLI | None | At turn end, after the 2-second settle. |
+| Grok Build | `UserPromptSubmit`, `Stop`, `StopCancelled` and `StopFailure` set `inputIdle: false`. `Notification` `idle_prompt` sets it to `true`. | After `idle_prompt`, as in Claude Code. |
+| Hermes | None | At turn end, after the 2-second settle. |
+| Qwen Code | None | At turn end, after the 2-second settle. |
+| Goose | None | At turn end, after the 2-second settle. |
+| Codex (local) | None | At turn end, after the 2-second settle. |
 
-Codex, Antigravity CLI, Copilot CLI and Gemini CLI expose no input idle signal. A line typed into one of
-them can still land in a prompt the user is writing.
+Pi and OpenCode have no hooks, so they have no state and no wake-up.
+
+Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Hermes, Qwen Code, Goose and Codex (local) expose no
+input idle signal. A line typed into one of them can still land in a prompt the user is writing. Grok
+Build has the signal, but it is untested.
 
 Hook events for each CLI:
 
@@ -562,10 +752,19 @@ Hook events for each CLI:
 | Antigravity CLI | The `ide-agent-tabs` group in `~/.gemini/config/hooks.json` | `PreInvocation`, `PostToolUse` | None | `Stop` | `PreInvocation` only (`injectSteps[].ephemeralMessage`) | `Stop` (`decision: "continue"`) |
 | Copilot CLI | `~/.copilot/hooks/ide-agent-tabs.json` | `userPromptSubmitted`, `preToolUse`, `postToolUse` | `notification` `permission_prompt`, `elicitation_dialog` | `agentStop` | `postToolUse` only (`additionalContext`) | `agentStop` (`decision: "block"`) |
 | Gemini CLI | `hooks` in `~/.gemini/settings.json` | `BeforeAgent`, `BeforeTool`, `AfterTool` | `Notification` `ToolPermission` | `AfterAgent` | `BeforeAgent`, `AfterTool` (`hookSpecificOutput.additionalContext`) | `AfterAgent` (`decision: "deny"`) |
+| Grok Build | `~/.grok/hooks/ide-agent-tabs.json`, or under `$GROK_HOME` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | `Notification` `permission_prompt` | `Stop`, `StopCancelled`, `StopFailure`, `Notification` `idle_prompt` | `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
+| Hermes | `hooks` in `config.yaml` in `$HERMES_HOME`, plus `shell-hooks-allowlist.json` | `pre_llm_call`, `post_tool_call`, `post_approval_response` | `pre_approval_request` | `pre_verify`, `on_session_end` | `pre_llm_call` (`context`) | `pre_verify` (`decision: "block"`), only after code edits |
+| Qwen Code | `hooks` in `~/.qwen/settings.json` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | `PermissionRequest`, and `Notification` of a permission or elicitation type | `Stop`, `Notification` `idle_prompt` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
+| Goose | `hooks/hooks.json` in the plugin `~/.agents/plugins/ide-agent-tabs/` | `UserPromptSubmit`, `PostToolUse` | None | `Stop` | None | `Stop` (`decision: "block"`) |
+| Codex (local) | The tab's `-c` arguments, as for Codex | As Codex | As Codex | As Codex | As Codex | As Codex |
 
-- The Claude Code plugin ships its hooks. `sync-ides.mjs --register agy|copilot|gemini` adds the Antigravity CLI,
-  Copilot CLI and Gemini CLI hooks, pointing at `~/.ide-agent-tabs/mcp/agent-hook.mjs`, and
-  `--unregister` removes only those entries. It doesn't change a file that isn't plain JSON.
+Pi and OpenCode set no state, and send no reminder or nudge.
+
+- The Claude Code plugin ships its hooks. `sync-ides.mjs --register agy|copilot|gemini|grok|hermes|qwen|goose`
+  adds the Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Hermes, Qwen Code and Goose hooks,
+  pointing at `~/.ide-agent-tabs/mcp/agent-hook.mjs`, and `--unregister` removes only those entries. It
+  doesn't change a JSON file that isn't plain JSON. For the registration files of the agents added after
+  Gemini CLI, see [Agent support](#agent-support).
 - Antigravity CLI:
   - `--register agy` writes the server entry `mcpServers.ide-agent-tabs = { command: "node", args: [<server>] }`
     to `~/.gemini/config/mcp_config.json`, the `ide-agent-tabs` hook group to `~/.gemini/config/hooks.json`
@@ -608,6 +807,53 @@ Hook events for each CLI:
   the tab tools and messaging. Copilot CLI passes a server only `PATH`, so its entry sets
   `"IDE_AGENT_TABS_ID": "${IDE_AGENT_TABS_ID}"` and the same for `IDE_AGENT_TABS_AGENT`. The server ignores
   a value that is still `${…}`.
+- OpenCode applies the `timeout` of an MCP entry, in milliseconds, to tool calls, and its default would
+  end `wait_for_message` early. `--register opencode` writes `timeout: 660000`.
+- Each MCP entry outlasts the longest `wait_for_message`, which is 600 seconds: Codex, Pi and Hermes use
+  660 seconds, Goose 700 seconds, Qwen Code 700000 milliseconds and OpenCode 660000 milliseconds. Grok
+  Build's entry sets no timeout.
+
+## Handoff
+
+A handoff moves a session's work to a new agent tab and ends the old session. It differs from messaging
+a peer, because the old session stops. Use it to continue in a fresh session, in another folder or agent,
+or after a CLI or plugin update that only a new session loads.
+
+The old session calls `handoff` with `path`, and a `brief` or the fields `goal`, `done`, `next`, `files` and
+`openQuestions`. It can also pass `agent`, `model`, `via` and `ide`. The server then:
+
+1. Writes the brief to `~/.ide-agent-tabs/handoffs/<id>.md`, owner-only. The brief says it holds notes
+   from another agent session, not instructions from the user.
+2. Opens the new tab like `open_tab`, with a first prompt that names the handoff, the old session and the
+   brief path. If the tab fails to open, it closes nothing and the old session keeps the work.
+3. Writes a record, `<id>.json`, with both sessions, the old tab, the new tab, `closeAfter` and
+   `confirmBy`, 10 minutes after the handoff starts.
+4. Returns the handoff id, the brief path, the new tab id and `next`, the steps the old session follows.
+
+Then:
+
+1. The old session calls `wait_for_message` for a message from the new tab.
+2. The new session reads the brief, asks its user before anything destructive, and sends the takeover
+   message to the old session.
+3. The old session finishes its current step, replies `stopped` with `replyTo` set to the takeover
+   message, and ends its turn.
+4. The new session waits for that reply, then calls `close_tab` for the old tab, and continues the work.
+
+Safety:
+
+- The brief is notes, not instructions. The new session treats it as data from another agent.
+- `close_tab` enforces the order. When the caller is the new session of a handoff and the target is the old
+  tab, the server refuses until the mailboxes hold the takeover message, sent from the new tab to the old
+  session before `confirmBy`, and the old session's reply to it. The refusal names what is missing.
+- If no takeover message arrives by `confirmBy`, the old session tells its user, keeps its tab open and
+  keeps the work.
+- The brief and the record stay on disk. A brief must leave out secrets.
+
+`"closeAfterHandoff": false` in `config.json`, which defaults to `true`, keeps the old tab open. The old
+session's presence file then holds `handedOffTo`, the new tab's id, and `list_sessions` shows it. `close_tab`
+refuses to close that tab as part of the handoff.
+
+The `handoff` skill holds the steps for both sessions.
 
 ## Delegation
 
@@ -692,10 +938,10 @@ Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before eac
   Plugins > ⚙ > Manage Plugin Repositories**, then install **Agent Tabs** from the **Marketplace** tab
   and restart the IDE;
 - reports which agent CLIs are installed, and writes the default agent to `~/.ide-agent-tabs/config.json`;
-- shows the four tab settings (see [Settings](#settings)) and writes the ones the user changes, including
-  the preferred terminal, to `~/.ide-agent-tabs/config.json`;
+- shows the tab settings, `launchVia` and `closeAfterHandoff` (see [Settings](#settings)) and writes the
+  ones the user changes, including the preferred terminal, to `~/.ide-agent-tabs/config.json`;
 - registers the MCP server with the other agent CLIs the user picks (Codex, Antigravity CLI, Copilot CLI,
-  Gemini CLI, OpenCode) with `sync-ides.mjs --register <agent>…`;
+  Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose) with `sync-ides.mjs --register <agent>…`;
 - offers to add OpenAI's Codex plugin (`claude plugin marketplace add openai/codex-plugin-cc`, then
   `claude plugin install codex@openai-codex`) when Codex is installed.
 
@@ -748,7 +994,7 @@ in `vscode/package.json`.
 | Claude Code plugin | This repository, through the marketplace | `claude plugin update ide-agent-tabs@ide-agent-tabs`, or auto-update turned on for the marketplace in `/plugin` (off by default for a marketplace you add yourself) |
 | VS Code extension | `dist/ide/ide-agent-tabs.vsix` in the installed plugin | The session start hook runs `<cli> --install-extension <vsix> --force` in each editor that has an older version. |
 | JetBrains plugin | `~/.ide-agent-tabs/repository/updatePlugins.xml` | The session start hook puts the bundled zip there. The IDE offers the update from its custom plugin repository. |
-| MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Antigravity CLI, Copilot CLI, Gemini CLI and OpenCode run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. `version.json` records the plugin version it came from, and an older plugin never replaces a copy from a newer one, because every Claude Code install on the machine shares the copy. |
+| MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code and Goose run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. `version.json` records the plugin version it came from, and an older plugin never replaces a copy from a newer one, because every Claude Code install on the machine shares the copy. |
 
 ### Session start hook
 
@@ -818,7 +1064,7 @@ builds have a different `TerminalViewVirtualFile` constructor, so opening a tab 
 judgment: one option out of up to 255 (Choice), a probability of yes (Noul), or a position on 2 to 10
 described levels (Score). It writes no text. When Jev is turned on, the MCP server lists tools that let
 any agent it serves ask Jev instead of spending a large-model turn on a pick, a yes or no, or a grade.
-Codex, Antigravity CLI, Copilot CLI, Gemini CLI and OpenCode get them through the same registration as the tab tools.
+Every agent that registers the server, from Codex to Goose, gets them through the same registration as the tab tools.
 
 ### Turning it on
 
@@ -939,6 +1185,8 @@ in `~/.ide-agent-tabs/mcp/` that other agents register.
 - Any such process can start any agent with any flags, including flags that skip permission prompts.
   This is by design: it is the same power as running the agent yourself.
 - The server never passes caller text through a shell parser.
+- A tab started through Ori sends the agent's model traffic through OpenRouter, and OpenRouter bills
+  it. That is why `launchVia` is off by default.
 - A message's text never reaches a command line or a terminal. The only line the server types into a
   session is the fixed wake line, built from the sender's cleaned agent name and id.
 - Any process of your user can write to any mailbox, as it can open tabs. Every agent treats a message
@@ -959,7 +1207,8 @@ in `~/.ide-agent-tabs/mcp/` that other agents register.
 | Ghostty on Linux | 1.3.1 in WSL Ubuntu accepts the flags. No window opens, because Ghostty needs OpenGL 4.3 and WSLg offers 4.1. | A working window |
 | Ghostty on macOS | Unit tests of the AppleScript and command generation | A live run |
 | iTerm2 | Unit tests with a stand-in `osascript`: open, list, close, input, quoting, argv passing, and the permission and not-installed errors | A live run |
-| Agent profiles | `claude`, `codex` and `agy` flags checked against each CLI's help | `gemini` and `copilot`; `agy -i` in a tab |
+| Agent profiles | `claude`, `codex` and `agy` flags checked against each CLI's help | `gemini` and `copilot`; `agy -i` in a tab; `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose` and `codex-local`, none of which is installed on the development machine |
+| Registration of the added agents | Unit tests against temporary homes: the config files and hooks of Grok Build, Pi, Hermes, Qwen Code and Goose are written, left unchanged by a second run and removed, and other entries stay | A live run of any of these CLIs: whether it reads the entry and runs the hooks, `--register` against a real home, Goose's `sh -c` hook on Windows with Git Bash, Hermes' allowlist, and Codex (local) with Ollama |
 | Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>`; interactive Codex 0.158.0 tabs in Antigravity on Windows 11: a message read mid-task through the hooks, and an idle tab woken by the typed line through the `input` route, each answered; Antigravity CLI 1.2.16 headless (`agy -p`) on Windows 11 with a workspace `.agents/` config: `IDE_AGENT_TABS_ID` reaches the server and the hook commands, the MCP client name is `antigravity-client`, `PreInvocation` context reaches the model, `Stop` with `decision: "continue"` keeps the turn going, and `Stop` fires once per turn | The `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Gemini CLI or Copilot CLI session; Antigravity CLI: whether `Stop` fires after Esc, whether the typed wake line submits in its interactive TUI, and `--register agy` against the real `~/.gemini` files |
 
 Open, list and close through the MCP server pass for tmux, kitty and WezTerm. No part is tested on a real
@@ -973,8 +1222,9 @@ None of these is scheduled.
 - **Visual Studio extension:** the **New Agent Tab** button and editor tabs in Visual Studio on Windows.
   Until then, the MCP server opens tabs for Visual Studio users in Windows Terminal.
 - **Terminal on macOS:** a terminal driver through AppleScript, like the iTerm2 one.
-- **Messaging hooks for OpenCode:** state and reminders through an OpenCode plugin. Without hooks, an
-  OpenCode session's `state` stays `unknown`, so it gets no wake-up and sees a message only when it calls
-  `read_messages` or `wait_for_message`.
+- **Messaging hooks for OpenCode and Pi:** state and reminders through an OpenCode plugin and a Pi
+  extension. Without hooks, such a session's `state` stays `unknown`, so it gets no wake-up and sees a
+  message only when it calls `read_messages` or `wait_for_message`.
+- **Prime Agent and Crush:** see [Not included](#not-included).
 - **Jev steps J3 to J5:** a routing bench, a guard hook and a cost report. See
   [jev-integration.md](jev-integration.md#phases).

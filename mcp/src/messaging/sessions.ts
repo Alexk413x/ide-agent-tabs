@@ -29,6 +29,7 @@ export interface PresenceFile {
   owner?: string;
   beatMs?: number;
   inputIdle?: boolean;
+  handedOffTo?: string;
 }
 
 export interface Presence extends PresenceFile {
@@ -54,10 +55,14 @@ const CLIENT_AGENTS: [string, string][] = [
   ['copilot', 'copilot'],
   ['opencode', 'opencode'],
   ['antigravity', 'agy'],
+  ['grok', 'grok'],
+  ['qwen', 'qwen'],
+  ['goose', 'goose'],
 ];
 
 export function agentFromClient(name: string | undefined): string {
   const lower = (name ?? '').toLowerCase();
+  if (lower === 'pi') return 'pi';
   const known = CLIENT_AGENTS.find(([part]) => lower.includes(part));
   return known ? known[1] : safeName(name ?? '') || 'unknown';
 }
@@ -94,6 +99,7 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...str('owner'),
     ...beatMs,
     ...(typeof o.inputIdle === 'boolean' ? { inputIdle: o.inputIdle } : {}),
+    ...str('handedOffTo'),
   };
 }
 

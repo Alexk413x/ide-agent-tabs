@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import {
   AGENTS_FILE,
+  AgentProfile,
   AgentSettings,
   BUILTIN_PROFILES,
   CODEX_TAB_ARGS,
@@ -12,11 +13,13 @@ import {
   findOnPath,
   isInstalled,
   launchOf,
+  LaunchContext,
+  planLaunch,
   profile,
   readDefaultAgent,
 } from '../profiles';
 import { BadRequest, checkEnv } from '../request';
-import { DETECTED_FILE, parseDetected, SHARED_DEFAULTS, userSettingValue, withSharedValue } from '../sharedSettings';
+import { DETECTED_FILE, DetectedOri, parseDetected, SHARED_DEFAULTS, userSettingValue, withSharedValue } from '../sharedSettings';
 
 function fixture() {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-agents-'));
@@ -35,15 +38,44 @@ function fixture() {
 test('built-in profiles match the design', () => {
   const { settings, warnings } = fixture();
   const profiles = settings.profiles();
-  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'gemini']);
-  assert.deepEqual(profiles.map(p => p.label), ['Claude Code', 'Codex', 'Antigravity CLI', 'Copilot CLI', 'Gemini CLI']);
-  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'agy', 'copilot', 'gemini']);
-  assert.deepEqual(profiles.map(p => p.promptFlag), [undefined, undefined, '-i', '-i', '-i']);
-  assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0, 0]);
+  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
+  assert.deepEqual(profiles.map(p => p.label), [
+    'Claude Code', 'Codex', 'Antigravity CLI', 'Copilot CLI', 'Gemini CLI', 'Grok Build', 'Pi', 'Hermes', 'OpenCode', 'Qwen Code', 'Goose', 'Codex (local)',
+  ]);
+  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex']);
+  assert.deepEqual(profiles.map(p => p.promptFlag), [
+    undefined, undefined, '-i', '-i', '-i', undefined, undefined, '-q', '--prompt', '-i', '-t', undefined,
+  ]);
+  assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0, 0, 0, 0, 1, 0, 0, 2, CODEX_TAB_ARGS.length + 3]);
   assert.deepEqual(profiles[1]!.args, CODEX_TAB_ARGS);
+  assert.deepEqual(profiles[7]!.args, ['chat']);
+  assert.deepEqual(profiles[10]!.args, ['run', '-s']);
+  assert.deepEqual(profiles[11]!.args, [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama']);
   assert.deepEqual(profiles[1]!.args.slice(0, 2), ['--no-daemon', '-c']);
   assert.equal(settings.defaultProfile().name, 'claude');
   assert.deepEqual(warnings, []);
+});
+
+test('the manifest wires every built-in profile and its icons', () => {
+  const root = path.resolve(__dirname, '..', '..');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const names = BUILTIN_PROFILES.map(p => p.name);
+  const keys = names.map(n => n.replace(/-(\w)/g, (_, c: string) => c.toUpperCase()));
+  const { contributes } = manifest;
+  assert.deepEqual(contributes.configuration[0].properties['ideAgentTabs.defaultAgent'].enum, names);
+  assert.deepEqual(contributes.configuration[0].properties['ideAgentTabs.defaultAgent'].enumItemLabels, BUILTIN_PROFILES.map(p => p.label));
+  const commands = contributes.commands.map((c: { command: string }) => c.command);
+  const menu = contributes.menus['ideAgentTabs.agents'].filter((m: { command: string }) => m.command.startsWith('ideAgentTabs.open.'));
+  assert.deepEqual(menu.map((m: { command: string }) => m.command), keys.map(k => `ideAgentTabs.open.${k}`));
+  for (const key of keys) {
+    assert.ok(commands.includes(`ideAgentTabs.newTab.${key}`), key);
+    assert.ok(commands.includes(`ideAgentTabs.open.${key}`), key);
+    assert.ok(contributes.menus['editor/title'].some((m: { when?: string }) => m.when === `ideAgentTabs.buttonAgent == ${key}`), key);
+  }
+  for (const c of contributes.commands) {
+    if (typeof c.icon !== 'object') continue;
+    for (const file of Object.values<string>(c.icon)) assert.ok(fs.existsSync(path.join(root, file)), file);
+  }
 });
 
 test('agents file overrides a built-in by name and adds new profiles', () => {
@@ -57,13 +89,14 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     },
     "bare": {"command": "bare-cli"}
   }`);
-  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'opencode-local', 'bare']);
-  assert.deepEqual(settings.profile('codex'), profile('codex', 'Codex (fast)', 'codex', { args: ['--model', 'o4'], promptFlag: undefined, icon: undefined }));
+  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'opencode-local', 'bare']);
+  assert.deepEqual(settings.profile('codex'), profile('codex', 'Codex (fast)', 'codex', { args: ['--model', 'o4'], promptFlag: undefined, modelFlag: undefined, icon: undefined }));
   assert.deepEqual(
     settings.profile('opencode-local'),
     profile('opencode-local', 'OpenCode (LM Studio)', 'opencode', {
       args: ['--model', 'lmstudio/qwen3-coder'],
       promptFlag: '--prompt',
+      modelFlag: undefined,
       env: { LMSTUDIO: '1' },
       icon: 'icons/opencode.svg',
     }),
@@ -233,15 +266,15 @@ test('shared settings default when config.json is missing or lacks the keys', ()
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
   assert.deepEqual(settings.sharedFound(), {});
   write(CONFIG_FILE, '{"defaultAgent": "codex"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last' });
+  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last', launchVia: 'direct', closeAfterHandoff: true });
   assert.deepEqual(warnings, []);
 });
 
-test('shared settings read the four keys and drop invalid values', () => {
+test('shared settings read the six keys and drop invalid values', () => {
   const { settings, write, warnings } = fixture();
-  write(CONFIG_FILE, '{"tabRouting": "caller", "terminal": "wezterm", "shell": "/opt/pwsh", "terminalWindow": "dedicated"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated' });
-  write(CONFIG_FILE, '{"tabRouting": "nowhere", "terminal": 3, "shell": " ", "terminalWindow": ""}');
+  write(CONFIG_FILE, '{"tabRouting": "caller", "terminal": "wezterm", "shell": "/opt/pwsh", "terminalWindow": "dedicated", "launchVia": "ori"}');
+  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated', launchVia: 'ori', closeAfterHandoff: true });
+  write(CONFIG_FILE, '{"tabRouting": "nowhere", "terminal": 3, "shell": " ", "terminalWindow": "", "launchVia": "both"}');
   assert.deepEqual(settings.sharedFound(), { shell: 'auto' });
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
   write(CONFIG_FILE, 'broken');
@@ -290,7 +323,7 @@ test('saving a shared setting leaves a broken config alone', () => {
 
 test('detection lists terminals and shells, and is empty when the file is missing or broken', () => {
   const { settings, write } = fixture();
-  assert.deepEqual(settings.detected(), { terminals: [], shells: [] });
+  assert.deepEqual(settings.detected(), { terminals: [], shells: [], ori: null });
   write(
     DETECTED_FILE,
     JSON.stringify({
@@ -302,12 +335,13 @@ test('detection lists terminals and shells, and is empty when the file is missin
   assert.deepEqual(settings.detected(), {
     terminals: [{ id: 'wezterm', name: 'WezTerm' }, { id: 'kitty', name: 'kitty' }],
     shells: [{ path: '/opt/pwsh', label: 'PowerShell 7.5.2 (MSI)' }, { path: '/opt/ps', label: '/opt/ps' }],
+    ori: null,
   });
   write(DETECTED_FILE, '{"terminals": "none", "shells": {}}');
-  assert.deepEqual(settings.detected(), { terminals: [], shells: [] });
+  assert.deepEqual(settings.detected(), { terminals: [], shells: [], ori: null });
   write(DETECTED_FILE, 'broken');
-  assert.deepEqual(settings.detected(), { terminals: [], shells: [] });
-  assert.deepEqual(parseDetected('{}'), { terminals: [], shells: [] });
+  assert.deepEqual(settings.detected(), { terminals: [], shells: [], ori: null });
+  assert.deepEqual(parseDetected('{}'), { terminals: [], shells: [], ori: null });
 });
 
 test('only the user-level value of a shared setting is shared; workspace values are ignored', () => {
@@ -317,4 +351,202 @@ test('only the user-level value of a shared setting is shared; workspace values 
   assert.equal(userSettingValue('tabRouting', { workspaceValue: 'caller' }), 'project');
   assert.equal(userSettingValue('terminalWindow', { globalValue: ' ', workspaceValue: 'dedicated' }), 'last');
   assert.equal(userSettingValue('shell', undefined), 'auto');
+});
+
+test('built-in profiles carry the model flag of each CLI', () => {
+  assert.deepEqual(
+    BUILTIN_PROFILES.map(p => [p.name, p.modelFlag]),
+    [
+      ['claude', '--model'], ['codex', '-m'], ['agy', '--model'], ['copilot', '--model'], ['gemini', '-m'], ['grok', '-m'], ['pi', '--model'],
+      ['hermes', '-m'], ['opencode', '-m'], ['qwen', '-m'], ['goose', '--model'], ['codex-local', '-m'],
+    ],
+  );
+});
+
+test('a custom profile sets modelFlag in the agents file', () => {
+  const { settings, warnings, writeAgents } = fixture();
+  writeAgents('{"mine": {"command": "mine-cli", "modelFlag": "--use"}, "codex": {"command": "codex"}}');
+  assert.equal(settings.profile('mine')?.modelFlag, '--use');
+  assert.equal(settings.profile('codex')?.modelFlag, undefined);
+  assert.deepEqual(warnings, []);
+  writeAgents('{"mine": {"command": "mine-cli", "modelFlag": " "}}');
+  assert.deepEqual(settings.profiles(), BUILTIN_PROFILES);
+  writeAgents('{"mine": {"command": "mine-cli", "modelFlag": 1}}');
+  assert.deepEqual(settings.profiles(), BUILTIN_PROFILES);
+  assert.equal(warnings.length, 2);
+});
+
+const oriAll: DetectedOri = { path: '/home/u/.local/bin/ori', version: '0.14.3', agents: ['claude', 'codex'] };
+const claudeProfile = profile('claude', 'Claude Code', 'claude', { modelFlag: '--model' });
+const codexProfile = profile('codex', 'Codex', 'codex', { args: ['--no-daemon'], modelFlag: '-m' });
+const geminiProfile = profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i', modelFlag: '-m' });
+const bareProfile = profile('bare', 'Bare', 'bare-cli', { promptFlag: '-i' });
+
+function context(extra: Partial<LaunchContext> = {}): LaunchContext {
+  return { setting: 'direct', ori: oriAll, windows: false, searchPath: '', ...extra };
+}
+
+test('a direct launch puts the model flag after the profile args', () => {
+  const launch = planLaunch(codexProfile, context({ model: 'gpt-5', args: ['--yolo'], prompt: 'hi' }));
+  assert.equal(launch.via, 'direct');
+  assert.equal(launch.command, 'codex');
+  assert.deepEqual(launch.args, ['--no-daemon', '-m', 'gpt-5', '--yolo']);
+  const withFlag = planLaunch(geminiProfile, context({ model: 'gemini-2.5-pro', prompt: 'hi' }));
+  assert.deepEqual(withFlag.args, ['-m', 'gemini-2.5-pro', '-i']);
+  assert.equal(withFlag.prompt, 'hi');
+  assert.deepEqual(planLaunch(claudeProfile, context()).args, []);
+});
+
+test('Goose starts with goose run -s -t for a first message and goose session without one', () => {
+  const goose = BUILTIN_PROFILES.find(p => p.name === 'goose')!;
+  const withPrompt = planLaunch(goose, context({ prompt: 'hi', model: 'm1' }));
+  assert.deepEqual([withPrompt.command, ...withPrompt.args, withPrompt.prompt], ['goose', 'run', '-s', '--model', 'm1', '-t', 'hi']);
+  const empty = planLaunch(goose, context({ model: 'm1' }));
+  assert.deepEqual([empty.command, ...empty.args], ['goose', 'session', '--model', 'm1']);
+  assert.deepEqual(planLaunch(goose, context({ setting: 'ori' })).args, ['session']);
+  assert.throws(() => planLaunch(goose, context({ via: 'ori' })), /goose can't launch through Ori/);
+  const custom = { ...goose, args: ['run', '-s', '--debug'] };
+  assert.deepEqual(planLaunch(custom, context()).args, ['run', '-s', '--debug']);
+  const renamed = { ...goose, command: 'goose-cli' };
+  assert.deepEqual(planLaunch(renamed, context()).args, ['run', '-s']);
+});
+
+test('a model for a profile without modelFlag fails, never silently', () => {
+  const message = 'bare has no model option; open it without model, or set modelFlag for it in agents.json';
+  assert.throws(() => planLaunch(bareProfile, context({ model: 'm' })), new BadRequest(message));
+  assert.throws(() => planLaunch(bareProfile, context({ model: 'm', via: 'direct' })), new BadRequest(message));
+  assert.deepEqual(planLaunch(bareProfile, context()).args, []);
+});
+
+test('an Ori launch runs ori with the agent, the model, then the profile args', () => {
+  const launch = planLaunch(codexProfile, context({ via: 'ori', model: 'openai/gpt-5', args: ['--yolo'], prompt: 'hi', env: { A: '1' } }));
+  assert.equal(launch.via, 'ori');
+  assert.equal(launch.agent, 'codex');
+  assert.equal(launch.command, 'ori');
+  assert.deepEqual(launch.args, ['codex', '--model', 'openai/gpt-5', '--no-daemon', '--yolo']);
+  assert.equal(launch.prompt, 'hi');
+  assert.deepEqual(launch.env, { A: '1' });
+  assert.deepEqual(planLaunch(claudeProfile, context({ via: 'ori' })).args, ['claude']);
+});
+
+test('an Ori launch needs no modelFlag on the profile', () => {
+  const noFlag = profile('claude', 'Claude Code', 'claude');
+  assert.deepEqual(planLaunch(noFlag, context({ via: 'ori', model: 'anthropic/claude-sonnet-4.5' })).args, ['claude', '--model', 'anthropic/claude-sonnet-4.5']);
+});
+
+test('an explicit via beats the setting in both directions', () => {
+  assert.equal(planLaunch(claudeProfile, context({ setting: 'ori' })).via, 'ori');
+  assert.equal(planLaunch(claudeProfile, context({ setting: 'ori', via: 'direct' })).via, 'direct');
+  assert.equal(planLaunch(claudeProfile, context({ setting: 'direct', via: 'ori' })).via, 'ori');
+  assert.equal(planLaunch(claudeProfile, context({ setting: 'direct' })).via, 'direct');
+});
+
+test('the setting falls back to a direct launch when Ori cannot run the agent', () => {
+  const cases: [AgentProfile, Partial<LaunchContext>][] = [
+    [claudeProfile, { ori: null }],
+    [geminiProfile, {}],
+    [profile('grok', 'Grok', 'grok'), {}],
+    [profile('pi', 'Pi', 'pi'), { ori: { ...oriAll, agents: ['claude'] } }],
+  ];
+  for (const [p, extra] of cases) {
+    const launch = planLaunch(p, context({ setting: 'ori', ...extra }));
+    assert.equal(launch.via, 'direct', p.name);
+    assert.equal(launch.command, p.command);
+  }
+  const withModel = planLaunch(geminiProfile, context({ setting: 'ori', model: 'gemini-2.5-pro' }));
+  assert.deepEqual(withModel.args, ['-m', 'gemini-2.5-pro']);
+  assert.throws(() => planLaunch(bareProfile, context({ setting: 'ori', model: 'm' })), /has no model option/);
+});
+
+test('an explicit Ori launch that cannot run fails with the reason', () => {
+  assert.throws(() => planLaunch(claudeProfile, context({ via: 'ori', ori: null })), new BadRequest("claude can't launch through Ori: Ori is not installed"));
+  assert.throws(() => planLaunch(geminiProfile, context({ via: 'ori' })), new BadRequest("gemini can't launch through Ori: Ori does not support gemini"));
+  assert.throws(
+    () => planLaunch(profile('pi', 'Pi', 'pi'), context({ via: 'ori', ori: { ...oriAll, agents: ['claude'] } })),
+    new BadRequest("pi can't launch through Ori: Ori does not list pi as launchable"),
+  );
+});
+
+function shimFixture(files: string[]) {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-shim-'));
+  for (const name of files) fs.writeFileSync(path.join(bin, name), '');
+  return bin;
+}
+
+test('on Windows, a .cmd shim agent refuses Ori arguments with | " % ^ & < or >', () => {
+  const bin = shimFixture(['codex.cmd', 'claude.exe']);
+  for (const bad of ['a|b', 'say "hi"', '50%', 'a^b', 'a&b', '<x', 'x>']) {
+    const own = { via: 'ori', windows: true, searchPath: bin } as const;
+    assert.throws(() => planLaunch(codexProfile, context({ ...own, prompt: bad })), /can't launch through Ori: .*\.cmd shim/, bad);
+    assert.throws(() => planLaunch(codexProfile, context({ ...own, args: [bad] })), /\.cmd shim/, bad);
+    assert.throws(() => planLaunch(codexProfile, context({ ...own, model: bad })), /\.cmd shim/, bad);
+    assert.equal(planLaunch(claudeProfile, context({ ...own, prompt: bad })).via, 'ori', `claude.exe takes ${bad}`);
+    assert.equal(planLaunch(codexProfile, context({ ...own, windows: false, prompt: bad })).via, 'ori', `non-Windows takes ${bad}`);
+  }
+  assert.equal(planLaunch(codexProfile, context({ via: 'ori', windows: true, searchPath: bin, prompt: 'plain text' })).via, 'ori');
+});
+
+test('on Windows, the setting falls back to a direct launch when a .cmd shim refuses an argument', () => {
+  const bin = shimFixture(['codex.cmd']);
+  const launch = planLaunch(codexProfile, context({ setting: 'ori', windows: true, searchPath: bin, prompt: 'say "hi"' }));
+  assert.equal(launch.via, 'direct');
+  assert.equal(launch.command, 'codex');
+});
+
+test('the Codex tab arguments hold characters a .cmd shim refuses, so Codex falls back or fails on Windows', () => {
+  const real = BUILTIN_PROFILES.find(p => p.name === 'codex')!;
+  assert.ok(real.args.some(a => /[|"%^&<>]/.test(a)));
+  const bin = shimFixture(['codex.cmd']);
+  assert.equal(planLaunch(real, context({ setting: 'ori', windows: true, searchPath: bin })).via, 'direct');
+  assert.throws(() => planLaunch(real, context({ via: 'ori', windows: true, searchPath: bin })), /can't launch through Ori/);
+  assert.equal(planLaunch(real, context({ via: 'ori', windows: false })).via, 'ori');
+});
+
+test('detection reads the Ori entry and is null without it', () => {
+  assert.deepEqual(parseDetected('{"ori": {"path": "/x/ori", "version": "0.14.3", "agents": ["claude", 3, "codex"]}}').ori, {
+    path: '/x/ori',
+    version: '0.14.3',
+    agents: ['claude', 'codex'],
+  });
+  assert.equal(parseDetected('{"ori": null}').ori, null);
+  assert.equal(parseDetected('{"ori": {"agents": ["claude"]}}').ori, null);
+  assert.equal(parseDetected('{"ori": []}').ori, null);
+  assert.deepEqual(parseDetected('{"ori": {"path": "/x/ori"}}').ori, { path: '/x/ori', version: undefined, agents: [] });
+});
+
+test('launchVia saves to config.json, defaults to direct and keeps other keys', () => {
+  const { settings, home, write } = fixture();
+  assert.equal(settings.shared().launchVia, 'direct');
+  write(CONFIG_FILE, '{"defaultAgent": "codex", "launchVia": "ori"}');
+  assert.equal(settings.shared().launchVia, 'ori');
+  assert.ok(settings.setShared('launchVia', 'direct'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, CONFIG_FILE), 'utf8')), { defaultAgent: 'codex', launchVia: 'direct' });
+  assert.equal(userSettingValue('launchVia', { globalValue: 'ori', workspaceValue: 'direct' }), 'ori');
+  assert.equal(userSettingValue('launchVia', { workspaceValue: 'ori' }), 'direct');
+});
+
+test('closeAfterHandoff defaults to true, reads a boolean and drops other values', () => {
+  const { settings, write } = fixture();
+  assert.equal(settings.shared().closeAfterHandoff, true);
+  write(CONFIG_FILE, '{"closeAfterHandoff": false}');
+  assert.equal(settings.shared().closeAfterHandoff, false);
+  assert.deepEqual(settings.sharedFound(), { closeAfterHandoff: false });
+  write(CONFIG_FILE, '{"closeAfterHandoff": "false"}');
+  assert.deepEqual(settings.sharedFound(), {});
+  assert.equal(settings.shared().closeAfterHandoff, true);
+});
+
+test('closeAfterHandoff writes false only when unchecked and removes the key when checked', () => {
+  const { settings, home } = fixture();
+  const config = path.join(home, CONFIG_FILE);
+  fs.writeFileSync(config, '{"defaultAgent": "codex"}');
+  assert.ok(settings.setShared('closeAfterHandoff', true));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { defaultAgent: 'codex' });
+  assert.ok(settings.setShared('closeAfterHandoff', false));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { defaultAgent: 'codex', closeAfterHandoff: false });
+  assert.ok(settings.setShared('closeAfterHandoff', true));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { defaultAgent: 'codex' });
+  assert.equal(userSettingValue('closeAfterHandoff', { globalValue: false, workspaceValue: true }), false);
+  assert.equal(userSettingValue('closeAfterHandoff', { workspaceValue: false }), true);
+  assert.equal(userSettingValue('closeAfterHandoff', { globalValue: 'no' }), true);
 });
