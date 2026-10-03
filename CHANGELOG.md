@@ -19,7 +19,10 @@ packages add the `agy` profile and icon and the Codex `Interrupt` hook.
   cancelled read puts its messages back. A message file that holds no valid message moves to `bad/` and
   is reported instead of dropped.
 - A headless agent started inside a tab no longer changes the tab's state. Only the agent session that
-  owns the tab updates it; `/clear` and resume hand ownership on.
+  owns the tab updates it. Another session takes the tab over only between turns, as after `/clear`,
+  `/new` or resume, so this works for every CLI, including Codex and Antigravity CLI, which have no
+  usable session-start hook. Hooks from a different CLI than the tab's agent are ignored, and the
+  `delegate` skill clears `IDE_AGENT_TABS_ID` for its runs.
 - `busy` with no hook activity for 15 minutes counts as idle. An interrupt sets idle: Claude
   `PostToolUseFailure` with `is_interrupt`, Claude `StopFailure`, and Codex `Interrupt`. A restarted
   server resets a dead server's state.

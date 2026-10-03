@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { deliver, newMessageId, takeMessages } from '../src/messaging/mailbox.js';
 import { HOOK_EVENTS, runHook } from '../src/messaging/hook.js';
-import { presencePath, readPresence } from '../src/messaging/sessions.js';
+import { presencePath, readPresence, updatePresence } from '../src/messaging/sessions.js';
 import { tempDir } from './tempDir.js';
 
 const ID = 'tab-hook-1';
@@ -186,4 +186,40 @@ test('an Antigravity CLI turn resets the turn-end count on its first model call 
   assert.equal((await readPresence(home, ID))!.nudges, 1, 'a later model call in the same turn keeps the count');
   await hook(home, 'agy', 'PreInvocation', { invocationNum: 0 });
   assert.equal((await readPresence(home, ID))!.nudges, 0);
+});
+
+test('a child agent of the same CLI is refused while the tab is in a turn, for every CLI', async () => {
+  const cases: [string, string, string, Record<string, unknown>, Record<string, unknown>][] = [
+    ['codex', 'UserPromptSubmit', 'Stop', { session_id: 'tab' }, { session_id: 'child' }],
+    ['agy', 'PreInvocation', 'Stop', { conversationId: 'tab', invocationNum: 0 }, { conversationId: 'child' }],
+    ['gemini', 'BeforeAgent', 'AfterAgent', { session_id: 'tab' }, { session_id: 'child' }],
+  ];
+  for (const [cli, prompt, stop, own, child] of cases) {
+    const home = tempDir('iat-hook-');
+    await hook(home, cli, prompt, own);
+    await mail(home);
+    assert.equal(await hook(home, cli, stop, child), undefined, cli);
+    assert.equal(await state(home), 'busy', `${cli}: the child's turn end leaves the tab busy`);
+    assert.equal((await readPresence(home, ID))?.nudges ?? 0, 0, `${cli}: the child uses none of the tab's nudges`);
+  }
+});
+
+test('a new session in an idle tab takes it over without a start hook, as after /clear or /new', async () => {
+  const home = tempDir('iat-hook-');
+  await hook(home, 'agy', 'PreInvocation', { conversationId: 'first', invocationNum: 0 });
+  await hook(home, 'agy', 'Stop', { conversationId: 'first' });
+  assert.equal(await state(home), 'idle');
+  await hook(home, 'agy', 'PreInvocation', { conversationId: 'second', invocationNum: 0 });
+  assert.equal(await state(home), 'busy');
+  assert.equal((await readPresence(home, ID))?.owner, 'second');
+  await hook(home, 'agy', 'Stop', { conversationId: 'first' });
+  assert.equal(await state(home), 'busy', 'the old session no longer counts');
+});
+
+test('a hook from another CLI than the tab agent is ignored', async () => {
+  const home = tempDir('iat-hook-');
+  await updatePresence(home, ID, () => ({ id: ID, agent: 'codex', state: 'busy', stateAt: new Date().toISOString() }));
+  assert.equal(await hook(home, 'claude', 'Stop', { session_id: 'child' }), undefined);
+  assert.equal(await hook(home, 'claude', 'SessionStart', { source: 'startup', session_id: 'child' }), undefined);
+  assert.equal(await state(home), 'busy');
 });
