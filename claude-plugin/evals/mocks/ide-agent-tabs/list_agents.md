@@ -20,7 +20,7 @@
       "name": "agy",
       "label": "Antigravity CLI",
       "command": "agy",
-      "installed": false
+      "installed": true
     },
     {
       "name": "copilot",
