@@ -88,12 +88,45 @@ test('lists editor CLI install locations per platform', () => {
   ]);
   assert.deepEqual(win.cursor, ['C:\\Users\\a\\AppData\\Local\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd']);
   assert.deepEqual(win['antigravity-ide'], ['C:\\Users\\a\\AppData\\Local\\Programs\\Antigravity IDE\\bin\\antigravity-ide.cmd']);
+  assert.deepEqual(win.kiro, ['C:\\Users\\a\\AppData\\Local\\Programs\\Kiro\\bin\\kiro.cmd']);
+  assert.deepEqual(win.positron, [
+    'C:\\Users\\a\\AppData\\Local\\Programs\\Positron\\bin\\positron.cmd',
+    'C:\\Program Files\\Positron\\bin\\positron.cmd',
+  ]);
+  assert.deepEqual(win.trae, ['C:\\Users\\a\\AppData\\Local\\Programs\\Trae\\bin\\trae.cmd']);
   const mac = editorCliLocations('darwin', {}, '/Users/a');
   assert.ok(mac.code!.includes('/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code'));
   assert.ok(mac.codium!.includes('/Users/a/Applications/VSCodium.app/Contents/Resources/app/bin/codium'));
+  assert.deepEqual(mac['code-insiders']!.slice(0, 1), ['/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code']);
+  assert.deepEqual(mac.cursor!.slice(0, 2), ['/Applications/Cursor.app/Contents/Resources/app/bin/code', '/Applications/Cursor.app/Contents/Resources/app/bin/cursor']);
+  assert.ok(mac['antigravity-ide']!.includes('/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide'));
+  assert.ok(mac.kiro!.includes('/Applications/Kiro.app/Contents/Resources/app/bin/code'));
+  assert.ok(mac.positron!.includes('/Users/a/Applications/Positron.app/Contents/Resources/app/bin/code'));
+  assert.ok(mac.trae!.includes('/Applications/Trae.app/Contents/Resources/app/bin/code'));
+  for (const list of Object.values(mac)) {
+    assert.ok(list.every((p) => !p.endsWith('/bin/code-insiders') && !p.endsWith('/bin/kiro') && !p.endsWith('/bin/positron')));
+  }
   const linux = editorCliLocations('linux', {}, '/home/a');
   assert.deepEqual(Object.keys(linux), EDITOR_CLIS);
-  assert.ok(Object.values(linux).every((l) => l.length === 0));
+  assert.deepEqual(linux.code, [
+    '/usr/share/code/bin/code',
+    '/opt/code/bin/code',
+    '/snap/bin/code',
+    '/home/a/.local/bin/code',
+    '/var/lib/flatpak/exports/bin/com.visualstudio.code',
+    '/home/a/.local/share/flatpak/exports/bin/com.visualstudio.code',
+  ]);
+  assert.ok(linux.codium!.includes('/var/lib/flatpak/exports/bin/com.vscodium.codium'));
+  assert.ok(linux['code-insiders']!.includes('/snap/bin/code-insiders'));
+  assert.deepEqual(linux.trae, ['/usr/share/trae/bin/trae', '/opt/trae/bin/trae', '/home/a/.local/bin/trae']);
+  assert.ok(linux.kiro!.includes('/usr/share/kiro/bin/kiro'));
+  assert.ok(linux.positron!.includes('/usr/share/positron/bin/positron'));
+});
+
+test('finds an editor CLI in a Linux fallback location when PATH misses it', () => {
+  const fallback = '/snap/bin/code';
+  const found = findEditorClis({ platform: 'linux', env: { PATH: '' }, userHome: '/home/a' }, (p) => p === fallback);
+  assert.deepEqual(found, [{ cli: 'code', path: fallback }]);
 });
 
 test('finds editor CLIs on PATH first, then in install locations', () => {

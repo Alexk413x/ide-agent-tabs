@@ -31,7 +31,8 @@ the new plugin as a normal plugin update.
 - Claude Code.
 - Node.js 20 or later.
 - An IDE: IntelliJ IDEA, Android Studio or another JetBrains IDE at build 262.10315 or later (2026.2.2),
-  or VS Code 1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium and Antigravity.
+  or VS Code 1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium, Antigravity, Kiro,
+  Positron and Trae.
 - At least one agent CLI, such as Claude Code, Codex, Gemini CLI, Copilot CLI or Antigravity CLI.
 
 ## Where it works

@@ -24,7 +24,8 @@ missing or older, ask the user to install the current Node.js LTS, and stop. Not
 
 ## 2. Find the IDEs
 
-1. Find VS Code and editors built on it, such as Cursor, Windsurf, VSCodium and Antigravity:
+1. Find VS Code and editors built on it, such as Cursor, Windsurf, VSCodium, Antigravity, Kiro,
+   Positron and Trae:
 
    ```sh
    node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --status
@@ -32,8 +33,8 @@ missing or older, ask the user to install the current Node.js LTS, and stop. Not
 
    The JSON lists each editor's command-line tool (`cli`, `path`) and the extension version installed
    there (`installed`, or `null`). It also shows the bundled versions and the JetBrains repository.
-   The script looks for `code`, `code-insiders`, `cursor`, `windsurf`, `codium` and `antigravity-ide`
-   on `PATH` and in the usual install folders. If the user has an editor it misses, ask for the path to
+   The script looks for `code`, `code-insiders`, `cursor`, `windsurf`, `codium`, `antigravity-ide`,
+   `kiro`, `positron` and `trae` on `PATH` and in the usual install folders. If the user has an editor it misses, ask for the path to
    its command-line tool.
 
 2. Find JetBrains IDEs, including Android Studio. Look for folders that contain `product-info.json`
@@ -42,10 +43,15 @@ missing or older, ask the user to install the current Node.js LTS, and stop. Not
    - Windows: `C:\Program Files\Android\Android Studio*`, `C:\Program Files\JetBrains\*`,
      `%LOCALAPPDATA%\Programs\*` (Toolbox 2.x installs IDEs here), and
      `%LOCALAPPDATA%\JetBrains\Toolbox\apps\*`.
-   - macOS: `/Applications/*.app` and `~/Applications/*.app`.
+   - macOS: `/Applications/*.app`, `~/Applications/*.app` (Toolbox 2.x), and
+     `~/Library/Application Support/JetBrains/Toolbox/apps/*` (Toolbox 1.x).
    - Linux: `~/.local/share/JetBrains/Toolbox/apps/*`, `/opt/*`, `/usr/share/*`, `/usr/local/*`,
      `/snap/*/current`, and Flatpak apps in `/var/lib/flatpak/app/*/current/active/files` and
      `~/.local/share/flatpak/app/*/current/active/files`.
+
+   Toolbox 1.x nests each IDE in `<ide>/ch-<n>/<build>/` under its `apps` folder, so search the
+   Toolbox `apps` folders three levels down. Toolbox 2.1 and later can install to a folder the user
+   chose; ask the user for it if a Toolbox IDE is missing.
 
    Read each IDE's `product-info.json` for its `name` and `buildNumber`. The plugin needs build
    262.10315 or later (2026.2.2). List an older IDE as too old; don't set it up.
