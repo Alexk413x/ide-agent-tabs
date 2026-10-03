@@ -28,7 +28,7 @@ async function answer(work: () => Promise<unknown>): Promise<CallToolResult> {
 }
 
 const IDE_ID =
-  'An id from list_ides: an IDE such as jetbrains-12345, or a terminal: windows-terminal, ghostty, kitty, wezterm or tmux.';
+  'An id from list_ides: an IDE such as jetbrains-12345, or a terminal: windows-terminal, ghostty, iterm2, kitty, wezterm or tmux.';
 
 const SESSION_ID = 'A session id from list_sessions.';
 const MESSAGE_ID = 'A message id, such as m-0123456789abcdef.';

@@ -24,7 +24,8 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 | `wait_for_message` | optional `timeout` (seconds, default 60, at most 600, or 170 in an Antigravity CLI session), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
 
 An IDE's id is its registry file name without `.json`: `<ide>-<pid>`, or `<ide>-<pid>-<window>` for a VS
-Code window. A terminal's id is its name: `windows-terminal`, `ghostty`, `kitty`, `wezterm` or `tmux`.
+Code window. A terminal's id is its name: `windows-terminal`, `ghostty`, `iterm2`, `kitty`, `wezterm` or
+`tmux`.
 
 When an IDE refuses a request, the tool result is an error that holds the IDE's HTTP status and JSON reply
 unchanged.
@@ -39,7 +40,8 @@ unchanged.
 4. Otherwise, the tab opens in the most recently started IDE that has a project open.
 5. Otherwise, the tab opens in the terminal named by `"terminal"` in `config.json`.
 6. Otherwise, the tab opens in the first installed terminal in the platform's order: Windows Terminal,
-   then WezTerm on Windows; Ghostty, kitty, WezTerm, then tmux on macOS and Linux.
+   then WezTerm on Windows; Ghostty, iTerm2, kitty, WezTerm, then tmux on macOS; Ghostty, kitty,
+   WezTerm, then tmux on Linux.
 
 The server skips an IDE that doesn't answer `info`, so an IDE stuck behind a modal dialog doesn't block the
 route.
@@ -101,7 +103,7 @@ to answer a message that needs no answer.
 | Where the recipient runs | Wake-up |
 |---|---|
 | JetBrains IDE, VS Code and editors built on it | The IDE's `input` route |
-| tmux, WezTerm, kitty with remote control, Ghostty on macOS | The terminal's own send-text command |
+| tmux, WezTerm, kitty with remote control, Ghostty on macOS, iTerm2 | The terminal's own send-text command |
 | Windows Terminal, Ghostty on Linux, kitty without remote control | None; the session relies on hooks |
 | A session Agent Tabs didn't open | None |
 
@@ -253,6 +255,7 @@ To remove Agent Tabs from the other agents, run `--unregister` with each agent, 
 |---|---|---|---|---|
 | Windows Terminal | Windows | Tab | Tabs this server opened, while their shell runs | Best effort |
 | Ghostty 1.3 or later | macOS | Tab | Yes | Yes |
+| iTerm2 | macOS | Tab | Yes | Yes |
 | Ghostty | Linux | New window | Windows this server opened, while their shell runs | Best effort |
 | WezTerm | Windows, macOS, Linux | Tab | Yes | Yes |
 | kitty, remote control on | macOS, Linux | Tab | Yes | Yes |
@@ -295,6 +298,24 @@ identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 
 - The server drives Ghostty through AppleScript, which Ghostty 1.3 added. The first call asks you to allow
   the calling app to control Ghostty, in **System Settings > Privacy & Security > Automation**.
+
+### iTerm2
+
+- The server drives iTerm2 through AppleScript, with `/usr/bin/osascript`. It needs no iTerm2 setting;
+  the Python API can stay off.
+- Setup: the first tab makes macOS ask whether the app that runs the agent, such as your terminal, IDE or
+  the Claude desktop app, may control iTerm. Allow it. To change the answer later, use **System Settings >
+  Privacy & Security > Automation**. If the permission is denied, `open_tab` returns an error that names
+  this setting, and the server skips iTerm2 when it picks a terminal until the server restarts.
+- A new tab opens in the current iTerm2 window, or in a new window when none is open. If iTerm2 isn't
+  running, AppleScript starts it.
+- Each tab is tracked by its session's `unique ID`. `list_tabs` reads every session's id, and
+  `close_tab` closes the session with the recorded id.
+- The tab command holds the login shell, the launch script and the launch file, each single-quoted.
+  iTerm2 evaluates the command as an interpolated string and then splits it like a shell, so the server
+  refuses to open a tab when the launch script or launch file sits in a path that holds `'`, `\` or `$`.
+- The tab title and the wake-up line reach AppleScript as `osascript` arguments, never inside the script.
+- The server finds iTerm2 at `/Applications/iTerm.app` or `~/Applications/iTerm.app`.
 
 ### Ghostty on Linux
 
@@ -380,6 +401,8 @@ tab. Add the driver to
 - Ghostty on Linux: partly. In WSL Ubuntu, Ghostty 1.3.1 accepts the flags, but it needs OpenGL 4.3 and
   WSLg offers 4.1, so no window opens. The same start, pid and `SIGHUP` path passes with kitty.
 - Ghostty on macOS: untested. Unit tests cover the AppleScript and command generation.
+- iTerm2: untested. Unit tests with a stand-in `osascript` cover open, list, close, input, quoting and
+  the permission errors.
 - No driver is tested on a real Mac.
 
 ## Build and test

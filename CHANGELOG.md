@@ -61,6 +61,10 @@ packages add the `agy` profile and icon and the Codex `Interrupt` hook.
 - The `delegate` skill runs Antigravity CLI headless with `agy -p`.
 - Codex tabs report an Esc interrupt through the `Interrupt` hook (see Fixed).
 - The IDE sync and setup skill support Kiro (`kiro`), Positron (`positron`) and Trae (`trae`).
+- iTerm2 on macOS as a terminal host, `iterm2`: open, list and close tabs, and the messaging wake-up,
+  through AppleScript. The first tab asks for the macOS Automation permission. A denied permission
+  returns an error that names the setting, and later tabs open in the next terminal in the platform
+  order until the server restarts.
 - `scripts/check.mjs` runs typecheck, tests, the bundle check, the plugin version check and both
   `claude plugin validate --strict` runs.
 

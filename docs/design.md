@@ -251,8 +251,8 @@ registry and calls the HTTP API.
 3. The caller's own IDE, when the caller runs in an Agent Tabs tab of a running IDE.
 4. The most recently started IDE.
 5. When no IDE is running: the preferred terminal from `config.json`, then the first installed terminal
-   in the platform's order: Windows Terminal, then WezTerm on Windows; Ghostty, kitty, WezTerm, then tmux
-   on macOS and Linux.
+   in the platform's order: Windows Terminal, then WezTerm on Windows; Ghostty, iTerm2, kitty, WezTerm,
+   then tmux on macOS; Ghostty, kitty, WezTerm, then tmux on Linux.
 
 The reply includes a `reason` that says which rule chose the target.
 
@@ -281,6 +281,7 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
 | Windows Terminal | Windows | Tab | Tracked | Best effort | `wt.exe -w 0 new-tab` with `pwsh` and `agent-launch.ps1`. No outside API to query tabs, so `list_tabs` shows only the tabs this server opened, while their launcher's shell runs. `close_tab` ends that shell, which may leave the tab open with an exit message. |
 | Ghostty 1.3+ | macOS | Tab | Yes | Yes | AppleScript: `new tab` with a surface configuration (command and environment variables); query `terminals` by id; `close`. |
 | Ghostty | Linux | Window | Tracked | Best effort | A new process per agent: `ghostty --gtk-single-instance=false --working-directory=<dir> --confirm-close-surface=false --wait-after-command=false -e <shell> -l -i -c …`. Ghostty can't open a tab in a running instance from outside ([ghostty#12136](https://github.com/ghostty-org/ghostty/issues/12136)). The launcher writes its shell's pid; `list_tabs` checks that the shell runs, and `close_tab` sends it `SIGHUP`. |
+| iTerm2 | macOS | Tab | Yes | Yes | AppleScript through `/usr/bin/osascript -` with fixed `on run argv` scripts: `create tab with default profile command <cmd>` in the current window, or `create window` when none is open, returns the session's `unique ID`; list every session's `unique ID`; `close` the session with that id. |
 | WezTerm | Windows, macOS, Linux | Tab | Yes | Yes | `wezterm cli --no-auto-start spawn --cwd <dir> -- …` prints the pane id; `cli list --format json`; `cli kill-pane --pane-id`. `WEZTERM_UNIX_SOCKET` names the newest running GUI's `gui-sock-<pid>` ([wezterm#4456](https://github.com/wezterm/wezterm/issues/4456)). With no GUI running, `wezterm start` opens one. |
 | kitty | macOS, Linux | Tab | Yes | Yes | With remote control on: `kitten @ --to <socket> launch --type=tab`, `ls` and `close-window --match id:<n>`. Without it: a new `kitty` process per agent, tracked like Ghostty on Linux (Window, Tracked, Best effort). |
 | tmux 3.0+ | macOS, Linux | Tab | Yes | Yes | `tmux new-window -- /usr/bin/env IDE_AGENT_TABS_LAUNCHER=… IDE_AGENT_TABS_SPEC=… …` in the most recently attached session, else in the detached session `agents`; `list-windows -a`; `kill-window`. |
@@ -293,12 +294,20 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
   `IDE_AGENT_TABS_LAUNCHER` and `IDE_AGENT_TABS_SPEC` in the tab (Ghostty, kitty, and tmux through
   `/usr/bin/env`, because `new-session -e` needs tmux 3.2). In argv mode, they are positional arguments
   of the login shell, whose fixed `-c` script sets `IDE_AGENT_TABS_SPEC` and sources the launcher
-  (WezTerm, whose new panes get the GUI's environment, not the caller's). Argv mode with fish needs fish
-  3.2 or later.
+  (WezTerm, whose new panes get the GUI's environment, not the caller's, and iTerm2, whose AppleScript
+  `create tab` takes no environment). Argv mode with fish needs fish 3.2 or later.
 - A command line holds only fixed flags, the server's own paths, the folder and a cleaned title. The
   server refuses a path that holds a control character, and a path with `;` for Windows Terminal and tmux,
   which split commands at `;`. tmux gets no `-c <dir>`, because it expands formats such as `#(…)` there;
   the launcher changes to the folder instead.
+- iTerm2 evaluates its tab command as an interpolated string, where `\(` starts an expression, and then
+  splits it like a shell. The server single-quotes each word and refuses a launcher or spec path that
+  holds `'`, `\` or `$`. The folder and the title never enter that command: the launcher changes to the
+  folder, and the title, like every AppleScript value, is an `osascript` argument that `on run argv`
+  reads, never part of the script source.
+- iTerm2 needs the macOS Automation permission. If macOS denies it, or can't find iTerm2, `open_tab`
+  returns an error that names the setting, and the server leaves iTerm2 out of the terminal choice until
+  it restarts.
 - A terminal the server starts gets the server's environment without the variables that identify the
   calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 - The POSIX launchers write the shell's pid to `launch/<id>.pid` when the spec names a pid file. The
@@ -412,6 +421,8 @@ An agent sees a message only when it calls `read_messages` or `wait_for_message`
    - kitty with remote control: `kitten @ send-text --match id:<n> --stdin`, with the line and then `\r`
      on stdin, because kitty reads escapes in a `send-text` argument.
    - Ghostty on macOS: AppleScript `input text <line> to terminal id <id>`, then `send key "enter"`.
+   - iTerm2: AppleScript `write text <line> newline false` to the session, then `write text ""`, which
+     sends only the CR.
    - Windows Terminal, Ghostty on Linux, and kitty windows started without remote control can't take
      input from outside, so their sessions rely on hooks.
 3. **Waiting.** An agent that asked a question calls `wait_for_message` for the reply.
@@ -815,6 +826,7 @@ in `~/.ide-agent-tabs/mcp/` that other agents register.
 | tmux | 3.6 with bash in WSL Ubuntu, with and without an attached client | macOS |
 | Ghostty on Linux | 1.3.1 in WSL Ubuntu accepts the flags. No window opens, because Ghostty needs OpenGL 4.3 and WSLg offers 4.1. | A working window |
 | Ghostty on macOS | Unit tests of the AppleScript and command generation | A live run |
+| iTerm2 | Unit tests with a stand-in `osascript`: open, list, close, input, quoting, argv passing, and the permission and not-installed errors | A live run |
 | Agent profiles | `claude`, `codex` and `agy` flags checked against each CLI's help | `gemini` and `copilot`; `agy -i` in a tab |
 | Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>`; interactive Codex 0.158.0 tabs in Antigravity on Windows 11: a message read mid-task through the hooks, and an idle tab woken by the typed line through the `input` route, each answered; Antigravity CLI 1.2.16 headless (`agy -p`) on Windows 11 with a workspace `.agents/` config: `IDE_AGENT_TABS_ID` reaches the server and the hook commands, the MCP client name is `antigravity-client`, `PreInvocation` context reaches the model, `Stop` with `decision: "continue"` keeps the turn going, and `Stop` fires once per turn | The `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Gemini CLI or Copilot CLI session; Antigravity CLI: whether `Stop` fires after Esc, whether the typed wake line submits in its interactive TUI, and `--register agy` against the real `~/.gemini` files |
 
@@ -828,7 +840,7 @@ None of these is scheduled.
 
 - **Visual Studio extension:** the **New Agent Tab** button and editor tabs in Visual Studio on Windows.
   Until then, the MCP server opens tabs for Visual Studio users in Windows Terminal.
-- **Terminal and iTerm2 on macOS:** terminal drivers through AppleScript.
+- **Terminal on macOS:** a terminal driver through AppleScript, like the iTerm2 one.
 - **Messaging hooks for OpenCode:** state and reminders through an OpenCode plugin. Without hooks, an
   OpenCode session's `state` stays `unknown`, so it gets no wake-up and sees a message only when it calls
   `read_messages` or `wait_for_message`.
