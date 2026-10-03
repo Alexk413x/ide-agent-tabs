@@ -64,6 +64,7 @@ export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
   profile('codex', 'Codex', 'codex', undefined, CODEX_TAB_ARGS),
   profile('gemini', 'Gemini CLI', 'gemini', '-i'),
   profile('copilot', 'Copilot CLI', 'copilot', '-i'),
+  profile('agy', 'Antigravity CLI', 'agy', '-i'),
 ]);
 
 export function launchOf(p: AgentProfile, prompt?: string, callerArgs: string[] = [], callerEnv: Env = {}): AgentLaunch {

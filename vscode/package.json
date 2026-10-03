@@ -2,8 +2,8 @@
   "name": "ide-agent-tabs",
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
-  "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.19",
+  "description": "Open Claude Code, Codex, Gemini CLI, Copilot CLI, Antigravity CLI and other agent CLIs in editor tabs, from a button or from another agent.",
+  "version": "0.1.20",
   "publisher": "alexk413x",
   "license": "LicenseRef-Proprietary",
   "repository": {
@@ -23,6 +23,7 @@
     "codex",
     "gemini",
     "copilot",
+    "agy",
     "terminal"
   ],
   "main": "./dist/extension.js",
@@ -46,19 +47,22 @@
             "claude",
             "codex",
             "gemini",
-            "copilot"
+            "copilot",
+            "agy"
           ],
           "enumItemLabels": [
             "Claude Code",
             "Codex",
             "Gemini CLI",
-            "Copilot CLI"
+            "Copilot CLI",
+            "Antigravity CLI"
           ],
           "enumDescriptions": [
             "Claude Code.",
             "Codex.",
             "Gemini CLI.",
-            "Copilot CLI."
+            "Copilot CLI.",
+            "Antigravity CLI."
           ],
           "description": "The agent that the editor title button, the status bar item and startup open."
         },
@@ -137,6 +141,15 @@
         }
       },
       {
+        "command": "ideAgentTabs.newTab.agy",
+        "title": "New Antigravity CLI Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/agy_new.svg",
+          "dark": "resources/icons/agents/agy_new_dark.svg"
+        }
+      },
+      {
         "command": "ideAgentTabs.newTab.other",
         "title": "New Agent Tab",
         "category": "Agent Tabs",
@@ -163,6 +176,11 @@
       {
         "command": "ideAgentTabs.open.copilot",
         "title": "Copilot CLI",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.open.agy",
+        "title": "Antigravity CLI",
         "category": "Agent Tabs"
       },
       {
@@ -203,6 +221,12 @@
         "when": "ideAgentTabs.buttonAgent == copilot"
       },
       {
+        "command": "ideAgentTabs.newTab.agy",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == agy"
+      },
+      {
         "command": "ideAgentTabs.newTab.other",
         "key": "ctrl+alt+a",
         "mac": "cmd+alt+a",
@@ -229,6 +253,11 @@
         {
           "command": "ideAgentTabs.newTab.copilot",
           "when": "ideAgentTabs.buttonAgent == copilot",
+          "group": "navigation@-0.2"
+        },
+        {
+          "command": "ideAgentTabs.newTab.agy",
+          "when": "ideAgentTabs.buttonAgent == agy",
           "group": "navigation@-0.2"
         },
         {
@@ -259,6 +288,10 @@
           "when": "false"
         },
         {
+          "command": "ideAgentTabs.newTab.agy",
+          "when": "false"
+        },
+        {
           "command": "ideAgentTabs.newTab.other",
           "when": "false"
         },
@@ -276,6 +309,10 @@
         },
         {
           "command": "ideAgentTabs.open.copilot",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.agy",
           "when": "false"
         }
       ],
@@ -299,6 +336,11 @@
           "command": "ideAgentTabs.open.copilot",
           "when": "ideAgentTabs.installed.copilot",
           "group": "1_agents@3"
+        },
+        {
+          "command": "ideAgentTabs.open.agy",
+          "when": "ideAgentTabs.installed.agy",
+          "group": "1_agents@4"
         },
         {
           "command": "ideAgentTabs.newTabWith",

@@ -39,6 +39,8 @@ import {
 
 export const DEFAULT_WAIT_S = 60;
 export const MAX_WAIT_S = 600;
+// Antigravity CLI ends any MCP tool call after 3 minutes and has no setting to raise that.
+export const AGY_MAX_WAIT_S = 170;
 const CLEAN_EVERY_MS = 60 * 60 * 1000;
 const RESTART_GRACE_MS = 60_000;
 export const REWAKE_EVERY_MS = 15_000;
@@ -438,7 +440,7 @@ export class Messaging {
   async wait(input: WaitInput, signal?: AbortSignal) {
     if (input.from !== undefined && !isSessionId(input.from)) throw new MailError(`from is not a session id: ${input.from}`);
     if (input.replyTo !== undefined) checkMessageId(input.replyTo, 'replyTo');
-    const seconds = Math.min(Math.max(input.timeout ?? DEFAULT_WAIT_S, 0), MAX_WAIT_S);
+    const seconds = Math.min(Math.max(input.timeout ?? DEFAULT_WAIT_S, 0), this.agent === 'agy' ? AGY_MAX_WAIT_S : MAX_WAIT_S);
     const filter = { ...(input.from !== undefined ? { from: input.from } : {}), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}) };
     const peer = input.from;
     const retry = peer === undefined ? undefined : setInterval(() => void this.rewake(peer).catch(() => undefined), this.deps.rewakeEveryMs ?? REWAKE_EVERY_MS);

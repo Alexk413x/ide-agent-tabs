@@ -1,7 +1,7 @@
 # Agent Tabs for JetBrains IDEs
 
 A plugin for IntelliJ IDEA, Android Studio and other JetBrains IDEs that opens AI coding-agent sessions,
-such as Claude Code, Codex, Gemini CLI and Copilot CLI, in editor tabs.
+such as Claude Code, Codex, Gemini CLI, Copilot CLI and Antigravity CLI, in editor tabs.
 
 - Click **New Agent Tab** in the main toolbar or the **Tools** menu, or press **Ctrl+Alt+A** (**⌘⌥A** on
   macOS), to start the default agent in the project root.
@@ -63,6 +63,7 @@ The plugin knows these agents:
 | `codex` | Codex | `codex --no-daemon` and `-c` options that add Agent Tabs messaging; needs Codex 0.158 or later | positional |
 | `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
 | `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
+| `agy` | Antigravity CLI | `agy` | `-i <prompt>` |
 
 The menus list only agents whose command is on the IDE's `PATH`. On Windows, the plugin
 also looks for `.exe`, `.cmd`, `.bat` and `.ps1` files.

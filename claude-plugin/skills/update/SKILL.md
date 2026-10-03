@@ -52,7 +52,7 @@ node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --hook
 
 It updates the extension only in editors that already have an older version, and puts the new
 JetBrains plugin in `~/.ide-agent-tabs/repository/` if that folder exists. It also refreshes the MCP
-server copy in `~/.ide-agent-tabs/mcp/`, if that folder exists. Codex, Gemini CLI, Copilot CLI and
+server copy in `~/.ide-agent-tabs/mcp/`, if that folder exists. Codex, Gemini CLI, Copilot CLI, Antigravity CLI and
 OpenCode run the server from that copy, so their registrations keep working after an update. It prints nothing when
 there's nothing to update. Errors go to `~/.ide-agent-tabs/sync.log`.
 

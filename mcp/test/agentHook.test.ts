@@ -49,6 +49,10 @@ test('hooks set busy, permission and idle for each CLI', async () => {
     ['copilot', 'notification', { notificationType: 'permission_prompt' }, 'permission'],
     ['copilot', 'postToolUse', {}, 'busy'],
     ['copilot', 'agentStop', {}, 'idle'],
+    ['agy', 'PreInvocation', { invocationNum: 0 }, 'busy'],
+    ['agy', 'Stop', { fullyIdle: true, terminationReason: 'NO_TOOL_CALL' }, 'idle'],
+    ['agy', 'PostToolUse', {}, 'busy'],
+    ['agy', 'Stop', { fullyIdle: true }, 'idle'],
   ];
   const home = tempDir('iat-hook-');
   for (const [cli, event, input, want] of cases) {
@@ -72,6 +76,8 @@ test('each CLI gets the reminder in its own context format after a prompt and a 
     ['gemini', 'AfterTool', context('AfterTool')],
     ['copilot', 'userPromptSubmitted', undefined],
     ['copilot', 'postToolUse', { additionalContext: REMINDER }],
+    ['agy', 'PreInvocation', { injectSteps: [{ ephemeralMessage: REMINDER }] }],
+    ['agy', 'PostToolUse', undefined],
   ];
   for (const [cli, event, want] of cases) {
     const home = tempDir('iat-hook-');
@@ -114,6 +120,8 @@ test('turn end blocks at most three times in a row, and a prompt or a read reset
   assert.deepEqual(await hook(home, 'codex', 'Stop'), block);
   assert.deepEqual(await hook(home, 'gemini', 'AfterAgent'), { decision: 'deny', reason: block.reason });
   assert.deepEqual(await hook(home, 'copilot', 'agentStop'), block);
+  await hook(home, 'agy', 'PreInvocation', { invocationNum: 0 });
+  assert.deepEqual(await hook(home, 'agy', 'Stop'), { decision: 'continue', reason: block.reason });
 
   await takeMessages(home, ID);
   assert.equal(await hook(home, 'claude', 'Stop'), undefined);
@@ -127,7 +135,7 @@ test('a hook without a session id, or for an unknown CLI or event, does nothing'
   assert.equal(await hook(home, 'vim', 'Stop'), undefined);
   assert.equal(await hook(home, 'claude', 'SessionEnd'), undefined);
   assert.ok(!existsSync(presencePath(home, ID)));
-  assert.deepEqual(Object.keys(HOOK_EVENTS).sort(), ['claude', 'codex', 'copilot', 'gemini']);
+  assert.deepEqual(Object.keys(HOOK_EVENTS).sort(), ['agy', 'claude', 'codex', 'copilot', 'gemini']);
 });
 
 test('the hook script reads stdin, prints one JSON line, and exits 0 even on bad input', async () => {
@@ -168,4 +176,14 @@ test('a clear or resume in the tab hands the session to the new agent session id
   assert.equal(await state(home), 'busy');
   await hook(home, 'claude', 'Stop', { session_id: 'first' });
   assert.equal(await state(home), 'busy');
+});
+
+test('an Antigravity CLI turn resets the turn-end count on its first model call only', async () => {
+  const home = tempDir('iat-hook-');
+  await mail(home);
+  await hook(home, 'agy', 'Stop');
+  await hook(home, 'agy', 'PreInvocation', { invocationNum: 3 });
+  assert.equal((await readPresence(home, ID))!.nudges, 1, 'a later model call in the same turn keeps the count');
+  await hook(home, 'agy', 'PreInvocation', { invocationNum: 0 });
+  assert.equal((await readPresence(home, ID))!.nudges, 0);
 });

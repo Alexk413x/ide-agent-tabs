@@ -34,11 +34,11 @@ function fixture() {
 test('built-in profiles match the design', () => {
   const { settings, warnings } = fixture();
   const profiles = settings.profiles();
-  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'gemini', 'copilot']);
-  assert.deepEqual(profiles.map(p => p.label), ['Claude Code', 'Codex', 'Gemini CLI', 'Copilot CLI']);
-  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'gemini', 'copilot']);
-  assert.deepEqual(profiles.map(p => p.promptFlag), [undefined, undefined, '-i', '-i']);
-  assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0]);
+  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'gemini', 'copilot', 'agy']);
+  assert.deepEqual(profiles.map(p => p.label), ['Claude Code', 'Codex', 'Gemini CLI', 'Copilot CLI', 'Antigravity CLI']);
+  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'gemini', 'copilot', 'agy']);
+  assert.deepEqual(profiles.map(p => p.promptFlag), [undefined, undefined, '-i', '-i', '-i']);
+  assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0, 0]);
   assert.deepEqual(profiles[1]!.args, CODEX_TAB_ARGS);
   assert.deepEqual(profiles[1]!.args.slice(0, 2), ['--no-daemon', '-c']);
   assert.equal(settings.defaultProfile().name, 'claude');
@@ -56,7 +56,7 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     },
     "bare": {"command": "bare-cli"}
   }`);
-  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'gemini', 'copilot', 'opencode-local', 'bare']);
+  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'gemini', 'copilot', 'agy', 'opencode-local', 'bare']);
   assert.deepEqual(settings.profile('codex'), profile('codex', 'Codex (fast)', 'codex', { args: ['--model', 'o4'], promptFlag: undefined, icon: undefined }));
   assert.deepEqual(
     settings.profile('opencode-local'),

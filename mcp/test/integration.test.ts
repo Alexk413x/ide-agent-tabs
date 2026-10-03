@@ -169,7 +169,7 @@ test('list_agents reports profiles, installed state and the default, and warns o
   writeFileSync(path.join(home, 'config.json'), JSON.stringify({ defaultAgent: 'probe' }));
   const { json } = await call('list_agents');
   assert.equal(json.default, 'probe');
-  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'gemini', 'copilot', 'probe']);
+  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'gemini', 'copilot', 'agy', 'probe']);
   assert.equal(json.agents.at(-1).installed, true);
   assert.equal(json.agents[0].installed, false);
 

@@ -27,6 +27,12 @@
       "label": "Copilot CLI",
       "command": "copilot",
       "installed": false
+    },
+    {
+      "name": "agy",
+      "label": "Antigravity CLI",
+      "command": "agy",
+      "installed": false
     }
   ]
 }

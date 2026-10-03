@@ -52,6 +52,7 @@ const CLIENT_AGENTS: [string, string][] = [
   ['gemini', 'gemini'],
   ['copilot', 'copilot'],
   ['opencode', 'opencode'],
+  ['antigravity', 'agy'],
 ];
 
 export function agentFromClient(name: string | undefined): string {

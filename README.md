@@ -1,6 +1,6 @@
 # Agent Tabs
 
-Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI and Copilot CLI,
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI, Copilot CLI and Antigravity CLI,
 in IDE editor tabs. You open a tab with one button. An agent opens, lists and closes tabs in any IDE
 that runs on the same computer.
 
@@ -32,7 +32,7 @@ the new plugin as a normal plugin update.
 - Node.js 20 or later.
 - An IDE: IntelliJ IDEA, Android Studio or another JetBrains IDE at build 262.10315 or later (2026.2.2),
   or VS Code 1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium and Antigravity.
-- At least one agent CLI, such as Claude Code, Codex, Gemini CLI or Copilot CLI.
+- At least one agent CLI, such as Claude Code, Codex, Gemini CLI, Copilot CLI or Antigravity CLI.
 
 ## Where it works
 

@@ -2,8 +2,10 @@ import path from 'node:path';
 import { HOOK_EVENTS } from './messaging/hook.js';
 import { AGENT_ENV, TAB_ID_ENV } from './profiles.js';
 
-export type HookAgent = 'codex' | 'gemini' | 'copilot';
-export const HOOK_AGENTS: readonly HookAgent[] = ['codex', 'gemini', 'copilot'];
+export type HookAgent = 'codex' | 'gemini' | 'copilot' | 'agy';
+export const HOOK_AGENTS: readonly HookAgent[] = ['codex', 'gemini', 'copilot', 'agy'];
+export const AGY_HOOK_GROUP = 'ide-agent-tabs';
+export const AGY_ALLOW_RULE = 'mcp(ide-agent-tabs/*)';
 export const COPILOT_HOOKS_FILE = 'ide-agent-tabs.json';
 export const CODEX_ENV_VARS = [TAB_ID_ENV, AGENT_ENV, 'IDE_AGENT_TABS_HOME'];
 export const CODEX_TOOL_TIMEOUT_S = 660;
@@ -19,12 +21,16 @@ export function hookConfigFile(agent: HookAgent, env: NodeJS.ProcessEnv, userHom
       return path.join(env.GEMINI_CLI_HOME || userHome, '.gemini', 'settings.json');
     case 'copilot':
       return path.join(env.COPILOT_HOME || path.join(userHome, '.copilot'), 'hooks', COPILOT_HOOKS_FILE);
+    case 'agy':
+      return path.join(userHome, '.gemini', 'config', 'hooks.json');
   }
 }
 
+export const agySettingsFile = (userHome: string) => path.join(userHome, '.gemini', 'antigravity-cli', 'settings.json');
+
 // Codex and Gemini CLI run a hook command through a shell (cmd.exe on Windows), so the path is quoted and may
 // not hold characters either shell expands inside double quotes.
-export function hookCommand(hook: string, agent: HookAgent, event: string): string {
+export function hookCommand(hook: string, agent: 'codex' | 'gemini', event: string): string {
   if (/["%$`!\p{Cc}]/u.test(hook)) throw new Error(`can't put the hook path in a shell command: ${hook}`);
   return `node "${hook}" ${agent} ${event}`;
 }
@@ -98,6 +104,40 @@ export function copilotHooks(hook: string): Record<string, unknown> {
     ),
   };
 }
+
+// Antigravity CLI hands the command to cmd.exe with its quotes escaped, so a quoted path reaches node with the
+// quotes in it; the path goes in bare and may not hold anything cmd.exe splits or expands.
+export function agyHookCommand(hook: string, event: string): string {
+  if (/[\s"%^&|<>()!\p{Cc}]/u.test(hook)) throw new Error(`can't put the hook path in an Antigravity CLI hook command: ${hook}`);
+  return `node ${hook} agy ${event}`;
+}
+
+export function agyHooks(hook: string): Record<string, unknown> {
+  const handler = (event: string) => ({ type: 'command', command: agyHookCommand(hook, event), timeout: HOOK_TIMEOUT_S });
+  return Object.fromEntries(
+    Object.keys(HOOK_EVENTS.agy).map((event) => [event, event === 'PostToolUse' ? [{ matcher: '*', hooks: [handler(event)] }] : [handler(event)]]),
+  );
+}
+
+export function withAgyHooks(root: Record<string, unknown>, hook: string | undefined): Record<string, unknown> {
+  const { [AGY_HOOK_GROUP]: _, ...rest } = root;
+  return hook === undefined ? rest : { ...rest, [AGY_HOOK_GROUP]: agyHooks(hook) };
+}
+
+export const hasAgyHooks = (root: Record<string, unknown>, hook: string) => JSON.stringify(root[AGY_HOOK_GROUP]) === JSON.stringify(agyHooks(hook));
+
+export function withAgyAllowRule(root: Record<string, unknown>, file: string, allow: boolean): Record<string, unknown> {
+  if (!allow && !hasAgyAllowRule(root)) return root;
+  const permissions = root.permissions ?? {};
+  if (!isObject(permissions)) throw new Error(`${file}: "permissions" isn't an object`);
+  const rules = permissions.allow ?? [];
+  if (!Array.isArray(rules)) throw new Error(`${file}: "permissions.allow" isn't a list`);
+  const kept = rules.filter((r) => r !== AGY_ALLOW_RULE);
+  return { ...root, permissions: { ...permissions, allow: allow ? [...kept, AGY_ALLOW_RULE] : kept } };
+}
+
+export const hasAgyAllowRule = (root: Record<string, unknown> | undefined) =>
+  isObject(root?.permissions) && Array.isArray(root.permissions.allow) && root.permissions.allow.includes(AGY_ALLOW_RULE);
 
 const CODEX_TABLE = /^\[\s*mcp_servers\s*\.\s*(?:ide-agent-tabs|"ide-agent-tabs"|'ide-agent-tabs')\s*\]\s*(?:#.*)?$/;
 
