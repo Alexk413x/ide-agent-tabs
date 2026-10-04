@@ -6,10 +6,12 @@ export const AUTO = 'auto';
 export const TAB_ROUTINGS = ['project', 'caller'] as const;
 export const TERMINAL_WINDOWS = ['last', 'dedicated'] as const;
 export const LAUNCH_VIA = ['direct', 'ori'] as const;
+export const FOCUS_NEW_TABS = ['auto', 'always', 'never'] as const;
 
 export type TabRouting = (typeof TAB_ROUTINGS)[number];
 export type TerminalWindow = (typeof TERMINAL_WINDOWS)[number];
 export type LaunchVia = (typeof LAUNCH_VIA)[number];
+export type FocusNewTabs = (typeof FOCUS_NEW_TABS)[number];
 
 export interface SharedSettings {
   tabRouting: TabRouting;
@@ -18,6 +20,7 @@ export interface SharedSettings {
   terminalWindow: TerminalWindow;
   launchVia: LaunchVia;
   closeAfterHandoff: boolean;
+  focusNewTabs: FocusNewTabs;
 }
 
 export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
@@ -27,6 +30,7 @@ export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
   terminalWindow: 'last',
   launchVia: 'direct',
   closeAfterHandoff: true,
+  focusNewTabs: AUTO,
 });
 
 export interface DetectedTerminal {
@@ -74,6 +78,8 @@ export function readSharedSettings(text: string, file: string): Partial<SharedSe
   const launchVia = oneOf(LAUNCH_VIA, root.launchVia);
   if (launchVia !== undefined) found.launchVia = launchVia;
   if (typeof root.closeAfterHandoff === 'boolean') found.closeAfterHandoff = root.closeAfterHandoff;
+  const focusNewTabs = oneOf(FOCUS_NEW_TABS, root.focusNewTabs);
+  if (focusNewTabs !== undefined) found.focusNewTabs = focusNewTabs;
   return found;
 }
 

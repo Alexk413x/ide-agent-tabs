@@ -266,14 +266,14 @@ test('shared settings default when config.json is missing or lacks the keys', ()
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
   assert.deepEqual(settings.sharedFound(), {});
   write(CONFIG_FILE, '{"defaultAgent": "codex"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last', launchVia: 'direct', closeAfterHandoff: true });
+  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last', launchVia: 'direct', closeAfterHandoff: true, focusNewTabs: 'auto' });
   assert.deepEqual(warnings, []);
 });
 
-test('shared settings read the six keys and drop invalid values', () => {
+test('shared settings read the seven keys and drop invalid values', () => {
   const { settings, write, warnings } = fixture();
   write(CONFIG_FILE, '{"tabRouting": "caller", "terminal": "wezterm", "shell": "/opt/pwsh", "terminalWindow": "dedicated", "launchVia": "ori"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated', launchVia: 'ori', closeAfterHandoff: true });
+  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated', launchVia: 'ori', closeAfterHandoff: true, focusNewTabs: 'auto' });
   write(CONFIG_FILE, '{"tabRouting": "nowhere", "terminal": 3, "shell": " ", "terminalWindow": "", "launchVia": "both"}');
   assert.deepEqual(settings.sharedFound(), { shell: 'auto' });
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
@@ -534,6 +534,25 @@ test('closeAfterHandoff defaults to true, reads a boolean and drops other values
   write(CONFIG_FILE, '{"closeAfterHandoff": "false"}');
   assert.deepEqual(settings.sharedFound(), {});
   assert.equal(settings.shared().closeAfterHandoff, true);
+});
+
+test('focusNewTabs defaults to auto, reads the three modes, and auto removes the key', () => {
+  const { settings, home, write } = fixture();
+  const config = path.join(home, CONFIG_FILE);
+  assert.equal(settings.shared().focusNewTabs, 'auto');
+  for (const mode of ['always', 'never', 'auto'] as const) {
+    write(CONFIG_FILE, JSON.stringify({ focusNewTabs: mode }));
+    assert.equal(settings.shared().focusNewTabs, mode);
+  }
+  write(CONFIG_FILE, '{"focusNewTabs": true}');
+  assert.deepEqual(settings.sharedFound(), {});
+  fs.writeFileSync(config, '{"defaultAgent": "codex"}');
+  assert.ok(settings.setShared('focusNewTabs', 'always'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { defaultAgent: 'codex', focusNewTabs: 'always' });
+  assert.ok(settings.setShared('focusNewTabs', 'auto'));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { defaultAgent: 'codex' });
+  assert.equal(userSettingValue('focusNewTabs', { globalValue: 'never', workspaceValue: 'always' }), 'never');
+  assert.equal(userSettingValue('focusNewTabs', { workspaceValue: 'always' }), 'auto');
 });
 
 test('closeAfterHandoff writes false only when unchecked and removes the key when checked', () => {

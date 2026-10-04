@@ -315,3 +315,23 @@ test('Grok marks its input busy at a turn end and idle after idle_prompt, like C
   await hook(qwen, 'qwen', 'Notification', { notification_type: 'idle_prompt' });
   assert.equal((await readPresence(qwen, ID))?.inputIdle, undefined);
 });
+
+test('hooks record the model and effort their payload carries, and leave them alone when it carries none', async () => {
+  const home = tempDir('iat-hook-');
+  await hook(home, 'codex', 'UserPromptSubmit', { session_id: 'a', model: 'gpt-5.5', reasoning_effort: 'high' });
+  assert.deepEqual([(await readPresence(home, ID))?.model, (await readPresence(home, ID))?.effort], ['gpt-5.5', 'high']);
+  await hook(home, 'codex', 'PostToolUse', { session_id: 'a' });
+  assert.deepEqual([(await readPresence(home, ID))?.model, (await readPresence(home, ID))?.effort], ['gpt-5.5', 'high']);
+
+  const agy = tempDir('iat-hook-');
+  await hook(agy, 'agy', 'PreInvocation', { conversationId: 'c', modelName: 'gemini-3-pro', invocationNum: 0 });
+  assert.equal((await readPresence(agy, ID))?.model, 'gemini-3-pro');
+
+  const claude = tempDir('iat-hook-');
+  await hook(claude, 'claude', 'PostToolUse', { session_id: 'c', effort: { level: 'xhigh' } });
+  assert.equal((await readPresence(claude, ID))?.effort, 'xhigh');
+  await hook(claude, 'claude', 'Notification', { session_id: 'c', notification_type: 'other', model: 'claude-opus-5-5' });
+  assert.equal((await readPresence(claude, ID))?.model, 'claude-opus-5-5', 'an event that sets no state still records the model');
+  await hook(claude, 'claude', 'PostToolUse', { session_id: 'c', model: 'bad\nmodel', effort: { level: 'way too high' } });
+  assert.deepEqual([(await readPresence(claude, ID))?.model, (await readPresence(claude, ID))?.effort], ['claude-opus-5-5', 'xhigh']);
+});

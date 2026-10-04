@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
-import { readdirSync, utimesSync } from 'node:fs';
+import { mkdirSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CLAIM_TIMEOUT_MS, deliver, mailboxDir, MAX_READ_CHARS, MAX_TEXT_CHARS, newMessageId, peekUnread, type Message } from '../src/messaging/mailbox.js';
 import { runHook } from '../src/messaging/hook.js';
-import { Messaging, MOD_DELIVERY_NOTE, type Hosts } from '../src/messaging/messaging.js';
+import { parseCodexConfig } from '../src/messaging/codexConfig.js';
+import { Messaging, MOD_DELIVERY_NOTE, shortNames, type Hosts } from '../src/messaging/messaging.js';
 import { isModDriven, MOD_STALE_MS, readPresence, updatePresence } from '../src/messaging/sessions.js';
 import { createServer, MOD_TOOL } from '../src/server.js';
 import { Service } from '../src/service.js';
@@ -172,7 +173,7 @@ test('list_sessions rows carry name, route, tab, host and via, in the agent orde
   await updatePresence(home, 'tab-c', () => ({ id: 'tab-c', host: 'jetbrains-1', project: 'Plugins', via: 'direct' }));
   await updatePresence(home, 'tab-x', () => ({ id: 'tab-x', host: 'windows-terminal', via: 'ori' }));
   for (const m of made) await m.start();
-  await made[2]!.modPresence({ driver: true, nativeName: 'plugins-fa [6a3948]', state: 'idle' });
+  await made[2]!.modPresence({ driver: true, nativeName: 'plugins-fa [6a3948]', state: 'idle', model: 'opus', effort: 'high' });
   const { sessions } = await made[0]!.listSessions();
   assert.deepEqual(sessions.map((s) => s.agent), ['claude', 'codex', 'agy', 'gemini', 'zed-agent']);
   const [claudeRow, codexRow] = sessions;
@@ -180,12 +181,18 @@ test('list_sessions rows carry name, route, tab, host and via, in the agent orde
     [claudeRow!.name, claudeRow!.id, claudeRow!.route, claudeRow!.tab, claudeRow!.host, claudeRow!.ide, claudeRow!.via, claudeRow!.state],
     ['plugins-fa [6a3948]', 'tab-c', 'native', 'tab-c', 'IntelliJ IDEA (Plugins)', 'jetbrains-1', 'direct', 'idle'],
   );
-  assert.deepEqual([codexRow!.name, codexRow!.route, codexRow!.host, codexRow!.via], ['tab-x', 'agent-tabs', 'Windows Terminal', 'ori']);
+  assert.deepEqual([codexRow!.name, codexRow!.route, codexRow!.host, codexRow!.via], ['codex-tabx', 'agent-tabs', 'Windows Terminal', 'ori']);
+  assert.deepEqual(
+    [codexRow!.shortName, codexRow!.session, codexRow!.harness, codexRow!.where, codexRow!.folder, codexRow!.model, codexRow!.effort],
+    ['codex-tabx', 'tab-x', 'Codex via OpenRouter', 'Windows Terminal', '/w/tab-x', null, null],
+  );
+  assert.deepEqual([claudeRow!.shortName, claudeRow!.harness, claudeRow!.where, claudeRow!.model, claudeRow!.effort], ['claude-tabc', 'Claude Code', 'IntelliJ IDEA', 'opus', 'high']);
   assert.equal(sessions.find((s) => s.agent === 'gemini')!.self, true);
 
   await updatePresence(home, 'tab-c', (p) => (p ? { ...p, modBeat: Date.now() - MOD_STALE_MS - 1 } : p));
   const stale = (await made[0]!.listSessions()).sessions[0]!;
-  assert.deepEqual([stale.name, stale.route], ['tab-c', 'agent-tabs'], 'a stopped mod is reached through Agent Tabs again');
+  assert.deepEqual([stale.name, stale.route], ['claude-tabc', 'agent-tabs'], 'a stopped mod is reached through Agent Tabs again');
+  assert.equal(stale.nativeName, 'plugins-fa [6a3948]', 'the native name stays so a listing can merge the row');
   for (const m of made) m.stopSync();
 });
 
@@ -228,7 +235,7 @@ test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', 
     assert.deepEqual((await claude.call({ op: 'ack', claim: taken.json.claim })).json, { claim: taken.json.claim, read: 1 });
     assert.match((await claude.call({ op: 'release', claim: 'c-0000' })).text, /no open claim/);
     const rows = (await claude.call({ op: 'sessions' })).json.sessions;
-    assert.deepEqual(rows.map((r: { name: string }) => r.name), ['plugins-fa [6a3948]', 'tab-x']);
+    assert.deepEqual(rows.map((r: { name: string }) => r.name), ['plugins-fa [6a3948]', 'codex-tabx']);
   } finally {
     codex.messaging.stopFollowUps();
     claude.messaging.stopFollowUps();
@@ -255,4 +262,73 @@ test('one take claims every waiting message up to MAX_READ_CHARS, at least one, 
     m.stopHeartbeat();
     m.stopSync();
   }
+});
+
+test('short names take four id characters after the agent, more only when two sessions of one agent would collide', () => {
+  const names = shortNames([
+    { id: 'f99f0a1b-2222-4333-8444-555566667777', agent: 'codex' },
+    { id: 'codex-019a2b3c-dead-beef', agent: 'codex' },
+    { id: 'codex-019a2b9f-dead-beef', agent: 'codex' },
+    { id: 's-019a2b3c4d5e', agent: 'claude' },
+    { id: '0bad', agent: 'agy' },
+  ]);
+  assert.deepEqual([...names.values()], ['codex-f99f', 'codex-019a2b3', 'codex-019a2b9', 'claude-019a', 'agy-0bad']);
+});
+
+test('send_message takes a short name as well as the full id', async () => {
+  const home = tempDir('iat-mod-');
+  const sender = session(home, 'tab-s', 'claude', 1);
+  const codex = session(home, 'f99f0a1b-2222-4333-8444-555566667777', 'codex', 2);
+  await sender.start();
+  await codex.start();
+  const byName = await sender.send({ to: 'codex-f99f', text: 'by name' });
+  assert.equal(byName.to, 'f99f0a1b-2222-4333-8444-555566667777');
+  const byId = await sender.send({ to: 'f99f0a1b-2222-4333-8444-555566667777', text: 'by id' });
+  assert.equal(byId.to, 'f99f0a1b-2222-4333-8444-555566667777');
+  assert.deepEqual((await peekUnread(home, 'f99f0a1b-2222-4333-8444-555566667777')).map((m) => m.text).sort(), ['by id', 'by name']);
+  await assert.rejects(sender.send({ to: 'codex-0000', text: 'x' }), /no live session with id or name codex-0000/);
+  await assert.rejects(codex.send({ to: 'codex-f99f', text: 'x' }), /to is this session/);
+  for (const m of [sender, codex]) {
+    m.stopFollowUps();
+    m.stopSync();
+  }
+});
+
+test('the mod records the model and effort; bad values are refused', async () => {
+  const home = tempDir('iat-mod-');
+  const claude = session(home, 'tab-c', 'claude', 1);
+  await claude.start();
+  await claude.modPresence({ model: 'claude-opus-5-5', effort: 'xhigh' });
+  const p = (await readPresence(home, 'tab-c'))!;
+  assert.deepEqual([p.model, p.effort], ['claude-opus-5-5', 'xhigh']);
+  await assert.rejects(claude.modPresence({ model: 'a\nb' }), /model must be one printable line/);
+  await assert.rejects(claude.modPresence({ effort: 'very high' }), /effort must be/);
+  claude.stopSync();
+});
+
+test("a Codex session's server reads its model and effort from config.toml, honouring CODEX_HOME and the profile", async () => {
+  assert.deepEqual(parseCodexConfig('model = "gpt-5.5"\nmodel_reasoning_effort = "high" # comment\n[profiles.fast]\nmodel = "x"\n'), { model: 'gpt-5.5', effort: 'high' });
+  assert.deepEqual(parseCodexConfig("profile = 'fast'\nmodel = 'gpt-5.5'\n[profiles.fast]\nmodel_reasoning_effort = 'low'\n"), { model: 'gpt-5.5', effort: 'low' });
+  assert.deepEqual(parseCodexConfig('[tools]\nmodel = "nested"\n'), {});
+
+  const home = tempDir('iat-mod-');
+  const codexHome = tempDir('iat-codex-');
+  mkdirSync(codexHome, { recursive: true });
+  writeFileSync(path.join(codexHome, 'config.toml'), 'model = "gpt-5.5"\nmodel_reasoning_effort = "medium"\n');
+  const env = { IDE_AGENT_TABS_ID: 'tab-x', IDE_AGENT_TABS_AGENT: 'codex', CODEX_HOME: codexHome };
+  const codex = new Messaging({ home, env, pid: 1, cwd: '/w', hosts: fakeHosts(), isAlive: () => true });
+  await codex.start();
+  assert.deepEqual([(await readPresence(home, 'tab-x'))?.model, (await readPresence(home, 'tab-x'))?.effort], ['gpt-5.5', 'medium']);
+  codex.stopSync();
+
+  await updatePresence(home, 'tab-y', () => ({ id: 'tab-y', model: 'gpt-5.5-codex' }));
+  const opened = new Messaging({ home, env: { ...env, IDE_AGENT_TABS_ID: 'tab-y' }, pid: 2, cwd: '/w', hosts: fakeHosts(), isAlive: () => true });
+  await opened.start();
+  assert.deepEqual([(await readPresence(home, 'tab-y'))?.model, (await readPresence(home, 'tab-y'))?.effort], ['gpt-5.5-codex', 'medium'], 'the open_tab model wins over the config');
+  opened.stopSync();
+
+  const claude = new Messaging({ home, env: { ...env, IDE_AGENT_TABS_ID: 'tab-z', IDE_AGENT_TABS_AGENT: 'claude' }, pid: 3, cwd: '/w', hosts: fakeHosts(), isAlive: () => true });
+  await claude.start();
+  assert.equal((await readPresence(home, 'tab-z'))?.model, undefined, 'only a Codex session reads the Codex config');
+  claude.stopSync();
 });

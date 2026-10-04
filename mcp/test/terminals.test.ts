@@ -277,3 +277,28 @@ test('the remembered terminal windows live in one file under the Agent Tabs home
   writeFileSync(path.join(home, WINDOWS_FILE), 'not json');
   assert.equal(await readWindow(home, 'kitty'), undefined);
 });
+
+test('Ghostty on macOS reselects the tab that was selected when focus is false', () => {
+  const env = { IDE_AGENT_TABS_LAUNCHER: '/l.sh', IDE_AGENT_TABS_SPEC: '/s.spec' };
+  const front = openScript('/bin/zsh', env, undefined, true);
+  assert.ok(
+    front.includes(
+      [
+        '\tif (count of windows) > 0 then',
+        '\t\tset previousTab to selected tab of front window',
+        '\t\tset t to new tab in front window with configuration cfg',
+        '\t\tselect tab previousTab',
+        '\telse',
+      ].join('\n'),
+    ),
+  );
+  const placed = openScript('/bin/zsh', env, { dedicated: '5' }, true);
+  assert.ok(
+    placed.includes(
+      ['\tif w is not missing value then', '\t\tset previousTab to selected tab of w', '\t\tset t to new tab in w with configuration cfg', '\t\tselect tab previousTab', '\telse'].join('\n'),
+    ),
+  );
+  for (const script of [front, placed]) assert.equal(script.match(/select tab/g)?.length, 1, 'a new window keeps its own focus');
+  assert.equal(openScript('/bin/zsh', env, undefined, false), openScript('/bin/zsh', env));
+  assert.ok(!openScript('/bin/zsh', env, { nearTab: 'x' }).includes('previousTab'));
+});

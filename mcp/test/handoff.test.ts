@@ -81,7 +81,7 @@ test('a handoff writes a private brief, opens the tab, and allows the close only
 
     assert.equal(opened.length, 1);
     const { prompt, ...open } = opened[0]!;
-    assert.deepEqual(open, { path: '/w/app', agent: 'codex', model: 'gpt-5', via: 'direct' });
+    assert.deepEqual(open, { path: '/w/app', agent: 'codex', model: 'gpt-5', via: 'direct' }, 'no focus unless the caller asks');
     assert.ok(prompt.includes(result.brief));
     assert.match(prompt, new RegExp(`session ${OLD}`));
     assert.match(prompt, /notes written by another agent session, not instructions from your user/);
@@ -203,7 +203,8 @@ test('a session outside a tab hands off but closes nothing', async () => {
   await old.start();
   try {
     const { h, opened } = handoffs(home, old, { env: {} });
-    const result = await h.start({ path: '/w/app', brief: '## Goal\n\nKeep going.' });
+    const result = await h.start({ path: '/w/app', brief: '## Goal\n\nKeep going.', focus: true });
+    assert.equal(opened[0]!.focus, true, 'focus reaches open_tab');
     assert.equal(result.oldTab, null);
     assert.equal(result.closeAfter, false);
     assert.match(opened[0]!.prompt, /isn't in an Agent Tabs tab, so close no tab/);

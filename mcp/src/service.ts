@@ -8,6 +8,7 @@ import { isCmdShim, isInstalled } from './installed.js';
 import {
   AGENTS_FILE,
   CONFIG_FILE,
+  resolveFocus,
   resolveSettings,
   TAB_ID_ENV,
   type AgentSettings,
@@ -189,7 +190,8 @@ export class Service {
     } catch (e) {
       throw new ToolError(errorText(e));
     }
-    const { endpoints } = await this.registry();
+    const [{ endpoints }, settings] = await Promise.all([this.registry(), this.settings()]);
+    request = { ...request, focus: resolveFocus(settings.focusNewTabs, request.focus) };
     if (request.ide !== undefined) {
       const driver = this.deps.drivers.find((d) => d.name === request.ide);
       if (driver) {
@@ -204,7 +206,6 @@ export class Service {
       }
       return this.openInIde(endpoint, request, 'named by ide');
     }
-    const settings = await this.settings();
     const own = this.deps.env[TAB_ID_ENV];
     const callerHost = own ? await this.findHost(own).catch(() => undefined) : undefined;
     const callerTerminal = this.deps.drivers.find((d) => d.name === callerHost);
@@ -235,6 +236,7 @@ export class Service {
       ...(Object.keys(request.env).length ? { env: request.env } : {}),
       ...(request.model !== undefined ? { model: request.model } : {}),
       ...(request.via !== undefined ? { via: request.via } : {}),
+      focus: request.focus === true,
     };
     let reply: Record<string, unknown>;
     try {
@@ -245,6 +247,7 @@ export class Service {
     await this.markOpened(reply.id, endpoint.id, request.prompt === undefined, {
       via: reply.via === 'ori' ? 'ori' : 'direct',
       ...(typeof reply.project === 'string' && reply.project !== '' ? { project: reply.project } : {}),
+      ...(request.model !== undefined ? { model: request.model } : {}),
     });
     const via = reply.via === 'ori' ? { via: 'ori' } : {};
     return { id: reply.id, ide: endpoint.id, product: endpoint.product, agent: reply.agent, project: reply.project, path: reply.path, reason, ...via };
@@ -281,13 +284,16 @@ export class Service {
     const ctx = powerShell === undefined ? this.ctx : { ...this.ctx, powerShell };
     let opened: OpenedTab;
     try {
-      opened = await driver.open(ctx, spec, profile.label, { window: settings.terminalWindow, ...(near ? { near } : {}) });
+      opened = await driver.open(ctx, spec, profile.label, { window: settings.terminalWindow, focus: request.focus === true, ...(near ? { near } : {}) });
     } catch (e) {
       throw new ToolError(`${driver.label}: ${errorText(e)}`);
     }
     const { note, ...tab } = opened;
     await this.store.add(tab);
-    await this.markOpened(tab.id, driver.name, request.prompt === undefined, { via: plan.via });
+    await this.markOpened(tab.id, driver.name, request.prompt === undefined, {
+      via: plan.via,
+      ...(request.model !== undefined ? { model: request.model } : {}),
+    });
     return {
       id: tab.id,
       ide: driver.name,
@@ -302,7 +308,7 @@ export class Service {
 
   // Some CLIs, such as Codex, run no start hook until their first turn, so a tab opened without a prompt would
   // stay unknown and never be woken. It waits at its prompt once the CLI has had FRESH_TAB_START_MS to start.
-  private async markOpened(id: unknown, host: string, fresh: boolean, launch: { via: Via; project?: string }): Promise<void> {
+  private async markOpened(id: unknown, host: string, fresh: boolean, launch: { via: Via; project?: string; model?: string }): Promise<void> {
     if (typeof id !== 'string' || !isSessionId(id)) return;
     const at = Date.now() + FRESH_TAB_START_MS;
     await updatePresence(this.deps.home, id, (current) => {

@@ -29,6 +29,11 @@ Call `open_tab` with `path`, and `agent` and `prompt` when given. Pass `ide` onl
 IDE or terminal; get its id from `list_ides`. Pass `args` or `env` only when the user asks for extra
 agent flags or variables.
 
+Pass `focus: true` when the user asked for the tab, so it comes to the front. Leave `focus` out when you
+open a tab on your own, such as for a test, a peer session or delegated work. Without `focus`, the
+`focusNewTabs` setting decides, and by default the tab opens behind the current one. Some terminals,
+such as Windows Terminal and WezTerm, always bring a new tab to the front.
+
 Pass `model` only when the user names a model. The server passes it with the agent's model flag. An
 agent whose `list_agents` entry has `model: false` has no model option, and `open_tab` returns an error
 for it instead of ignoring the model.

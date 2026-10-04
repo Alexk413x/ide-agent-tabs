@@ -9,6 +9,7 @@ import {
   ARG_ENV_PREFIX,
   ARGS_ENV,
   COMMAND_ENV,
+  editorLocation,
   fishQuote,
   launchScripts,
   PROMPT_ENV,
@@ -142,4 +143,9 @@ test('launch scripts ship with LF line endings', () => {
     assert.ok(!text.includes('\r'), name);
     assert.ok(text.includes('IDE_AGENT_TABS_COMMAND'), name);
   }
+});
+
+test('an editor terminal keeps focus in the current editor unless focus is asked for', () => {
+  assert.deepEqual(editorLocation(-1, false), { viewColumn: -1, preserveFocus: true });
+  assert.deepEqual(editorLocation(-1, true), { viewColumn: -1, preserveFocus: false });
 });

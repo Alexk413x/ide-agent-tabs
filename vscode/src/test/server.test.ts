@@ -95,7 +95,7 @@ test('open, list, close, and close again', async () => {
   const opening = await call('open', { path: dir, agent: 'probe', prompt: 'hi', args: ['--x'], env: { FOO: 'bar' } });
   assert.equal(opening.status, 200);
   assert.deepEqual(opening.json, { ok: true, id: 'tab-1', agent: 'probe', project: 'repo', path: dir, via: 'direct' });
-  assert.deepEqual(opened.at(-1)?.request, { path: dir, prompt: 'hi', args: ['--x'], env: { FOO: 'bar' }, agent: 'probe', model: undefined, via: undefined });
+  assert.deepEqual(opened.at(-1)?.request, { path: dir, prompt: 'hi', args: ['--x'], env: { FOO: 'bar' }, agent: 'probe', model: undefined, via: undefined, focus: false });
   assert.equal(opened.at(-1)?.profile, settings.profile('probe'));
   assert.deepEqual(opened.at(-1)?.launch, { agent: 'probe', command: 'probe-cli', args: ['--x', '-p'], prompt: 'hi', env: { FOO: 'bar' }, via: 'direct' });
 
@@ -120,6 +120,16 @@ test('input types into an open tab and 404s once it closes', async () => {
   assert.equal(gone.json.ok, false);
   assert.match(gone.json.error, /no open agent tab/);
   assert.equal(typed.length, 1);
+});
+
+test('open passes focus to the host, false unless the request asks', async () => {
+  for (const [fields, focus] of [[{}, false], [{ focus: true }, true], [{ focus: false }, false]] as const) {
+    const { status, json } = await call('open', { path: dir, agent: 'probe', ...fields });
+    assert.equal(status, 200);
+    assert.equal(opened.at(-1)!.request.focus, focus, JSON.stringify(fields));
+    tabs.delete(json.id);
+  }
+  assert.equal((await call('open', { path: dir, agent: 'probe', focus: 'yes' })).status, 400);
 });
 
 test('open passes the model to the launch line and reports via', async () => {

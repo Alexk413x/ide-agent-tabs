@@ -107,6 +107,13 @@ export function optStringMap(obj: JsonObject, key: string, field = key): Record<
   return result;
 }
 
+export function optBoolean(obj: JsonObject, key: string, field = key): boolean | undefined {
+  const value = obj[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'boolean') throw new BadRequest(`${field} must be true or false`);
+  return value;
+}
+
 export function parseCloseId(body: string): string {
   const id = optString(parseObject(body), 'id');
   if (id === undefined || isBlank(id)) throw new BadRequest('id is required');
@@ -148,6 +155,7 @@ export interface OpenRequest {
   agent?: string;
   model?: string;
   via?: 'ori' | 'direct';
+  focus: boolean;
 }
 
 export function parseOpenRequest(body: string): OpenRequest {
@@ -160,6 +168,7 @@ export function parseOpenRequest(body: string): OpenRequest {
     optString(obj, 'agent'),
     optString(obj, 'model'),
     optString(obj, 'via'),
+    optBoolean(obj, 'focus'),
   );
 }
 
@@ -171,6 +180,7 @@ export function openRequestOf(
   agent?: string,
   model?: string,
   via?: string,
+  focus = false,
 ): OpenRequest {
   if (dir === undefined || isBlank(dir)) throw new BadRequest('path is required');
   if (dir.includes('\0') || !isAbsolutePath(dir)) throw new BadRequest('path must be absolute');
@@ -200,6 +210,7 @@ export function openRequestOf(
     agent,
     model,
     via,
+    focus,
   };
 }
 

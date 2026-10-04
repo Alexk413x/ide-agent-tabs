@@ -11,7 +11,7 @@ Qwen Code and Goose, in editor tabs.
 - Open **Settings > Tools > Agent Tabs** to change the default agent.
 - The default agent can open by itself when a project opens. See [Open on startup](#open-on-startup).
 - Other programs, such as another agent session, can open, list and close tabs through a local HTTP
-  API. The IDE does not take focus.
+  API. The new tab takes focus only when the request asks for it.
 
 ## Requirements
 
@@ -136,6 +136,7 @@ server writes. Without that file, only **Automatic** is listed, plus any value a
 | Setting | Key | Description |
 |---|---|---|
 | Open new tabs in | `tabRouting` | Where a new agent tab opens when no IDE or terminal is named. `project` (**IDE that has the project open**, the default) or `caller` (**IDE the request came from**). |
+| Bring new agent tabs to the front | `focusNewTabs` | Whether a tab that an agent opens takes focus. `auto` (**When you asked for the tab**, the default): only when the agent says you asked for it. `always` or `never`. A request's `focus` field wins. The **New Agent Tab** button always brings its tab to the front. |
 
 **Terminal tabs**
 
@@ -209,6 +210,7 @@ the IDE refuses a browser-like `POST` before the plugin sees it. `curl` doesn't 
 | `prompt` | No | The session's first message. Up to 30,000 characters. |
 | `args` | No | Extra agent arguments, such as `["--plugin-dir", "/path/to/plugin"]`. Up to 64 strings. They go after the profile's `args` and before the prompt. |
 | `env` | No | Environment variables for the session, such as `{"MY_SETTING": "value"}`. Up to 64. Names that start with `IDE_AGENT_TABS_` or `JEDITERM_SOURCE` are refused. |
+| `focus` | No | `true` gives the new editor tab keyboard focus. `false` or absent keeps focus where it is; the new tab still becomes the selected editor tab. |
 
 The reply holds the tab's `id`, the `agent`, the `project` window it opened in, and the `path`. The tab
 opens in the open project that contains `path`, or in the last focused project window if none does.

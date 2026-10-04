@@ -110,6 +110,22 @@ class SharedSettingsTest {
     }
 
     @Test
+    fun `focusNewTabs defaults to auto, reads the three modes, and auto removes the key`() {
+        assertEquals(FocusNewTabs.AUTO_FOCUS, settings.shared().focusNewTabs)
+        for (mode in FocusNewTabs.entries) {
+            write(CONFIG_FILE, """{"focusNewTabs": "${mode.value}"}""")
+            assertEquals(mode, settings.shared().focusNewTabs)
+        }
+        write(CONFIG_FILE, """{"focusNewTabs": true}""")
+        assertEquals(FocusNewTabs.AUTO_FOCUS, settings.shared().focusNewTabs)
+        Files.writeString(config, """{"defaultAgent": "codex"}""")
+        assertTrue(settings.setFocusNewTabs(FocusNewTabs.NEVER))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex", "focusNewTabs": "never"}"""), saved())
+        assertTrue(settings.setFocusNewTabs(FocusNewTabs.AUTO_FOCUS))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex"}"""), saved())
+    }
+
+    @Test
     fun `launchVia saves to config and keeps other keys`() {
         Files.writeString(config, """{"defaultAgent": "codex", "launchVia": "ori"}""")
         assertTrue(settings.setLaunchVia(LaunchVia.DIRECT))
