@@ -221,6 +221,8 @@ opens in the open project that contains `path`, or in the last focused project w
 `POST {"id": "<tab id>"}` to `close`. Closing the tab ends its session. You can close only tabs this
 plugin opened. Each session can read its own id from the `IDE_AGENT_TABS_ID` environment variable,
 so a session can close its own tab when it finishes. `IDE_AGENT_TABS_AGENT` holds the agent name.
+After a plugin update or reload without an IDE restart, the plugin finds its open tabs again by their
+`IDE_AGENT_TABS_ID`, so you can still list, close and type into them.
 
 ### Input
 

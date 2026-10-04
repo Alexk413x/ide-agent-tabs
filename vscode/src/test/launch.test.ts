@@ -13,6 +13,7 @@ import {
   fishQuote,
   launchScripts,
   PROMPT_ENV,
+  revivedTabs,
   shellKind,
   TAB_ID_ENV,
   terminalEnv,
@@ -148,4 +149,31 @@ test('launch scripts ship with LF line endings', () => {
 test('an editor terminal keeps focus in the current editor unless focus is asked for', () => {
   assert.deepEqual(editorLocation(-1, false), { viewColumn: -1, preserveFocus: true });
   assert.deepEqual(editorLocation(-1, true), { viewColumn: -1, preserveFocus: false });
+});
+
+test('terminals that survive an extension host restart come back as tabs from their env', () => {
+  const env = terminalEnv('powershell', launchOf(claude), 'tab-7');
+  const panel = { name: 'panel', creationOptions: { name: 'pwsh' } };
+  const pty = { name: 'pty', creationOptions: { name: 'Task', pty: {} } };
+  const agentTab = { name: 'agent', creationOptions: { name: 'Claude Code', cwd: 'C:\work\app', env } };
+  const uriCwd = { name: 'uri', creationOptions: { cwd: { fsPath: '/home/a/b' }, env: { [TAB_ID_ENV]: 'tab-8', [AGENT_ENV]: 'codex' } } };
+  assert.deepEqual(revivedTabs([panel, pty, agentTab, uriCwd], () => false), [
+    { id: 'tab-7', agent: 'claude', path: 'C:\work\app', terminal: agentTab },
+    { id: 'tab-8', agent: 'codex', path: '/home/a/b', terminal: uriCwd },
+  ]);
+});
+
+test('known tabs and a second terminal with the same tab id are not revived', () => {
+  const env = { [TAB_ID_ENV]: 'tab-9', [AGENT_ENV]: 'gemini' };
+  const first = { creationOptions: { cwd: '/a', env } };
+  const copy = { creationOptions: { cwd: '/b', env } };
+  const known = { creationOptions: { cwd: '/c', env: { [TAB_ID_ENV]: 'tab-10' } } };
+  const revived = revivedTabs([first, copy, known], id => id === 'tab-10');
+  assert.deepEqual(revived.map(t => [t.id, t.path]), [['tab-9', '/a']]);
+  assert.deepEqual(revivedTabs([first], (_, terminal) => terminal === first), []);
+});
+
+test('a terminal with a tab id but no agent or folder is still revived', () => {
+  const bare = { creationOptions: { env: { [TAB_ID_ENV]: 'tab-11', [AGENT_ENV]: null } } };
+  assert.deepEqual(revivedTabs([bare], () => false), [{ id: 'tab-11', agent: '', path: '', terminal: bare }]);
 });

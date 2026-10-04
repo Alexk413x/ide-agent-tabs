@@ -6,7 +6,7 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 
 ## 0.6.0
 
-Plugin and MCP server 0.6.0, with VS Code extension 0.1.24 and JetBrains plugin 0.4.7 bundled. Both IDE
+Plugin and MCP server 0.6.0, with VS Code extension 0.1.25 and JetBrains plugin 0.4.8 bundled. Both IDE
 packages add the `agy` profile and icon, the profiles and icons of seven more agents, the Codex
 `Interrupt` hook and the tab settings.
 
@@ -37,6 +37,10 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
   `PostToolUseFailure` with `is_interrupt`, Claude `StopFailure`, and Codex `Interrupt`. A restarted
   server resets a dead server's state.
 - A wake-up that fails on a cached host looks the host up again and retries once.
+- Agent tabs stay listed after a VS Code extension host restart, as after an extension update, and after
+  a JetBrains plugin update or reload. The terminals outlived the restart, but the IDE side forgot them,
+  so `list_tabs`, `close_tab` and wake-ups failed for them. Both IDE packages find them again by their
+  `IDE_AGENT_TABS_ID`, and open no startup tab when they find any.
 - A failed delivery gives its rate-limit slot back. The same message sent again within 60 seconds
   returns the first id with `duplicate: true` and is not delivered twice.
 - File locks record their owner. A lock whose owner is dead is broken at once, and waiters wait longer

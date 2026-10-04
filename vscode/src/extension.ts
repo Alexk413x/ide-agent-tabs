@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { typeLine } from './input';
-import { editorLocation, launchScripts, terminalEnv, unixShell, windowsShell } from './launch';
+import { editorLocation, launchScripts, revivedTabs, terminalEnv, unixShell, windowsShell } from './launch';
 import { AgentLaunch, AgentProfile, AgentSettings, CONFIG_FILE, isInstalled, planLaunch } from './profiles';
 import { endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { closestBase } from './request';
@@ -80,9 +80,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
 
   const fileFolders = () => (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === 'file');
-  const folderPath = (folder: vscode.WorkspaceFolder) => {
-    const fsPath = folder.uri.fsPath;
-    return isWindows ? fsPath.replace(/^[a-z]:/, drive => drive.toUpperCase()) : fsPath;
+  const drivePath = (fsPath: string) => (isWindows ? fsPath.replace(/^[a-z]:/, drive => drive.toUpperCase()) : fsPath);
+  const folderPath = (folder: vscode.WorkspaceFolder) => drivePath(folder.uri.fsPath);
+  const projectOf = (dir: string) => {
+    const folders = fileFolders();
+    const index = closestBase(dir, folders.map(folderPath));
+    return index !== undefined ? folders[index].name : (vscode.workspace.name ?? folders[0]?.name ?? path.basename(dir));
   };
 
   const openTab = (dir: string, project: string, profile: AgentProfile, options: OpenOptions): TabInfo => {
@@ -126,6 +129,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   };
 
+  // Terminals outlive an extension host restart in the pty host, and their creation options keep the tab's env.
+  const adopt = (terminals: readonly vscode.Terminal[]) => {
+    const known = (id: string, terminal: vscode.Terminal) => tabs.has(id) || [...tabs.values()].some(t => t.terminal === terminal);
+    const found = revivedTabs(terminals, known);
+    for (const tab of found) {
+      const dir = drivePath(tab.path);
+      tabs.set(tab.id, { ...tab, project: projectOf(dir), path: dir });
+    }
+    return found.length;
+  };
+
   const openOnStartup = (folders: readonly vscode.WorkspaceFolder[]) => {
     const folder = folders.find(f => f.uri.scheme === 'file' && opensOnStartup(f));
     if (folder) openInFolder(folder, settings.defaultProfile());
@@ -146,9 +160,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     open: (request, profile, launch) => {
       const folders = fileFolders();
       if (folders.length === 0) return undefined;
-      const index = closestBase(request.path, folders.map(folderPath));
-      const project = index !== undefined ? folders[index].name : (vscode.workspace.name ?? folders[0].name);
-      return openTab(request.path, project, profile, { launch, focus: request.focus });
+      return openTab(request.path, projectOf(request.path), profile, { launch, focus: request.focus });
     },
     close: id => {
       const tab = tabs.get(id);
@@ -331,6 +343,7 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
       const profile = typeof name === 'string' ? settings.profile(name) : undefined;
       if (profile) openFromButton(profile);
     }),
+    vscode.window.onDidOpenTerminal(terminal => adopt([terminal])),
     vscode.window.onDidCloseTerminal(terminal => {
       for (const [id, tab] of tabs) if (tab.terminal === terminal) tabs.delete(id);
     }),
@@ -365,7 +378,9 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
     }),
   );
   refreshStatus();
-  openOnStartup(fileFolders());
+  const revived = adopt(vscode.window.terminals);
+  if (revived > 0) log.info(`Found ${revived} agent tab${revived === 1 ? '' : 's'} from before the extension host restarted`);
+  else openOnStartup(fileFolders());
 
   const token = newToken();
   const server = createApiServer(token, host, settings);
