@@ -248,6 +248,7 @@ export class Service {
       via: reply.via === 'ori' ? 'ori' : 'direct',
       ...(typeof reply.project === 'string' && reply.project !== '' ? { project: reply.project } : {}),
       ...(request.model !== undefined ? { model: request.model } : {}),
+      product: endpoint.product,
     });
     const via = reply.via === 'ori' ? { via: 'ori' } : {};
     return { id: reply.id, ide: endpoint.id, product: endpoint.product, agent: reply.agent, project: reply.project, path: reply.path, reason, ...via };
@@ -293,6 +294,7 @@ export class Service {
     await this.markOpened(tab.id, driver.name, request.prompt === undefined, {
       via: plan.via,
       ...(request.model !== undefined ? { model: request.model } : {}),
+      product: driver.label,
     });
     return {
       id: tab.id,
@@ -308,7 +310,7 @@ export class Service {
 
   // Some CLIs, such as Codex, run no start hook until their first turn, so a tab opened without a prompt would
   // stay unknown and never be woken. It waits at its prompt once the CLI has had FRESH_TAB_START_MS to start.
-  private async markOpened(id: unknown, host: string, fresh: boolean, launch: { via: Via; project?: string; model?: string }): Promise<void> {
+  private async markOpened(id: unknown, host: string, fresh: boolean, launch: { via: Via; project?: string; model?: string; product?: string }): Promise<void> {
     if (typeof id !== 'string' || !isSessionId(id)) return;
     const at = Date.now() + FRESH_TAB_START_MS;
     await updatePresence(this.deps.home, id, (current) => {

@@ -42,8 +42,14 @@ type Row = {
   path: string
   folder: string
   via?: string
+  startedAt?: string
   self: boolean
 }
+
+const NOW = 1_000_000
+const ago = (ms: number) => new Date(NOW - ms).toISOString()
+const MIN = 60_000
+const HOUR = 60 * MIN
 
 const LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', agy: 'Antigravity CLI', gemini: 'Gemini CLI' }
 
@@ -68,13 +74,14 @@ function row(r: Pick<Row, 'id' | 'agent' | 'state' | 'path'> & Partial<Row>): Ro
 
 const ROWS: Row[] = [
   row({ name: NATIVE, id: 'c1a2b3c4-0000', agent: 'claude', route: 'native', nativeName: NATIVE, state: 'idle', tab: 'c1a2b3c4-0000', where: 'IntelliJ IDEA', host: 'IntelliJ IDEA (Plugins)', path: 'C:\\w', self: true, model: 'claude-opus-5-5' }),
-  row({ id: 'zed10000', agent: 'zed-agent', state: 'idle', path: 'C:\\z' }),
-  row({ id: 'a0a0a0a0-1111', agent: 'agy', state: 'busy', tab: 'a0a0a0a0-1111', where: 'Antigravity IDE', host: 'Antigravity IDE (Plugins)', path: 'C:\\w', model: 'gemini-3-pro' }),
-  row({ name: 'docs-9b [11aa22]', id: 'tab-d', agent: 'claude', route: 'native', nativeName: 'docs-9b [11aa22]', state: 'permission', tab: 'tab-d', where: 'IntelliJ IDEA', host: 'IntelliJ IDEA (Docs)', path: 'C:\\docs', via: 'direct', model: 'claude-opus-5-5', effort: 'high' }),
-  row({ id: '01d00000-3333', agent: 'claude', state: 'idle', tab: '01d00000-3333', where: 'Windows Terminal', host: 'Windows Terminal', path: 'C:\\w' }),
-  row({ id: 'e2e00000-4444', agent: 'claude', nativeName: 'E2E testing plugin [e2e000]', state: 'idle', tab: 'e2e00000-4444', where: 'Visual Studio Code', host: 'Visual Studio Code (E2E)', path: 'C:\\e2e', model: 'claude-sonnet-5-5-20261001-extended-preview' }),
-  row({ id: 'codex-1a2b', agent: 'codex', state: 'idle', path: 'C:\\w', via: 'ori', where: 'Windows Terminal', model: 'gpt-5.5', effort: 'medium' }),
-  row({ id: 'a2a2a2a2-6666', agent: 'agy', state: 'idle', tab: 'a2a2a2a2-6666', where: 'Windows Terminal', host: 'Windows Terminal', path: 'C:\\a' }),
+  row({ id: 'zed10000', agent: 'zed-agent', state: 'idle', path: 'C:\\z', startedAt: ago(30_000) }),
+  row({ id: 'a0a0a0a0-1111', agent: 'agy', state: 'busy', tab: 'a0a0a0a0-1111', where: 'Antigravity IDE', host: 'Antigravity IDE (Plugins)', path: 'C:\\w', model: 'gemini-3-pro', startedAt: ago(5 * HOUR) }),
+  row({ name: 'docs-9b [11aa22]', id: 'tab-d', agent: 'claude', route: 'native', nativeName: 'docs-9b [11aa22]', state: 'permission', tab: 'tab-d', where: 'IntelliJ IDEA', host: 'IntelliJ IDEA (Docs)', path: 'C:\\docs', via: 'direct', model: 'claude-opus-5-5', effort: 'high', startedAt: ago(26 * HOUR) }),
+  row({ id: '01d00000-3333', agent: 'claude', state: 'idle', tab: '01d00000-3333', where: 'Windows Terminal', host: 'Windows Terminal', path: 'C:\\w', startedAt: ago(45 * MIN) }),
+  row({ id: 'e2e00000-4444', agent: 'claude', nativeName: 'E2E testing plugin [e2e000]', state: 'idle', tab: 'e2e00000-4444', where: 'Visual Studio Code', host: 'Visual Studio Code (E2E)', path: 'C:\\e2e', model: 'claude-sonnet-5-5-20261001-extended-preview', startedAt: ago(18 * MIN) }),
+  row({ id: 'codex-1a2b', agent: 'codex', state: 'idle', path: 'C:\\w', via: 'ori', where: 'Windows Terminal', model: 'gpt-5.5', effort: 'medium', startedAt: ago(2 * 24 * HOUR) }),
+  row({ id: 'c0dec0de-8888', agent: 'codex', state: 'busy', path: 'C:\\w', where: 'Windows Terminal', startedAt: ago(10 * MIN) }),
+  row({ id: 'a2a2a2a2-6666', agent: 'agy', state: 'idle', tab: 'a2a2a2a2-6666', where: 'Windows Terminal', host: 'Windows Terminal', path: 'C:\\a', startedAt: ago(3 * MIN + 59_600) }),
   row({ id: '9e9e0000-7777', agent: 'gemini', state: 'idle', tab: '9e9e0000-7777', where: 'Windows Terminal', host: 'Windows Terminal', path: 'C:\\W\\sub' }),
 ]
 
@@ -82,32 +89,33 @@ const MERGED = [
   HEADER,
   '',
   'C:\\w',
-  '  claude-01d0                           idle        Claude Code (no native name)  —                         —       Windows Terminal    01d00000',
-  '  codex-1a2b                            idle        Codex via OpenRouter          gpt-5.5                   medium  Windows Terminal    codex-1a',
-  '  agy-a0a0                              busy        Antigravity CLI               gemini-3-pro              —       Antigravity IDE     a0a0a0a0',
+  '  claude-01d0                           idle        45m  Claude Code (no native name)  —                         —       Windows Terminal    01d00000',
+  '  codex-c0de                            busy        10m  Codex                         —                         —       Windows Terminal    c0dec0de',
+  '  codex-1a2b                            idle        2d   Codex via OpenRouter          gpt-5.5                   medium  Windows Terminal    codex-1a',
+  '  agy-a0a0                              busy        5h   Antigravity CLI               gemini-3-pro              —       Antigravity IDE     a0a0a0a0',
   '',
   'C:\\a',
-  '  agy-a2a2                              idle        Antigravity CLI               —                         —       Windows Terminal    a2a2a2a2',
+  '  agy-a2a2                              idle        4m   Antigravity CLI               —                         —       Windows Terminal    a2a2a2a2',
   '',
   'C:\\docs',
-  '  docs-9b [11aa22]                      permission  Claude Code                   claude-opus-5-5           high    IntelliJ IDEA       tab-d',
+  '  docs-9b [11aa22]                      permission  1d   Claude Code                   claude-opus-5-5           high    IntelliJ IDEA       tab-d',
   '',
   'C:\\e2e',
-  '  E2E testing plugin [b39a20]           idle        Claude Code                   claude-sonnet-5-5-20261…  —       Visual Studio Code  e2e00000',
+  '  E2E testing plugin [b39a20]           idle        18m  Claude Code                   claude-sonnet-5-5-20261…  —       Visual Studio Code  e2e00000',
   '',
   'C:\\W\\sub',
-  '  gemini-9e9e                           idle        Gemini CLI                    —                         —       Windows Terminal    9e9e0000',
+  '  gemini-9e9e                           idle        —    Gemini CLI                    —                         —       Windows Terminal    9e9e0000',
   '',
   'C:\\z',
-  '  zed-agent-zed1                        idle        zed-agent                     —                         —       —                   zed10000',
+  '  zed-agent-zed1                        idle        30s  zed-agent                     —                         —       —                   zed10000',
   '',
   'Folder not known',
-  '  nightly-sync [c0ffee]                 idle        Claude Code (background)      —                         —       tmux build          —',
-  '  Laptop RC [rc0001]                    idle        Claude Code                   —                         —       Remote Control      —',
+  '  nightly-sync [c0ffee]                 idle        3h   Claude Code (background)      —                         —       tmux build          —',
+  '  Laptop RC [rc0001]                    idle        —    Claude Code                   —                         —       Remote Control      —',
   '',
   "Cloud (can receive, can't reply)",
-  '  Guide 3-to-4 player support [77aa01]  cloud       Claude Code                   —                         —       cloud               —',
-  '  Fix flaky test [77aa02]               cloud       Claude Code                   —                         —       cloud               —',
+  '  Guide 3-to-4 player support [77aa01]  cloud       —    Claude Code                   —                         —       cloud               —',
+  '  Fix flaky test [77aa02]               cloud       —    Claude Code                   —                         —       cloud               —',
   '',
   "Left out: 150 Remote Control offline, 1 offline, 1 that can't take messages, 69 more ListAgents did not show. /list-agents shows every session, including offline ones.",
 ].join('\n')
@@ -141,7 +149,7 @@ function world(on: On, options: WorldOptions = {}) {
   const counts = { listAgents: 0 }
   const model = { current: 'claude-opus-5-5' }
   const mail = { unread: [...(options.unread ?? [])], held: [] as string[], read: [] as string[] }
-  const clock = mock.clock(on, { now: 1_000_000 })
+  const clock = mock.clock(on, { now: NOW })
   const panes = { open: [] as string[], opened: [] as unknown[], closed: [] as unknown[], commands: [] as string[], filled: [] as string[] }
   on('command.register', (_$, e) => {
     panes.commands.push(e.name)
@@ -404,12 +412,12 @@ describe('ListAgents', () => {
     const w = world(on, { tab: 'c1a2b3c4-0000' })
     await start($)
     const shown = names((await list($)).listing)
-    expect(shown).toHaveLength(12)
+    expect(shown).toHaveLength(13)
     for (const to of shown) expect(await $.session.send({ to, text: `to ${to}`, origin: MODEL })).toEqual({ isDelivered: true })
     expect(w.native.map(n => n.to).sort()).toEqual(
       ['E2E testing plugin [b39a20]', 'nightly-sync [c0ffee]', 'Laptop RC [rc0001]', 'docs-9b [11aa22]', 'Fix flaky test [77aa02]', 'Guide 3-to-4 player support [77aa01]'].sort(),
     )
-    expect(w.ops('send').map(c => c.args.to).sort()).toEqual(['01d00000-3333', 'codex-1a2b', 'a0a0a0a0-1111', 'a2a2a2a2-6666', '9e9e0000-7777', 'zed10000'].sort())
+    expect(w.ops('send').map(c => c.args.to).sort()).toEqual(['01d00000-3333', 'codex-1a2b', 'c0dec0de-8888', 'a0a0a0a0-1111', 'a2a2a2a2-6666', '9e9e0000-7777', 'zed10000'].sort())
   })
 
   test('a native-routed Agent Tabs row that the native list does not show is listed by its short name', async ($, on) => {
@@ -420,7 +428,7 @@ describe('ListAgents', () => {
       listing: `${HEADER}\n\nNo reachable agents — no other Claude session is running on this machine right now (peer messaging itself is available; a session appears here once it is started).`,
     })
     await start($)
-    expect((await list($)).listing).toBe(`${HEADER}\n\nC:\\docs\n  claude-b0b0  permission  Claude Code  claude-opus-5-5  high  IntelliJ IDEA  b0b0b0b0`)
+    expect((await list($)).listing).toBe(`${HEADER}\n\nC:\\docs\n  claude-b0b0  permission  1d  Claude Code  claude-opus-5-5  high  IntelliJ IDEA  b0b0b0b0`)
     await $.session.send({ to: 'claude-b0b0', text: 'hi', origin: MODEL })
     expect(w.ops('send').map(c => c.args.to)).toEqual(['b0b0b0b0-9999'])
   })
@@ -446,16 +454,31 @@ describe('ListAgents', () => {
     world(on, { tab: 'c1a2b3c4-0000', rows: ROWS.slice(0, 3), listing: odd })
     await start($)
     expect((await list($)).listing).toBe(
-      ['C:\\w', '  agy-a0a0        busy  Antigravity CLI  gemini-3-pro  —  Antigravity IDE  a0a0a0a0', '', 'C:\\z', '  zed-agent-zed1  idle  zed-agent        —             —  —                zed10000', '', odd].join(
-        '\n',
-      ),
+      [
+        'C:\\w',
+        '  agy-a0a0        busy  5h   Antigravity CLI  gemini-3-pro  —  Antigravity IDE  a0a0a0a0',
+        '',
+        'C:\\z',
+        '  zed-agent-zed1  idle  30s  zed-agent        —             —  —                zed10000',
+        '',
+        odd,
+      ].join('\n'),
     )
+  })
+
+  test('STARTED follows the native style, and a folder lists the newest session of an agent first', async ($, on) => {
+    const at = (ms: number) => row({ id: `c0de${String(ms).padStart(4, '0')}-x`, agent: 'codex', state: 'idle', path: 'C:\\t', startedAt: ago(ms) })
+    const ages = [0, 59_999, 60_000, 3_599_600, 3_600_000, 23 * HOUR + 59 * MIN + 59_600, 86_400_000 * 3]
+    world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!, ...ages.map(at).reverse()], listing: HEADER })
+    await start($)
+    const lines = (await list($)).listing.split('\n').filter(l => l.startsWith('  '))
+    expect(lines.map(l => l.trim().split(/\s{2,}/)[2])).toEqual(['0s', '59s', '1m', '1h', '1h', '1d', '3d'])
   })
 
   test('an unknown peer row shape still counts as a native peer', async ($, on) => {
     world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!], listing: `${HEADER}\n\nPeer sessions (1):\n  mystery [abc123]  ·  something new` })
     await start($)
-    expect((await list($)).listing).toBe(`${HEADER}\n\nFolder not known\n  mystery [abc123]  unknown  Claude Code  —  —  —  —`)
+    expect((await list($)).listing).toBe(`${HEADER}\n\nFolder not known\n  mystery [abc123]  unknown  —  Claude Code  —  —  —  —`)
   })
 })
 
@@ -624,7 +647,9 @@ describe('agents pane', () => {
       const headings = ['C:\\w', 'C:\\a', 'C:\\docs', 'C:\\e2e', 'C:\\W\\sub', 'C:\\z', 'Folder not known', "Cloud (can receive, can't reply)"]
       expect(texts.filter(t => headings.includes(t))).toEqual(headings)
       const buttons = (await ui.findAll({ type: 'Button' })).map(b => b.text.trim())
-      expect(buttons.slice(0, 3)).toEqual(['claude-01d0', 'codex-1a2b', 'agy-a0a0'])
+      expect(buttons.slice(0, 4)).toEqual(['claude-01d0', 'codex-c0de', 'codex-1a2b', 'agy-a0a0'])
+      expect(await ui.find({ type: 'Text', text: /^45m {2}Claude Code \(no native name\) / })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: /^— {4}Gemini CLI / })).toBeDefined()
       expect(buttons).toContain('docs-9b [11aa22]')
       expect(buttons).not.toContain(NATIVE)
       expect((await ui.find({ type: 'Text', text: /^permission/ }))?.props.color).toBe('error')

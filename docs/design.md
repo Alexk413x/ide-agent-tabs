@@ -668,8 +668,13 @@ other agent CLIs. For that, every session that runs the MCP server can message e
   `inputIdle`, a boolean that says whether the prompt has sat unused (see
   [Input idle signal](#input-idle-signal)). A missing `inputIdle` allows a wake-up. A hook that runs before the
   server starts writes a file with only `id` and `state`, and the server keeps that state.
-- `open_tab` adds `via` (`ori` or `direct`) and, for an IDE tab, the IDE's `project` to the presence
-  file, and the server keeps both.
+- `open_tab` adds `via` (`ori` or `direct`), `product` (the IDE's product name or the terminal's label)
+  and, for an IDE tab, the IDE's `project` to the presence file, and the server keeps them.
+- An IDE host id names one run of an IDE extension, so it can outlive its endpoint, as after an
+  extension-host restart. `list_sessions` names the host by its live endpoint's label, else by the stored
+  `product`, else `null`; it never shows the raw id. When the server finds the tab under a new host, at
+  its start or when a wake line fails and the host is looked up again, it stores the new host and that
+  host's label as `product`.
 - `model` and `effort` record what the session runs, and `list_sessions` shows `—` for what nobody
   recorded. `open_tab` writes its `model`. A hook payload's `model` or `modelName` (Codex, Antigravity
   CLI), and its `effort` (`effort.level` for Claude Code) or `reasoning_effort`, replace them. A Claude
@@ -936,21 +941,22 @@ every session that can take a message now. The result still matches `{ listing: 
 This session is plugins-fa [6a3948] — the name other sessions use to message it (…).
 
 C:\w
-  claude-01d0                           idle        Claude Code (no native name)  —                         —       Windows Terminal    01d00000
-  codex-1a2b                            idle        Codex via OpenRouter          gpt-5.5                   medium  Windows Terminal    codex-1a
-  agy-a0a0                              busy        Antigravity CLI               gemini-3-pro              —       Antigravity IDE     a0a0a0a0
+  claude-01d0                           idle        45m  Claude Code (no native name)  —                         —       Windows Terminal    01d00000
+  codex-c0de                            busy        10m  Codex                         —                         —       Windows Terminal    c0dec0de
+  codex-1a2b                            idle        2d   Codex via OpenRouter          gpt-5.5                   medium  Windows Terminal    codex-1a
+  agy-a0a0                              busy        5h   Antigravity CLI               gemini-3-pro              —       Antigravity IDE     a0a0a0a0
 
 C:\docs
-  docs-9b [11aa22]                      permission  Claude Code                   claude-opus-5-5           high    IntelliJ IDEA       tab-d
+  docs-9b [11aa22]                      permission  1d   Claude Code                   claude-opus-5-5           high    IntelliJ IDEA       tab-d
 
 C:\e2e
-  E2E testing plugin [b39a20]           idle        Claude Code                   claude-sonnet-5-5-20261…  —       Visual Studio Code  e2e00000
+  E2E testing plugin [b39a20]           idle        18m  Claude Code                   claude-sonnet-5-5-20261…  —       Visual Studio Code  e2e00000
 
 Folder not known
-  nightly-sync [c0ffee]                 idle        Claude Code (background)      —                         —       tmux build          —
+  nightly-sync [c0ffee]                 idle        3h   Claude Code (background)      —                         —       tmux build          —
 
 Cloud (can receive, can't reply)
-  Guide 3-to-4 player support [77aa01]  cloud       Claude Code                   —                         —       cloud               —
+  Guide 3-to-4 player support [77aa01]  cloud       —    Claude Code                   —                         —       cloud               —
 
 Left out: 150 Remote Control offline, 1 offline, 1 that can't take messages, 69 more ListAgents did not show. /list-agents shows every session, including offline ones.
 ```
@@ -964,20 +970,25 @@ This shows some of the groups from the test listing. The columns align across al
   order. Native Claude peers whose folder isn't known come next under `Folder not known`, and cloud
   sessions last under `Cloud (can receive, can't reply)`, with state and where `cloud`. The session
   itself is not listed.
-- Each line has the columns `NAME`, `STATE`, `HARNESS`, `MODEL`, `EFFORT`, `WHERE` and `SESSION`, with no
-  header row, two spaces apart and aligned across all groups. A column wider than its cap (`STATE` 10,
-  `HARNESS` 32, `MODEL` 24, `EFFORT` 8, `WHERE` 24, `SESSION` 8) is cut with `…`. `NAME` is never cut.
-  An unknown value shows as `—`.
+- Each line has the columns `NAME`, `STATE`, `STARTED`, `HARNESS`, `MODEL`, `EFFORT`, `WHERE` and
+  `SESSION`, with no header row, two spaces apart and aligned across all groups. A column wider than its
+  cap (`STATE` 10, `STARTED` 6, `HARNESS` 32, `MODEL` 24, `EFFORT` 8, `WHERE` 24, `SESSION` 8) is cut with
+  `…`. `NAME` is never cut. An unknown value shows as `—`.
   - `NAME` is what `SendMessage` takes: a Claude session's native name, else the row's `shortName`.
+  - `STARTED` is the time since the session started, in native `ListAgents` style: the largest whole
+    unit, such as `42s`, `15m`, `7h` or `3d`, with seconds rounded into the minute. An Agent Tabs
+    session uses `startedAt` from `list_sessions`; a native peer uses its `started … ago` field. Cloud
+    rows and rows with no start show `—`.
   - `HARNESS` is the agent CLI's label, with ` via OpenRouter` for a session started through Ori, and
     ` (no native name)` for a Claude tab with no native name, such as one on 0.5.3.
   - `MODEL` and `EFFORT` come from the presence file (see [Sessions](#sessions)).
-  - `WHERE` is the IDE product or terminal app, with no project.
+  - `WHERE` is the IDE product or terminal app, with no project, from the `list_sessions` row's `where`.
+    It never shows a raw host id.
   - `SESSION` is the first 8 characters of the session id.
 - Inside a group, lines sort by agent, in the order `claude`, `codex`, `agy`, `copilot`, `gemini`,
-  `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local`, then other agents by name, and then
-  by state: `idle`, `waking`, `busy`, `permission`, then any other state, so the sessions that can act on
-  a message at once come first. Native `running` counts as `busy`, and `waiting on a human` as
+  `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local`, then other agents by name. Within an
+  agent the newest session comes first, then sessions with no start time. State breaks a tie: `idle`,
+  `waking`, `busy`, `permission`, then any other state. Native `running` counts as `busy`, and `waiting on a human` as
   `permission`.
 - The mod parses each native `Peer sessions` row by its `  ·  ` fields. It drops a row that shows
   `offline` or that can't receive messages, and a Remote Control row with no status. It keeps a local
@@ -1052,7 +1063,7 @@ fullscreen layout and opens inline above the prompt otherwise. It opens with `fo
 opens one, and a click works where the surface reports presses. Toasts wait until it closes.
 
 - **Agents:** the `ListAgents` layout, from the same merge code: folder headings, one row per agent with
-  name, state, harness, model, effort, IDE or terminal and session, cloud sessions last. The state is
+  name, state, time since start, harness, model, effort, IDE or terminal and session, cloud sessions last. The state is
   coloured by theme key: `idle` success, `busy` warning, `permission` error, `waking` suggestion,
   anything else dim.
 - **Messages** of the chosen agent: everything it sent or received through Agent Tabs or SendMessage

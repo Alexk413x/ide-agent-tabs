@@ -332,3 +332,38 @@ test("a Codex session's server reads its model and effort from config.toml, hono
   assert.equal((await readPresence(home, 'tab-z'))?.model, undefined, 'only a Codex session reads the Codex config');
   claude.stopSync();
 });
+
+test('where shows the stored IDE product when the endpoint is gone, refreshes it when the tab is re-adopted, and is null when unknown', async () => {
+  const home = tempDir('iat-mod-');
+  const quiet: Hosts = { findHost: async () => undefined, typeInto: async () => ({ ok: true }), describeHost: async () => undefined };
+  const kept = session(home, 'tab-v', 'codex', 1, quiet);
+  const bare = session(home, 'tab-u', 'codex', 2, quiet);
+  await kept.start();
+  await bare.start();
+  await updatePresence(home, 'tab-v', (p) => (p ? { ...p, host: 'vscode-1-old', product: 'Visual Studio Code', project: 'proj' } : p));
+  await updatePresence(home, 'tab-u', (p) => (p ? { ...p, host: 'vscode-2-gone' } : p));
+  const row = async (id: string) => (await kept.listSessions()).sessions.find((s) => s.id === id)!;
+  assert.deepEqual([(await row('tab-v')).where, (await row('tab-v')).host], ['Visual Studio Code', 'Visual Studio Code (proj)']);
+  assert.deepEqual([(await row('tab-u')).where, (await row('tab-u')).host], [null, null], 'a raw host id is never shown');
+
+  const typed: string[] = [];
+  const readopt: Hosts = {
+    findHost: async () => 'vscode-3-new',
+    typeInto: async (_id, host) => {
+      typed.push(host);
+      return host === 'vscode-1-old' ? { ok: false, reason: 'gone' } : { ok: true };
+    },
+    describeHost: async (host) => (host === 'vscode-3-new' ? 'Cursor' : undefined),
+  };
+  const sender = new Messaging({ home, env: {}, pid: 3, cwd: '/w', hosts: readopt, isAlive: () => true, randomId: () => 's-000000000003' });
+  await sender.start();
+  await idle(home, 'tab-v');
+  assert.equal((await sender.send({ to: 'tab-v', text: 'wake' })).delivery, 'woken');
+  assert.deepEqual(typed, ['vscode-1-old', 'vscode-3-new']);
+  const after = (await readPresence(home, 'tab-v'))!;
+  assert.deepEqual([after.host, after.product], ['vscode-3-new', 'Cursor']);
+  for (const m of [kept, bare, sender]) {
+    m.stopFollowUps();
+    m.stopSync();
+  }
+});

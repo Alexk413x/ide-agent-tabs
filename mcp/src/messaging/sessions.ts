@@ -42,6 +42,7 @@ export interface PresenceFile {
   project?: string;
   model?: string;
   effort?: string;
+  product?: string;
 }
 
 export interface Presence extends PresenceFile {
@@ -124,6 +125,7 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...str('project'),
     ...str('model'),
     ...str('effort'),
+    ...str('product'),
   };
 }
 

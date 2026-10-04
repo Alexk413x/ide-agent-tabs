@@ -220,6 +220,7 @@ export class Messaging {
       ...(current?.project !== undefined ? { project: current.project } : {}),
       ...(current?.model !== undefined ? { model: current.model } : {}),
       ...(current?.effort !== undefined ? { effort: current.effort } : {}),
+      ...(current?.product !== undefined ? { product: current.product } : {}),
       beatMs: this.beatMs,
     };
   }
@@ -284,8 +285,18 @@ export class Messaging {
 
   private async resolveOwnHost(): Promise<string | undefined> {
     const host = await this.deps.hosts.findHost(this.sessionId).catch(() => undefined);
-    if (host !== undefined) await this.updateOwn((p) => ({ ...p, host })).catch(() => undefined);
+    if (host !== undefined) {
+      const fields = await this.hostFields(host);
+      await this.updateOwn((p) => ({ ...p, ...fields })).catch(() => undefined);
+    }
     return host;
+  }
+
+  // A host id names one run of an IDE extension or one terminal, so the product label is kept in the
+  // presence file: list_sessions still names the IDE after that endpoint is gone.
+  private async hostFields(host: string): Promise<Pick<PresenceFile, 'host' | 'product'>> {
+    const product = await this.deps.hosts.describeHost?.(host).catch(() => undefined);
+    return { host, ...(product !== undefined ? { product } : {}) };
   }
 
   // A model from open_tab or from a hook payload names what the session runs; the config is only its default.
@@ -382,7 +393,7 @@ export class Messaging {
     const short = shortNames(sessions);
     const rows = sessions.map((s) => {
       const native = s.agent === 'claude' && s.nativeName !== undefined && isModDriven(s, now);
-      const product = s.host !== undefined ? (labels.get(s.host) ?? s.host) : undefined;
+      const product = (s.host !== undefined ? labels.get(s.host) : undefined) ?? s.product;
       return {
         name: native ? s.nativeName! : short.get(s.id)!,
         shortName: short.get(s.id)!,
@@ -479,10 +490,11 @@ export class Messaging {
     let host = recipient.host;
     if (host === undefined && mayBeTab(recipient.id)) host = await this.deps.hosts.findHost(recipient.id);
     if (host === undefined) return { delivery: 'queued' };
+    const fields = host === recipient.host ? { host } : await this.hostFields(host);
     let claimed: PresenceFile | undefined;
     await updatePresence(this.deps.home, recipient.id, (current) => {
       if (current?.pid !== recipient.pid || current.stateAt !== recipient.stateAt || effectiveState(current, now) !== 'idle' || current.inputIdle === false) return current;
-      claimed = withState({ ...current, host }, 'waking', now);
+      claimed = withState({ ...current, ...fields }, 'waking', now);
       return claimed;
     });
     if (!claimed) return { delivery: 'queued' };
@@ -491,7 +503,8 @@ export class Messaging {
       const found = await this.deps.hosts.findHost(recipient.id).catch(() => undefined);
       if (found !== undefined && found !== host) {
         const stateAt = claimed.stateAt;
-        await updatePresence(this.deps.home, recipient.id, (current) => (current !== undefined && current.stateAt === stateAt ? { ...current, host: found } : current));
+        const refound = await this.hostFields(found);
+        await updatePresence(this.deps.home, recipient.id, (current) => (current !== undefined && current.stateAt === stateAt ? { ...current, ...refound } : current));
         typed = await this.typeWakeLine(recipient.id, found);
       }
     }
