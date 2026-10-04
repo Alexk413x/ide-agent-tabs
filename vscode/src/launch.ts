@@ -11,6 +11,10 @@ export const ARG_COUNT_ENV = `${PLUGIN_ENV_PREFIX}ARGC`;
 export const ARG_ENV_PREFIX = `${PLUGIN_ENV_PREFIX}ARG_`;
 export const PROMPT_ENV = `${PLUGIN_ENV_PREFIX}PROMPT`;
 
+export function editorLocation<Column>(column: Column, focus: boolean): { viewColumn: Column; preserveFocus: boolean } {
+  return { viewColumn: column, preserveFocus: !focus };
+}
+
 export type ShellKind = 'powershell' | 'posix' | 'fish';
 
 export interface LaunchScripts {

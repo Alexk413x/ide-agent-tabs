@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "publisher": "alexk413x",
   "license": "LicenseRef-Proprietary",
   "repository": {
@@ -166,6 +166,28 @@
             ],
             "description": "Where a new agent tab opens when no IDE or terminal is named.",
             "order": 1
+          },
+          "ideAgentTabs.focusNewTabs": {
+            "type": "string",
+            "scope": "machine",
+            "default": "auto",
+            "enum": [
+              "auto",
+              "always",
+              "never"
+            ],
+            "enumItemLabels": [
+              "When you asked for the tab",
+              "Always",
+              "Never"
+            ],
+            "enumDescriptions": [
+              "Open an agent's tab behind the current one, and bring it to the front when the agent says you asked for it.",
+              "Bring every new agent tab to the front, unless the agent asks to open it behind.",
+              "Open new agent tabs behind the current one, unless the agent asks to bring it to the front."
+            ],
+            "markdownDescription": "Bring new agent tabs to the front. Applies to tabs that agents open with `open_tab` or a handoff; the New Agent Tab button always brings its tab to the front. Some terminals can't open a tab behind the current one.",
+            "order": 2
           }
         }
       },

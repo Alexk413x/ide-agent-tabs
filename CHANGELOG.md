@@ -6,7 +6,7 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 
 ## 0.6.0
 
-Plugin and MCP server 0.6.0, with VS Code extension 0.1.22 and JetBrains plugin 0.4.5 bundled. Both IDE
+Plugin and MCP server 0.6.0, with VS Code extension 0.1.23 and JetBrains plugin 0.4.6 bundled. Both IDE
 packages add the `agy` profile and icon, the profiles and icons of seven more agents, the Codex
 `Interrupt` hook and the tab settings.
 
@@ -58,12 +58,24 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
 - The OpenCode MCP entry sets `timeout: 660000` (milliseconds). OpenCode applies it to tool calls, and
   its default would end `wait_for_message` early. Run `--register opencode` again to update an entry
   written earlier.
+- A tab that an agent opens no longer takes focus by default. In kitty with remote control it opens with
+  `--keep-focus`, in tmux with `new-window -d`, and in iTerm2 and Ghostty on macOS the previous tab is
+  selected again. Windows Terminal and WezTerm have no background option, so their new tab still comes
+  to the front.
 
 ### Added
 
 - A Claude Code mod, loaded from `hooks/hooks.json` `modules` in Claude Code builds with function hooks.
-  - `ListAgents` lists every Agent Tabs session, and `SendMessage` reaches them by name. Native Claude
-    peers still go the native way.
+  - `ListAgents` returns one list of every session that can take a message now: live native Claude
+    peers and every Agent Tabs session, grouped by folder with the caller's folder first and cloud
+    sessions last. Each line shows the name to message, state, harness, model, effort, IDE or terminal,
+    and the session id's first 8 characters, aligned across groups. A Claude tab appears once, under
+    its native name. Offline sessions, including offline Remote Control ones, are left out and counted
+    on the last line; `/list-agents` still shows them. `SendMessage` reaches every listed name, and
+    native Claude peers still go the native way.
+  - `list_sessions` adds `shortName` (such as `codex-f99f`), `session`, `harness`, `model`, `effort`,
+    `where`, `folder` and `nativeName`, and `send_message` takes a `shortName`. The model comes from
+    `open_tab`, hook payloads, the Claude mod, or a Codex session's `config.toml`.
   - In a tab, the mod reports the session's state and delivers mail with `$.prompt.submit` as a framed
     peer prompt once the session is idle. A failed submit returns the message to unread.
   - The status line shows the unread count and the first sender, a toast announces each arrival, and the
@@ -196,6 +208,14 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
   Ori can launch `prime-agent`, but there is no profile for it.
 - `scripts/check.mjs` runs typecheck, tests, the bundle check, the plugin version check and both
   `claude plugin validate --strict` runs.
+- `open_tab` and `handoff` take `focus`. `true` brings the new tab to the front; `false` opens it behind
+  the current one where the host allows. The IDE `open` route takes `focus` too, and treats a missing
+  value as `false`.
+- The setting **Bring new agent tabs to the front** (`focusNewTabs` in `config.json`), under IDE tabs in
+  VS Code (`ideAgentTabs.focusNewTabs`) and JetBrains: `auto` (default) follows the call's `focus`; `always` and
+  `never` ignore it. With `auto`, the `new-tab` skill passes `focus: true` when the user asked
+  for the tab, and the `handoff` skill only when the user asks to watch the new tab. The New Agent Tab
+  button always brings its tab to the front.
 
 ## 0.5.3
 

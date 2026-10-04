@@ -56,6 +56,13 @@ private fun JsonObject.string(name: String): String? {
     return value.asString
 }
 
+private fun JsonObject.boolean(name: String): Boolean? {
+    val value = get(name) ?: return null
+    if (value.isJsonNull) return null
+    if (!value.isJsonPrimitive || !value.asJsonPrimitive.isBoolean) throw IllegalArgumentException("$name must be true or false")
+    return value.asBoolean
+}
+
 fun parseCloseId(body: String): String {
     val id = parseObject(body).string("id")
     if (id.isNullOrBlank()) throw IllegalArgumentException("id is required")
@@ -109,6 +116,7 @@ data class OpenRequest(
     val agent: String? = null,
     val model: String? = null,
     val via: LaunchVia? = null,
+    val focus: Boolean = false,
 ) {
 
     companion object {
@@ -123,6 +131,7 @@ data class OpenRequest(
                 obj.string("agent"),
                 obj.string("model"),
                 obj.string("via"),
+                obj.boolean("focus") ?: false,
             )
         }
 
@@ -134,6 +143,7 @@ data class OpenRequest(
             agent: String? = null,
             model: String? = null,
             via: String? = null,
+            focus: Boolean = false,
         ): OpenRequest {
             if (path.isNullOrBlank()) throw IllegalArgumentException("path is required")
             val dir = Path.of(path)
@@ -150,7 +160,7 @@ data class OpenRequest(
                 throw IllegalArgumentException("model must be 1 to 200 characters from letters, digits and . _ : / @ + -")
             }
             val chosenVia = via?.let { LaunchVia.of(it) ?: throw IllegalArgumentException("via must be 'ori' or 'direct'") }
-            return OpenRequest(dir.normalize(), prompt?.takeIf { it.isNotBlank() }, args, env, agent, model, chosenVia)
+            return OpenRequest(dir.normalize(), prompt?.takeIf { it.isNotBlank() }, args, env, agent, model, chosenVia, focus)
         }
     }
 }

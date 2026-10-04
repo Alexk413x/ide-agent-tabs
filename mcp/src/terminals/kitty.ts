@@ -79,11 +79,20 @@ function placeArgs(place: KittyPlace | undefined): string[] {
   return 'osWindow' in place ? ['--type=os-window'] : ['--type=tab', '--match', `window_id:${place.windowId}`];
 }
 
-export function kittyLaunchArgs(o: { address: string; cwd: string; title: string; launcher: string; spec: string; argv: string[]; place?: KittyPlace }): string[] {
+export function kittyLaunchArgs(o: {
+  address: string;
+  cwd: string;
+  title: string;
+  launcher: string;
+  spec: string;
+  argv: string[];
+  place?: KittyPlace;
+  focus?: boolean;
+}): string[] {
   checkArgvPaths('kitty', [o.address, o.cwd, o.launcher, o.spec]);
   if (o.place && 'windowId' in o.place && !/^\d+$/.test(o.place.windowId)) throw new Error(`not a kitty window id: ${o.place.windowId}`);
   return [
-    '@', '--to', o.address, 'launch', ...placeArgs(o.place), '--cwd', o.cwd,
+    '@', '--to', o.address, 'launch', ...placeArgs(o.place), ...(o.focus === false ? ['--keep-focus'] : []), '--cwd', o.cwd,
     '--env', `IDE_AGENT_TABS_LAUNCHER=${o.launcher}`,
     '--env', `IDE_AGENT_TABS_SPEC=${o.spec}`,
     '--tab-title', tabTitle(o.title),
@@ -211,7 +220,16 @@ export const kitty: TerminalDriver = {
 
     if (address) {
       const target = await kittyPlace(kitten, address, ctx.home, options);
-      const args = kittyLaunchArgs({ address: target.address, cwd: spec.cwd, title, launcher, spec: specFile, argv, ...(target.place ? { place: target.place } : {}) });
+      const args = kittyLaunchArgs({
+        address: target.address,
+        cwd: spec.cwd,
+        title,
+        launcher,
+        spec: specFile,
+        argv,
+        ...(target.place ? { place: target.place } : {}),
+        ...(options?.focus !== undefined ? { focus: options.focus } : {}),
+      });
       await writeNewPrivateFile(specFile, posixSpec(spec));
       let windowId: string;
       try {

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { promises as fs, readFileSync, rmSync } from 'node:fs';
-import { AGENT_ENV, TAB_ID_ENV } from '../profiles.js';
+import { AGENT_ENV, BUILTIN_PROFILES, TAB_ID_ENV } from '../profiles.js';
 import { isProcessAlive } from '../registry.js';
 import {
   checkMessageId,
@@ -23,6 +23,7 @@ import {
   waitForMessage,
   type Message,
 } from './mailbox.js';
+import { readCodexConfig } from './codexConfig.js';
 import { runHook } from './hook.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
@@ -30,7 +31,9 @@ import {
   effectiveState,
   HEARTBEAT_MS,
   IDLE_SETTLE_MS,
+  isEffort,
   isModDriven,
+  isModel,
   isSessionId,
   liveSessions,
   parsePresence,
@@ -88,6 +91,8 @@ export interface ModPresenceInput {
   driver?: boolean;
   nativeName?: string;
   state?: ModState;
+  model?: string;
+  effort?: string;
 }
 
 export interface WaitInput {
@@ -102,10 +107,34 @@ export const CODEX_ID_PREFIX = 'codex-';
 const generatedId = () => `s-${randomBytes(6).toString('hex')}`;
 const mayBeTab = (id: string) => !id.startsWith('s-') && !id.startsWith(CODEX_ID_PREFIX);
 const NATIVE_NAME = /^[^\x00-\x1f\x7f]{1,128}$/;
+const ID_PREFIXES = ['s-', CODEX_ID_PREFIX];
+const SHORT_ID_CHARS = 4;
+export const SESSION_PREFIX_CHARS = 8;
 const agentRank = (agent: string) => {
   const i = AGENT_ORDER.indexOf(agent);
   return i === -1 ? AGENT_ORDER.length : i;
 };
+
+export const harnessOf = (agent: string, via?: string) =>
+  `${BUILTIN_PROFILES.find((p) => p.name === agent)?.label ?? agent}${via === 'ori' ? ' via OpenRouter' : ''}`;
+
+function idCore(id: string): string {
+  const prefix = ID_PREFIXES.find((p) => id.startsWith(p) && id.length > p.length);
+  return (prefix !== undefined ? id.slice(prefix.length) : id).replace(/[^A-Za-z0-9]/g, '');
+}
+
+export function shortNames(sessions: readonly { id: string; agent: string }[]): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const s of sessions) {
+    const core = idCore(s.id);
+    const rivals = sessions.filter((o) => o !== s && o.agent === s.agent).map((o) => idCore(o.id));
+    let n = Math.min(SHORT_ID_CHARS, core.length);
+    while (n < core.length && rivals.some((r) => r.slice(0, n) === core.slice(0, n))) n++;
+    const name = `${s.agent}-${core.slice(0, n)}`;
+    names.set(s.id, core === '' || rivals.some((r) => r.slice(0, n) === core.slice(0, n)) ? s.id : name);
+  }
+  return names;
+}
 
 interface ReadResult {
   notice?: string;
@@ -179,6 +208,8 @@ export class Messaging {
       ...(current?.nativeName !== undefined ? { nativeName: current.nativeName } : {}),
       ...(current?.via !== undefined ? { via: current.via } : {}),
       ...(current?.project !== undefined ? { project: current.project } : {}),
+      ...(current?.model !== undefined ? { model: current.model } : {}),
+      ...(current?.effort !== undefined ? { effort: current.effort } : {}),
       beatMs: this.beatMs,
     };
   }
@@ -226,6 +257,7 @@ export class Messaging {
     }
     if (!this.isTab) await updatePresence(this.deps.home, this.sessionId, (current) => this.presence(current));
     if (this.isTab) this.ownHost = this.resolveOwnHost();
+    await this.learnCodexDefaults().catch(() => undefined);
     this.startHeartbeat();
     void this.clean().catch(() => undefined);
   }
@@ -244,6 +276,18 @@ export class Messaging {
     const host = await this.deps.hosts.findHost(this.sessionId).catch(() => undefined);
     if (host !== undefined) await this.updateOwn((p) => ({ ...p, host })).catch(() => undefined);
     return host;
+  }
+
+  // A model from open_tab or from a hook payload names what the session runs; the config is only its default.
+  private async learnCodexDefaults(): Promise<void> {
+    if (this.agent !== 'codex') return;
+    const config = await readCodexConfig(this.deps.env);
+    if (config.model === undefined && config.effort === undefined) return;
+    await this.updateOwn((p) => ({
+      ...p,
+      ...(p.model === undefined && config.model !== undefined ? { model: config.model } : {}),
+      ...(p.effort === undefined && config.effort !== undefined ? { effort: config.effort } : {}),
+    }));
   }
 
   noteThread(threadId: unknown): Promise<void> {
@@ -297,6 +341,7 @@ export class Messaging {
     if (this.agentFromEnv() !== undefined) return;
     this.agent = agentFromClient(name);
     await this.updateOwn((p) => ({ ...p, agent: this.agent }));
+    await this.learnCodexDefaults().catch(() => undefined);
   }
 
   stopSync(): void {
@@ -324,20 +369,29 @@ export class Messaging {
     for (const host of new Set(sessions.flatMap((s) => (s.host !== undefined ? [s.host] : [])))) {
       labels.set(host, await this.deps.hosts.describeHost?.(host).catch(() => undefined));
     }
+    const short = shortNames(sessions);
     const rows = sessions.map((s) => {
       const native = s.agent === 'claude' && s.nativeName !== undefined && isModDriven(s, now);
       const product = s.host !== undefined ? (labels.get(s.host) ?? s.host) : undefined;
       return {
-        name: native ? s.nativeName! : s.id,
+        name: native ? s.nativeName! : short.get(s.id)!,
+        shortName: short.get(s.id)!,
         id: s.id,
+        session: s.id.slice(0, SESSION_PREFIX_CHARS),
         agent: s.agent,
         route: native ? ('native' as const) : ('agent-tabs' as const),
+        ...(s.agent === 'claude' && s.nativeName !== undefined ? { nativeName: s.nativeName } : {}),
         state: s.state,
         ...(s.stateAt !== undefined ? { stateAt: s.stateAt } : {}),
+        harness: harnessOf(s.agent, s.via),
+        model: s.model ?? null,
+        effort: s.effort ?? null,
+        where: product ?? null,
         tab: mayBeTab(s.id) ? s.id : null,
         host: product === undefined ? null : s.project !== undefined ? `${product} (${s.project})` : product,
         ide: s.host ?? null,
         path: s.path,
+        folder: s.path,
         ...(s.via !== undefined ? { via: s.via } : {}),
         startedAt: s.startedAt,
         ...(s.handedOffTo !== undefined ? { handedOffTo: s.handedOffTo } : {}),
@@ -352,15 +406,19 @@ export class Messaging {
   }
 
   async send(input: SendInput) {
-    const { to, text, replyTo } = input;
-    if (to === this.sessionId) throw new MailError('to is this session; pick another id from list_sessions');
-    if (!isSessionId(to)) throw new MailError(`not a session id: ${to}`);
+    const { text, replyTo } = input;
+    if (input.to === this.sessionId) throw new MailError('to is this session; pick another id from list_sessions');
+    if (!isSessionId(input.to)) throw new MailError(`not a session id: ${input.to}`);
     if (text.trim() === '') throw new MailError('text is empty');
     if (text.length > MAX_TEXT_CHARS) throw new MailError(`text exceeds ${MAX_TEXT_CHARS} characters`);
     if (replyTo !== undefined) checkMessageId(replyTo, 'replyTo');
     const now = this.now();
-    const recipient = (await liveSessions(this.deps.home, this.alive, now)).find((s) => s.id === to);
-    if (!recipient) throw new MailError(`no live session with id ${to}; call list_sessions`);
+    const live = await liveSessions(this.deps.home, this.alive, now);
+    const short = shortNames(live);
+    const recipient = live.find((s) => s.id === input.to) ?? live.find((s) => short.get(s.id) === input.to);
+    if (!recipient) throw new MailError(`no live session with id or name ${input.to}; call list_sessions`);
+    const to = recipient.id;
+    if (to === this.sessionId) throw new MailError('to is this session; pick another id from list_sessions');
     const id = newMessageId();
     const { duplicateOf } = await reserveSend(this.deps.home, this.sessionId, now, { id, to, digest: sendDigest(to, text, replyTo) });
     if (duplicateOf !== undefined) {
@@ -478,6 +536,8 @@ export class Messaging {
     if (input.nativeName !== undefined && !NATIVE_NAME.test(input.nativeName)) {
       throw new MailError('nativeName must be one printable line of at most 128 characters');
     }
+    if (input.model !== undefined && !isModel(input.model)) throw new MailError('model must be one printable line of at most 128 characters');
+    if (input.effort !== undefined && !isEffort(input.effort)) throw new MailError('effort must be at most 32 letters, digits, dots, dashes or underscores');
     const now = this.now();
     const claim = input.driver === true && this.isTab;
     await this.updateOwn((p) => {
@@ -490,6 +550,8 @@ export class Messaging {
         ...(claim ? { driver: 'mod' as const } : {}),
         ...(driven ? { modBeat: now } : {}),
         ...(input.nativeName !== undefined && input.driver !== false ? { nativeName: input.nativeName } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.effort !== undefined ? { effort: input.effort } : {}),
       };
     });
     const own = await readPresence(this.deps.home, this.sessionId);

@@ -65,13 +65,14 @@ export function tmuxTitle(label: string): string {
   return tabTitle(label.replace(/[#;]/g, ' '));
 }
 
-export function tmuxOpenArgs(target: TmuxTarget, o: { title: string; launcher: string; spec: string; argv: string[] }): string[] {
+export function tmuxOpenArgs(target: TmuxTarget, o: { title: string; launcher: string; spec: string; argv: string[]; focus?: boolean }): string[] {
   checkArgvPaths('tmux', [o.launcher, o.spec], ';');
+  const behind = o.focus === false ? ['-d'] : [];
   const head =
     'after' in target
-      ? ['-S', target.socket, 'new-window', '-a', '-t', target.after, '-P', '-F', WINDOW_FORMAT]
+      ? ['-S', target.socket, 'new-window', ...behind, '-a', '-t', target.after, '-P', '-F', WINDOW_FORMAT]
       : 'session' in target
-        ? ['new-window', '-P', '-F', WINDOW_FORMAT, '-t', `${target.session}:`]
+        ? ['new-window', ...behind, '-P', '-F', WINDOW_FORMAT, '-t', `${target.session}:`]
         : ['new-session', '-d', '-s', target.newSession, '-P', '-F', WINDOW_FORMAT];
   // /usr/bin/env sets the paths instead of -e: new-session -e needs tmux 3.2, and it would also leave them
   // in the session environment for later windows.
@@ -169,7 +170,7 @@ export const tmux: TerminalDriver = {
     const launcher = path.join(ctx.scriptsDir, launcherName(shell));
     const env = terminalEnvironment(ctx.env);
     const target = await chooseTarget(exe, env, options);
-    const args = tmuxOpenArgs(target, { title, launcher, spec: specFile, argv: surfaceArgv(shell) });
+    const args = tmuxOpenArgs(target, { title, launcher, spec: specFile, argv: surfaceArgv(shell), ...(options?.focus !== undefined ? { focus: options.focus } : {}) });
     await writeNewPrivateFile(specFile, posixSpec(spec));
     let window: TmuxWindow;
     try {

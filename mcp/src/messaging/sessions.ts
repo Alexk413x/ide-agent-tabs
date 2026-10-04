@@ -40,6 +40,8 @@ export interface PresenceFile {
   nativeName?: string;
   via?: Via;
   project?: string;
+  model?: string;
+  effort?: string;
 }
 
 export interface Presence extends PresenceFile {
@@ -51,6 +53,8 @@ export interface Presence extends PresenceFile {
 }
 
 export const isSessionId = (id: string) => SESSION_ID.test(id);
+export const isModel = (value: string) => /^[^\x00-\x1f\x7f]{1,128}$/.test(value);
+export const isEffort = (value: string) => /^[A-Za-z0-9._-]{1,32}$/.test(value);
 
 export const presencePath = (home: string, id: string) => path.join(home, SESSIONS_DIR, `${id}.json`);
 
@@ -118,6 +122,8 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...str('nativeName'),
     ...via,
     ...str('project'),
+    ...str('model'),
+    ...str('effort'),
   };
 }
 

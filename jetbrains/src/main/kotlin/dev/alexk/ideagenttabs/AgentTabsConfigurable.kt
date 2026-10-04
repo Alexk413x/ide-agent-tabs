@@ -94,6 +94,13 @@ class AgentTabsConfigurable : BoundConfigurable("Agent Tabs") {
                         })
                         .comment("Where a new agent tab opens when no IDE or terminal is named.")
                 }
+                row("Bring new agent tabs to the front:") {
+                    comboBox(FocusNewTabs.entries, textListCellRenderer { it?.label })
+                        .bindItem({ Agents.settings.shared().focusNewTabs }, { value ->
+                            if (value != null && value != Agents.settings.shared().focusNewTabs) saved(Agents.settings.setFocusNewTabs(value))
+                        })
+                        .comment("For tabs that agents open. An agent's tab opens behind the current one unless you asked for it. The New Agent Tab button always brings its tab to the front.")
+                }
             }
             group("Terminal tabs") {
                 row("Preferred terminal:") {

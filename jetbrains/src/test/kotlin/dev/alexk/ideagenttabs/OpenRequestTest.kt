@@ -191,4 +191,18 @@ class OpenRequestTest {
         }
         assertEquals(200, OpenRequest.of(dir.toString(), null, model = "x".repeat(200)).model?.length)
     }
+
+    @Test
+    fun `focus is an optional boolean that defaults to false`() {
+        val path = dir.toString().replace("\\", "\\\\")
+        assertEquals(false, OpenRequest.parse("""{"path":"$path"}""").focus)
+        assertEquals(false, OpenRequest.parse("""{"path":"$path","focus":null}""").focus)
+        assertEquals(true, OpenRequest.parse("""{"path":"$path","focus":true}""").focus)
+        assertEquals(false, OpenRequest.parse("""{"path":"$path","focus":false}""").focus)
+        for (bad in listOf("\"true\"", "1", "{}")) {
+            val body = """{"path":"$path","focus":$bad}"""
+            assertThrows(body, IllegalArgumentException::class.java) { OpenRequest.parse(body) }
+        }
+        assertEquals(false, OpenRequest.of(dir.toString(), null).focus)
+    }
 }

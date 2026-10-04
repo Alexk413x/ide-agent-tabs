@@ -24,6 +24,13 @@ test('open requests follow the IDE rules', () => {
     { path: dir, env: { IDE_AGENT_TABS_ID: 'x' } },
     { path: dir, agent: ' ' },
     { path: dir, ide: '' },
+    { path: dir, focus: 'yes' as unknown as boolean },
   ];
   for (const input of bad) assert.throws(() => validateOpen(input), ConfigError, JSON.stringify(input).slice(0, 80));
+});
+
+test('focus passes through only when the caller gives it', () => {
+  assert.equal('focus' in validateOpen({ path: dir }), false);
+  assert.equal(validateOpen({ path: dir, focus: true }).focus, true);
+  assert.equal(validateOpen({ path: dir, focus: false }).focus, false);
 });

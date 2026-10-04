@@ -9,6 +9,7 @@ import {
   mergeProfiles,
   parseProfiles,
   readDefaultAgent,
+  resolveFocus,
   resolveSettings,
   type AgentProfile,
 } from '../src/profiles.js';
@@ -186,6 +187,26 @@ test('tab routing, shell and terminal window come from config, with defaults and
   assert.match(all, /terminalWindow .*"last" or "dedicated"/);
   assert.match(all, /shell .*absolute path/);
   assert.match(all, /terminal .*must be a string/);
+});
+
+test('focusNewTabs comes from config: auto follows the call, always and never decide alone', () => {
+  assert.equal(resolveSettings(undefined, undefined).focusNewTabs, 'auto');
+  for (const mode of ['auto', 'always', 'never'] as const) {
+    const settings = resolveSettings(undefined, JSON.stringify({ focusNewTabs: mode }));
+    assert.equal(settings.focusNewTabs, mode);
+    assert.deepEqual(settings.warnings, []);
+  }
+  const bad = resolveSettings(undefined, JSON.stringify({ focusNewTabs: true }));
+  assert.equal(bad.focusNewTabs, 'auto');
+  assert.match(bad.warnings.join(' '), /focusNewTabs .*"auto" or "always" or "never"/);
+
+  assert.equal(resolveFocus('auto', undefined), false);
+  assert.equal(resolveFocus('always', undefined), true);
+  assert.equal(resolveFocus('never', undefined), false);
+  assert.equal(resolveFocus('auto', true), true);
+  assert.equal(resolveFocus('auto', false), false);
+  assert.equal(resolveFocus('always', false), true);
+  assert.equal(resolveFocus('never', true), false);
 });
 
 test('merge keeps built-in order and appends new profiles in file order', () => {

@@ -16,13 +16,13 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 | `list_ides` | none | Running IDEs (`id`, `product`, `version`, `projects` with `focused`), the terminals this machine supports with their capabilities, and `shells`: the PowerShell installs a Windows terminal tab can use |
 | `list_agents` | none | Profiles (`name`, `label`, `command`, `installed`, `model`: `true` when the profile takes a model, and `ori: true` when Ori can launch it), the `default` agent, `launchVia`, and any warnings about your config files |
 | `list_tabs` | `ide` (optional) | Open tabs across all IDEs and terminals, or in one |
-| `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux |
+| `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux |
 | `close_tab` | `id` (optional) | The closed tab. With no `id`, it closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
-| `list_sessions` | none | Live agent sessions in a fixed agent order: `name` (what Claude Code's `SendMessage` takes), `id`, `agent`, `route` (`native` or `agent-tabs`), `state`, `tab`, `host` (IDE and project, or terminal), `ide` (the host's id), `path`, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
-| `send_message` | `to`, `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
+| `list_sessions` | none | Live agent sessions in a fixed agent order: `name` (what Claude Code's `SendMessage` takes: a Claude session's native name, else `shortName`), `shortName` (such as `codex-f99f`, which `send_message` also takes), `id`, `session` (the first 8 characters of `id`), `agent`, `harness` (the agent CLI, with ` via OpenRouter` for an Ori launch), `model` and `effort` (`null` when unknown), `route` (`native` or `agent-tabs`), `state`, `tab`, `where` (the IDE or terminal app), `host` (IDE and project, or terminal), `ide` (the host's id), `path` and `folder`, `nativeName` for a Claude session that has one, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
+| `send_message` | `to` (an `id` or `shortName`), `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
 | `read_messages` | none | The caller's unread messages, marked read, under a `notice` that they come from other agents |
 | `wait_for_message` | optional `timeout` (seconds, default 60, at most 600, or 170 in an Antigravity CLI session), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
-| `handoff` | `path`, and `brief` or `goal`, `done`, `next`, `files`, `openQuestions`, and optional `agent`, `model`, `via`, `ide` | The handoff `id`, the `brief` path, the `newTab` id, and `next`: the steps the caller follows to wait for the takeover and stop |
+| `handoff` | `path`, and `brief` or `goal`, `done`, `next`, `files`, `openQuestions`, and optional `agent`, `model`, `via`, `ide`, `focus` | The handoff `id`, the `brief` path, the `newTab` id, and `next`: the steps the caller follows to wait for the takeover and stop |
 
 An IDE's id is its registry file name without `.json`: `<ide>-<pid>`, or `<ide>-<pid>-<window>` for a VS
 Code window. A terminal's id is its name: `windows-terminal`, `ghostty`, `iterm2`, `kitty`, `wezterm` or
@@ -85,6 +85,24 @@ Ori 0.14.3 on Windows, checked 2026-10-03:
   Codex tab arguments hold Codex's own `<session-flags>` keys, so Codex tabs through Ori don't work
   with an npm (`.cmd`) Codex on Windows. The setting falls back to a direct launch, and an explicit
   `via: "ori"` returns a clear error.
+
+### Focus
+
+`focus: true` brings the new tab to the front, and `focus: false` opens it behind the current one where
+the host allows. The `focusNewTabs` setting decides how: `"auto"` (the default) follows the call's `focus`
+and opens behind without one, `"always"` always brings the tab to the front, and `"never"` never does. The
+server can't tell whether the user or an agent asked for a tab, so the `new-tab` skill passes
+`focus: true` when the user asked for the tab, and the `handoff` skill only when the user asks to watch
+the new tab. The New Agent Tab button in an IDE always brings its tab to the front.
+
+| Host | With `focus: false` |
+|---|---|
+| VS Code | Keyboard focus stays in the current editor; the new tab still shows in the active editor group. |
+| JetBrains IDEs | Keyboard focus stays where it was; the new tab becomes the selected editor tab. |
+| kitty with remote control | `launch --keep-focus`. |
+| tmux | `new-window -d`. |
+| iTerm2, Ghostty on macOS | The previous tab of that window is selected again. A new window takes focus. |
+| Windows Terminal, WezTerm, kitty without remote control, Ghostty on Linux | No effect: the new tab or window comes to the front. |
 
 ### How `open_tab` picks a place
 
@@ -324,8 +342,9 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `terminalWindow` | `"last"`: your last window. `"dedicated"`: a window kept for Agent Tabs. | `"last"` |
 | `launchVia` | `"direct"`: start each agent with its own command. `"ori"`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `"direct"` |
 | `closeAfterHandoff` | `true`: the new session closes the old tab after a handoff. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
+| `focusNewTabs` | `"auto"`: an agent's tab opens behind the current one unless the call passes `focus: true`. `"always"`: it comes to the front unless the call passes `focus: false`. `"never"`: behind unless the call passes `focus: true`. See [Focus](#focus). | `"auto"` |
 
-An `ide` passed to `open_tab` always wins over these settings. The server ignores a value it doesn't know,
+An `ide` or `focus` passed to `open_tab` always wins over these settings. The server ignores a value it doesn't know,
 uses the default, and reports a warning in `list_agents`.
 
 `list_agents` reads the profile files itself instead of asking an IDE. A terminal tab uses the same

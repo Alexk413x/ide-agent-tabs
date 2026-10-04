@@ -39,6 +39,17 @@ enum class LaunchVia(val value: String, val label: String) {
     }
 }
 
+enum class FocusNewTabs(val value: String, val label: String) {
+    AUTO_FOCUS(AUTO, "When you asked for the tab"),
+    ALWAYS("always", "Always"),
+    NEVER("never", "Never"),
+    ;
+
+    companion object {
+        fun of(value: String?): FocusNewTabs? = entries.firstOrNull { it.value == value }
+    }
+}
+
 data class SharedSettings(
     val tabRouting: TabRouting = TabRouting.PROJECT,
     val terminal: String = AUTO,
@@ -46,6 +57,7 @@ data class SharedSettings(
     val terminalWindow: TerminalWindow = TerminalWindow.LAST,
     val launchVia: LaunchVia = LaunchVia.DIRECT,
     val closeAfterHandoff: Boolean = true,
+    val focusNewTabs: FocusNewTabs = FocusNewTabs.AUTO_FOCUS,
 )
 
 data class DetectedTerminal(val id: String, val name: String)
@@ -69,6 +81,7 @@ fun readSharedSettings(text: String): SharedSettings {
         terminalWindow = TerminalWindow.of(root.stringOrNull("terminalWindow")) ?: TerminalWindow.LAST,
         launchVia = LaunchVia.of(root.stringOrNull("launchVia")) ?: LaunchVia.DIRECT,
         closeAfterHandoff = root.booleanOrNull("closeAfterHandoff") ?: true,
+        focusNewTabs = FocusNewTabs.of(root.stringOrNull("focusNewTabs")) ?: FocusNewTabs.AUTO_FOCUS,
     )
 }
 

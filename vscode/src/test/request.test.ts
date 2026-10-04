@@ -89,6 +89,15 @@ test('parses an optional agent', () => {
   }
 });
 
+test('focus is an optional boolean that defaults to false', () => {
+  assert.equal(parseOpenRequest(body({})).focus, false);
+  assert.equal(parseOpenRequest(body({ focus: null })).focus, false);
+  assert.equal(parseOpenRequest(body({ focus: true })).focus, true);
+  assert.equal(parseOpenRequest(body({ focus: false })).focus, false);
+  for (const focus of ['true', 1, {}]) assert.throws(() => parseOpenRequest(body({ focus })), BadRequest, JSON.stringify(focus));
+  assert.equal(openRequestOf(dir).focus, false);
+});
+
 test('parses an optional model and via', () => {
   const request = parseOpenRequest(body({ model: 'anthropic/claude-sonnet-4.5:beta', via: 'ori' }));
   assert.equal(request.model, 'anthropic/claude-sonnet-4.5:beta');

@@ -99,7 +99,7 @@ class AgentTabHttpHandler : HttpRequestHandler() {
 
     private fun open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch): Reply {
         val project = chooseProject(request.path) ?: return Reply(409, error("no open project to host the tab"))
-        val id = AgentTabLauncher.open(project, request.path.toString(), profile, launch, focus = false)
+        val id = AgentTabLauncher.open(project, request.path.toString(), profile, launch, request.focus)
         return Reply(200, ok().apply {
             addProperty("id", id)
             addProperty("agent", profile.name)

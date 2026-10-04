@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { typeLine } from './input';
-import { launchScripts, terminalEnv, unixShell, windowsShell } from './launch';
+import { editorLocation, launchScripts, terminalEnv, unixShell, windowsShell } from './launch';
 import { AgentLaunch, AgentProfile, AgentSettings, CONFIG_FILE, isInstalled, planLaunch } from './profiles';
 import { endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { closestBase } from './request';
@@ -23,6 +23,7 @@ const SHARED_SETTING_NAMES: Record<keyof SharedSettings, string> = {
   terminalWindow: 'terminalWindow',
   launchVia: 'launchVia',
   closeAfterHandoff: 'closeAfterHandoff',
+  focusNewTabs: 'focusNewTabs',
 };
 
 const SHARED_KEYS = Object.keys(SHARED_SETTING_NAMES) as (keyof SharedSettings)[];
@@ -95,7 +96,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       shellArgs: shell.args,
       iconPath: icon(profile),
       isTransient: true,
-      location: { viewColumn: vscode.ViewColumn.Active, preserveFocus: !options.focus },
+      location: editorLocation(vscode.ViewColumn.Active, options.focus),
     });
     const tab: Tab = { id, agent: profile.name, project, path: dir, terminal };
     tabs.set(id, tab);
@@ -146,7 +147,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (folders.length === 0) return undefined;
       const index = closestBase(request.path, folders.map(folderPath));
       const project = index !== undefined ? folders[index].name : (vscode.workspace.name ?? folders[0].name);
-      return openTab(request.path, project, profile, { launch, focus: false });
+      return openTab(request.path, project, profile, { launch, focus: request.focus });
     },
     close: id => {
       const tab = tabs.get(id);

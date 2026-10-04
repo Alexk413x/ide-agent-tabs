@@ -35,6 +35,7 @@ export type TerminalWindowMode = 'last' | 'dedicated';
 export interface OpenOptions {
   window: TerminalWindowMode;
   near?: TerminalTab;
+  focus?: boolean;
 }
 
 // A terminal driver never passes caller text on a command line: the caller's command, arguments, prompt

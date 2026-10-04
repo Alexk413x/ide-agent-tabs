@@ -31,6 +31,7 @@ export interface HandoffInput extends BriefFields {
   model?: string;
   via?: LaunchVia;
   ide?: string;
+  focus?: boolean;
 }
 
 export type HandoffOpen = Omit<OpenInput, 'args' | 'env'> & { prompt: string };
@@ -180,6 +181,7 @@ export class Handoffs {
         ...(input.model !== undefined ? { model: input.model } : {}),
         ...(input.via !== undefined ? { via: input.via } : {}),
         ...(input.ide !== undefined ? { ide: input.ide } : {}),
+        ...(input.focus !== undefined ? { focus: input.focus } : {}),
       });
     } catch (e) {
       throw new ToolError(`the new tab did not open, so this session keeps the work and nothing was closed: ${errorText(e)}. The brief stays at ${brief}.`);

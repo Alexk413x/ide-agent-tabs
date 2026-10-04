@@ -66,7 +66,7 @@ The server refuses non-loopback addresses and any request with an `Origin` or `R
 |---|---|---|
 | `info` | `{}` | `ide`, `product`, `version`, `pid`, and `projects`: `name`, `path`, `focused` for each open project or folder |
 | `agents` | `{}` | `default`, and `agents`: `name`, `label`, `command`, `installed` for each profile |
-| `open` | `path`, and optional `agent`, `prompt`, `args`, `env`, `model`, `via` | `id`, `agent`, `project`, `path`, `via` |
+| `open` | `path`, and optional `agent`, `prompt`, `args`, `env`, `model`, `via`, `focus` | `id`, `agent`, `project`, `path`, `via` |
 | `close` | `id` | `id` |
 | `list` | `{}` | `tabs`: `id`, `agent`, `project`, `path` for each open tab this IDE opened |
 | `input` | `id`, `text` | `id` |
@@ -84,6 +84,12 @@ The server refuses non-loopback addresses and any request with an `Origin` or `R
   with the profile's `modelFlag`. See [Model and Ori](#model-and-ori).
 - `via`: `ori` or `direct`. It overrides the `launchVia` setting for this tab. The reply's `via` says
   how the tab started.
+- `focus`: `true` opens the editor tab with keyboard focus. `false` or absent keeps focus in the current
+  editor. The MCP server always sends it, resolved from `open_tab` and `focusNewTabs` (see
+  [Settings](#settings)). VS Code creates the terminal with `preserveFocus`, so the new tab shows in the
+  active editor group while focus stays in the editor the user was in; the API has no way to open it
+  behind that editor. A JetBrains IDE opens the terminal editor with `openFile(file, focus)` and never
+  activates the Terminal tool window. The New Agent Tab button always opens with focus.
 
 The tab opens in the open project or folder that contains `path`, or in the last focused window if none
 does.
@@ -404,7 +410,7 @@ registry and calls the HTTP API.
 | `list_ides` | Lists running IDEs with their projects, from the registry and each IDE's `info`. |
 | `list_agents` | Lists profiles, which are installed, which take a model (`model`), which Ori can launch (`ori`), and the `launchVia` setting. |
 | `list_tabs` | Lists tabs across all IDEs, or in one. |
-| `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`. Returns `via: "ori"` for a tab started through Ori. |
+| `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus`. Returns `via: "ori"` for a tab started through Ori. |
 | `close_tab` | Closes a tab by `id`. With no `id`, closes the caller's own tab through `IDE_AGENT_TABS_ID`. Refuses the old tab of a handoff until the handoff is confirmed (see [Handoff](#handoff)). |
 | `handoff` | Hands the caller's work to a new tab (see [Handoff](#handoff)). |
 
@@ -426,8 +432,8 @@ The reply includes a `reason` that says which rule chose the target.
 
 ### Settings
 
-Four settings in `~/.ide-agent-tabs/config.json` decide where a new tab opens when a request names
-nothing. The MCP server, the VS Code extension, the JetBrains plugin and the setup skill read and write
+Five settings in `~/.ide-agent-tabs/config.json` decide where a new tab opens when a request names
+nothing, and whether it comes to the front. The MCP server, the VS Code extension, the JetBrains plugin and the setup skill read and write
 the same keys, keep every key they don't know, and treat a missing key as the default. VS Code shows the
 groups as **Agent Tabs: IDE tabs** and **Agent Tabs: Terminal tabs**. JetBrains shows them as **IDE tabs**
 and **Terminal tabs**.
@@ -435,6 +441,7 @@ and **Terminal tabs**.
 | Group | Setting | Key | Values | Default |
 |---|---|---|---|---|
 | IDE tabs | Open new tabs in | `tabRouting` | `project`: the IDE that has the project open (rules 3 to 5). `caller`: the IDE the request came from (rule 2). | `project` |
+| IDE tabs | Bring new agent tabs to the front | `focusNewTabs` | `auto`: behind the current tab unless the call passes `focus: true`. `always`: to the front unless the call passes `focus: false`. `never`: behind unless the call passes `focus: true`. | `auto` |
 | Terminal tabs | Preferred terminal | `terminal` | `auto` or absent: the platform's order. Otherwise a terminal id from detection, such as `windows-terminal`, `wezterm`, `kitty`, `tmux`, `ghostty` or `iterm2`. | `auto` |
 | Terminal tabs | Shell (Windows only) | `shell` | `auto` or absent: the newest PowerShell 7 or later, else Windows PowerShell 5.1. Otherwise the absolute path of a shell executable, either a detected one or a custom path. | `auto` |
 | Terminal tabs | Terminal window | `terminalWindow` | `last`: the user's last window. `dedicated`: a window kept for Agent Tabs. | `last` |
@@ -443,6 +450,14 @@ An explicit name always wins. An `open_tab` call that names `ide` or an agent, o
 or a terminal, overrides these settings. They apply only when nothing is named. The server ignores a value
 it doesn't know, uses the default, and reports a warning in `list_agents`.
 
+`focusNewTabs` covers tabs opened through `open_tab` and `handoff`, in IDEs and terminals. The server
+can't tell whether the user or an agent asked for a tab, so `auto` opens it behind the current one, and
+the skills pass `focus: true` when the user asked for it: the `new-tab` skill for a tab the user asked
+to open, and the `handoff` skill only when the user asks to watch the new tab. A tab an agent opens on
+its own, such as a peer test or delegated work, passes no `focus`. With `auto`, the call's `focus` decides; `always` and
+`never` decide alone and ignore it. The New Agent Tab button and the open-on-startup tab don't use the setting; they always take focus. What
+`focus: false` does depends on the host; see [Focus](#focus).
+
 Two more settings in `config.json` don't depend on where a tab opens:
 
 | Setting | Key | Values | Default |
@@ -450,7 +465,7 @@ Two more settings in `config.json` don't depend on where a tab opens:
 | Launch through OpenRouter (Ori) | `launchVia` | `direct`: start each agent with its own command. `ori`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `direct` |
 | Close the old tab after a handoff | `closeAfterHandoff` | `true`: the new session closes the old tab. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
 
-VS Code shows both in the **Agent Tabs** section, as `ideAgentTabs.launchVia` and
+VS Code shows these two in the **Agent Tabs** section, as `ideAgentTabs.launchVia` and
 `ideAgentTabs.closeAfterHandoff`. JetBrains shows `launchVia` next to **Default agent**. Both IDEs
 show `launchVia` only when `detected.json` has an `ori` entry. The server treats a value it doesn't know
 as the default, as for the tab settings.
@@ -567,6 +582,26 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
   its reply: run `tmux attach -t agents`. The server records the tmux socket and server pid with each
   window id, so a restarted tmux server doesn't match old ids.
 
+### Focus
+
+`open_tab` passes the resolved `focus` to the IDE's `open` route or to the terminal driver. With
+`focus: false`, each host does what it can:
+
+| Host | `focus: false` |
+|---|---|
+| VS Code | The terminal editor opens with `preserveFocus`: keyboard focus stays in the current editor, but the new tab becomes the visible tab of the active group. |
+| JetBrains IDEs | `openFile(file, false)`: keyboard focus stays where it was, and the Terminal tool window isn't activated. The new tab becomes the selected editor tab. |
+| Windows Terminal | No effect. `wt.exe new-tab` has no option to open a tab in the background, so the tab and its window come to the front. |
+| WezTerm | No effect. `cli spawn` has no option to keep the current tab, so the new tab becomes the window's active tab. `wezterm start` opens a new window. |
+| kitty with remote control | `launch --keep-focus` keeps the focus on the current kitty window. |
+| kitty without remote control, Ghostty on Linux | No effect. Each agent gets a new process and window. |
+| tmux | `new-window -d`, so the client's current window stays. A new session is always created detached. |
+| iTerm2 | After `create tab`, the script selects the tab that was current in that window. A new window takes focus. |
+| Ghostty on macOS | After `new tab`, the script runs `select tab` on the tab that was selected in that window. A new window takes focus. |
+
+The AppleScript hosts don't call `activate`, but iTerm2 and Ghostty may still raise their own window when
+they add a tab; the drivers only restore the selected tab.
+
 ### Terminal window
 
 `"terminalWindow": "last"` opens a terminal tab in the user's last window, as each terminal does by
@@ -634,6 +669,17 @@ other agent CLIs. For that, every session that runs the MCP server can message e
   server starts writes a file with only `id` and `state`, and the server keeps that state.
 - `open_tab` adds `via` (`ori` or `direct`) and, for an IDE tab, the IDE's `project` to the presence
   file, and the server keeps both.
+- `model` and `effort` record what the session runs, and `list_sessions` shows `—` for what nobody
+  recorded. `open_tab` writes its `model`. A hook payload's `model` or `modelName` (Codex, Antigravity
+  CLI), and its `effort` (`effort.level` for Claude Code) or `reasoning_effort`, replace them. A Claude
+  tab's mod reports both (see [Model and effort](#model-and-effort)). A Codex session's server fills a
+  value nobody recorded from `config.toml` in `CODEX_HOME`, or else `~/.codex`, when it starts: the
+  top-level `model` and `model_reasoning_effort`, or those of the `[profiles.<name>]` table that a
+  top-level `profile` selects.
+- `list_sessions` gives each session a `shortName`: the agent, a dash, and the first 4 letters and digits
+  of its id after any `s-` or `codex-` prefix, such as `codex-f99f`. When two live sessions of one agent
+  share those characters, both take more until they differ. `send_message` and the mod's `send` take a
+  `shortName` as well as the full id.
 - A Claude tab whose mod runs adds `driver`, `modBeat` and `nativeName` (see
   [Claude Code mod](#claude-code-mod)).
 - Every change to a presence file happens under a lock file next to it, because the server, the hooks
@@ -840,7 +886,7 @@ itself raised the call. The model's own calls to those tools keep the engine's d
 
 | `op` | Input | What it does |
 |---|---|---|
-| `presence` | optional `driver`, `nativeName`, `state` | `driver: true` claims in-process delivery for a tab session; `false` hands it back. `state` is `idle`, `busy` or `permission`. Every call refreshes `modBeat`. Returns the session `id`, `tab`, `driver` and the `mailbox` path of `new/`. |
+| `presence` | optional `driver`, `nativeName`, `state`, `model`, `effort` | `driver: true` claims in-process delivery for a tab session; `false` hands it back. `state` is `idle`, `busy` or `permission`. `model` and `effort` record the session's model and effort level. Every call refreshes `modBeat`. Returns the session `id`, `tab`, `driver` and the `mailbox` path of `new/`. |
 | `send` | `to`, `text`, optional `replyTo` | The same as `send_message`. |
 | `take` | optional `max` (1 to 10) | Claims unread messages: moves them from `new/` to `held/` and returns them with a `claim` id. |
 | `ack`, `release` | `claim` | `ack` moves the claimed messages to `cur/`; `release` returns them to `new/`. |
@@ -878,16 +924,91 @@ completed `tool.call`, a `classic.PostToolUseFailure` or `turn.complete` clears 
 
 #### ListAgents
 
-A `tool.call` hook on `ListAgents` runs the native tool, then appends the `sessions` rows to
-`result.listing`, so the result still matches `{ listing: string }`. It skips the session itself. A row
-whose `route` is `agent-tabs` gets its own entry; a Claude session that `ListAgents` already lists gets
-only its tab, host, folder and `via` under its native name. One `context` entry says that these sessions
-are peers, not the user.
+A `tool.call` hook on `ListAgents` runs the native tool and rewrites `result.listing` into one list of
+every session that can take a message now. The result still matches `{ listing: string }`. One
+`context` entry names the columns and says that these sessions are peers, not the user.
+
+```
+This session is plugins-fa [6a3948] — the name other sessions use to message it (…).
+
+C:\w
+  claude-01d0                           idle        Claude Code (no native name)  —                         —       Windows Terminal    01d00000
+  codex-1a2b                            idle        Codex via OpenRouter          gpt-5.5                   medium  Windows Terminal    codex-1a
+  agy-a0a0                              busy        Antigravity CLI               gemini-3-pro              —       Antigravity IDE     a0a0a0a0
+
+C:\docs
+  docs-9b [11aa22]                      permission  Claude Code                   claude-opus-5-5           high    IntelliJ IDEA       tab-d
+
+C:\e2e
+  E2E testing plugin [b39a20]           idle        Claude Code                   claude-sonnet-5-5-20261…  —       Visual Studio Code  e2e00000
+
+Folder not known
+  nightly-sync [c0ffee]                 idle        Claude Code (background)      —                         —       tmux build          —
+
+Cloud (can receive, can't reply)
+  Guide 3-to-4 player support [77aa01]  cloud       Claude Code                   —                         —       cloud               —
+
+Left out: 150 Remote Control offline, 1 offline, 1 that can't take messages, 69 more ListAgents did not show. /list-agents shows every session, including offline ones.
+```
+
+This shows some of the groups from the test listing. The columns align across all groups.
+
+- The native `This session is <name> —` line stays first, unchanged, because the handover reads the
+  native name from it.
+- Sessions follow, grouped by folder. Each group is a blank line, the full folder path, and one line per
+  session indented two spaces. The caller's own folder comes first, then the others in case-insensitive
+  order. Native Claude peers whose folder isn't known come next under `Folder not known`, and cloud
+  sessions last under `Cloud (can receive, can't reply)`, with state and where `cloud`. The session
+  itself is not listed.
+- Each line has the columns `NAME`, `STATE`, `HARNESS`, `MODEL`, `EFFORT`, `WHERE` and `SESSION`, with no
+  header row, two spaces apart and aligned across all groups. A column wider than its cap (`STATE` 10,
+  `HARNESS` 32, `MODEL` 24, `EFFORT` 8, `WHERE` 24, `SESSION` 8) is cut with `…`. `NAME` is never cut.
+  An unknown value shows as `—`.
+  - `NAME` is what `SendMessage` takes: a Claude session's native name, else the row's `shortName`.
+  - `HARNESS` is the agent CLI's label, with ` via OpenRouter` for a session started through Ori, and
+    ` (no native name)` for a Claude tab with no native name, such as one on 0.5.3.
+  - `MODEL` and `EFFORT` come from the presence file (see [Sessions](#sessions)).
+  - `WHERE` is the IDE product or terminal app, with no project.
+  - `SESSION` is the first 8 characters of the session id.
+- Inside a group, lines sort by agent, in the order `claude`, `codex`, `agy`, `copilot`, `gemini`,
+  `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local`, then other agents by name, and then
+  by state: `idle`, `waking`, `busy`, `permission`, then any other state, so the sessions that can act on
+  a message at once come first. Native `running` counts as `busy`, and `waiting on a human` as
+  `permission`.
+- The mod parses each native `Peer sessions` row by its `  ·  ` fields. It drops a row that shows
+  `offline` or that can't receive messages, and a Remote Control row with no status. It keeps a local
+  row (one with `started … ago`), a Remote Control row with a status, every cloud row, and any row it
+  can't classify, with state `unknown`. A `background` row shows its kind in `HARNESS`.
+- A Claude session appears once. An Agent Tabs row with a native name (the row's `name` when `route` is
+  `native`, else `nativeName`) joins the native row of that name, first by the exact name, then by the
+  name without its `[ref]` when exactly one row on each side carries it. The joined line keeps the
+  native name and takes the rest from Agent Tabs. A native peer with no Agent Tabs session shows `—`
+  for model, effort and session. A native-routed Agent Tabs row that the native list doesn't show is
+  listed by its `shortName`, which the mailbox reaches.
+- `Subagents` and `Teammates` paragraphs and the native notes, such as a session list that didn't
+  complete, follow the groups unchanged.
+- The last line counts what the list leaves out: Remote Control sessions that are offline, other
+  offline sessions, sessions that can't take messages, Remote Control sessions with no status, and the
+  native `(… <n> more not shown)` count. It ends with `/list-agents shows every session, including
+  offline ones.`
+- If the listing doesn't start with the `This session is` line, or holds a paragraph or peer line the
+  mod doesn't recognize, the mod puts its own groups of Agent Tabs sessions above the native listing and
+  leaves that listing whole.
+
+#### Model and effort
+
+- At `session.start` the mod sends `$.session.model()` and `CLAUDE_EFFORT`, when set, with its first
+  `presence`. At each `turn.start` it reads `$.session.model()` again.
+- `classic.PostToolUse` and `classic.Stop` on the main thread carry `effort.level`, the effort of the
+  current turn.
+- The mod sends `presence` with `model` or `effort` only when a value changes. It sends no value that
+  isn't one printable line of at most 128 characters (`model`) or a word of at most 32 letters, digits,
+  dots, dashes or underscores (`effort`).
 
 #### SendMessage
 
-A `session.send` hook sends to Agent Tabs when `e.to` is the name or id of a row whose `route` is
-`agent-tabs`, or the tab id of a native row. It returns `{ isDelivered: true }`, or
+A `session.send` hook sends to Agent Tabs when `e.to` is any row's `shortName`, the name or id of a row
+whose `route` is `agent-tabs`, or the tab id of a native row. It returns `{ isDelivered: true }`, or
 `{ isDelivered: false, reason }` with the server's error, without calling `next`. Every other name,
 including each native peer name, goes to `next(e)` unchanged.
 
@@ -928,10 +1049,14 @@ keep working when the model calls them.
 #### Tests
 
 `claude plugin test claude-plugin` runs `hooks/register.test.tsx` against the engine: state reports,
-the `ListAgents` merge, `SendMessage` routing both ways, inbound delivery when idle and when busy,
+the `ListAgents` list (folder groups, alignment and cuts, order, the Claude join, the cloud group, the
+left-out count and the fallback), model and effort reports, `SendMessage` routing both ways, by short
+name and for every listed name, inbound delivery when idle and when busy,
 release after a failed submit, the permission rule, tool deferral, and the card on the terminal and
 desktop surfaces. `mcp/test/mod.test.ts` covers the server side: the driver rules, the stale-beat
-fallback, claims, and the `list_sessions` rows.
+fallback, claims, the `list_sessions` rows, short names and their resolution in `send_message`, the model
+and effort a mod reports, and the Codex config defaults. `mcp/test/agentHook.test.ts` covers the model
+and effort in hook payloads, and `mcp/test/integration.test.ts` the model `open_tab` records.
 
 ## Handoff
 

@@ -89,6 +89,7 @@ workspaces can't change the terminal or the shell.
 | Setting | Key | Values | Default |
 | --- | --- | --- | --- |
 | `ideAgentTabs.openNewTabsIn` | `tabRouting` | `project` (IDE that has the project open), `caller` (IDE the request came from) | `project` |
+| `ideAgentTabs.focusNewTabs` | `focusNewTabs` | `auto` (bring an agent's tab to the front only when the agent says you asked for it), `always`, `never`. A request's `focus` field wins. The New Agent Tab button always brings its tab to the front. | `auto` |
 
 **Agent Tabs: Terminal tabs**
 
@@ -151,7 +152,9 @@ registry, each route, the status codes and the security rules.
 
 - `open` opens the tab in the window that serves the request. The caller picks the window from the
   registry, for example by the folders that `info` lists.
-- A tab opened through the API doesn't take focus. A tab opened from the button does.
+- A tab opened through the API takes focus only when the request sets `"focus": true`. Otherwise
+  keyboard focus stays in the current editor, though the new tab still shows in the active editor
+  group. A tab opened from the button takes focus.
 - `info` reports every workspace folder in the window. Each folder's `focused` value is `true` when the
   window has focus.
 

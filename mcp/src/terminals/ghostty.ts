@@ -65,7 +65,7 @@ function findWindowLines(place: GhosttyPlace): string[] {
   ];
 }
 
-export function openScript(command: string, env: Record<string, string>, place?: GhosttyPlace): string {
+export function openScript(command: string, env: Record<string, string>, place?: GhosttyPlace, keepFocus = false): string {
   const vars = Object.entries(env).map(([k, v]) => appleScriptString(`${k}=${v}`));
   const head = [
     'tell application "Ghostty"',
@@ -73,11 +73,15 @@ export function openScript(command: string, env: Record<string, string>, place?:
     `\tset command of cfg to ${appleScriptString(command)}`,
     `\tset environment variables of cfg to {${vars.join(', ')}}`,
   ];
+  const newTabIn = (window: string) =>
+    keepFocus
+      ? [`\t\tset previousTab to selected tab of ${window}`, `\t\tset t to new tab in ${window} with configuration cfg`, '\t\tselect tab previousTab']
+      : [`\t\tset t to new tab in ${window} with configuration cfg`];
   if (!place) {
     return [
       ...head,
       '\tif (count of windows) > 0 then',
-      '\t\tset t to new tab in front window with configuration cfg',
+      ...newTabIn('front window'),
       '\telse',
       '\t\tset w to new window with configuration cfg',
       '\t\tset t to selected tab of w',
@@ -92,7 +96,7 @@ export function openScript(command: string, env: Record<string, string>, place?:
     '\tset w to missing value',
     ...findWindowLines(place),
     '\tif w is not missing value then',
-    '\t\tset t to new tab in w with configuration cfg',
+    ...newTabIn('w'),
     '\telse',
     '\t\tset w to new window with configuration cfg',
     '\t\tset t to selected tab of w',
@@ -207,6 +211,7 @@ export const ghostty: TerminalDriver = {
       surfaceCommand(shell),
       { IDE_AGENT_TABS_LAUNCHER: launcher, IDE_AGENT_TABS_SPEC: specFile },
       ghosttyPlace(options, remembered),
+      options?.focus === false,
     );
     await writeNewPrivateFile(specFile, posixSpec(spec));
     let ids: { tabId: string; terminalId: string; windowId?: string };

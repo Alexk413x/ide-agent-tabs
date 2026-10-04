@@ -260,3 +260,26 @@ test('tmux uses a dedicated agent-tabs session, or opens next to the caller\'s w
     '-S', '/tmp/tmux-1/default', 'new-window', '-a', '-t', '@7', '-P', '-F', '#{window_id} #{session_id} #{pid} #{socket_path}',
   ]);
 });
+
+test('tmux opens a background window with -d, and kitty keeps focus with --keep-focus, only when focus is false', () => {
+  const t = { title: 't', launcher: '/d/agent-launch.sh', spec: '/h/t.spec', argv };
+  const near = { after: '@7', socket: '/s' };
+  assert.deepEqual(tmuxOpenArgs({ session: '$2', detached: false }, { ...t, focus: false }).slice(0, 2), ['new-window', '-d']);
+  assert.deepEqual(tmuxOpenArgs(near, { ...t, focus: false }).slice(2, 5), ['new-window', '-d', '-a']);
+  for (const focus of [true, undefined]) {
+    const o = focus === undefined ? t : { ...t, focus };
+    assert.ok(!tmuxOpenArgs({ session: '$2', detached: false }, o).includes('-d'), String(focus));
+    assert.ok(!tmuxOpenArgs(near, o).includes('-d'), String(focus));
+  }
+  assert.deepEqual(
+    tmuxOpenArgs({ newSession: 'agents' }, { ...t, focus: true }).slice(0, 2),
+    ['new-session', '-d'],
+    'a new session is always detached; no client sees it until one attaches',
+  );
+
+  const k = { address: 'unix:/k', cwd: '/w', title: 't', launcher: '/l.sh', spec: '/s.spec', argv };
+  assert.deepEqual(kittyLaunchArgs({ ...k, focus: false }).slice(3, 6), ['launch', '--type=tab', '--keep-focus']);
+  assert.deepEqual(kittyLaunchArgs({ ...k, focus: false, place: { osWindow: true } }).slice(3, 6), ['launch', '--type=os-window', '--keep-focus']);
+  assert.ok(!kittyLaunchArgs({ ...k, focus: true }).includes('--keep-focus'));
+  assert.ok(!kittyLaunchArgs(k).includes('--keep-focus'));
+});

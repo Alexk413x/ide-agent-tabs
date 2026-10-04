@@ -194,7 +194,7 @@ test('open_tab routes a path inside an open project to that IDE and forwards the
   assert.equal(json.id, 'ide-tab-1');
   assert.equal(json.agent, 'codex');
   assert.match(json.reason, /open project proj contains the path/);
-  assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', prompt: 'hi "there"', args: ['--yolo'], env: { A: 'b' } });
+  assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', prompt: 'hi "there"', args: ['--yolo'], env: { A: 'b' }, focus: false });
 });
 
 test('a tab opened without a prompt counts as idle once it has had time to start, so a message wakes it', async () => {
@@ -207,6 +207,14 @@ test('a tab opened without a prompt counts as idle once it has had time to start
   assert.equal(presence.host, fresh.json.ide);
   assert.ok(Date.parse(presence.stateAt!) >= before + FRESH_TAB_START_MS);
   for (const tab of [prompted, fresh]) assert.ok(!(await call('close_tab', { id: tab.json.id })).isError);
+});
+
+test('open_tab records the model it launches the tab with, for list_sessions', async () => {
+  const opened = await call('open_tab', { path: project, prompt: 'go', model: 'claude-opus-5-5' });
+  assert.equal((await readPresence(home, opened.json.id))?.model, 'claude-opus-5-5');
+  const plain = await call('open_tab', { path: project, prompt: 'go' });
+  assert.equal((await readPresence(home, plain.json.id))?.model, undefined);
+  for (const tab of [opened, plain]) assert.ok(!(await call('close_tab', { id: tab.json.id })).isError);
 });
 
 test('open_tab falls back to the most recently started IDE and adds the next step to IDE errors', async () => {
@@ -313,7 +321,7 @@ test('close_tab with no id closes the caller\'s own tab from IDE_AGENT_TABS_ID',
 
 test("tabRouting caller opens a terminal caller's tab in its own terminal window, even when an IDE has the project", async () => {
   const caller = await call('open_tab', { path: outside, ide: 'fake-term' });
-  assert.deepEqual(openOptions.at(-1), { window: 'last' });
+  assert.deepEqual(openOptions.at(-1), { window: 'last', focus: false });
   env.IDE_AGENT_TABS_ID = caller.json.id;
   try {
     const byProject = await call('open_tab', { path: project, prompt: 'p' });
@@ -365,7 +373,7 @@ test('the server reports the version of its package and of the Claude Code plugi
 
 test('open_tab passes a model and via to the IDE, and builds the model flag into a terminal launch', async () => {
   await call('open_tab', { path: project, agent: 'codex', model: 'gpt-5.5', via: 'direct' });
-  assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', model: 'gpt-5.5', via: 'direct' });
+  assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', model: 'gpt-5.5', via: 'direct', focus: false });
   const term = await call('open_tab', { path: project, agent: 'claude', model: 'opus', ide: 'fake-term' });
   assert.ok(!term.isError, term.text);
   assert.deepEqual(opened.at(-1)!.spec.args.slice(0, 2), ['--model', 'opus']);
@@ -375,6 +383,46 @@ test('open_tab passes a model and via to the IDE, and builds the model flag into
   const badModel = await call('open_tab', { path: project, model: 'two words' });
   assert.ok(badModel.isError);
   for (const id of [term.json.id]) await call('close_tab', { id });
+});
+
+test('open_tab focus: auto follows the call, always and never decide alone, for IDE and terminal tabs', async () => {
+  const cases: [string | undefined, boolean | undefined, boolean][] = [
+    [undefined, undefined, false],
+    ['auto', undefined, false],
+    ['auto', true, true],
+    ['auto', false, false],
+    ['always', undefined, true],
+    ['always', true, true],
+    ['always', false, true],
+    ['never', undefined, false],
+    ['never', true, false],
+    ['never', false, false],
+  ];
+  const opened: string[] = [];
+  try {
+    for (const [setting, focus, expected] of cases) {
+      writeFileSync(path.join(home, 'config.json'), JSON.stringify(setting === undefined ? {} : { focusNewTabs: setting }));
+      const label = `${setting} with ${focus}`;
+      const args = { path: project, ...(focus !== undefined ? { focus } : {}) };
+      const ide = await call('open_tab', args);
+      assert.ok(!ide.isError, ide.text);
+      assert.equal(seen.at(-1)!.body.focus, expected, `IDE: ${label}`);
+      const term = await call('open_tab', { ...args, ide: 'fake-term' });
+      assert.ok(!term.isError, term.text);
+      assert.equal(openOptions.at(-1)?.focus, expected, `terminal: ${label}`);
+      opened.push(ide.json.id, term.json.id);
+    }
+    writeFileSync(path.join(home, 'config.json'), JSON.stringify({ focusNewTabs: 'sometimes' }));
+    const agents = await call('list_agents');
+    assert.ok(agents.json.warnings.some((w: string) => /focusNewTabs/.test(w)));
+    await call('open_tab', { path: project });
+    assert.equal(seen.at(-1)!.body.focus, false, 'an unknown value falls back to auto');
+    opened.push(ideTabs.at(-1)!.id as string);
+    assert.ok((await call('open_tab', { path: project, focus: 'yes' })).isError);
+  } finally {
+    writeFileSync(path.join(home, 'config.json'), '{}');
+    for (const id of opened) await call('close_tab', { id });
+  }
 });
 
 test('list_agents says which agents take a model', async () => {

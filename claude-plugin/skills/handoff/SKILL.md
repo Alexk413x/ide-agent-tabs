@@ -14,7 +14,8 @@ Arguments: `$ARGUMENTS`
 ## Hand off (the old session)
 
 1. Call `handoff` with `path` (absolute; the current folder unless the user names another), and `agent`,
-   `model`, `via` or `ide` only when the user names them. Write the brief so a session with none of
+   `model`, `via` or `ide` only when the user names them. The new tab opens behind the current one. Pass
+   `focus: true` only when the user asks to watch it or switch to it. Write the brief so a session with none of
    this context can continue: `goal`, `done` (with results), `next` (in order), `files` (files,
    branches, worktrees) and `openQuestions`. Leave out secrets.
 2. The result holds the handoff id, the brief path, the new tab id and `next`. Follow `next`: call

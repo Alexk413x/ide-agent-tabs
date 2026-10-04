@@ -1,6 +1,6 @@
 import { peekUnread } from './mailbox.js';
 import { unreadReminder } from './notice.js';
-import { effectiveState, isModDriven, isSessionId, readPresence, updatePresence, withState, type PresenceFile, type SessionState } from './sessions.js';
+import { effectiveState, isEffort, isModDriven, isModel, isSessionId, readPresence, updatePresence, withState, type PresenceFile, type SessionState } from './sessions.js';
 
 export const HOOK_CLIS = ['claude', 'codex', 'gemini', 'copilot', 'agy', 'grok', 'hermes', 'qwen', 'goose'] as const;
 export type HookCli = (typeof HOOK_CLIS)[number];
@@ -119,6 +119,13 @@ function inputIdleAfter(cli: HookCli, action: Action, input: Record<string, unkn
   return action.inputIdle;
 }
 
+export function reportedModel(input: Record<string, unknown>): Pick<PresenceFile, 'model' | 'effort'> {
+  const model = [input.model, input.modelName].find((v): v is string => typeof v === 'string' && isModel(v));
+  const level = (v: unknown) => (typeof v === 'object' && v !== null ? (v as { level?: unknown }).level : v);
+  const effort = [level(input.effort), input.reasoning_effort].find((v): v is string => typeof v === 'string' && isEffort(v));
+  return { ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}) };
+}
+
 export interface HookRun {
   cli: string;
   event: string;
@@ -140,6 +147,7 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
   const state = action.notification ? notificationState(run.input) : action.failure ? (run.input.is_interrupt === true ? 'idle' : 'busy') : action.state;
   const unread = action.remind || action.stop ? await peekUnread(home, sessionId) : [];
   const reminder = unreadReminder(unread);
+  const reported = reportedModel(run.input);
 
   let block = false;
   let remind = false;
@@ -154,13 +162,15 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
       ...(current ?? { id: sessionId }),
       ...(owned !== undefined ? { owner: owned } : {}),
       ...(inputIdle !== undefined ? { inputIdle } : {}),
+      ...reported,
     };
+    const learned = (Object.keys(reported) as (keyof typeof reported)[]).some((k) => current?.[k] !== reported[k]);
     if (action.stop) {
       const nudges = base.nudges ?? 0;
       block = reminder !== undefined && nudges < MAX_NUDGES;
       return block ? withState(base, 'busy', now, nudges + 1) : withState(base, 'idle', now, reminder === undefined ? 0 : nudges);
     }
-    if (state === undefined) return (owned === undefined || current?.owner === owned) && (inputIdle === undefined || current?.inputIdle === inputIdle) ? current : base;
+    if (state === undefined) return !learned && (owned === undefined || current?.owner === owned) && (inputIdle === undefined || current?.inputIdle === inputIdle) ? current : base;
     const prompt = action.prompt || (action.invocation && run.input.invocationNum === 0);
     const next = withState(base, state, now, prompt ? 0 : undefined);
     if (!action.remind) return next;

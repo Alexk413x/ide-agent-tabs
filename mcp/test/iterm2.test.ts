@@ -247,3 +247,19 @@ test("iTerm2 opens next to the caller's session, and the last mode passes no pla
   assert.deepEqual(parseOpenAnswer(`${GUID}\n7\n`), { sessionId: GUID, windowId: '7' });
   assert.deepEqual(parseOpenAnswer(`${GUID}\nmissing value\n`), { sessionId: GUID });
 });
+
+test('iTerm2 reselects the previous tab of an existing window when focus is false', async () => {
+  const { driver, calls } = fake([ok(GUID), ok(GUID), ok(GUID)]);
+  await driver.open(ctx, spec, 't', { window: 'last', focus: false });
+  assert.deepEqual(calls[0]!.args.slice(2), ['last', '', 'background']);
+  await driver.open(ctx, { ...spec, id: 'tab-2' }, 't', { window: 'dedicated', focus: false, near: { ...tab, id: 'caller', terminalId: 'CALLER-GUID' } });
+  assert.deepEqual(calls[1]!.args.slice(2), ['session', 'CALLER-GUID', 'background']);
+  await driver.open(ctx, { ...spec, id: 'tab-3' }, 't', { window: 'last', focus: true });
+  assert.equal(calls[2]!.args.length, 2);
+  assert.match(OPEN_SCRIPT, /\tif \(count of argv\) > 4 then set keepFocus to \(item 5 of argv\) is "background"/);
+  assert.match(
+    OPEN_SCRIPT,
+    /\t+set previousTab to current tab of w\n\t+tell w to set t to \(create tab with default profile command agentCommand\)\n\t+set s to current session of t\n\t+if keepFocus then tell previousTab to select\n/,
+  );
+  assert.equal(OPEN_SCRIPT.match(/to select/g)?.length, 1, 'a new window keeps its own focus');
+});

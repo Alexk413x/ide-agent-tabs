@@ -178,7 +178,7 @@ export function parseProfiles(text: string): AgentProfile[] {
       throw new ConfigError(`${name}.promptFlag must not be blank`);
     }
     const modelFlag = optString(value, `${name}.modelFlag`, 'modelFlag');
-    if (modelFlag !== undefined && (isBlank(modelFlag) || modelFlag.includes(' '))) {
+    if (modelFlag !== undefined && (isBlank(modelFlag) || modelFlag.includes('\0'))) {
       throw new ConfigError(`${name}.modelFlag must not be blank`);
     }
     const env = optStringMap(value, `${name}.env`, 'env');
@@ -217,6 +217,7 @@ export function readJevSettings(text: string): JevSettings {
 
 export type TabRouting = 'project' | 'caller';
 export type TerminalWindow = 'last' | 'dedicated';
+export type FocusNewTabs = 'auto' | 'always' | 'never';
 const AUTO = 'auto';
 
 export interface TerminalSettings {
@@ -225,6 +226,12 @@ export interface TerminalSettings {
   shell?: string;
   terminalWindow: TerminalWindow;
   launchVia: 'direct' | 'ori';
+  focusNewTabs: FocusNewTabs;
+}
+
+export function resolveFocus(setting: FocusNewTabs, requested: boolean | undefined): boolean {
+  if (setting === 'auto') return requested ?? false;
+  return setting === 'always';
 }
 
 function choice<T extends string>(config: Record<string, unknown>, key: string, values: readonly T[], warnings: string[]): T {
@@ -239,6 +246,7 @@ export function readTerminalSettings(config: Record<string, unknown>, warnings: 
   const tabRouting = choice(config, 'tabRouting', ['project', 'caller'] as const, warnings);
   const terminalWindow = choice(config, 'terminalWindow', ['last', 'dedicated'] as const, warnings);
   const launchVia = choice(config, 'launchVia', ['direct', 'ori'] as const, warnings);
+  const focusNewTabs = choice(config, 'focusNewTabs', ['auto', 'always', 'never'] as const, warnings);
   let preferredTerminal: string | undefined;
   const terminal = field(config, 'terminal');
   if (typeof terminal === 'string') preferredTerminal = !isBlank(terminal) && terminal !== AUTO ? terminal : undefined;
@@ -251,7 +259,7 @@ export function readTerminalSettings(config: Record<string, unknown>, warnings: 
   } else if (shellValue !== undefined && shellValue !== null) {
     warnings.push(`Ignoring shell in ${CONFIG_FILE}: it must be "auto" or the absolute path of a shell executable`);
   }
-  return { tabRouting, terminalWindow, launchVia, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
+  return { tabRouting, terminalWindow, launchVia, focusNewTabs, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
 }
 
 export interface AgentSettings extends TerminalSettings {
@@ -276,7 +284,7 @@ export function resolveSettings(
     }
   }
   let configured: string | undefined;
-  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last', launchVia: 'direct' };
+  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last', launchVia: 'direct', focusNewTabs: 'auto' };
   let jev = JEV_OFF;
   if (configText !== undefined) {
     let readable = true;

@@ -164,17 +164,24 @@ config and would open a console window each time it starts the server.
 ## 7. Tab settings and terminal
 
 Settings in `~/.ide-agent-tabs/config.json` decide where a new tab opens when a request names no IDE or
-terminal, how an agent starts, and what happens to the old tab after a handoff. An explicit request
-always wins: an `open_tab` call that names `ide`, an agent or `via`, or a user who names an IDE, a
-terminal or a launch, overrides these settings. A missing key means the default.
+terminal, whether it comes to the front, how an agent starts, and what happens to the old tab after a
+handoff. An explicit request always wins: an `open_tab` call that names `ide`, an agent, `via` or
+`focus`, or a user who names an IDE, a terminal or a launch, overrides these settings. A missing key means the default.
 
 **IDE tabs**
 
 | Setting | Key | Values | Default |
 |---|---|---|---|
 | Open new tabs in | `tabRouting` | `project` (IDE that has the project open), `caller` (IDE the request came from) | `project` |
+| Bring new agent tabs to the front | `focusNewTabs` | `auto` (when you asked for the tab), `always`, `never` | `auto` |
 
 - Open new tabs in: Where a new agent tab opens when no IDE or terminal is named.
+- Bring new agent tabs to the front: Whether a tab that an agent opens with `open_tab` or `handoff`
+  takes focus. With `auto`, it opens behind the current tab unless the agent passes `focus: true`, which
+  the skills do when the user asked for the tab. `always` brings it to the front unless the call passes
+  `focus: false`. `never` opens it behind unless the call passes `focus: true`. The **New Agent Tab**
+  button always brings its tab to the front. Windows Terminal, WezTerm, Ghostty on Linux and kitty
+  without remote control always bring a new tab or window to the front.
 
 **Terminal tabs**
 

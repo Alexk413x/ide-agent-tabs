@@ -40,10 +40,12 @@ export const OPEN_SCRIPT = [
   '\tset agentTitle to item 2 of argv',
   '\tset placement to "last"',
   '\tset placeRef to ""',
+  '\tset keepFocus to false',
   '\tif (count of argv) > 3 then',
   '\t\tset placement to item 3 of argv',
   '\t\tset placeRef to item 4 of argv',
   '\tend if',
+  '\tif (count of argv) > 4 then set keepFocus to (item 5 of argv) is "background"',
   `\ttell ${APP}`,
   '\t\tset w to missing value',
   '\t\tif placement is "session" then',
@@ -64,8 +66,10 @@ export const OPEN_SCRIPT = [
   '\t\t\tset w to (create window with default profile command agentCommand)',
   '\t\t\tset s to current session of current tab of w',
   '\t\telse',
+  '\t\t\tset previousTab to current tab of w',
   '\t\t\ttell w to set t to (create tab with default profile command agentCommand)',
   '\t\t\tset s to current session of t',
+  '\t\t\tif keepFocus then tell previousTab to select',
   '\t\tend if',
   '\t\tset name of s to agentTitle',
   '\t\treturn (unique ID of s) & linefeed & ((id of w) as text)',
@@ -144,6 +148,11 @@ export function parseOpenAnswer(stdout: string): { sessionId: string; windowId?:
 }
 
 export function iterm2Placement(options: OpenOptions | undefined, remembered: RememberedWindow | undefined): string[] {
+  const place = iterm2Place(options, remembered);
+  return options?.focus === false ? [...(place.length ? place : ['last', '']), 'background'] : place;
+}
+
+function iterm2Place(options: OpenOptions | undefined, remembered: RememberedWindow | undefined): string[] {
   if (options?.near?.terminal === ITERM2 && options.near.terminalId) return ['session', options.near.terminalId];
   if (options?.window === 'dedicated') return ['dedicated', remembered?.id ?? ''];
   return [];
