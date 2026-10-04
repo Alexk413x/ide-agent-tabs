@@ -79,6 +79,13 @@ class AgentTabsConfigurable : BoundConfigurable("Agent Tabs") {
                     })
                     .comment("After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off.")
             }
+            row {
+                checkBox("Use the Claude Code mod (in-process messaging)")
+                    .bindSelected({ Agents.settings.shared().claudeMod }, { value ->
+                        if (value != Agents.settings.shared().claudeMod) saved(Agents.settings.setClaudeMod(value))
+                    })
+                    .comment("Claude Code sessions message other agents with SendMessage and ListAgents and get their messages in-process. Off uses the hooks and wake lines. New sessions pick up a change.")
+            }
             row("Open on startup:") {
                 comboBox(OpenOnStartup.entries, textListCellRenderer { it?.label })
                     .bindItem({ AgentTabsOptions.getInstance().openOnStartup }, { mode ->

@@ -1,6 +1,8 @@
 import type { On, SessionSendResult } from 'claude-code'
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 
+import { DEFAULT_PANE, upFrom } from './register'
+
 const SERVER = 'plugin:ide-agent-tabs:ide-agent-tabs'
 const MAILBOX = 'C:\\Users\\me\\.ide-agent-tabs\\mail\\tab-c\\new'
 const NATIVE = 'plugins-fa [6a3948]'
@@ -126,6 +128,8 @@ type WorldOptions = {
   listing?: string
   rows?: Row[]
   effort?: string
+  claudeMod?: 'on' | 'off'
+  history?: unknown[]
 }
 
 function world(on: On, options: WorldOptions = {}) {
@@ -138,6 +142,27 @@ function world(on: On, options: WorldOptions = {}) {
   const model = { current: 'claude-opus-5-5' }
   const mail = { unread: [...(options.unread ?? [])], held: [] as string[], read: [] as string[] }
   const clock = mock.clock(on, { now: 1_000_000 })
+  const panes = { open: [] as string[], opened: [] as unknown[], closed: [] as unknown[], commands: [] as string[], filled: [] as string[] }
+  on('command.register', (_$, e) => {
+    panes.commands.push(e.name)
+    return { value: undefined } as never
+  })
+  on('ui.open', (_$, e) => {
+    panes.opened.push(e)
+    if (!panes.open.includes(e.id)) panes.open.push(e.id)
+    return { value: { isPlaced: true as const } }
+  })
+  on('ui.close', (_$, e) => {
+    panes.closed.push(e)
+    panes.open = panes.open.filter(id => id !== e.id)
+    return { value: undefined }
+  })
+  on('ui.panes', () => ({ value: panes.open.map(id => ({ id, title: 'Agent Tabs', isShown: true, isFocused: true, isPlaced: true })) }))
+  on('prompt.fill', (_$, e) => {
+    panes.filled.push(e.text)
+    return { isFilled: true }
+  })
+  on('session.receive', (_$, e) => ({ text: e.text }))
   mock.env(on, { ...(options.tab === undefined ? {} : { IDE_AGENT_TABS_ID: options.tab }), ...(options.effort === undefined ? {} : { CLAUDE_EFFORT: options.effort }) })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', () => ({ sessionId: 'b2f0c4de-0000-4000-8000-000000000000' }) as never)
@@ -197,12 +222,18 @@ function world(on: On, options: WorldOptions = {}) {
       case 'release':
         mail.unread.push(...mail.held.splice(0))
         return ok({ claim: e.args.claim, released: 1 })
+      case 'settings':
+        return ok({ claudeMod: options.claudeMod ?? 'on' })
+      case 'log':
+        return ok({ id: 'm-2222222222222222' })
+      case 'history':
+        return ok({ messages: options.history ?? [] })
       default:
         return fail(`unknown op ${String(e.args.op)}`)
     }
   })
   const ops = (op: string) => calls.filter(c => c.args.op === op)
-  return { calls, ops, statuses, toasts, submitted, native, counts, mail, clock, model }
+  return { calls, ops, statuses, toasts, submitted, native, counts, mail, clock, model, panes }
 }
 
 async function start($: Engine) {
@@ -476,6 +507,7 @@ describe('inbound mail', () => {
 describe('tool descriptions', () => {
   test('defers the Agent Tabs messaging tools and points Claude to SendMessage and ListAgents', async ($, on) => {
     world(on, { tab: 'tab-c' })
+    await start($)
     const provider = { plugin: 'mcp:plugin:ide-agent-tabs:ide-agent-tabs', tier: 'user' } as never
     for (const tool of ['send_message', 'read_messages', 'wait_for_message', 'list_sessions']) {
       const described = await $.tool.describe({ tool: `mcp__plugin_ide-agent-tabs_ide-agent-tabs__${tool}`, description: 'Send text.', provider })
@@ -510,6 +542,8 @@ describe('peer message card', () => {
 
   test("draws the mod's own peer prompts as a compact card on terminal and desktop", async ($, on) => {
     engineRow(on)
+    world(on, { tab: 'tab-c' })
+    await start($)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({
         plugin: 'ide-agent-tabs',
@@ -539,5 +573,167 @@ describe('peer message card', () => {
         await ui.unmount()
       }
     }
+  })
+})
+
+const PANE_PROPS = (columns = 120) => ({ title: 'Agent Tabs', isFocused: true, bodyColumns: columns, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} })
+const COMPOSER = { kind: 'composer' } as const
+const PRESENTATION = { isFullscreen: true, columns: 200 }
+const AT = (minute: number) => new Date(Date.UTC(2026, 9, 4, 9, minute)).toISOString()
+const local = (iso: string) => `${String(new Date(iso).getHours()).padStart(2, '0')}:${String(new Date(iso).getMinutes()).padStart(2, '0')}`
+const HISTORY = [
+  { id: 'm-aaaaaaaaaaaaaaa1', at: AT(1), direction: 'received', route: 'agent-tabs', from: { id: 'codex-1a2b', agent: 'codex', path: 'C:\\w' }, to: { id: 'tab-d' }, peer: { id: 'codex-1a2b' }, text: 'Please review x.ts\nand y.ts', status: 'read' },
+  { id: 'm-aaaaaaaaaaaaaaa2', at: AT(2), direction: 'sent', route: 'native', from: { id: 'tab-d', name: 'docs-9b [11aa22]' }, to: { name: NATIVE }, peer: { name: NATIVE }, text: 'Done, both look fine.', delivery: 'delivered' },
+]
+
+async function openPane($: Engine) {
+  return $.command.run({ command: 'agent-tabs', args: '', origin: COMPOSER, presentation: PRESENTATION })
+}
+
+describe('agents pane', () => {
+  test('/agent-tabs toggles one pane, closed by default, and reads nothing while closed', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: HISTORY })
+    await start($)
+    expect(w.panes.commands).toEqual(['agent-tabs'])
+    expect(w.panes.open).toEqual([])
+    const booted = w.counts.listAgents
+    await w.clock.advance(10_000)
+    expect(w.counts.listAgents).toBe(booted)
+    expect(w.ops('history')).toHaveLength(0)
+
+    expect((await openPane($)).text).toBe('Agent Tabs pane opened.')
+    expect(w.panes.opened).toEqual([{ id: 'agent-tabs', title: 'Agent Tabs', focus: true, closeOnEscape: true, holdToasts: true, rows: 18 }])
+    expect(w.counts.listAgents).toBe(booted + 1)
+    await w.clock.advance(2_000)
+    expect(w.counts.listAgents).toBe(booted + 2)
+    expect(w.ops('history')).toHaveLength(0)
+
+    expect((await openPane($)).text).toBe('Agent Tabs pane closed.')
+    expect(w.panes.open).toEqual([])
+    await w.clock.advance(10_000)
+    expect(w.counts.listAgents).toBe(booted + 2)
+  })
+
+  test('the agents view lists the merged groups with colour-coded states on terminal and desktop', async ($, on) => {
+    world(on, { tab: 'tab-c' })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+      const headings = ['C:\\w', 'C:\\a', 'C:\\docs', 'C:\\e2e', 'C:\\W\\sub', 'C:\\z', 'Folder not known', "Cloud (can receive, can't reply)"]
+      expect(texts.filter(t => headings.includes(t))).toEqual(headings)
+      const buttons = (await ui.findAll({ type: 'Button' })).map(b => b.text.trim())
+      expect(buttons.slice(0, 3)).toEqual(['claude-01d0', 'codex-1a2b', 'agy-a0a0'])
+      expect(buttons).toContain('docs-9b [11aa22]')
+      expect(buttons).not.toContain(NATIVE)
+      expect((await ui.find({ type: 'Text', text: /^permission/ }))?.props.color).toBe('error')
+      expect((await ui.find({ type: 'Text', text: /^busy/ }))?.props.color).toBe('warning')
+      expect((await ui.find({ type: 'Text', text: /^idle/ }))?.props.color).toBe('success')
+      expect((await ui.find({ type: 'Text', text: /^cloud/ }))?.props.dimColor).toBe(true)
+      expect(await ui.find({ type: 'Text', text: 'Codex via OpenRouter          gpt-5.5                   medium  Windows Terminal    codex-1a' })).toBeDefined()
+      await ui.unmount()
+    }
+  })
+
+  test('Enter on an agent shows its messages, Enter on a message its detail, and Back and Esc go up one level', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: HISTORY })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      await ui.press({ key: 'agent:id:tab-d' })
+      const history = w.ops('history').at(-1)!.args
+      expect(history.session).toBe('tab-d')
+      expect(history.names).toContain('docs-9b [11aa22]')
+      const lines = (await ui.findAll({ type: 'Button' })).map(b => b.text)
+      expect(lines).toEqual(['Back', `${local(AT(1))}  ↘ codex-1a2b  Please review x.ts…`, `${local(AT(2))}  ↑ ${NATIVE}  Done, both look fine.`])
+      expect(await ui.find({ type: 'Text', text: 'docs-9b [11aa22] · 2 messages' })).toBeDefined()
+
+      await ui.press({ key: 'msg:m-aaaaaaaaaaaaaaa1' })
+      expect(await ui.find({ type: 'Text', text: 'From: codex-1a2b' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'To: docs-9b [11aa22]' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Time: 2026-10-04 09:01:00Z' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Delivery: read · Agent Tabs' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'Please review x.ts\nand y.ts' })).toBeDefined()
+
+      await ui.press({ key: 'back' })
+      expect(await ui.find({ type: 'Button', key: 'msg:m-aaaaaaaaaaaaaaa2' })).toBeDefined()
+      await ui.press({ key: 'back' })
+      expect(await ui.find({ type: 'Button', key: 'agent:id:tab-d' })).toBeDefined()
+      expect(w.panes.closed).toHaveLength(0)
+      await ui.unmount()
+    }
+  })
+
+  test('Esc goes up one level the way Back does, and closes the pane only from the agents view', () => {
+    const agent = { key: 'id:tab-d', name: 'docs-9b [11aa22]', id: 'tab-d', names: ['docs-9b [11aa22]'] }
+    const detail = { ...DEFAULT_PANE, view: 'detail' as const, agent, message: 'm-aaaaaaaaaaaaaaa1' }
+    expect(upFrom(detail)).toEqual({ ...detail, view: 'messages' })
+    expect(upFrom(upFrom(detail))).toEqual({ ...detail, view: 'agents', message: null })
+    expect(upFrom(DEFAULT_PANE).view).toBe('agents')
+  })
+
+  test('Reply closes the pane and fills the prompt with a SendMessage-ready line, never submitting', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: HISTORY })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'desktop', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await ui.press({ key: 'agent:id:tab-d' })
+    await ui.press({ key: 'msg:m-aaaaaaaaaaaaaaa1' })
+    await ui.press({ key: 'reply' })
+    expect(w.panes.filled).toEqual(['Reply to codex-1a2b (message m-aaaaaaaaaaaaaaa1): '])
+    expect(w.panes.open).toEqual([])
+    expect(w.submitted).toEqual([])
+  })
+
+  test('the view, the agent and the message stay in $.state across a reload, and the open pane resumes its refresh', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: HISTORY })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await ui.press({ key: 'agent:id:tab-d' })
+    await ui.press({ key: 'msg:m-aaaaaaaaaaaaaaa2' })
+    await ui.unmount()
+    await start($)
+    const again = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    expect(await again.find({ type: 'Text', text: 'Delivery: delivered · SendMessage' })).toBeDefined()
+    const before = w.ops('history').length
+    await w.clock.advance(2_000)
+    expect(w.ops('history').length).toBeGreaterThan(before)
+  })
+})
+
+describe('native traffic log', () => {
+  test('a native SendMessage and a peer delivery are logged; an Agent Tabs send is left to the server', async ($, on) => {
+    const w = world(on, { tab: 'tab-c' })
+    await start($)
+    await $.session.send({ to: 'docs-9b [11aa22]', text: 'native hi', origin: MODEL })
+    await $.session.send({ to: 'codex-1a2b', text: 'bridged', origin: MODEL })
+    await $.session.receive({ origin: { kind: 'peer' }, text: '<cross-session-message from="docs-9b [11aa22]">thanks</cross-session-message>' })
+    await $.session.receive({ origin: { kind: 'bridge' }, text: 'from my phone' })
+    expect(w.ops('log').map(c => [c.args.direction, c.args.peer, c.args.text, c.args.delivery])).toEqual([
+      ['sent', 'docs-9b [11aa22]', 'native hi', 'delivered'],
+      ['received', 'docs-9b [11aa22]', '<cross-session-message from="docs-9b [11aa22]">thanks</cross-session-message>', undefined],
+    ])
+  })
+})
+
+describe('claudeMod off', () => {
+  test('the mod stays inert: no driver, no polling, no ListAgents rewrite, no deferral, no command', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', claudeMod: 'off', unread: ['1-m-0123456789abcdef.json'] })
+    await start($)
+    expect(w.ops('presence')).toHaveLength(0)
+    expect(w.panes.commands).toEqual([])
+    await w.clock.advance(10_000)
+    expect(w.ops('take')).toHaveLength(0)
+    expect(w.statuses).toEqual([])
+    const listed = await $.tool.call({ tool: 'ListAgents' })
+    expect((listed.result as { listing: string }).listing).toBe(LISTING)
+    const provider = { plugin: 'mcp:plugin:ide-agent-tabs:ide-agent-tabs', tier: 'user' } as never
+    expect(await $.tool.describe({ tool: 'mcp__plugin_ide-agent-tabs_ide-agent-tabs__send_message', description: 'Send text.', provider })).toEqual({ description: 'Send text.' })
+    expect(await $.session.send({ to: 'codex-1a2b', text: 'hi', origin: MODEL })).toEqual({ isDelivered: true })
+    expect(w.native).toEqual([{ to: 'codex-1a2b', text: 'hi' }])
+    expect(w.ops('send')).toHaveLength(0)
   })
 })

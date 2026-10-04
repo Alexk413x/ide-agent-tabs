@@ -7,11 +7,13 @@ export const TAB_ROUTINGS = ['project', 'caller'] as const;
 export const TERMINAL_WINDOWS = ['last', 'dedicated'] as const;
 export const LAUNCH_VIA = ['direct', 'ori'] as const;
 export const FOCUS_NEW_TABS = ['auto', 'always', 'never'] as const;
+export const CLAUDE_MOD = ['on', 'off'] as const;
 
 export type TabRouting = (typeof TAB_ROUTINGS)[number];
 export type TerminalWindow = (typeof TERMINAL_WINDOWS)[number];
 export type LaunchVia = (typeof LAUNCH_VIA)[number];
 export type FocusNewTabs = (typeof FOCUS_NEW_TABS)[number];
+export type ClaudeMod = (typeof CLAUDE_MOD)[number];
 
 export interface SharedSettings {
   tabRouting: TabRouting;
@@ -21,6 +23,7 @@ export interface SharedSettings {
   launchVia: LaunchVia;
   closeAfterHandoff: boolean;
   focusNewTabs: FocusNewTabs;
+  claudeMod: ClaudeMod;
 }
 
 export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
@@ -31,6 +34,7 @@ export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
   launchVia: 'direct',
   closeAfterHandoff: true,
   focusNewTabs: AUTO,
+  claudeMod: 'on',
 });
 
 export interface DetectedTerminal {
@@ -80,6 +84,8 @@ export function readSharedSettings(text: string, file: string): Partial<SharedSe
   if (typeof root.closeAfterHandoff === 'boolean') found.closeAfterHandoff = root.closeAfterHandoff;
   const focusNewTabs = oneOf(FOCUS_NEW_TABS, root.focusNewTabs);
   if (focusNewTabs !== undefined) found.focusNewTabs = focusNewTabs;
+  const claudeMod = oneOf(CLAUDE_MOD, root.claudeMod);
+  if (claudeMod !== undefined) found.claudeMod = claudeMod;
   return found;
 }
 
@@ -88,7 +94,7 @@ export function withSharedValue(existing: string | undefined, file: string, key:
   if (typeof value === 'boolean') {
     if (value === SHARED_DEFAULTS[key]) delete root[key];
     else root[key] = value;
-  } else if (value === AUTO || value.trim() === '') delete root[key];
+  } else if (value === AUTO || value.trim() === '' || (key === 'claudeMod' && value === SHARED_DEFAULTS.claudeMod)) delete root[key];
   else root[key] = value;
   return JSON.stringify(root, null, 2) + '\n';
 }

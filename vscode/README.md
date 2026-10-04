@@ -78,6 +78,7 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
 | `ideAgentTabs.launchVia` | `direct`, `ori` (start supported agents with `ori <agent>`, which bills model usage through OpenRouter). Needs Ori (`ori`) installed. | `direct` |
 | `ideAgentTabs.closeAfterHandoff` | `true` (the new session closes the old tab once both sides confirm a handoff), `false` (leave the old tab open, marked as handed off) | `true` |
+| `ideAgentTabs.claudeMod` | `on` (Claude Code sessions message other agents through SendMessage and ListAgents and get their messages in-process), `off` (the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0). Claude Code sessions that start after the change pick it up. | `on` |
 
 Two more sections hold the settings that the MCP server and JetBrains IDEs share. They stay in sync with
 `~/.ide-agent-tabs/config.json`. A tab request that names an IDE, a terminal or an agent overrides them.

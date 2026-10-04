@@ -202,6 +202,7 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
 |---|---|---|---|
 | Launch through OpenRouter (Ori) | `launchVia` | `direct`, `ori` | `direct` |
 | Close the old tab after a handoff | `closeAfterHandoff` | `true`, `false` | `true` |
+| Use the Claude Code mod (in-process messaging) | `claudeMod` | `on`, `off` | `on` |
 
 - Launch through OpenRouter (Ori): Start supported agents with `ori <agent>`, which bills model usage
   through OpenRouter. Offer it only when `~/.ide-agent-tabs/detected.json` has a non-null `ori`, or
@@ -213,6 +214,11 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
   `401 Missing Authentication header` in Ori 0.14.3; both are Ori limits.
 - Close the old tab after a handoff: After a handoff, the new session closes the old tab once both
   sides confirm. `false` leaves the old tab open, marked as handed off.
+- Use the Claude Code mod (in-process messaging): With `on`, Claude Code sessions message other agents
+  with SendMessage and ListAgents, get their messages in-process, and have the `/agent-tabs` pane.
+  `off` turns the mod off; Claude Code then uses the hooks, wake lines and messaging tools. Claude Code
+  sessions that start after the change pick it up. Suggest `off` only when the user reports a problem
+  with the mod.
 
 To change a setting, use the IDE settings or edit `config.json` and keep every other key:
 

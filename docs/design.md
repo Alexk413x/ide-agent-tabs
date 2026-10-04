@@ -440,6 +440,7 @@ and **Terminal tabs**.
 
 | Group | Setting | Key | Values | Default |
 |---|---|---|---|---|
+| Agents | Use the Claude Code mod (in-process messaging) | `claudeMod` | `on`: Claude Code sessions message other agents with SendMessage and ListAgents and get their messages in-process. `off`: the 0.6.0 hooks, wake lines and tools. | `on` |
 | IDE tabs | Open new tabs in | `tabRouting` | `project`: the IDE that has the project open (rules 3 to 5). `caller`: the IDE the request came from (rule 2). | `project` |
 | IDE tabs | Bring new agent tabs to the front | `focusNewTabs` | `auto`: behind the current tab unless the call passes `focus: true`. `always`: to the front unless the call passes `focus: false`. `never`: behind unless the call passes `focus: true`. | `auto` |
 | Terminal tabs | Preferred terminal | `terminal` | `auto` or absent: the platform's order. Otherwise a terminal id from detection, such as `windows-terminal`, `wezterm`, `kitty`, `tmux`, `ghostty` or `iterm2`. | `auto` |
@@ -891,6 +892,9 @@ itself raised the call. The model's own calls to those tools keep the engine's d
 | `take` | optional `max` (1 to 10) | Claims unread messages: moves them from `new/` to `held/` and returns them with a `claim` id. |
 | `ack`, `release` | `claim` | `ack` moves the claimed messages to `cur/`; `release` returns them to `new/`. |
 | `sessions` | none | The `list_sessions` rows. |
+| `log` | `direction` (`sent` or `received`), `peer`, `text`, optional `id`, `at`, `delivery` | Records a native SendMessage message of this session in its `sent-log/` or `received-log/`. |
+| `history` | `session` and/or `names` | Every message the session sent or received, oldest first (see [Agents pane](#agents-pane)). |
+| `settings` | none | `claudeMod` from `config.json`. |
 
 The server registers the tool only for a Claude Code client: it removes the tool for every other client
 once the client names itself, so their `tools/list` never shows it. The mod's `tool.describe` hook
@@ -1040,6 +1044,59 @@ including each native peer name, goes to `next(e)` unchanged.
   folder, and a reply hint. It returns `next(e)` when `isExpanded`, so ctrl+o shows the whole message, and
   for every other row, including the person's own prompts (`composer`, `bridge`) and other plugins'.
 
+#### Agents pane
+
+`/agent-tabs` shows or hides one pane, closed by default. It docks beside the transcript in the
+fullscreen layout and opens inline above the prompt otherwise. It opens with `focus`, `closeOnEscape` and
+`holdToasts`, so it holds the keyboard as a dialog does: the arrow keys and Tab walk its rows, Enter
+opens one, and a click works where the surface reports presses. Toasts wait until it closes.
+
+- **Agents:** the `ListAgents` layout, from the same merge code: folder headings, one row per agent with
+  name, state, harness, model, effort, IDE or terminal and session, cloud sessions last. The state is
+  coloured by theme key: `idle` success, `busy` warning, `permission` error, `waking` suggestion,
+  anything else dim.
+- **Messages** of the chosen agent: everything it sent or received through Agent Tabs or SendMessage
+  with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
+  `HH:MM  ↘ peer  first line…` for received, in local time.
+- **Detail:** from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
+  closes the pane and fills the prompt with `Reply to <name> (message <id>): `, which never submits; a
+  dialog-held pane would refuse the fill.
+
+Back and Esc go up one level. Esc reaches the mod as `ui.close` with origin `person`; above the agents
+view the mod answers without `next`, so the pane stays open and goes up instead. The view, the chosen
+agent and message, and the focused row of each view live in `$.state`, so a reload keeps them, and a
+pane still open after a reload resumes its refresh.
+
+While the pane is open, the mod refreshes every 2 seconds: one `ListAgents` call and the `sessions` op,
+plus the `history` op in the messages and detail views. It writes `$.state` only when the data changed, so
+the pane redraws only then. While it is closed, nothing renders and nothing is read. The mod's own
+`ListAgents` call skips its merge hook, so the pane parses the native listing.
+
+Data:
+
+- The server writes a sent log for every send (`send_message` and the `send` op):
+  `mail/<sender>/sent-log/<ms>-<id>.json`, owner-only (`wx`, 0600), with `id`, `at`, `route`
+  (`agent-tabs`), `from`, `to`, `text`, `replyTo` and `delivery` (`woken` or `queued`).
+- The mod logs its own session's native traffic through the `log` op: outgoing SendMessage after
+  `next(e)` settles (delivery `delivered` or `failed: <reason>`) into `sent-log/`, and incoming peer
+  deliveries from `session.receive` into `received-log/`. `session.receive` carries no sender, so the
+  mod reads one from the text (`from="…"`, `From: …`) and writes `a Claude peer` when it finds none.
+- `history` merges, for a session id and its names: the session's own sent and received logs, every
+  other session's logs that name it, and the messages in its own mailbox (`new/`, `held/`, `cur/`, as
+  status `unread`, `delivering` or `read`) or that it sent to other mailboxes. One message in a sent log
+  and a mailbox shows once, with the log's delivery and the mailbox's status. A native message logged by
+  both sides shows once. It reads files only: nothing moves out of `new/`.
+- `cleanMail` deletes log entries after 7 days, as it does `cur/`.
+
+#### Turning the mod off
+
+`config.json` key `claudeMod`: `"on"` (default) or `"off"`. The mod reads it through the `settings` op
+at `session.start`. With `off` it does nothing: no driver claim, no polling, no `ListAgents` merge, no
+deferral, no card, no command and no native log, so the command hooks and wake lines work as in 0.6.0.
+VS Code (`ideAgentTabs.claudeMod`, in the **Agent Tabs** section, machine scope, user level only),
+JetBrains (a checkbox on the main settings page) and the setup skill set it. Sessions that start after
+the change pick it up.
+
 #### Tool deferral
 
 A `tool.describe` hook defers `send_message`, `read_messages`, `wait_for_message` and `list_sessions`
@@ -1052,8 +1109,11 @@ keep working when the model calls them.
 the `ListAgents` list (folder groups, alignment and cuts, order, the Claude join, the cloud group, the
 left-out count and the fallback), model and effort reports, `SendMessage` routing both ways, by short
 name and for every listed name, inbound delivery when idle and when busy,
-release after a failed submit, the permission rule, tool deferral, and the card on the terminal and
-desktop surfaces. `mcp/test/mod.test.ts` covers the server side: the driver rules, the stale-beat
+release after a failed submit, the permission rule, tool deferral, the card on the terminal and
+desktop surfaces, the pane's three views on both surfaces, its navigation, Reply, `$.state` across a
+reload, no reads while closed, the native log, and `claudeMod` off. `mcp/test/history.test.ts` covers
+the sent log, `history` order and merge, that `history` marks nothing read, log retention and the
+`claudeMod` setting. `mcp/test/mod.test.ts` covers the server side: the driver rules, the stale-beat
 fallback, claims, the `list_sessions` rows, short names and their resolution in `send_message`, the model
 and effort a mod reports, and the Codex config defaults. `mcp/test/agentHook.test.ts` covers the model
 and effort in hook payloads, and `mcp/test/integration.test.ts` the model `open_tab` records.

@@ -25,6 +25,7 @@ import {
 } from './mailbox.js';
 import { readCodexConfig } from './codexConfig.js';
 import { runHook } from './hook.js';
+import { history, logId, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
   agentFromClient,
@@ -86,6 +87,15 @@ export const MOD_STATES = ['idle', 'busy', 'permission'] as const;
 export type ModState = (typeof MOD_STATES)[number];
 export const AGENT_ORDER = ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local'];
 export const MOD_DELIVERY_NOTE = "the recipient's Agent Tabs mod delivers it in-process once the session is idle";
+
+export interface ModLogInput {
+  direction: 'sent' | 'received';
+  peer: string;
+  text: string;
+  id?: string;
+  at?: number;
+  delivery?: string;
+}
 
 export interface ModPresenceInput {
   driver?: boolean;
@@ -439,6 +449,16 @@ export class Messaging {
       throw e;
     }
     const wake = await this.wake(recipient, now).catch((e: unknown) => ({ delivery: 'queued' as const, note: String(e) }));
+    await writeLog(this.deps.home, this.sessionId, SENT_LOG, {
+      id,
+      at: message.sentAt,
+      route: 'agent-tabs',
+      from: message.from,
+      to: { id: to, ...(recipient.nativeName !== undefined ? { name: recipient.nativeName } : {}) },
+      text,
+      ...(replyTo !== undefined ? { replyTo } : {}),
+      delivery: wake.delivery,
+    }).catch(() => undefined);
     this.followUp(to);
     void this.clean().catch(() => undefined);
     return { id: message.id, to, ...wake };
@@ -530,6 +550,35 @@ export class Messaging {
 
   private async resetNudges(): Promise<void> {
     await this.updateOwn((p) => (p.nudges ? { ...p, nudges: 0 } : p)).catch(() => undefined);
+  }
+
+  async modLog(input: ModLogInput) {
+    if (!NATIVE_NAME.test(input.peer)) throw new MailError('peer must be one printable line of at most 128 characters');
+    if (input.direction !== 'sent' && input.direction !== 'received') throw new MailError('direction must be sent or received');
+    const own = await readPresence(this.deps.home, this.sessionId);
+    const self = { id: this.sessionId, agent: this.agent, path: this.deps.cwd, ...(own?.nativeName !== undefined ? { name: own.nativeName } : {}) };
+    const peer = { name: input.peer };
+    const id = logId(input.id);
+    const at = new Date(input.at !== undefined && Number.isFinite(input.at) ? input.at : this.now()).toISOString();
+    const text = input.text.slice(0, MAX_TEXT_CHARS);
+    const sent = input.direction === 'sent';
+    await writeLog(this.deps.home, this.sessionId, sent ? SENT_LOG : RECEIVED_LOG, {
+      id,
+      at,
+      route: 'native',
+      from: sent ? self : peer,
+      to: sent ? peer : self,
+      text,
+      ...(input.delivery !== undefined ? { delivery: input.delivery.slice(0, 200) } : {}),
+    });
+    return { id };
+  }
+
+  async modHistory(who: Who) {
+    if (who.id !== undefined && !isSessionId(who.id)) throw new MailError(`not a session id: ${who.id}`);
+    const names = who.names.filter((n) => NATIVE_NAME.test(n)).slice(0, 8);
+    if (who.id === undefined && names.length === 0) throw new MailError('history needs session or names');
+    return { messages: await history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names }) };
   }
 
   async modPresence(input: ModPresenceInput) {

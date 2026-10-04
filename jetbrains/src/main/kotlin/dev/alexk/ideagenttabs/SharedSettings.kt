@@ -8,6 +8,7 @@ import com.google.gson.JsonParser
 
 const val DETECTED_FILE = "detected.json"
 const val AUTO = "auto"
+const val CLAUDE_MOD_OFF = "off"
 
 enum class TabRouting(val value: String, val label: String) {
     PROJECT("project", "IDE that has the project open"),
@@ -58,6 +59,7 @@ data class SharedSettings(
     val launchVia: LaunchVia = LaunchVia.DIRECT,
     val closeAfterHandoff: Boolean = true,
     val focusNewTabs: FocusNewTabs = FocusNewTabs.AUTO_FOCUS,
+    val claudeMod: Boolean = true,
 )
 
 data class DetectedTerminal(val id: String, val name: String)
@@ -82,6 +84,7 @@ fun readSharedSettings(text: String): SharedSettings {
         launchVia = LaunchVia.of(root.stringOrNull("launchVia")) ?: LaunchVia.DIRECT,
         closeAfterHandoff = root.booleanOrNull("closeAfterHandoff") ?: true,
         focusNewTabs = FocusNewTabs.of(root.stringOrNull("focusNewTabs")) ?: FocusNewTabs.AUTO_FOCUS,
+        claudeMod = root.stringOrNull("claudeMod") != CLAUDE_MOD_OFF,
     )
 }
 

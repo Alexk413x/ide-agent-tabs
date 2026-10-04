@@ -362,7 +362,7 @@ export async function waitForMessage(
 
 async function newestMtime(dir: string): Promise<number> {
   let newest = (await fs.stat(dir).catch(() => undefined))?.mtimeMs ?? 0;
-  for (const name of ['tmp', 'new', 'cur', 'bad', 'held', SENT_FILE]) {
+  for (const name of ['tmp', 'new', 'cur', 'bad', 'held', 'sent-log', 'received-log', SENT_FILE]) {
     const file = path.join(dir, name);
     newest = Math.max(newest, (await fs.stat(file).catch(() => undefined))?.mtimeMs ?? 0);
     for (const child of await fs.readdir(file).catch(() => [] as string[])) {
@@ -389,6 +389,8 @@ export async function cleanMail(home: string, liveIds: Set<string>, now = Date.n
       continue;
     }
     await removeOlder(path.join(dir, 'cur'), KEEP_MS, now);
+    await removeOlder(path.join(dir, 'sent-log'), KEEP_MS, now);
+    await removeOlder(path.join(dir, 'received-log'), KEEP_MS, now);
     await removeOlder(path.join(dir, 'bad'), KEEP_MS, now);
     await removeOlder(path.join(dir, 'tmp'), TMP_MAX_AGE_MS, now);
   }
