@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, statSync, utimesSync } from 'node:fs';
+import { readdirSync, utimesSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CLAIM_TIMEOUT_MS, deliver, mailboxDir, newMessageId, peekUnread, type Message } from '../src/messaging/mailbox.js';
 import { runHook } from '../src/messaging/hook.js';
-import { Messaging, MOD_DELIVERY_NOTE, MOD_REFUSAL, MOD_TOKEN_DIR, type Hosts } from '../src/messaging/messaging.js';
+import { Messaging, MOD_DELIVERY_NOTE, type Hosts } from '../src/messaging/messaging.js';
 import { isModDriven, MOD_STALE_MS, readPresence, updatePresence } from '../src/messaging/sessions.js';
 import { createServer, MOD_TOOL } from '../src/server.js';
 import { Service } from '../src/service.js';
@@ -198,14 +198,12 @@ async function connect(home: string, id: string, clientName: string, pid: number
   await createServer(service, undefined, messaging).connect(serverSide);
   const client = new Client({ name: clientName, version: '1.0.0' });
   await client.connect(clientSide);
-  const auth = { token: undefined as string | undefined };
   const call = async (args: Record<string, unknown>) => {
-    const sent = args.op === 'register' || 'token' in args ? args : { ...args, token: auth.token };
-    const result = (await client.callTool({ name: MOD_TOOL, arguments: sent })) as { isError?: boolean; content: { text: string }[] };
+    const result = (await client.callTool({ name: MOD_TOOL, arguments: args })) as { isError?: boolean; content: { text: string }[] };
     const text = result.content[0]!.text;
     return { isError: result.isError === true, text, json: result.isError ? undefined : JSON.parse(text) };
   };
-  return { client, call, messaging, auth };
+  return { client, call, messaging };
 }
 
 test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', async () => {
@@ -217,8 +215,6 @@ test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', 
     assert.ok(!(await codex.client.listTools()).tools.some((t) => t.name === MOD_TOOL));
     assert.ok((await claude.client.listTools()).tools.some((t) => t.name === MOD_TOOL));
 
-    const register = await claude.call({ op: 'register' });
-    claude.auth.token = readFileSync(register.json.tokenFile, 'utf8');
     const presence = await claude.call({ op: 'presence', driver: true, nativeName: 'plugins-fa [6a3948]', state: 'idle' });
     assert.equal(presence.json.driver, true);
     const sent = await claude.call({ op: 'send', to: 'tab-x', text: 'from the mod' });
@@ -241,41 +237,5 @@ test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', 
     await claude.client.close();
     codex.messaging.stopSync();
     claude.messaging.stopSync();
-  }
-});
-
-test('agent_tabs_mod refuses every op but register without the token from the owner-only file', async () => {
-  const home = tempDir('iat-mod-token-');
-  const claude = await connect(home, 'tab-c', 'claude-code', 102);
-  try {
-    for (const op of ['presence', 'send', 'take', 'ack', 'release', 'sessions']) {
-      assert.equal((await claude.call({ op, token: undefined })).text, MOD_REFUSAL, `${op} without a token`);
-    }
-    assert.equal((await claude.call({ op: 'sessions', token: 'x' })).text, MOD_REFUSAL, 'before any register');
-
-    const { tokenFile } = (await claude.call({ op: 'register' })).json;
-    assert.equal(tokenFile, path.join(home, MOD_TOKEN_DIR, 'tab-c.token'));
-    const token = readFileSync(tokenFile, 'utf8');
-    assert.match(token, /^[0-9a-f]{32}$/);
-    if (process.platform !== 'win32') assert.equal(statSync(tokenFile).mode & 0o777, 0o600);
-    assert.doesNotMatch((await claude.call({ op: 'register' })).text, new RegExp(token), 'register never returns the token itself');
-    assert.equal(readFileSync(tokenFile, 'utf8'), token, 'a second register keeps the token');
-
-    assert.equal((await claude.call({ op: 'sessions', token: 'f'.repeat(32) })).text, MOD_REFUSAL, 'a wrong token');
-    assert.equal((await claude.call({ op: 'sessions', token: `${token}0` })).text, MOD_REFUSAL, 'a longer token');
-    assert.equal((await claude.call({ op: 'sessions', token })).isError, false);
-  } finally {
-    await claude.client.close();
-    claude.messaging.stopSync();
-  }
-  assert.ok(!existsSync(path.join(home, MOD_TOKEN_DIR, 'tab-c.token')), 'the server removes its token file when it stops');
-
-  const restarted = await connect(home, 'tab-c', 'claude-code', 103);
-  try {
-    const { tokenFile } = (await restarted.call({ op: 'register' })).json;
-    assert.match(readFileSync(tokenFile, 'utf8'), /^[0-9a-f]{32}$/, 'a restarted server writes a new token');
-  } finally {
-    await restarted.client.close();
-    restarted.messaging.stopSync();
   }
 });

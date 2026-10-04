@@ -2,7 +2,6 @@ export type AgentTabsActivity = 'idle' | 'busy' | 'permission'
 
 export type AgentTabsSelf = {
   server: string
-  token: string
   id: string
   name: string
   isDriver: boolean
