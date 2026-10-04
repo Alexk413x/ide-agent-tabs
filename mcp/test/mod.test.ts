@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { CLAIM_TIMEOUT_MS, deliver, mailboxDir, newMessageId, peekUnread, type Message } from '../src/messaging/mailbox.js';
+import { CLAIM_TIMEOUT_MS, deliver, mailboxDir, MAX_READ_CHARS, MAX_TEXT_CHARS, newMessageId, peekUnread, type Message } from '../src/messaging/mailbox.js';
 import { runHook } from '../src/messaging/hook.js';
 import { Messaging, MOD_DELIVERY_NOTE, type Hosts } from '../src/messaging/messaging.js';
 import { isModDriven, MOD_STALE_MS, readPresence, updatePresence } from '../src/messaging/sessions.js';
@@ -129,12 +129,11 @@ test('take claims mail at least once: release and a stale claim return it, ack m
   await deliver(home, message('tab-c', 'one'));
   await deliver(home, message('tab-c', 'two'));
 
-  const first = await claude.modTake(1);
-  assert.equal(first.messages.length, 1);
-  assert.equal(first.remaining, 1);
+  const first = await claude.modTake();
+  assert.equal(first.messages.length, 2);
   assert.match('notice' in first ? first.notice : '', /not from your user/);
-  assert.equal((await peekUnread(home, 'tab-c')).length, 1, 'a claimed message is no longer unread');
-  assert.deepEqual(await claude.modSettle(first.claim!, 'release'), { claim: first.claim, released: 1 });
+  assert.equal((await peekUnread(home, 'tab-c')).length, 0, 'a claimed message is no longer unread');
+  assert.deepEqual(await claude.modSettle(first.claim!, 'release'), { claim: first.claim, released: 2 });
   assert.equal((await peekUnread(home, 'tab-c')).length, 2);
 
   const both = await claude.modTake();
@@ -224,7 +223,7 @@ test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', 
     assert.match((await claude.call({ op: 'send', to: 'tab-c', text: 'me' })).text, /to is this session/);
 
     await deliver(home, message('tab-c', 'for claude'));
-    const taken = await claude.call({ op: 'take', max: 5 });
+    const taken = await claude.call({ op: 'take' });
     assert.equal(taken.json.messages[0].text, 'for claude');
     assert.deepEqual((await claude.call({ op: 'ack', claim: taken.json.claim })).json, { claim: taken.json.claim, read: 1 });
     assert.match((await claude.call({ op: 'release', claim: 'c-0000' })).text, /no open claim/);
@@ -237,5 +236,23 @@ test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', 
     await claude.client.close();
     codex.messaging.stopSync();
     claude.messaging.stopSync();
+  }
+});
+
+test('one take claims every waiting message up to MAX_READ_CHARS, at least one, and leaves the rest', async () => {
+  const home = tempDir('iat-mod-take-');
+  const m = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-t', IDE_AGENT_TABS_AGENT: 'claude' }, pid: 9, cwd: '/t', hosts: { findHost: async () => undefined, typeInto: async () => ({ ok: true }) }, isAlive: () => true });
+  await m.start();
+  try {
+    for (let i = 0; i < 12; i++) await deliver(home, message('tab-t', `short ${i}`));
+    const all = await m.modTake();
+    assert.equal(all.messages.length, 12, 'no count limit');
+    for (let i = 0; i < 3; i++) await deliver(home, message('tab-t', String(i).repeat(MAX_TEXT_CHARS)));
+    const capped = await m.modTake();
+    assert.equal(capped.messages.length, Math.max(1, Math.floor(MAX_READ_CHARS / MAX_TEXT_CHARS)));
+    assert.equal(capped.remaining, 3 - capped.messages.length);
+  } finally {
+    m.stopHeartbeat();
+    m.stopSync();
   }
 });

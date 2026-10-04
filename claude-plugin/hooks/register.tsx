@@ -7,7 +7,6 @@ const MOD_TOOL = 'agent_tabs_mod'
 const POLL_MS = 2_000
 const BEAT_MS = 60_000
 const RETRY_MS = 30_000
-const TAKE_MAX = 5
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const NATIVE_NAME = /This session is (.+?) —/
 const PEER_TOOLS = /^mcp__(plugin_ide-agent-tabs_)?ide-agent-tabs__(send_message|read_messages|wait_for_message|list_sessions|agent_tabs_mod)$/
@@ -180,7 +179,7 @@ async function unreadNames($: EngineInterface, mailbox: string): Promise<string[
 }
 
 async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> {
-  const taken = (await callMod($, me.server, { op: 'take', max: TAKE_MAX })) as Taken
+  const taken = (await callMod($, me.server, { op: 'take' })) as Taken
   if (taken.claim === null || taken.messages.length === 0) return true
   const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
   const text = taken.messages.map(m => frame(m, rows.find(r => r.id === m.from.id)?.name ?? m.from.id)).join('\n\n---\n\n')

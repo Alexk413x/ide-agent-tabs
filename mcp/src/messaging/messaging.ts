@@ -81,7 +81,6 @@ export interface SendInput {
 
 export const MOD_STATES = ['idle', 'busy', 'permission'] as const;
 export type ModState = (typeof MOD_STATES)[number];
-export const MOD_TAKE_MAX = 10;
 export const AGENT_ORDER = ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local'];
 export const MOD_DELIVERY_NOTE = "the recipient's Agent Tabs mod delivers it in-process once the session is idle";
 
@@ -497,10 +496,9 @@ export class Messaging {
     return { id: this.sessionId, tab: this.isTab, driver: own?.driver === 'mod', mailbox: unreadDir(this.deps.home, this.sessionId) };
   }
 
-  async modTake(max = MOD_TAKE_MAX) {
-    const count = Math.min(Math.max(Math.trunc(max), 1), MOD_TAKE_MAX);
+  async modTake() {
     await returnStaleClaims(this.deps.home, this.sessionId, this.now());
-    const { messages, names, remaining, unreadable } = await claimBatch(this.deps.home, this.sessionId, count);
+    const { messages, names, remaining, unreadable } = await claimBatch(this.deps.home, this.sessionId, Infinity);
     const extra = { ...(remaining ? { remaining } : {}), ...(unreadable ? { unreadable } : {}) };
     if (!messages.length) return { claim: null, messages: [], ...extra };
     const claim = `c-${randomBytes(8).toString('hex')}`;
