@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'claude-plugin', 'dist');
 const skipTests = process.argv.includes('--skip-tests');
+const skipIde = process.argv.includes('--skip-ide');
 const shell = process.platform === 'win32';
 
 const run = (command, args, cwd) => spawnSync(command, args, { cwd, stdio: 'inherit', shell }).status === 0;
@@ -43,6 +44,7 @@ const steps = [
   ['validate plugin', () => run('claude', ['plugin', 'validate', '--strict', 'claude-plugin'], root)],
   ...(skipTests ? [] : [['mod tests', () => run('claude', ['plugin', 'test', 'claude-plugin'], root)]]),
   ['validate marketplace', () => run('claude', ['plugin', 'validate', '--strict', '.'], root)],
+  ...(skipTests || skipIde ? [] : [['ide tests', () => run('node', ['scripts/pack-ides.mjs', '--test'], root)]]),
 ];
 
 for (const [name, step] of steps) {

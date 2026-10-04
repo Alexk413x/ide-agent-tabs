@@ -198,23 +198,21 @@ test('open_tab routes a path inside an open project to that IDE and forwards the
 });
 
 test('a tab opened without a prompt counts as idle once it has had time to start, so a message wakes it', async () => {
-  const prompted = await call('open_tab', { path: project, prompt: 'go' });
-  assert.deepEqual(await readPresence(home, prompted.json.id), { id: prompted.json.id, via: 'direct', project: 'proj' }, 'a tab with a prompt starts busy and reports its state itself');
+  const prompted = await call('open_tab', { path: project, prompt: 'go', model: 'claude-opus-5-5' });
+  assert.deepEqual(
+    await readPresence(home, prompted.json.id),
+    { id: prompted.json.id, via: 'direct', project: 'proj', model: 'claude-opus-5-5', product: prompted.json.product },
+    'a tab with a prompt starts busy and reports its state itself; the model and IDE product it opened with are kept for list_sessions',
+  );
   const before = Date.now();
   const fresh = await call('open_tab', { path: project });
   const presence = (await readPresence(home, fresh.json.id))!;
   assert.equal(presence.state, 'idle');
   assert.equal(presence.host, fresh.json.ide);
+  assert.equal(presence.model, undefined);
+  assert.equal(typeof presence.product, 'string');
   assert.ok(Date.parse(presence.stateAt!) >= before + FRESH_TAB_START_MS);
   for (const tab of [prompted, fresh]) assert.ok(!(await call('close_tab', { id: tab.json.id })).isError);
-});
-
-test('open_tab records the model it launches the tab with, for list_sessions', async () => {
-  const opened = await call('open_tab', { path: project, prompt: 'go', model: 'claude-opus-5-5' });
-  assert.equal((await readPresence(home, opened.json.id))?.model, 'claude-opus-5-5');
-  const plain = await call('open_tab', { path: project, prompt: 'go' });
-  assert.equal((await readPresence(home, plain.json.id))?.model, undefined);
-  for (const tab of [opened, plain]) assert.ok(!(await call('close_tab', { id: tab.json.id })).isError);
 });
 
 test('open_tab falls back to the most recently started IDE and adds the next step to IDE errors', async () => {

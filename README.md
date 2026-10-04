@@ -92,8 +92,11 @@ and possible future work. Change the design before you change the protocol.
 ## Checks
 
 Before you commit, run `node scripts/check.mjs` from the repo root. It runs the MCP typecheck and tests,
-confirms `claude-plugin/dist` matches a fresh bundle, checks the plugin version, and runs
-`claude plugin validate --strict`. Pass `--skip-tests` to skip the tests.
+confirms `claude-plugin/dist` matches a fresh bundle, checks the plugin version, runs
+`claude plugin validate --strict` and the mod tests, then the JetBrains and VS Code tests. Gradle runs
+without its build cache, so a stale cache entry can't fail or skip a test. The JetBrains tests need JDK 25
+or later, found the way `scripts/pack-ides.mjs` finds it. Pass `--skip-ide` to skip the IDE tests, or
+`--skip-tests` to skip every test.
 
 ## License
 

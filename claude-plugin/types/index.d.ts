@@ -29,6 +29,7 @@ export type AgentTabsPaneRow = {
   name: string
   agent: string
   state: string
+  started: string | null
   harness: string
   model: string | null
   effort: string | null

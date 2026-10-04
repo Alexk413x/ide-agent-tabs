@@ -72,14 +72,18 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
 - A Claude Code mod, loaded from `hooks/hooks.json` `modules` in Claude Code builds with function hooks.
   - `ListAgents` returns one list of every session that can take a message now: live native Claude
     peers and every Agent Tabs session, grouped by folder with the caller's folder first and cloud
-    sessions last. Each line shows the name to message, state, harness, model, effort, IDE or terminal,
-    and the session id's first 8 characters, aligned across groups. A Claude tab appears once, under
+    sessions last. Each line shows the name to message, state, time since start, harness, model,
+    effort, IDE or terminal, and the session id's first 8 characters, aligned across groups. Within a
+    folder, each agent's newest session comes first. A Claude tab appears once, under
     its native name. Offline sessions, including offline Remote Control ones, are left out and counted
     on the last line; `/list-agents` still shows them. `SendMessage` reaches every listed name, and
     native Claude peers still go the native way.
   - `list_sessions` adds `shortName` (such as `codex-f99f`), `session`, `harness`, `model`, `effort`,
     `where`, `folder` and `nativeName`, and `send_message` takes a `shortName`. The model comes from
     `open_tab`, hook payloads, the Claude mod, or a Codex session's `config.toml`.
+  - `list_sessions` never shows a raw IDE host id. `open_tab` stores the IDE product or terminal label
+    in the presence file, so a tab whose endpoint is gone, as after an extension-host restart, still
+    names its IDE, and a tab found under a new host takes that host's label.
   - In a tab, the mod reports the session's state and delivers mail with `$.prompt.submit` as a framed
     peer prompt once the session is idle. A failed submit returns the message to unread.
   - The status line shows the unread count and the first sender, a toast announces each arrival, and the
