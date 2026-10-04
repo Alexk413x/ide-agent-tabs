@@ -7,7 +7,7 @@ import { MODEL_PATTERN } from './launchPlan.js';
 import type { Jev } from './jev/service.js';
 import { JEV_INSTRUCTIONS, JEV_TOOLS } from './jev/tools.js';
 import { MAX_TEXT_CHARS } from './messaging/mailbox.js';
-import { MAX_WAIT_S, type Messaging } from './messaging/messaging.js';
+import { MAX_WAIT_S, MOD_STATES, MOD_TAKE_MAX, type Messaging } from './messaging/messaging.js';
 import { MESSAGING_INSTRUCTIONS, TAB_INSTRUCTIONS } from './messaging/notice.js';
 import { agentFromClient } from './messaging/sessions.js';
 import { MAX_ENTRIES, MAX_PROMPT_CHARS } from './profiles.js';
@@ -17,6 +17,8 @@ import { PACKAGE_VERSION } from './version.js';
 export const SERVER_NAME = 'ide-agent-tabs';
 export const SERVER_VERSION = PACKAGE_VERSION;
 export const HOOK_TOOL = 'agent_tabs_hook';
+export const MOD_TOOL = 'agent_tabs_mod';
+export const MOD_OPS = ['register', 'presence', 'send', 'take', 'ack', 'release', 'sessions'] as const;
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 type Reply = (extra: Extra, work: () => Promise<unknown>) => Promise<CallToolResult>;
@@ -180,6 +182,45 @@ async function hookResult(messaging: Messaging, input: HookInput, extra: Extra):
   }
 }
 
+interface ModInput {
+  op: (typeof MOD_OPS)[number];
+  token?: string | undefined;
+  driver?: boolean | undefined;
+  nativeName?: string | undefined;
+  state?: (typeof MOD_STATES)[number] | undefined;
+  to?: string | undefined;
+  text?: string | undefined;
+  replyTo?: string | undefined;
+  max?: number | undefined;
+  claim?: string | undefined;
+}
+
+async function modOp(messaging: Messaging, input: ModInput): Promise<unknown> {
+  const need = <T>(value: T | undefined, field: string): T => {
+    if (value === undefined) throw new Error(`${input.op} needs ${field}`);
+    return value;
+  };
+  if (input.op === 'register') return messaging.modRegister();
+  messaging.checkModToken(input.token);
+  switch (input.op) {
+    case 'presence':
+      return messaging.modPresence({
+        ...(input.driver !== undefined ? { driver: input.driver } : {}),
+        ...(input.nativeName !== undefined ? { nativeName: input.nativeName } : {}),
+        ...(input.state !== undefined ? { state: input.state } : {}),
+      });
+    case 'send':
+      return messaging.send({ to: need(input.to, 'to'), text: need(input.text, 'text'), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}) });
+    case 'take':
+      return messaging.modTake(input.max);
+    case 'ack':
+    case 'release':
+      return messaging.modSettle(need(input.claim, 'claim'), input.op);
+    case 'sessions':
+      return messaging.listSessions();
+  }
+}
+
 function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply): void {
   // Only the hooks that a Codex tab's arguments define call this tool; ui.visibility [] hides it from Codex's model.
   const hookTool = server.registerTool(
@@ -198,9 +239,34 @@ function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply
     (input, extra) => hookResult(messaging, input, extra),
   );
 
+  const modTool = server.registerTool(
+    MOD_TOOL,
+    {
+      title: 'Agent Tabs mod',
+      description:
+        "Internal: the Agent Tabs mod inside Claude Code calls this to report the session's state, bridge SendMessage and ListAgents, and deliver its mail. Don't call it.",
+      inputSchema: {
+        op: z.enum(MOD_OPS).describe('register, presence, send, take, ack, release or sessions.'),
+        token: z.string().max(64).optional().describe('Every op but register: the token from the file register names.'),
+        driver: z.boolean().optional().describe('presence: true claims in-process delivery for this tab; false hands it back to the hooks.'),
+        nativeName: z.string().max(128).optional().describe("presence: the session's name in Claude Code's ListAgents."),
+        state: z.enum(MOD_STATES).optional().describe('presence: idle, busy or permission.'),
+        to: z.string().optional().describe(`send: ${SESSION_ID}`),
+        text: z.string().max(MAX_TEXT_CHARS).optional().describe('send: the message.'),
+        replyTo: z.string().optional().describe(`send: ${MESSAGE_ID}`),
+        max: z.number().int().min(1).max(MOD_TAKE_MAX).optional().describe('take: at most this many messages.'),
+        claim: z.string().optional().describe('ack, release: the claim id take returned.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    (input, extra) => reply(extra, () => modOp(messaging, input)),
+  );
+
   server.server.oninitialized = () => {
     const client = server.server.getClientVersion()?.name;
-    if (agentFromClient(client) !== 'codex') hookTool.remove();
+    const agent = agentFromClient(client);
+    if (agent !== 'codex') hookTool.remove();
+    if (agent !== 'claude') modTool.remove();
     void messaging.setClient(client).catch(() => undefined);
   };
 
@@ -209,7 +275,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply
     {
       title: 'List agent sessions',
       description:
-        'List the live agent sessions on this machine that can exchange messages: id, agent, path, host (the IDE or terminal of its tab), state (idle, busy, permission, waking or unknown), handedOffTo for a session that handed its work to another, and self for this session. ' +
+        'List the live agent sessions on this machine that can exchange messages, in a fixed agent order: name (the name Claude Code\'s SendMessage takes), id, agent, route (native for a Claude session that SendMessage reaches directly, else agent-tabs), state (idle, busy, permission, waking or unknown), tab (its tab id, or null), host (the IDE and project or the terminal of its tab), ide (that host\'s id), path, via (ori or direct, when known), handedOffTo for a session that handed its work to another, and self for this session. ' +
         "Call it before send_message for the recipient's id; don't guess ids. To start a new session instead, call open_tab.",
       annotations: { readOnlyHint: true, openWorldHint: false },
     },

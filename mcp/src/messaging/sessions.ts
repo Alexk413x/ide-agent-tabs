@@ -13,6 +13,11 @@ export const IDLE_SETTLE_MS = 2_000;
 export const BUSY_STALE_MS = 15 * 60_000;
 export const HEARTBEAT_MS = 60_000;
 export const PRESENCE_BEATS_MISSED = 5;
+export const MOD_STALE_MS = 3 * HEARTBEAT_MS;
+export const DRIVERS = ['mod'] as const;
+export type Driver = (typeof DRIVERS)[number];
+export const VIAS = ['ori', 'direct'] as const;
+export type Via = (typeof VIAS)[number];
 
 export interface PresenceFile {
   id: string;
@@ -30,6 +35,11 @@ export interface PresenceFile {
   beatMs?: number;
   inputIdle?: boolean;
   handedOffTo?: string;
+  driver?: Driver;
+  modBeat?: number;
+  nativeName?: string;
+  via?: Via;
+  project?: string;
 }
 
 export interface Presence extends PresenceFile {
@@ -83,6 +93,9 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
   const pid = typeof o.pid === 'number' && Number.isSafeInteger(o.pid) && o.pid > 0 ? { pid: o.pid } : {};
   const nudges = typeof o.nudges === 'number' && Number.isSafeInteger(o.nudges) && o.nudges >= 0 ? { nudges: o.nudges } : {};
   const beatMs = typeof o.beatMs === 'number' && Number.isSafeInteger(o.beatMs) && o.beatMs > 0 ? { beatMs: o.beatMs } : {};
+  const modBeat = typeof o.modBeat === 'number' && Number.isSafeInteger(o.modBeat) && o.modBeat > 0 ? { modBeat: o.modBeat } : {};
+  const driver = DRIVERS.includes(o.driver as Driver) ? { driver: o.driver as Driver } : {};
+  const via = VIAS.includes(o.via as Via) ? { via: o.via as Via } : {};
   const reminded = Array.isArray(o.reminded) && o.reminded.every((r) => typeof r === 'string') ? { reminded: o.reminded as string[] } : {};
   return {
     id: o.id,
@@ -100,7 +113,20 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...beatMs,
     ...(typeof o.inputIdle === 'boolean' ? { inputIdle: o.inputIdle } : {}),
     ...str('handedOffTo'),
+    ...driver,
+    ...modBeat,
+    ...str('nativeName'),
+    ...via,
+    ...str('project'),
   };
+}
+
+// The Claude mod delivers mail and reports state in-process; a mod that stopped without cleanup leaves the
+// field behind, so it counts only while the mod's heartbeat is fresh, and the classic hooks and wake lines resume.
+export function isModDriven(p: Pick<PresenceFile, 'driver' | 'modBeat'>, now: number): boolean {
+  if (p.driver !== 'mod' || p.modBeat === undefined) return false;
+  const age = now - p.modBeat;
+  return age >= -MOD_STALE_MS && age < MOD_STALE_MS;
 }
 
 export function isComplete(p: PresenceFile): p is Presence {

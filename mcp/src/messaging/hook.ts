@@ -1,6 +1,6 @@
 import { peekUnread } from './mailbox.js';
 import { unreadReminder } from './notice.js';
-import { effectiveState, isSessionId, updatePresence, withState, type PresenceFile, type SessionState } from './sessions.js';
+import { effectiveState, isModDriven, isSessionId, readPresence, updatePresence, withState, type PresenceFile, type SessionState } from './sessions.js';
 
 export const HOOK_CLIS = ['claude', 'codex', 'gemini', 'copilot', 'agy', 'grok', 'hermes', 'qwen', 'goose'] as const;
 export type HookCli = (typeof HOOK_CLIS)[number];
@@ -134,6 +134,8 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
   const action = HOOK_EVENTS[cli][event];
   if (!action) return undefined;
   const now = run.now ?? Date.now();
+  const before = await readPresence(home, sessionId);
+  if (before && isModDriven(before, now)) return undefined;
   const inputIdle = inputIdleAfter(cli, action, run.input);
   const state = action.notification ? notificationState(run.input) : action.failure ? (run.input.is_interrupt === true ? 'idle' : 'busy') : action.state;
   const unread = action.remind || action.stop ? await peekUnread(home, sessionId) : [];
@@ -143,7 +145,7 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
   let remind = false;
   let foreign = false;
   await updatePresence(home, sessionId, (current) => {
-    const owned = ownedBy(cli, current ?? { id: sessionId }, action, run.input, now);
+    const owned = current && isModDriven(current, now) ? false : ownedBy(cli, current ?? { id: sessionId }, action, run.input, now);
     if (owned === false) {
       foreign = true;
       return current;

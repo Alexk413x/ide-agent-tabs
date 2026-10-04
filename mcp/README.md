@@ -18,8 +18,8 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 | `list_tabs` | `ide` (optional) | Open tabs across all IDEs and terminals, or in one |
 | `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux |
 | `close_tab` | `id` (optional) | The closed tab. With no `id`, it closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
-| `list_sessions` | none | Live agent sessions (`id`, `agent`, `path`, `host`, `state`, `startedAt`), with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
-| `send_message` | `to`, `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued` |
+| `list_sessions` | none | Live agent sessions in a fixed agent order: `name` (what Claude Code's `SendMessage` takes), `id`, `agent`, `route` (`native` or `agent-tabs`), `state`, `tab`, `host` (IDE and project, or terminal), `ide` (the host's id), `path`, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
+| `send_message` | `to`, `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
 | `read_messages` | none | The caller's unread messages, marked read, under a `notice` that they come from other agents |
 | `wait_for_message` | optional `timeout` (seconds, default 60, at most 600, or 170 in an Antigravity CLI session), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
 | `handoff` | `path`, and `brief` or `goal`, `done`, `next`, `files`, `openQuestions`, and optional `agent`, `model`, `via`, `ide` | The handoff `id`, the `brief` path, the `newTab` id, and `next`: the steps the caller follows to wait for the takeover and stop |
@@ -250,6 +250,25 @@ to answer a message that needs no answer.
 | Windows Terminal, Ghostty on Linux, kitty without remote control | None; the session relies on hooks |
 | A session Agent Tabs didn't open | None |
 
+### Claude Code sessions
+
+In a Claude Code build with function hooks, the plugin's mod (`claude-plugin/hooks/register.tsx`) bridges
+Claude Code's own tools to Agent Tabs:
+
+- `ListAgents` also lists every other Agent Tabs session, with its agent, state, tab, host, folder and
+  `via`.
+- `SendMessage` to an Agent Tabs session's name goes to its mailbox. A native Claude peer's name goes
+  the native way.
+- In a tab, the mod delivers incoming mail as a framed peer prompt when the session is idle, and shows
+  the unread count in the status line. While the mod runs, the presence file holds `driver: "mod"`, the
+  command hooks do nothing for that session, and `send_message` returns `queued` with a note instead of
+  typing a wake line. A mod that stops for 3 minutes hands the session back to the hooks and wake lines.
+- The mod calls the internal `agent_tabs_mod` tool, which the server offers to Claude Code only. Every
+  op but `register` needs the token that `register` writes to an owner-only file. The mod also
+  defers `send_message`, `read_messages`, `wait_for_message` and `list_sessions` behind ToolSearch.
+
+See [Claude Code mod](../docs/design.md#claude-code-mod) in the design doc.
+
 ### Codex tabs
 
 A Codex tab starts `codex --no-daemon` with `-c` options that add, for that session only, this server
@@ -391,9 +410,12 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
 
   `--unregister` removes only the Agent Tabs entries and leaves your other hooks in place.
 - Antigravity CLI notes:
-  - `--register agy` also adds the allow rule `mcp(ide-agent-tabs/*)` to `permissions.allow` in
-    `~/.gemini/antigravity-cli/settings.json`, because Antigravity CLI asks before each call to an MCP
-    tool that has no rule. `--unregister agy` removes only that rule and keeps your other settings.
+  - `--register agy` also adds allow rules to `permissions.allow` in
+    `~/.gemini/antigravity-cli/settings.json` for the tools that read or message (`send_message`,
+    `read_messages`, `wait_for_message`, `list_sessions`, `list_agents`, `list_ides`, `list_tabs`), because
+    Antigravity CLI asks before each call to an MCP tool that has no rule. `open_tab`, `close_tab`, `handoff`
+    and the `jev_` tools still ask. Registering replaces the broader `mcp(ide-agent-tabs/*)` rule of
+    earlier builds. `--unregister agy` removes only these rules and keeps your other settings.
   - Antigravity CLI runs a hook command through `cmd.exe` on Windows and escapes double quotes, so the
     hook path goes in without quotes. `--register agy` refuses a path with spaces or `cmd.exe` special
     characters.

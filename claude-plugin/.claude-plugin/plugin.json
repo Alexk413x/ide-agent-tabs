@@ -6,5 +6,6 @@
     "name": "Alexk413x"
   },
   "repository": "https://github.com/Alexk413x/ide-agent-tabs",
-  "license": "LicenseRef-Proprietary"
+  "license": "LicenseRef-Proprietary",
+  "types": "./types/index.d.ts"
 }
