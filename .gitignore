@@ -9,3 +9,6 @@ bin/
 
 # claude plugin eval run output
 claude-plugin/evals/results/
+
+# types Claude Code lays beside a plugin loaded with --plugin-dir
+claude-plugin/.claude-plugin/types/

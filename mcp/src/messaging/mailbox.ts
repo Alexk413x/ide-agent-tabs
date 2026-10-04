@@ -39,7 +39,9 @@ export interface MessageFilter {
 }
 
 export const mailboxDir = (home: string, id: string) => path.join(home, MAIL_DIR, id);
-const sub = (home: string, id: string, name: 'tmp' | 'new' | 'cur' | 'bad') => path.join(mailboxDir(home, id), name);
+type Folder = 'tmp' | 'new' | 'cur' | 'bad' | 'held';
+const sub = (home: string, id: string, name: Folder) => path.join(mailboxDir(home, id), name);
+export const unreadDir = (home: string, id: string) => sub(home, id, 'new');
 
 export const newMessageId = () => `m-${randomBytes(8).toString('hex')}`;
 
@@ -87,6 +89,7 @@ export async function unreadNames(home: string, id: string): Promise<string[]> {
 }
 
 export async function peekUnread(home: string, id: string): Promise<Message[]> {
+  await returnStaleClaims(home, id);
   const dir = sub(home, id, 'new');
   const messages: Message[] = [];
   for (const name of await unreadNames(home, id)) {
@@ -170,7 +173,7 @@ export async function deliver(home: string, message: Message, now = Date.now()):
 
 const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 
-async function move(home: string, id: string, name: string, from: 'new' | 'cur', to: 'new' | 'cur' | 'bad'): Promise<boolean> {
+async function move(home: string, id: string, name: string, from: Folder, to: Folder): Promise<boolean> {
   await ensurePrivateDir(sub(home, id, to));
   const source = path.join(sub(home, id, from), name);
   const target = path.join(sub(home, id, to), name);
@@ -212,6 +215,7 @@ export async function takeBatch(home: string, id: string, limits: BatchLimits = 
   const { filter = {}, count = Infinity, chars = Infinity } = limits;
   const batch: Batch = { messages: [], names: [], remaining: 0, unreadable: 0 };
   await ensureMailbox(home, id);
+  await returnStaleClaims(home, id);
   if ((await unreadNames(home, id)).length === 0) return batch;
   return withFileLock(path.join(mailboxDir(home, id), 'read'), async () => {
     let size = 0;
@@ -249,6 +253,60 @@ export async function takeMessages(home: string, id: string, filter: MessageFilt
 
 export async function putBack(home: string, id: string, names: string[]): Promise<void> {
   for (const name of names) await move(home, id, name, 'cur', 'new');
+}
+
+export const CLAIM_TIMEOUT_MS = 2 * 60_000;
+
+async function heldNames(home: string, id: string): Promise<string[]> {
+  const names = await fs.readdir(sub(home, id, 'held')).catch(() => [] as string[]);
+  return names.filter((n) => n.endsWith('.json')).sort();
+}
+
+// A claim parks messages in held/ until the claimer acks them into cur/ or releases them back to new/. move()
+// stamps the mtime, so a claim older than CLAIM_TIMEOUT_MS returns to new/ even after the claimer died.
+export async function returnStaleClaims(home: string, id: string, now = Date.now(), maxAgeMs = CLAIM_TIMEOUT_MS): Promise<number> {
+  let returned = 0;
+  if ((await heldNames(home, id)).length === 0) return returned;
+  await withFileLock(path.join(mailboxDir(home, id), 'read'), async () => {
+    for (const name of await heldNames(home, id)) {
+      const stat = await fs.stat(path.join(sub(home, id, 'held'), name)).catch(() => undefined);
+      if (stat && now - stat.mtimeMs >= maxAgeMs && (await move(home, id, name, 'held', 'new'))) returned++;
+    }
+  });
+  return returned;
+}
+
+export async function claimBatch(home: string, id: string, count: number, chars = MAX_READ_CHARS): Promise<Batch> {
+  const batch: Batch = { messages: [], names: [], remaining: 0, unreadable: 0 };
+  await ensureMailbox(home, id);
+  if ((await unreadNames(home, id)).length === 0) return batch;
+  return withFileLock(path.join(mailboxDir(home, id), 'read'), async () => {
+    let size = 0;
+    for (const name of await unreadNames(home, id)) {
+      const text = await readTextIfExists(path.join(sub(home, id, 'new'), name)).catch(() => undefined);
+      if (text === undefined) continue;
+      const message = parseMessage(text);
+      if (!message) {
+        if (await move(home, id, name, 'new', 'bad')) batch.unreadable++;
+        continue;
+      }
+      if (batch.messages.length >= count || (batch.messages.length > 0 && size + message.text.length > chars)) {
+        batch.remaining++;
+        continue;
+      }
+      if (!(await move(home, id, name, 'new', 'held'))) continue;
+      size += message.text.length;
+      batch.messages.push(message);
+      batch.names.push(name);
+    }
+    return batch;
+  });
+}
+
+export async function settleClaim(home: string, id: string, names: string[], to: 'cur' | 'new'): Promise<number> {
+  let moved = 0;
+  for (const name of names) if (await move(home, id, name, 'held', to)) moved++;
+  return moved;
 }
 
 export async function waitForMessage(
@@ -304,7 +362,7 @@ export async function waitForMessage(
 
 async function newestMtime(dir: string): Promise<number> {
   let newest = (await fs.stat(dir).catch(() => undefined))?.mtimeMs ?? 0;
-  for (const name of ['tmp', 'new', 'cur', 'bad', SENT_FILE]) {
+  for (const name of ['tmp', 'new', 'cur', 'bad', 'held', SENT_FILE]) {
     const file = path.join(dir, name);
     newest = Math.max(newest, (await fs.stat(file).catch(() => undefined))?.mtimeMs ?? 0);
     for (const child of await fs.readdir(file).catch(() => [] as string[])) {

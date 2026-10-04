@@ -48,8 +48,8 @@ test('two servers sharing a home exchange a message and a reply', async () => {
     assert.deepEqual(
       listed.map((s) => [s.id, s.agent, s.self, s.state, s.path]),
       [
-        ['tab-aaaa-1', 'codex', true, 'unknown', '/work/tab-aaaa-1'],
         ['tab-bbbb-2', 'claude', false, 'unknown', '/work/tab-bbbb-2'],
+        ['tab-aaaa-1', 'codex', true, 'unknown', '/work/tab-aaaa-1'],
       ],
     );
 

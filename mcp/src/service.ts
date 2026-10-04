@@ -12,7 +12,7 @@ import {
   TAB_ID_ENV,
   type AgentSettings,
 } from './profiles.js';
-import { isSessionId, updatePresence, withState } from './messaging/sessions.js';
+import { isSessionId, updatePresence, withState, type PresenceFile, type Via } from './messaging/sessions.js';
 import { isProcessAlive, readRegistry, type Endpoint } from './registry.js';
 import { validateOpen, type OpenInput, type OpenRequest } from './request.js';
 import { chooseIde, chooseTerminal, type IdeCandidate, type Project } from './routing.js';
@@ -242,7 +242,10 @@ export class Service {
     } catch (e) {
       throw new ToolError(errorText(e));
     }
-    if (request.prompt === undefined) await this.markFresh(reply.id, endpoint.id);
+    await this.markOpened(reply.id, endpoint.id, request.prompt === undefined, {
+      via: reply.via === 'ori' ? 'ori' : 'direct',
+      ...(typeof reply.project === 'string' && reply.project !== '' ? { project: reply.project } : {}),
+    });
     const via = reply.via === 'ori' ? { via: 'ori' } : {};
     return { id: reply.id, ide: endpoint.id, product: endpoint.product, agent: reply.agent, project: reply.project, path: reply.path, reason, ...via };
   }
@@ -284,7 +287,7 @@ export class Service {
     }
     const { note, ...tab } = opened;
     await this.store.add(tab);
-    if (request.prompt === undefined) await this.markFresh(tab.id, driver.name);
+    await this.markOpened(tab.id, driver.name, request.prompt === undefined, { via: plan.via });
     return {
       id: tab.id,
       ide: driver.name,
@@ -299,12 +302,19 @@ export class Service {
 
   // Some CLIs, such as Codex, run no start hook until their first turn, so a tab opened without a prompt would
   // stay unknown and never be woken. It waits at its prompt once the CLI has had FRESH_TAB_START_MS to start.
-  private async markFresh(id: unknown, host: string): Promise<void> {
+  private async markOpened(id: unknown, host: string, fresh: boolean, launch: { via: Via; project?: string }): Promise<void> {
     if (typeof id !== 'string' || !isSessionId(id)) return;
     const at = Date.now() + FRESH_TAB_START_MS;
-    await updatePresence(this.deps.home, id, (current) =>
-      current?.state !== undefined && current.state !== 'unknown' ? current : withState({ ...(current ?? { id }), host }, 'idle', at),
-    ).catch(() => undefined);
+    await updatePresence(this.deps.home, id, (current) => {
+      const base: PresenceFile = { ...(current ?? { id }), ...launch };
+      return !fresh || (current?.state !== undefined && current.state !== 'unknown') ? base : withState({ ...base, host }, 'idle', at);
+    }).catch(() => undefined);
+  }
+
+  async describeHost(host: string): Promise<string | undefined> {
+    const driver = this.deps.drivers.find((d) => d.name === host);
+    if (driver) return driver.label;
+    return (await this.registry()).endpoints.find((e) => e.id === host)?.product;
   }
 
   private async terminalTabs(only?: TerminalDriver) {

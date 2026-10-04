@@ -8,7 +8,12 @@ export type HookAgent = 'codex' | 'gemini' | 'copilot' | 'agy' | 'grok' | 'herme
 export const HOOK_AGENTS: readonly HookAgent[] = ['codex', 'gemini', 'copilot', 'agy', 'grok', 'hermes', 'qwen', 'goose'];
 type SettingsAgent = 'codex' | 'gemini' | 'qwen';
 export const AGY_HOOK_GROUP = 'ide-agent-tabs';
-export const AGY_ALLOW_RULE = 'mcp(ide-agent-tabs/*)';
+// Only tools that read or message: open_tab, close_tab and handoff start or stop agents, and jev_ sends text
+// off the machine, so those keep Antigravity CLI's own per-call confirmation.
+export const AGY_ALLOW_RULES: readonly string[] = ['send_message', 'read_messages', 'wait_for_message', 'list_sessions', 'list_agents', 'list_ides', 'list_tabs'].map(
+  (tool) => `mcp(ide-agent-tabs/${tool})`,
+);
+const AGY_WILDCARD_RULE = 'mcp(ide-agent-tabs/*)';
 export const COPILOT_HOOKS_FILE = 'ide-agent-tabs.json';
 export const GROK_HOOKS_FILE = 'ide-agent-tabs.json';
 export const GOOSE_PLUGIN = 'ide-agent-tabs';
@@ -149,17 +154,24 @@ export function withAgyHooks(root: Record<string, unknown>, hook: string | undef
 export const hasAgyHooks = (root: Record<string, unknown>, hook: string) => JSON.stringify(root[AGY_HOOK_GROUP]) === JSON.stringify(agyHooks(hook));
 
 export function withAgyAllowRule(root: Record<string, unknown>, file: string, allow: boolean): Record<string, unknown> {
-  if (!allow && !hasAgyAllowRule(root)) return root;
+  if (!allow && !hasAnyAgyRule(root)) return root;
   const permissions = root.permissions ?? {};
   if (!isObject(permissions)) throw new Error(`${file}: "permissions" isn't an object`);
   const rules = permissions.allow ?? [];
   if (!Array.isArray(rules)) throw new Error(`${file}: "permissions.allow" isn't a list`);
-  const kept = rules.filter((r) => r !== AGY_ALLOW_RULE);
-  return { ...root, permissions: { ...permissions, allow: allow ? [...kept, AGY_ALLOW_RULE] : kept } };
+  const kept = rules.filter((r) => r !== AGY_WILDCARD_RULE && !AGY_ALLOW_RULES.includes(r));
+  return { ...root, permissions: { ...permissions, allow: allow ? [...kept, ...AGY_ALLOW_RULES] : kept } };
 }
 
-export const hasAgyAllowRule = (root: Record<string, unknown> | undefined) =>
-  isObject(root?.permissions) && Array.isArray(root.permissions.allow) && root.permissions.allow.includes(AGY_ALLOW_RULE);
+function hasAnyAgyRule(root: Record<string, unknown>): boolean {
+  const allow = isObject(root.permissions) ? root.permissions.allow : undefined;
+  return Array.isArray(allow) && allow.some((r) => r === AGY_WILDCARD_RULE || AGY_ALLOW_RULES.includes(r));
+}
+
+export function hasAgyAllowRule(root: Record<string, unknown> | undefined): boolean {
+  const allow = isObject(root?.permissions) ? root.permissions.allow : undefined;
+  return Array.isArray(allow) && (AGY_ALLOW_RULES.every((r) => allow.includes(r)) || allow.includes(AGY_WILDCARD_RULE));
+}
 
 const CODEX_TABLE = /^\[\s*mcp_servers\s*\.\s*(?:ide-agent-tabs|"ide-agent-tabs"|'ide-agent-tabs')\s*\]\s*(?:#.*)?$/;
 

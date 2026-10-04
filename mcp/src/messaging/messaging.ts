@@ -1,9 +1,12 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs, readFileSync, rmSync } from 'node:fs';
+import path from 'node:path';
+import { writeNewPrivateFile } from '../files.js';
 import { AGENT_ENV, TAB_ID_ENV } from '../profiles.js';
 import { isProcessAlive } from '../registry.js';
 import {
   checkMessageId,
+  claimBatch,
   cleanMail,
   deliver,
   MailError,
@@ -14,8 +17,11 @@ import {
   putBack,
   releaseSend,
   reserveSend,
+  returnStaleClaims,
   sendDigest,
+  settleClaim,
   takeBatch,
+  unreadDir,
   waitForMessage,
   type Message,
 } from './mailbox.js';
@@ -26,6 +32,7 @@ import {
   effectiveState,
   HEARTBEAT_MS,
   IDLE_SETTLE_MS,
+  isModDriven,
   isSessionId,
   liveSessions,
   parsePresence,
@@ -35,6 +42,7 @@ import {
   withState,
   type Presence,
   type PresenceFile,
+  type SessionState,
 } from './sessions.js';
 
 export const DEFAULT_WAIT_S = 60;
@@ -50,6 +58,7 @@ const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(reso
 export interface Hosts {
   findHost(id: string): Promise<string | undefined>;
   typeInto(id: string, host: string, text: string): Promise<{ ok: true } | { ok: false; reason: string }>;
+  describeHost?(host: string): Promise<string | undefined>;
 }
 
 export interface MessagingDeps {
@@ -72,6 +81,20 @@ export interface SendInput {
   replyTo?: string;
 }
 
+export const MOD_STATES = ['idle', 'busy', 'permission'] as const;
+export type ModState = (typeof MOD_STATES)[number];
+export const MOD_TAKE_MAX = 10;
+export const AGENT_ORDER = ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local'];
+export const MOD_REFUSAL = 'agent_tabs_mod is internal to the Agent Tabs Claude Code mod';
+export const MOD_TOKEN_DIR = 'mod';
+export const MOD_DELIVERY_NOTE = "the recipient's Agent Tabs mod delivers it in-process once the session is idle";
+
+export interface ModPresenceInput {
+  driver?: boolean;
+  nativeName?: string;
+  state?: ModState;
+}
+
 export interface WaitInput {
   timeout?: number;
   from?: string;
@@ -83,6 +106,11 @@ const THREAD_ID = /^[A-Za-z0-9-]{1,100}$/;
 export const CODEX_ID_PREFIX = 'codex-';
 const generatedId = () => `s-${randomBytes(6).toString('hex')}`;
 const mayBeTab = (id: string) => !id.startsWith('s-') && !id.startsWith(CODEX_ID_PREFIX);
+const NATIVE_NAME = /^[^\x00-\x1f\x7f]{1,128}$/;
+const agentRank = (agent: string) => {
+  const i = AGENT_ORDER.indexOf(agent);
+  return i === -1 ? AGENT_ORDER.length : i;
+};
 
 interface ReadResult {
   notice?: string;
@@ -108,6 +136,8 @@ export class Messaging {
   private identified: Promise<void> = Promise.resolve();
   private readonly followUps = new Map<string, ReturnType<typeof setInterval>>();
   private heartbeat?: ReturnType<typeof setInterval>;
+  private readonly claims = new Map<string, string[]>();
+  private modToken?: { value: string; file: string };
 
   constructor(private readonly deps: MessagingDeps) {
     const tab = deps.env[TAB_ID_ENV];
@@ -150,6 +180,11 @@ export class Messaging {
       ...(current?.inputIdle !== undefined ? { inputIdle: current.inputIdle } : {}),
       ...(this.threadId !== undefined ? { threadId: this.threadId } : {}),
       ...(current?.handedOffTo !== undefined ? { handedOffTo: current.handedOffTo } : {}),
+      ...(current?.driver !== undefined ? { driver: current.driver } : {}),
+      ...(current?.modBeat !== undefined ? { modBeat: current.modBeat } : {}),
+      ...(current?.nativeName !== undefined ? { nativeName: current.nativeName } : {}),
+      ...(current?.via !== undefined ? { via: current.via } : {}),
+      ...(current?.project !== undefined ? { project: current.project } : {}),
       beatMs: this.beatMs,
     };
   }
@@ -205,7 +240,7 @@ export class Messaging {
   // came from the dead server's agent.
   private leftByDeadServer(current: PresenceFile | undefined): PresenceFile | undefined {
     if (current?.pid === undefined || current.pid === this.deps.pid || this.alive(current.pid)) return current;
-    const { nudges: _, ...rest } = current;
+    const { nudges: _, driver: _d, modBeat: _b, nativeName: _n, ...rest } = current;
     const at = Date.parse(current.stateAt ?? '');
     const old = !Number.isFinite(at) || at < Date.parse(this.startedAt) - RESTART_GRACE_MS;
     return old && current.state !== 'idle' ? { ...rest, state: 'unknown' } : rest;
@@ -272,6 +307,7 @@ export class Messaging {
 
   stopSync(): void {
     this.stopHeartbeat();
+    if (this.modToken) rmSync(this.modToken.file, { force: true });
     const file = presencePath(this.deps.home, this.sessionId);
     try {
       if (parsePresence(readFileSync(file, 'utf8'))?.pid === this.deps.pid) rmSync(file, { force: true });
@@ -289,20 +325,37 @@ export class Messaging {
   }
 
   async listSessions() {
-    const sessions = await liveSessions(this.deps.home, this.alive, this.now());
-    return {
-      sessions: sessions.map((s) => ({
+    const now = this.now();
+    const sessions = await liveSessions(this.deps.home, this.alive, now);
+    const labels = new Map<string, string | undefined>();
+    for (const host of new Set(sessions.flatMap((s) => (s.host !== undefined ? [s.host] : [])))) {
+      labels.set(host, await this.deps.hosts.describeHost?.(host).catch(() => undefined));
+    }
+    const rows = sessions.map((s) => {
+      const native = s.agent === 'claude' && s.nativeName !== undefined && isModDriven(s, now);
+      const product = s.host !== undefined ? (labels.get(s.host) ?? s.host) : undefined;
+      return {
+        name: native ? s.nativeName! : s.id,
         id: s.id,
         agent: s.agent,
-        path: s.path,
-        host: s.host ?? null,
+        route: native ? ('native' as const) : ('agent-tabs' as const),
         state: s.state,
         ...(s.stateAt !== undefined ? { stateAt: s.stateAt } : {}),
+        tab: mayBeTab(s.id) ? s.id : null,
+        host: product === undefined ? null : s.project !== undefined ? `${product} (${s.project})` : product,
+        ide: s.host ?? null,
+        path: s.path,
+        ...(s.via !== undefined ? { via: s.via } : {}),
         startedAt: s.startedAt,
         ...(s.handedOffTo !== undefined ? { handedOffTo: s.handedOffTo } : {}),
         self: s.id === this.sessionId,
-      })),
-    };
+      };
+    });
+    rows.sort(
+      (a, b) =>
+        agentRank(a.agent) - agentRank(b.agent) || a.agent.localeCompare(b.agent) || a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id),
+    );
+    return { sessions: rows };
   }
 
   async send(input: SendInput) {
@@ -341,6 +394,7 @@ export class Messaging {
   }
 
   private async wake(recipient: Presence, now: number): Promise<{ delivery: 'woken' | 'queued'; note?: string }> {
+    if (isModDriven(recipient, now)) return { delivery: 'queued', note: MOD_DELIVERY_NOTE };
     // A line typed while the user writes a prompt lands in that prompt; see inputIdleAfter in hook.ts.
     if (effectiveState(recipient, now) !== 'idle' || recipient.inputIdle === false) return { delivery: 'queued' };
     // An agent reports idle when its turn-end hook runs, but it can still be finishing the turn, and a
@@ -425,6 +479,67 @@ export class Messaging {
 
   private async resetNudges(): Promise<void> {
     await this.updateOwn((p) => (p.nudges ? { ...p, nudges: 0 } : p)).catch(() => undefined);
+  }
+
+  // The token lives in a file only this user can read: a model that lists agent_tabs_mod learns the path, but
+  // can't use the tool without reading that file.
+  async modRegister() {
+    if (this.modToken === undefined) {
+      const file = path.join(this.deps.home, MOD_TOKEN_DIR, `${this.sessionId}.token`);
+      const value = randomBytes(16).toString('hex');
+      await fs.rm(file, { force: true });
+      await writeNewPrivateFile(file, value);
+      this.modToken = { value, file };
+    }
+    return { tokenFile: this.modToken.file };
+  }
+
+  checkModToken(token: string | undefined): void {
+    const expected = this.modToken?.value;
+    const ok = expected !== undefined && token !== undefined && token.length === expected.length && timingSafeEqual(Buffer.from(token), Buffer.from(expected));
+    if (!ok) throw new MailError(MOD_REFUSAL);
+  }
+
+  async modPresence(input: ModPresenceInput) {
+    if (input.nativeName !== undefined && !NATIVE_NAME.test(input.nativeName)) {
+      throw new MailError('nativeName must be one printable line of at most 128 characters');
+    }
+    const now = this.now();
+    const claim = input.driver === true && this.isTab;
+    await this.updateOwn((p) => {
+      const { driver: _d, modBeat: _b, nativeName: _n, ...rest } = p;
+      const kept = input.driver === false ? rest : p;
+      const stated = input.state !== undefined && input.state !== effectiveState(kept, now) ? withState(kept, input.state as SessionState, now) : kept;
+      const driven = input.driver !== false && (claim || p.driver === 'mod');
+      return {
+        ...stated,
+        ...(claim ? { driver: 'mod' as const } : {}),
+        ...(driven ? { modBeat: now } : {}),
+        ...(input.nativeName !== undefined && input.driver !== false ? { nativeName: input.nativeName } : {}),
+      };
+    });
+    const own = await readPresence(this.deps.home, this.sessionId);
+    return { id: this.sessionId, tab: this.isTab, driver: own?.driver === 'mod', mailbox: unreadDir(this.deps.home, this.sessionId) };
+  }
+
+  async modTake(max = MOD_TAKE_MAX) {
+    const count = Math.min(Math.max(Math.trunc(max), 1), MOD_TAKE_MAX);
+    await returnStaleClaims(this.deps.home, this.sessionId, this.now());
+    const { messages, names, remaining, unreadable } = await claimBatch(this.deps.home, this.sessionId, count);
+    const extra = { ...(remaining ? { remaining } : {}), ...(unreadable ? { unreadable } : {}) };
+    if (!messages.length) return { claim: null, messages: [], ...extra };
+    const claim = `c-${randomBytes(8).toString('hex')}`;
+    this.claims.set(claim, names);
+    return { claim, notice: UNTRUSTED_NOTICE, messages: messages.map(shown), ...extra };
+  }
+
+  async modSettle(claim: string, op: 'ack' | 'release') {
+    const names = this.claims.get(claim);
+    if (names === undefined) throw new MailError(`no open claim ${claim}; an unsettled claim returns its messages to unread after two minutes`);
+    this.claims.delete(claim);
+    const moved = await settleClaim(this.deps.home, this.sessionId, names, op === 'ack' ? 'cur' : 'new');
+    if (op === 'ack') await this.resetNudges();
+    return { claim, ...(op === 'ack' ? { read: moved } : { released: moved }) };
   }
 
   async read(signal?: AbortSignal) {

@@ -41,6 +41,7 @@ const steps = [
   ['bundle is current', bundleIsCurrent],
   ['plugin version', () => run('node', ['scripts/check-plugin-version.mjs'], root)],
   ['validate plugin', () => run('claude', ['plugin', 'validate', '--strict', 'claude-plugin'], root)],
+  ...(skipTests ? [] : [['mod tests', () => run('claude', ['plugin', 'test', 'claude-plugin'], root)]]),
   ['validate marketplace', () => run('claude', ['plugin', 'validate', '--strict', '.'], root)],
 ];
 

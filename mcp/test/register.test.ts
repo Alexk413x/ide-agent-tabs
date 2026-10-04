@@ -20,7 +20,7 @@ import {
   unregisterArgs,
   withServerEntry,
 } from '../src/register.js';
-import { agyHookCommand, hasOurHooks, hookCommand, mergeHookSettings, withCodexSettings } from '../src/hookConfig.js';
+import { AGY_ALLOW_RULES, agyHookCommand, hasOurHooks, hookCommand, mergeHookSettings, withAgyAllowRule, withCodexSettings } from '../src/hookConfig.js';
 import { copyVersion, hookCopyPath, refreshServerCopy, serverCopyDir, serverCopyPath, serverHash } from '../src/serverCopy.js';
 import { makeServerDir } from './serverDir.js';
 import { tempDir } from './tempDir.js';
@@ -259,7 +259,7 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   assert.deepEqual(JSON.parse(readFileSync(path.join(agyDir, 'mcp_config.json'), 'utf8')), { mcpServers: { 'ide-agent-tabs': { command: 'node', args: [server] } } });
   assert.deepEqual(JSON.parse(readFileSync(agySettings, 'utf8')), {
     ...agyUserSettings,
-    permissions: { allow: ['command(adb devices)', 'mcp(ide-agent-tabs/*)'] },
+    permissions: { allow: ['command(adb devices)', ...AGY_ALLOW_RULES] },
   });
 
 
@@ -284,7 +284,7 @@ test('registers and unregisters every agent in a temp home with fake CLIs', asyn
   const again = await registerAgents(ctx, ['codex', 'gemini', 'copilot', 'agy']);
   assert.deepEqual(again.errors, codexErrors);
   assert.equal(readFileSync(path.join(env.CODEX_HOME, 'config.toml'), 'utf8').match(/env_vars/g)?.length ?? 0, codexRegisters ? 1 : 0);
-  assert.equal(JSON.parse(readFileSync(agySettings, 'utf8')).permissions.allow.length, 2, 'registering again adds the rule once');
+  assert.equal(JSON.parse(readFileSync(agySettings, 'utf8')).permissions.allow.length, 1 + AGY_ALLOW_RULES.length, 'registering again adds the rules once');
 
   const removed = await unregisterAgents(ctx, ['codex', 'gemini', 'copilot', 'agy', 'opencode']);
   assert.deepEqual(removed.errors, []);
@@ -410,4 +410,12 @@ test('an Antigravity CLI hook command holds the path bare and refuses one cmd.ex
 test('the OpenCode entry sets a tool timeout above the longest wait_for_message', () => {
   const entry = opencodeEntry(SERVER) as { timeout?: number };
   assert.ok((entry.timeout ?? 0) >= (MAX_WAIT_S + 60) * 1000, 'OpenCode would cut wait_for_message at its own default');
+});
+
+test('the Antigravity CLI allow rules cover only tools that read or message, and drop the old wildcard', () => {
+  assert.ok(AGY_ALLOW_RULES.every((r) => /^mcp\(ide-agent-tabs\/(send_message|read_messages|wait_for_message|list_sessions|list_agents|list_ides|list_tabs)\)$/.test(r)));
+  for (const tool of ['open_tab', 'close_tab', 'handoff', 'jev_ask']) assert.ok(!AGY_ALLOW_RULES.some((r) => r.includes(tool)), tool);
+  const old = { permissions: { allow: ['command(git)', 'mcp(ide-agent-tabs/*)'] } };
+  assert.deepEqual((withAgyAllowRule(old, 'f', true).permissions as { allow: string[] }).allow, ['command(git)', ...AGY_ALLOW_RULES]);
+  assert.deepEqual((withAgyAllowRule(old, 'f', false).permissions as { allow: string[] }).allow, ['command(git)']);
 });

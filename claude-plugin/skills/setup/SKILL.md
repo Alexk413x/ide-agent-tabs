@@ -140,9 +140,10 @@ config and would open a console window each time it starts the server.
    Copilot CLI, to `~/.gemini/settings.json` for Gemini CLI, to `$GROK_HOME/hooks/ide-agent-tabs.json`
    for Grok Build, to `hooks` in `config.yaml` (and the allowlist `shell-hooks-allowlist.json`) under
    `HERMES_HOME` for Hermes, to `~/.qwen/settings.json` for Qwen Code, and as a plugin in
-   `~/.agents/plugins/ide-agent-tabs/` for Goose. For Antigravity CLI, it also adds the allow rule
-   `mcp(ide-agent-tabs/*)` to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`, so the
-   agent doesn't ask before each Agent Tabs tool call. For Codex, it sets `env_vars` and
+   `~/.agents/plugins/ide-agent-tabs/` for Goose. For Antigravity CLI, it also adds allow rules to
+   `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` for the tools that read or message, so
+   the agent doesn't ask before each of those calls. `open_tab`, `close_tab`, `handoff` and the `jev_`
+   tools still ask. For Codex, it sets `env_vars` and
    `tool_timeout_sec` in the server's table in `~/.codex/config.toml`, and removes Agent Tabs hooks that
    earlier versions added to `~/.codex/hooks.json`. The script keeps every other entry in those files.
 

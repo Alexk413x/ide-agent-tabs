@@ -61,6 +61,22 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
 
 ### Added
 
+- A Claude Code mod, loaded from `hooks/hooks.json` `modules` in Claude Code builds with function hooks.
+  - `ListAgents` lists every Agent Tabs session, and `SendMessage` reaches them by name. Native Claude
+    peers still go the native way.
+  - In a tab, the mod reports the session's state and delivers mail with `$.prompt.submit` as a framed
+    peer prompt once the session is idle. A failed submit returns the message to unread.
+  - The status line shows the unread count and the first sender, a toast announces each arrival, and the
+    transcript draws each delivered message as a compact card.
+  - The Agent Tabs messaging tools move behind ToolSearch in Claude Code.
+  - While the mod runs, the presence file holds `driver: "mod"`; the command hooks skip that session and
+    `send_message` types no wake line into it. A mod silent for 3 minutes, or no mod at all, leaves the
+    command hooks and wake lines working as before.
+- The internal `agent_tabs_mod` tool (`register`, `presence`, `send`, `take`, `ack`, `release`,
+  `sessions`) for the mod, offered to Claude Code clients only. Every op but `register` needs the token
+  that `register` writes to an owner-only file under `~/.ide-agent-tabs/mod/`.
+- `list_sessions` rows add `name`, `route`, `tab`, `ide`, `via`, and a `host` that names the IDE product
+  and project or the terminal. Rows come in a fixed agent order.
 - Four tab settings in `~/.ide-agent-tabs/config.json`, shared by the VS Code extension, the JetBrains
   plugin, the MCP server and the setup skill. VS Code groups them as **Agent Tabs: IDE tabs** and
   **Agent Tabs: Terminal tabs**, and JetBrains as **IDE tabs** and **Terminal tabs**. An explicit `ide`,
@@ -87,8 +103,10 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
 - Antigravity CLI (`agy`) is a built-in agent profile, labelled "Antigravity CLI", that starts with
   `agy -i <prompt>`. `--register agy` writes the server entry to `~/.gemini/config/mcp_config.json`, the
   `ide-agent-tabs` hook group (`PreInvocation`, `PostToolUse`, `Stop`) to `~/.gemini/config/hooks.json`,
-  and the allow rule `mcp(ide-agent-tabs/*)` to `permissions.allow` in
-  `~/.gemini/antigravity-cli/settings.json`. `--unregister agy` removes only those. The hook path goes in
+  and allow rules to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` for the tools that
+  read or message (`send_message`, `read_messages`, `wait_for_message`, `list_sessions`, `list_agents`,
+  `list_ides`, `list_tabs`). `open_tab`, `close_tab`, `handoff` and the `jev_` tools still ask, and
+  registering replaces the broader `mcp(ide-agent-tabs/*)` rule of earlier builds. `--unregister agy` removes only those. The hook path goes in
   unquoted, because Antigravity CLI escapes quotes in a `cmd.exe` command, so registration refuses a path
   with spaces or `cmd.exe` special characters.
 - Antigravity CLI hooks set `busy` at `PreInvocation` and `PostToolUse`, add the unread-message reminder

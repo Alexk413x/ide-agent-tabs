@@ -199,7 +199,7 @@ test('open_tab routes a path inside an open project to that IDE and forwards the
 
 test('a tab opened without a prompt counts as idle once it has had time to start, so a message wakes it', async () => {
   const prompted = await call('open_tab', { path: project, prompt: 'go' });
-  assert.equal(await readPresence(home, prompted.json.id), undefined, 'a tab with a prompt starts busy and reports it itself');
+  assert.deepEqual(await readPresence(home, prompted.json.id), { id: prompted.json.id, via: 'direct', project: 'proj' }, 'a tab with a prompt starts busy and reports its state itself');
   const before = Date.now();
   const fresh = await call('open_tab', { path: project });
   const presence = (await readPresence(home, fresh.json.id))!;
