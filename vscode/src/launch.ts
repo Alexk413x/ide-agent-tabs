@@ -99,3 +99,30 @@ export function terminalEnv(
   }
   return env;
 }
+
+export interface TerminalCreation {
+  name?: string;
+  cwd?: string | { fsPath: string };
+  env?: { [key: string]: string | null | undefined };
+}
+
+export interface RevivedTab<T> {
+  id: string;
+  agent: string;
+  path: string;
+  terminal: T;
+}
+
+export function revivedTabs<T extends { readonly creationOptions: Readonly<TerminalCreation> }>(
+  terminals: readonly T[],
+  known: (id: string, terminal: T) => boolean,
+): RevivedTab<T>[] {
+  const found = new Map<string, RevivedTab<T>>();
+  for (const terminal of terminals) {
+    const { env, cwd } = terminal.creationOptions;
+    const id = env?.[TAB_ID_ENV];
+    if (!id || found.has(id) || known(id, terminal)) continue;
+    found.set(id, { id, agent: env?.[AGENT_ENV] ?? '', path: typeof cwd === 'string' ? cwd : (cwd?.fsPath ?? ''), terminal });
+  }
+  return [...found.values()];
+}

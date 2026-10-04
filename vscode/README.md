@@ -180,7 +180,9 @@ can close its own tab.
 - A prompt holds up to 30,000 characters. `args` and `env` hold up to 64 entries each.
 - On Windows, a single environment variable holds up to 32,767 characters, so very long `args` lists can
   fail to start.
-- Agent tabs don't survive a window reload. The tab closes, and its id stops working.
+- Agent tabs don't survive a window reload. The tab closes, and its id stops working. An extension host
+  restart, as after an extension update, keeps the tabs: the extension finds them again by their
+  `IDE_AGENT_TABS_ID` and lists, closes and types into them under its new endpoint id.
 - Windows PowerShell 5.1 drops empty arguments and can split arguments that contain double quotes.
   Install PowerShell 7 to avoid this.
 - Tested on Windows. The bash launcher is tested through WSL. zsh, fish, macOS and remote workspaces

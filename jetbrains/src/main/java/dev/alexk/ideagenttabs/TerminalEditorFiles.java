@@ -14,4 +14,8 @@ final class TerminalEditorFiles {
     static VirtualFile of(TerminalToolWindowTab tab) {
         return new TerminalViewVirtualFile(tab);
     }
+
+    static TerminalToolWindowTab tabOf(VirtualFile file) {
+        return file instanceof TerminalViewVirtualFile view ? view.getTab() : null;
+    }
 }
