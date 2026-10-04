@@ -7,7 +7,7 @@ import { MODEL_PATTERN } from './launchPlan.js';
 import type { Jev } from './jev/service.js';
 import { JEV_INSTRUCTIONS, JEV_TOOLS } from './jev/tools.js';
 import { MAX_TEXT_CHARS } from './messaging/mailbox.js';
-import { MAX_WAIT_S, MOD_STATES, MOD_TAKE_MAX, type Messaging } from './messaging/messaging.js';
+import { MAX_WAIT_S, MOD_STATES, type Messaging } from './messaging/messaging.js';
 import { MESSAGING_INSTRUCTIONS, TAB_INSTRUCTIONS } from './messaging/notice.js';
 import { agentFromClient } from './messaging/sessions.js';
 import { MAX_ENTRIES, MAX_PROMPT_CHARS } from './profiles.js';
@@ -190,7 +190,6 @@ interface ModInput {
   to?: string | undefined;
   text?: string | undefined;
   replyTo?: string | undefined;
-  max?: number | undefined;
   claim?: string | undefined;
 }
 
@@ -209,7 +208,7 @@ async function modOp(messaging: Messaging, input: ModInput): Promise<unknown> {
     case 'send':
       return messaging.send({ to: need(input.to, 'to'), text: need(input.text, 'text'), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}) });
     case 'take':
-      return messaging.modTake(input.max);
+      return messaging.modTake();
     case 'ack':
     case 'release':
       return messaging.modSettle(need(input.claim, 'claim'), input.op);
@@ -250,7 +249,6 @@ function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply
         to: z.string().optional().describe(`send: ${SESSION_ID}`),
         text: z.string().max(MAX_TEXT_CHARS).optional().describe('send: the message.'),
         replyTo: z.string().optional().describe(`send: ${MESSAGE_ID}`),
-        max: z.number().int().min(1).max(MOD_TAKE_MAX).optional().describe('take: at most this many messages.'),
         claim: z.string().optional().describe('ack, release: the claim id take returned.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

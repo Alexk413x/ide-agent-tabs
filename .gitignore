@@ -10,5 +10,6 @@ bin/
 # claude plugin eval run output
 claude-plugin/evals/results/
 
-# types Claude Code lays beside a plugin loaded with --plugin-dir
+# editor files Claude Code lays beside a plugin it loads as a mod
 claude-plugin/.claude-plugin/types/
+claude-plugin/tsconfig.json
