@@ -18,7 +18,7 @@ export const SERVER_NAME = 'ide-agent-tabs';
 export const SERVER_VERSION = PACKAGE_VERSION;
 export const HOOK_TOOL = 'agent_tabs_hook';
 export const MOD_TOOL = 'agent_tabs_mod';
-export const MOD_OPS = ['register', 'presence', 'send', 'take', 'ack', 'release', 'sessions'] as const;
+export const MOD_OPS = ['presence', 'send', 'take', 'ack', 'release', 'sessions'] as const;
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 type Reply = (extra: Extra, work: () => Promise<unknown>) => Promise<CallToolResult>;
@@ -184,7 +184,6 @@ async function hookResult(messaging: Messaging, input: HookInput, extra: Extra):
 
 interface ModInput {
   op: (typeof MOD_OPS)[number];
-  token?: string | undefined;
   driver?: boolean | undefined;
   nativeName?: string | undefined;
   state?: (typeof MOD_STATES)[number] | undefined;
@@ -200,8 +199,6 @@ async function modOp(messaging: Messaging, input: ModInput): Promise<unknown> {
     if (value === undefined) throw new Error(`${input.op} needs ${field}`);
     return value;
   };
-  if (input.op === 'register') return messaging.modRegister();
-  messaging.checkModToken(input.token);
   switch (input.op) {
     case 'presence':
       return messaging.modPresence({
@@ -246,8 +243,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply
       description:
         "Internal: the Agent Tabs mod inside Claude Code calls this to report the session's state, bridge SendMessage and ListAgents, and deliver its mail. Don't call it.",
       inputSchema: {
-        op: z.enum(MOD_OPS).describe('register, presence, send, take, ack, release or sessions.'),
-        token: z.string().max(64).optional().describe('Every op but register: the token from the file register names.'),
+        op: z.enum(MOD_OPS).describe('presence, send, take, ack, release or sessions.'),
         driver: z.boolean().optional().describe('presence: true claims in-process delivery for this tab; false hands it back to the hooks.'),
         nativeName: z.string().max(128).optional().describe("presence: the session's name in Claude Code's ListAgents."),
         state: z.enum(MOD_STATES).optional().describe('presence: idle, busy or permission.'),

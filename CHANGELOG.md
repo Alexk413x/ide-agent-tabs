@@ -72,9 +72,8 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
   - While the mod runs, the presence file holds `driver: "mod"`; the command hooks skip that session and
     `send_message` types no wake line into it. A mod silent for 3 minutes, or no mod at all, leaves the
     command hooks and wake lines working as before.
-- The internal `agent_tabs_mod` tool (`register`, `presence`, `send`, `take`, `ack`, `release`,
-  `sessions`) for the mod, offered to Claude Code clients only. Every op but `register` needs the token
-  that `register` writes to an owner-only file under `~/.ide-agent-tabs/mod/`.
+- The internal `agent_tabs_mod` tool (`presence`, `send`, `take`, `ack`, `release`, `sessions`) for the
+  mod, offered to Claude Code clients only.
 - `list_sessions` rows add `name`, `route`, `tab`, `ide`, `via`, and a `host` that names the IDE product
   and project or the terminal. Rows come in a fixed agent order.
 - Four tab settings in `~/.ide-agent-tabs/config.json`, shared by the VS Code extension, the JetBrains

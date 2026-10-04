@@ -263,8 +263,7 @@ Claude Code's own tools to Agent Tabs:
   the unread count in the status line. While the mod runs, the presence file holds `driver: "mod"`, the
   command hooks do nothing for that session, and `send_message` returns `queued` with a note instead of
   typing a wake line. A mod that stops for 3 minutes hands the session back to the hooks and wake lines.
-- The mod calls the internal `agent_tabs_mod` tool, which the server offers to Claude Code only. Every
-  op but `register` needs the token that `register` writes to an owner-only file. The mod also
+- The mod calls the internal `agent_tabs_mod` tool, which the server offers to Claude Code only, and
   defers `send_message`, `read_messages`, `wait_for_message` and `list_sessions` behind ToolSearch.
 
 See [Claude Code mod](../docs/design.md#claude-code-mod) in the design doc.

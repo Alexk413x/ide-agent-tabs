@@ -4,7 +4,6 @@ import type { AgentTabsActivity, AgentTabsSelf } from '../types'
 
 const SERVER = 'ide-agent-tabs'
 const MOD_TOOL = 'agent_tabs_mod'
-const MOD_REFUSAL = 'agent_tabs_mod is internal to the Agent Tabs Claude Code mod'
 const POLL_MS = 2_000
 const BEAT_MS = 60_000
 const RETRY_MS = 30_000
@@ -122,26 +121,8 @@ async function nativeName($: EngineInterface): Promise<string | undefined> {
   return typeof listing === 'string' ? NATIVE_NAME.exec(listing)?.[1]?.trim() : undefined
 }
 
-async function readToken($: EngineInterface, server: string): Promise<string> {
-  const { tokenFile } = (await callMod($, server, { op: 'register' })) as { tokenFile: string }
-  return (await $.fs.read(tokenFile)).trim()
-}
-
-async function authed($: EngineInterface, args: Record<string, unknown>): Promise<unknown> {
-  const { value: me } = await $.state.get(selfRef)
-  if (!me) throw new Error('Agent Tabs is not connected')
-  try {
-    return await callMod($, me.server, { ...args, token: me.token })
-  } catch (error) {
-    if (!(error instanceof Error) || error.message !== MOD_REFUSAL) throw error
-    const token = await readToken($, me.server)
-    await $.state.set(selfRef, { ...me, token })
-    return callMod($, me.server, { ...args, token })
-  }
-}
-
-async function sessions($: EngineInterface): Promise<SessionRow[]> {
-  const reply = (await authed($, { op: 'sessions' })) as { sessions?: SessionRow[] }
+async function sessions($: EngineInterface, server: string): Promise<SessionRow[]> {
+  const reply = (await callMod($, server, { op: 'sessions' })) as { sessions?: SessionRow[] }
   return reply.sessions ?? []
 }
 
@@ -150,13 +131,13 @@ async function report($: EngineInterface, state: AgentTabsActivity) {
   if (before.value === state) return
   await $.state.set(activityRef, state)
   const { value: me } = await $.state.get(selfRef)
-  if (me?.isDriver) await authed($, { op: 'presence', state }).catch(() => undefined)
+  if (me?.isDriver) await callMod($, me.server, { op: 'presence', state }).catch(() => undefined)
 }
 
 async function beat($: EngineInterface) {
   const { value: me } = await $.state.get(selfRef)
   const { value: state = 'idle' } = await $.state.get(activityRef)
-  if (me?.isDriver) await authed($, { op: 'presence', state }).catch(() => undefined)
+  if (me?.isDriver) await callMod($, me.server, { op: 'presence', state }).catch(() => undefined)
 }
 
 async function boot($: EngineInterface): Promise<AgentTabsSelf | null> {
@@ -166,13 +147,11 @@ async function boot($: EngineInterface): Promise<AgentTabsSelf | null> {
   const inTab = tab !== undefined && SESSION_ID.test(tab)
   const name = inTab ? await nativeName($).catch(() => undefined) : undefined
   const fallback = await $.session.id()
-  const token = await readToken($, server)
   const reply = (await callMod($, server, {
     op: 'presence',
-    token,
     ...(inTab ? { driver: true, state: 'idle', nativeName: name ?? fallback } : {}),
   })) as PresenceReply
-  const me: AgentTabsSelf = { server, token, id: reply.id, name: name ?? fallback, isDriver: reply.driver, mailbox: reply.driver ? reply.mailbox : null }
+  const me: AgentTabsSelf = { server, id: reply.id, name: name ?? fallback, isDriver: reply.driver, mailbox: reply.driver ? reply.mailbox : null }
   await $.state.set(selfRef, me)
   await $.state.set(activityRef, 'idle')
   return me
@@ -201,9 +180,9 @@ async function unreadNames($: EngineInterface, mailbox: string): Promise<string[
 }
 
 async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> {
-  const taken = (await authed($, { op: 'take', max: TAKE_MAX })) as Taken
+  const taken = (await callMod($, me.server, { op: 'take', max: TAKE_MAX })) as Taken
   if (taken.claim === null || taken.messages.length === 0) return true
-  const rows = await sessions($).catch(() => [] as SessionRow[])
+  const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
   const text = taken.messages.map(m => frame(m, rows.find(r => r.id === m.from.id)?.name ?? m.from.id)).join('\n\n---\n\n')
   let submitted = false
   try {
@@ -212,7 +191,7 @@ async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> 
   } catch {
     submitted = false
   }
-  await authed($, { op: submitted ? 'ack' : 'release', claim: taken.claim }).catch(() => undefined)
+  await callMod($, me.server, { op: submitted ? 'ack' : 'release', claim: taken.claim }).catch(() => undefined)
   return submitted
 }
 
@@ -260,7 +239,7 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     const { value: me } = await $.state.get(selfRef)
     if (me?.isDriver && e.reason !== 'clear') {
-      await authed($, { op: 'presence', driver: false }).catch(() => undefined)
+      await callMod($, me.server, { op: 'presence', driver: false }).catch(() => undefined)
       $.ui.status(undefined)
     }
     return next(e)
@@ -303,7 +282,7 @@ export const register: Register = on => {
     if (ran.deny !== undefined || ran.isError) return ran
     const { value: me } = await $.state.get(selfRef)
     if (!me) return ran
-    const rows = await sessions($).catch(() => [] as SessionRow[])
+    const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
     const added = formatRows(rows)
     const listing = (ran.result as { listing?: unknown } | undefined)?.listing
     if (added === undefined || typeof listing !== 'string') return ran
@@ -319,11 +298,11 @@ export const register: Register = on => {
   on('session.send', async ($, e, next) => {
     const { value: me } = await $.state.get(selfRef)
     if (!me) return next(e)
-    const rows = await sessions($).catch(() => [] as SessionRow[])
+    const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
     const target = bridgeTarget(rows, e.to)
     if (target === undefined) return next(e)
     try {
-      await authed($, { op: 'send', to: target.id, text: e.text })
+      await callMod($, me.server, { op: 'send', to: target.id, text: e.text })
       return { isDelivered: true }
     } catch (error) {
       return { isDelivered: false, reason: `Agent Tabs: ${error instanceof Error ? error.message : String(error)}` }

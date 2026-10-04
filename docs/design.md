@@ -840,20 +840,11 @@ itself raised the call. The model's own calls to those tools keep the engine's d
 
 | `op` | Input | What it does |
 |---|---|---|
-| `register` | none | Writes a random token (16 bytes, hex) to `~/.ide-agent-tabs/mod/<session id>.token`, mode 0600, on the first call of the server process, and returns that file's path, never the token. Later calls return the same path. |
 | `presence` | optional `driver`, `nativeName`, `state` | `driver: true` claims in-process delivery for a tab session; `false` hands it back. `state` is `idle`, `busy` or `permission`. Every call refreshes `modBeat`. Returns the session `id`, `tab`, `driver` and the `mailbox` path of `new/`. |
 | `send` | `to`, `text`, optional `replyTo` | The same as `send_message`. |
 | `take` | optional `max` (1 to 10) | Claims unread messages: moves them from `new/` to `held/` and returns them with a `claim` id. |
 | `ack`, `release` | `claim` | `ack` moves the claimed messages to `cur/`; `release` returns them to `new/`. |
 | `sessions` | none | The `list_sessions` rows. |
-
-Every op but `register` needs `token`, the file's content. A missing or wrong token fails with
-`agent_tabs_mod is internal to the Agent Tabs Claude Code mod`. So a model that can list the tool learns
-only a path, and it can't use the tool without reading a file the user owns. The mod reads the file with
-`$.fs.read` at `session.start` and keeps the token in `$.state`. On that exact refusal, such as after the
-server restarted and wrote a new token, it registers again, rereads the file and retries once. A token
-file, rather than a token handed out once per process, also survives a mod that lost its `$.state`. The
-server deletes the file when it exits.
 
 The server registers the tool only for a Claude Code client: it removes the tool for every other client
 once the client names itself, so their `tools/list` never shows it. The mod's `tool.describe` hook
