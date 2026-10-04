@@ -253,6 +253,11 @@ test('a session without a tab id takes codex-<thread> unless another live server
   assert.equal((await readPresence(home, `codex-${THREAD}`))!.pid, 100);
 });
 
+async function until(done: () => boolean, ms: number): Promise<void> {
+  const end = Date.now() + ms;
+  while (!done() && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+}
+
 async function pair(typed: Typed[], ok = true) {
   const home = tempDir('iat-pair-');
   const a = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-a', IDE_AGENT_TABS_AGENT: 'codex' }, pid: 1, cwd: '/a', hosts: hosts(typed, ok), isAlive: () => true });
@@ -562,7 +567,7 @@ test('a tab still starting is not typed into, and the follow-up wakes it once it
   try {
     assert.equal((await a.send({ to: 'tab-b', text: 'hi' })).delivery, 'queued');
     assert.equal(typed.length, 0);
-    await new Promise((r) => setTimeout(r, 2_600));
+    await until(() => typed.length > 0, 5_000);
     assert.equal(typed.length, 1);
   } finally {
     a.stopFollowUps();
@@ -595,7 +600,7 @@ test('a Claude tab whose turn just ended is not typed into until its prompt has 
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(typed.length, 0);
     await runHook({ cli: 'claude', event: 'Notification', input: { notification_type: 'idle_prompt' }, home, sessionId: 'tab-b', now: at });
-    await new Promise((r) => setTimeout(r, 200));
+    await until(() => typed.length > 0, 3_000);
     assert.equal(typed.length, 1, 'the follow-up wakes it once the prompt is idle');
   } finally {
     a.stopFollowUps();

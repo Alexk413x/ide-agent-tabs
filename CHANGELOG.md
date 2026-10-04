@@ -6,7 +6,7 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 
 ## 0.6.0
 
-Plugin and MCP server 0.6.0, with VS Code extension 0.1.23 and JetBrains plugin 0.4.6 bundled. Both IDE
+Plugin and MCP server 0.6.0, with VS Code extension 0.1.24 and JetBrains plugin 0.4.7 bundled. Both IDE
 packages add the `agy` profile and icon, the profiles and icons of seven more agents, the Codex
 `Interrupt` hook and the tab settings.
 
@@ -81,11 +81,19 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
   - The status line shows the unread count and the first sender, a toast announces each arrival, and the
     transcript draws each delivered message as a compact card.
   - The Agent Tabs messaging tools move behind ToolSearch in Claude Code.
+  - `/agent-tabs` shows or hides the agents pane: the merged agent list with coloured states, the
+    messages the chosen agent sent or received, oldest first, and one message's detail with Reply, which
+    fills the prompt. Arrow keys, Enter, Back and Esc navigate; it reads nothing while closed.
+  - Each send writes an owner-only entry to `mail/<sender>/sent-log/`, and the mod logs native
+    SendMessage traffic; `cleanMail` drops entries after 7 days.
+  - The setting **Use the Claude Code mod (in-process messaging)** (`claudeMod` in `config.json`, `on` by
+    default) in VS Code (`ideAgentTabs.claudeMod`), JetBrains and the setup skill. `off` leaves the mod
+    inert, so the 0.6.0 hooks and wake lines apply.
   - While the mod runs, the presence file holds `driver: "mod"`; the command hooks skip that session and
     `send_message` types no wake line into it. A mod silent for 3 minutes, or no mod at all, leaves the
     command hooks and wake lines working as before.
-- The internal `agent_tabs_mod` tool (`presence`, `send`, `take`, `ack`, `release`, `sessions`) for the
-  mod, offered to Claude Code clients only.
+- The internal `agent_tabs_mod` tool (`presence`, `send`, `take`, `ack`, `release`, `sessions`, `log`,
+  `history`, `settings`) for the mod, offered to Claude Code clients only.
 - `list_sessions` rows add `name`, `route`, `tab`, `ide`, `via`, and a `host` that names the IDE product
   and project or the terminal. Rows come in a fixed agent order.
 - Four tab settings in `~/.ide-agent-tabs/config.json`, shared by the VS Code extension, the JetBrains

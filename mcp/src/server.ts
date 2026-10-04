@@ -18,7 +18,7 @@ export const SERVER_NAME = 'ide-agent-tabs';
 export const SERVER_VERSION = PACKAGE_VERSION;
 export const HOOK_TOOL = 'agent_tabs_hook';
 export const MOD_TOOL = 'agent_tabs_mod';
-export const MOD_OPS = ['presence', 'send', 'take', 'ack', 'release', 'sessions'] as const;
+export const MOD_OPS = ['presence', 'send', 'take', 'ack', 'release', 'sessions', 'log', 'history', 'settings'] as const;
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 type Reply = (extra: Extra, work: () => Promise<unknown>) => Promise<CallToolResult>;
@@ -153,7 +153,7 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging,
       }),
   );
 
-  if (messaging) registerMessaging(server, messaging, reply);
+  if (messaging) registerMessaging(server, messaging, service, reply);
   if (messaging && handoffs) registerHandoff(server, handoffs, reply);
 
   for (const t of jev ? JEV_TOOLS : []) {
@@ -190,6 +190,13 @@ async function hookResult(messaging: Messaging, input: HookInput, extra: Extra):
 
 interface ModInput {
   op: (typeof MOD_OPS)[number];
+  direction?: 'sent' | 'received' | undefined;
+  peer?: string | undefined;
+  id?: string | undefined;
+  at?: number | undefined;
+  delivery?: string | undefined;
+  session?: string | undefined;
+  names?: string[] | undefined;
   driver?: boolean | undefined;
   nativeName?: string | undefined;
   state?: (typeof MOD_STATES)[number] | undefined;
@@ -201,7 +208,7 @@ interface ModInput {
   claim?: string | undefined;
 }
 
-async function modOp(messaging: Messaging, input: ModInput): Promise<unknown> {
+async function modOp(messaging: Messaging, service: Service, input: ModInput): Promise<unknown> {
   const need = <T>(value: T | undefined, field: string): T => {
     if (value === undefined) throw new Error(`${input.op} needs ${field}`);
     return value;
@@ -224,10 +231,23 @@ async function modOp(messaging: Messaging, input: ModInput): Promise<unknown> {
       return messaging.modSettle(need(input.claim, 'claim'), input.op);
     case 'sessions':
       return messaging.listSessions();
+    case 'log':
+      return messaging.modLog({
+        direction: need(input.direction, 'direction'),
+        peer: need(input.peer, 'peer'),
+        text: need(input.text, 'text'),
+        ...(input.id !== undefined ? { id: input.id } : {}),
+        ...(input.at !== undefined ? { at: input.at } : {}),
+        ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
+      });
+    case 'history':
+      return messaging.modHistory({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] });
+    case 'settings':
+      return { claudeMod: (await service.settings()).claudeMod };
   }
 }
 
-function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply): void {
+function registerMessaging(server: McpServer, messaging: Messaging, service: Service, reply: Reply): void {
   // Only the hooks that a Codex tab's arguments define call this tool; ui.visibility [] hides it from Codex's model.
   const hookTool = server.registerTool(
     HOOK_TOOL,
@@ -252,7 +272,14 @@ function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply
       description:
         "Internal: the Agent Tabs mod inside Claude Code calls this to report the session's state, bridge SendMessage and ListAgents, and deliver its mail. Don't call it.",
       inputSchema: {
-        op: z.enum(MOD_OPS).describe('presence, send, take, ack, release or sessions.'),
+        op: z.enum(MOD_OPS).describe('presence, send, take, ack, release, sessions, log, history or settings.'),
+        direction: z.enum(['sent', 'received']).optional().describe('log: sent from or received by this session.'),
+        peer: z.string().max(128).optional().describe("log: the other session's name."),
+        id: z.string().max(64).optional().describe('log: the message id, when it has one.'),
+        at: z.number().optional().describe('log: when, in milliseconds since the epoch.'),
+        delivery: z.string().max(200).optional().describe('log: what became of a sent message.'),
+        session: z.string().max(128).optional().describe('history: the session id.'),
+        names: z.array(z.string().max(128)).max(8).optional().describe('history: the names the session goes by.'),
         driver: z.boolean().optional().describe('presence: true claims in-process delivery for this tab; false hands it back to the hooks.'),
         nativeName: z.string().max(128).optional().describe("presence: the session's name in Claude Code's ListAgents."),
         state: z.enum(MOD_STATES).optional().describe('presence: idle, busy or permission.'),
@@ -265,7 +292,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, reply: Reply
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    (input, extra) => reply(extra, () => modOp(messaging, input)),
+    (input, extra) => reply(extra, () => modOp(messaging, service, input)),
   );
 
   server.server.oninitialized = () => {

@@ -126,6 +126,22 @@ class SharedSettingsTest {
     }
 
     @Test
+    fun `claudeMod defaults to on, reads off, and on removes the key`() {
+        assertTrue(settings.shared().claudeMod)
+        write(CONFIG_FILE, """{"claudeMod": "off"}""")
+        assertFalse(settings.shared().claudeMod)
+        write(CONFIG_FILE, """{"claudeMod": "on"}""")
+        assertTrue(settings.shared().claudeMod)
+        write(CONFIG_FILE, """{"claudeMod": false}""")
+        assertTrue(settings.shared().claudeMod)
+        Files.writeString(config, """{"defaultAgent": "codex"}""")
+        assertTrue(settings.setClaudeMod(false))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex", "claudeMod": "off"}"""), saved())
+        assertTrue(settings.setClaudeMod(true))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex"}"""), saved())
+    }
+
+    @Test
     fun `launchVia saves to config and keeps other keys`() {
         Files.writeString(config, """{"defaultAgent": "codex", "launchVia": "ori"}""")
         assertTrue(settings.setLaunchVia(LaunchVia.DIRECT))

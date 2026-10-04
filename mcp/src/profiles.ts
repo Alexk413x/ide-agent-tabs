@@ -218,6 +218,7 @@ export function readJevSettings(text: string): JevSettings {
 export type TabRouting = 'project' | 'caller';
 export type TerminalWindow = 'last' | 'dedicated';
 export type FocusNewTabs = 'auto' | 'always' | 'never';
+export type ClaudeMod = 'on' | 'off';
 const AUTO = 'auto';
 
 export interface TerminalSettings {
@@ -227,6 +228,7 @@ export interface TerminalSettings {
   terminalWindow: TerminalWindow;
   launchVia: 'direct' | 'ori';
   focusNewTabs: FocusNewTabs;
+  claudeMod: ClaudeMod;
 }
 
 export function resolveFocus(setting: FocusNewTabs, requested: boolean | undefined): boolean {
@@ -247,6 +249,7 @@ export function readTerminalSettings(config: Record<string, unknown>, warnings: 
   const terminalWindow = choice(config, 'terminalWindow', ['last', 'dedicated'] as const, warnings);
   const launchVia = choice(config, 'launchVia', ['direct', 'ori'] as const, warnings);
   const focusNewTabs = choice(config, 'focusNewTabs', ['auto', 'always', 'never'] as const, warnings);
+  const claudeMod = choice(config, 'claudeMod', ['on', 'off'] as const, warnings);
   let preferredTerminal: string | undefined;
   const terminal = field(config, 'terminal');
   if (typeof terminal === 'string') preferredTerminal = !isBlank(terminal) && terminal !== AUTO ? terminal : undefined;
@@ -259,7 +262,7 @@ export function readTerminalSettings(config: Record<string, unknown>, warnings: 
   } else if (shellValue !== undefined && shellValue !== null) {
     warnings.push(`Ignoring shell in ${CONFIG_FILE}: it must be "auto" or the absolute path of a shell executable`);
   }
-  return { tabRouting, terminalWindow, launchVia, focusNewTabs, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
+  return { tabRouting, terminalWindow, launchVia, focusNewTabs, claudeMod, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
 }
 
 export interface AgentSettings extends TerminalSettings {
@@ -284,7 +287,7 @@ export function resolveSettings(
     }
   }
   let configured: string | undefined;
-  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last', launchVia: 'direct', focusNewTabs: 'auto' };
+  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last', launchVia: 'direct', focusNewTabs: 'auto', claudeMod: 'on' };
   let jev = JEV_OFF;
   if (configText !== undefined) {
     let readable = true;

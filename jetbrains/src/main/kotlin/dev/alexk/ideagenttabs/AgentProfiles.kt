@@ -325,6 +325,8 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
 
     fun setFocusNewTabs(value: FocusNewTabs): Boolean = saveShared("focusNewTabs", value.value)
 
+    fun setClaudeMod(on: Boolean): Boolean = saveShared("claudeMod", if (on) AUTO else CLAUDE_MOD_OFF)
+
     fun setCloseAfterHandoff(value: Boolean): Boolean = try {
         val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null
         writeAtomically(configFile, withSharedFlag(existing, "closeAfterHandoff", value, default = true))

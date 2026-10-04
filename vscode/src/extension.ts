@@ -24,6 +24,7 @@ const SHARED_SETTING_NAMES: Record<keyof SharedSettings, string> = {
   launchVia: 'launchVia',
   closeAfterHandoff: 'closeAfterHandoff',
   focusNewTabs: 'focusNewTabs',
+  claudeMod: 'claudeMod',
 };
 
 const SHARED_KEYS = Object.keys(SHARED_SETTING_NAMES) as (keyof SharedSettings)[];
