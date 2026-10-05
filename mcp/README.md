@@ -23,6 +23,8 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 | `read_messages` | none | The caller's unread messages, marked read, under a `notice` that they come from other agents |
 | `wait_for_message` | optional `timeout` (seconds, default 60, at most 600, or 170 in an Antigravity CLI session), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
 | `handoff` | `path`, and `brief` or `goal`, `done`, `next`, `files`, `openQuestions`, and optional `agent`, `model`, `via`, `ide`, `focus` | The handoff `id`, the `brief` path, the `newTab` id, and `next`: the steps the caller follows to wait for the takeover and stop |
+| `closed_sessions` | none | The sessions that ended in the last 7 days, newest first: `listing`, grouped by folder with one aligned line each (NAME, AGENT, ENDED, SIZE, MODEL, WHERE, ID), and `sessions` with the full `id`, `folder`, `tokens`, `size`, `model`, `where`, `preview` and `resumable` |
+| `resume_tab` | `id`, and optional `ide`, `model`, `focus`, `confirm` | `resumed: true` with the new `tab`, `ide`, `product`, `size`, `age` and `cost`, or `resumed: false` and `needsConfirm: true` with `size`, `age`, `reasons` and a `message`. See [Resume](#resume). |
 
 An IDE's id is its registry file name without `.json`: `<ide>-<pid>`, or `<ide>-<pid>-<window>` for a VS
 Code window. A terminal's id is its name: `windows-terminal`, `ghostty`, `iterm2`, `kitty`, `wezterm` or
@@ -223,6 +225,49 @@ Safety:
 `"closeAfterHandoff": false` in `config.json` keeps the old tab open. `list_sessions` then shows that
 session with `handedOffTo` set to the new tab's id. The setting is `true` by default.
 
+## Resume
+
+When a session ends, the server writes a record to `~/.ide-agent-tabs/history/<id>.json`, named by the
+agent's own session id. A session ends when its server shuts down, when `close_tab` closes its tab, or
+when another server finds its presence file dead. The record holds the agent, label, folder, IDE or
+terminal product, model, effort, harness, `via`, `startedAt`, `endedAt`, the size and a preview. Only the
+owner can read it, and it is deleted after 7 days.
+
+- The resumable id is the Claude Code session id (from the hooks or the Claude mod), the Codex thread id,
+  or the Antigravity CLI conversation id. A session without one leaves no record, and so does a Claude
+  session that never wrote a transcript.
+- Size is the input of the last turn. For Claude Code it is `input_tokens` plus the cache tokens of the
+  last assistant turn in `~/.claude/projects/<folder>/<session>.jsonl`. For Codex it is
+  `last_token_usage.input_tokens` from the session's rollout file. Other agents expose no size, so it is
+  `null`.
+- The preview is the first line of the last assistant text, cut to 120 characters. The record keeps no
+  other transcript text.
+
+`resume_tab` reopens a record in a new tab with the agent's resume option, in the record's folder, its
+IDE or terminal when that is still running (else one with the same product, else the usual route), and
+its model. An `ide` or `model` you pass wins.
+
+| Agent | Resume option |
+|---|---|
+| Claude Code | `claude --resume <id>` |
+| Codex, Codex (local) | `codex resume <id>` |
+| Antigravity CLI | `agy --conversation <id>` |
+
+Any other agent gets an error that suggests `handoff` instead.
+
+A resumed session re-reads its whole history. `resume_tab` opens it without `confirm` only when all of
+these hold:
+
+- It ended within the prompt cache window: 5 minutes, or 60 minutes when the transcript shows that Claude
+  Code wrote to the 1-hour cache.
+- The model stays the same.
+- The size is at most 50,000 tokens. An unknown size passes only within 5 minutes.
+
+Then the result says `likely cached: about 10% of normal input cost`. Otherwise it opens nothing and
+returns `needsConfirm: true` with the size, the age, the reasons and the offer of `handoff` as the
+cheaper fresh start. The `new-tab` skill asks the user, and passes `confirm: true` only after the user
+agrees. `"allowResume": false` in `config.json` makes `resume_tab` refuse every call.
+
 ## Messaging
 
 Every session that runs this server can message every other one on the machine, whichever agent CLI it
@@ -329,9 +374,10 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 |---|---|
 | `endpoints/*.json` | One registry entry per running IDE. The server skips entries with an unknown `protocol` or a URL that isn't on the loopback address, and deletes entries whose process has ended or whose `beatMs` heartbeat (file modification time) stopped for more than 5 beats. |
 | `agents.json` | Your own agent profiles. The rules match the JetBrains plugin exactly. |
-| `config.json` | `defaultAgent`, `jev` (the Jev settings), `launchVia`, `closeAfterHandoff` and the tab settings below. The JetBrains plugin and the VS Code extension edit the same keys. |
+| `config.json` | `defaultAgent`, `jev` (the Jev settings), `launchVia`, `closeAfterHandoff`, `allowResume` and the tab settings below. The JetBrains plugin and the VS Code extension edit the same keys. |
 | `detected.json` | The terminals, on Windows the PowerShell installs, and `ori` (`path`, `version`, and the `agents` Ori lists as installed; `null` without Ori) that this machine has, for the IDE settings. The server writes it at start, on each `list_ides` and from the Claude Code session start hook; don't edit it. |
 | `handoffs/` | The brief (`<id>.md`) and the record (`<id>.json`) of each handoff. |
+| `history/` | One record per ended session, named by the agent's session id, kept 7 days. See [Resume](#resume). |
 | `terminal-windows.json` | The windows kept for Agent Tabs with `"terminalWindow": "dedicated"`. The server writes it; don't edit it. |
 | `jev/ledger.jsonl` | One line per Jev call: time, tool, agent, tab, model, question count, input tokens and result. |
 | `terminal-tabs.json` | The terminal tabs this server opened. The server writes it; don't edit it. |
@@ -348,6 +394,7 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `terminalWindow` | `"last"`: your last window. `"dedicated"`: a window kept for Agent Tabs. | `"last"` |
 | `launchVia` | `"direct"`: start each agent with its own command. `"ori"`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `"direct"` |
 | `closeAfterHandoff` | `true`: the new session closes the old tab after a handoff. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
+| `allowResume` | `true`: `resume_tab` reopens closed sessions, asking for `confirm` when the resume costs full price. `false`: it refuses. See [Resume](#resume). | `true` |
 | `claudeMod` | `"on"`: Claude Code sessions use the Agent Tabs mod: SendMessage and ListAgents reach every agent, mail arrives in-process, and `/agent-tabs` shows the agents pane. `"off"`: the hooks, wake lines and messaging tools, as in 0.6.0. New Claude Code sessions pick up a change. | `"on"` |
 | `focusNewTabs` | `"auto"`: an agent's tab opens behind the current one unless the call passes `focus: true`. `"always"`: it comes to the front unless the call passes `focus: false`. `"never"`: behind unless the call passes `focus: true`. See [Focus](#focus). | `"auto"` |
 

@@ -11,6 +11,7 @@ import { MAX_WAIT_S, MOD_STATES, type Messaging } from './messaging/messaging.js
 import { MESSAGING_INSTRUCTIONS, TAB_INSTRUCTIONS } from './messaging/notice.js';
 import { agentFromClient } from './messaging/sessions.js';
 import { MAX_ENTRIES, MAX_PROMPT_CHARS } from './profiles.js';
+import { CACHE_MS, LONG_CACHE_MS, MAX_CHEAP_TOKENS, type Resumes } from './resume.js';
 import type { Service } from './service.js';
 import { PACKAGE_VERSION } from './version.js';
 
@@ -43,7 +44,7 @@ export function serverInstructions(jev: boolean, messaging: boolean): string {
     .join('\n\n');
 }
 
-export function createServer(service: Service, jev?: Jev, messaging?: Messaging, handoffs?: Handoffs): McpServer {
+export function createServer(service: Service, jev?: Jev, messaging?: Messaging, handoffs?: Handoffs, resumes?: Resumes): McpServer {
   const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION }, { instructions: serverInstructions(!!jev, !!messaging) });
   const reply: Reply = (extra, work) =>
     answer(async () => {
@@ -155,6 +156,7 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging,
 
   if (messaging) registerMessaging(server, messaging, service, reply);
   if (messaging && handoffs) registerHandoff(server, handoffs, reply);
+  if (resumes) registerResume(server, resumes, reply);
 
   for (const t of jev ? JEV_TOOLS : []) {
     server.registerTool(
@@ -221,6 +223,7 @@ async function modOp(messaging: Messaging, service: Service, input: ModInput): P
         ...(input.state !== undefined ? { state: input.state } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        ...(input.session !== undefined ? { owner: input.session } : {}),
       });
     case 'send':
       return messaging.send({ to: need(input.to, 'to'), text: need(input.text, 'text'), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}) });
@@ -278,7 +281,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
         id: z.string().max(64).optional().describe('log: the message id, when it has one.'),
         at: z.number().optional().describe('log: when, in milliseconds since the epoch.'),
         delivery: z.string().max(200).optional().describe('log: what became of a sent message.'),
-        session: z.string().max(128).optional().describe('history: the session id.'),
+        session: z.string().max(128).optional().describe("history: the session id. presence: Claude Code's own session id."),
         names: z.array(z.string().max(128)).max(8).optional().describe('history: the names the session goes by.'),
         driver: z.boolean().optional().describe('presence: true claims in-process delivery for this tab; false hands it back to the hooks.'),
         nativeName: z.string().max(128).optional().describe("presence: the session's name in Claude Code's ListAgents."),
@@ -393,5 +396,45 @@ function registerHandoff(server: McpServer, handoffs: Handoffs, reply: Reply): v
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     (input, extra) => reply(extra, () => handoffs.start(input)),
+  );
+}
+
+function registerResume(server: McpServer, resumes: Resumes, reply: Reply): void {
+  server.registerTool(
+    'closed_sessions',
+    {
+      title: 'List closed sessions',
+      description:
+        "List the agent sessions that ended in the last 7 days, newest first, grouped by folder. listing has one aligned line each: NAME, AGENT, ENDED (how long ago), SIZE (tokens of the last turn's input, or — when unknown), MODEL, WHERE (the IDE or terminal) and ID (the first 8 characters of the agent's own session id). " +
+        'sessions holds the same records with the full id, folder, tokens and preview: the first line of the last answer. ' +
+        'Call it to find a session the user wants back, then pass its id to resume_tab. It does not list live sessions; list_sessions does.',
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    (extra) => reply(extra, () => resumes.list()),
+  );
+
+  server.registerTool(
+    'resume_tab',
+    {
+      title: 'Resume a closed session',
+      description:
+        "Reopen a closed agent session from closed_sessions in a new tab, with the agent's own resume option (Claude Code --resume, Codex resume, Antigravity CLI --conversation), in the session's folder, IDE or terminal and model unless you pass others. " +
+        'A resumed session re-reads its whole history. Without confirm it opens only when that is likely cached: the session ended within the prompt cache window ' +
+        `(${CACHE_MS / 60_000} minutes, or ${LONG_CACHE_MS / 60_000} when its transcript shows the 1-hour cache), keeps its model, and holds at most ${MAX_CHEAP_TOKENS.toLocaleString('en-US')} tokens. ` +
+        'Otherwise it returns resumed false, needsConfirm true, the size, the age and a message: tell the user, offer handoff as the cheaper fresh start, and pass confirm true only after the user agrees to the cost. ' +
+        'Every result has size and age. Returns the new tab id, ide and product when it opens. config.json allowResume false turns it off.',
+      inputSchema: {
+        id: z.string().min(1).max(128).describe('A session id from closed_sessions, or its first 8 characters.'),
+        ide: z.string().optional().describe(`${IDE_ID} Leave out to reopen where the session ran.`),
+        model: z.string().regex(MODEL_PATTERN).optional().describe("Model for the resumed session. Leave out to keep the session's model; another model gets no cache."),
+        focus: z.boolean().optional().describe('true brings the new tab to the front, as for open_tab. Pass true only when the user asked for the tab.'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('true opens the session after a needsConfirm result. Pass it only after the user agreed to re-read the full history at full price.'),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    (input, extra) => reply(extra, () => resumes.resume(input)),
   );
 }

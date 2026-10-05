@@ -266,14 +266,14 @@ test('shared settings default when config.json is missing or lacks the keys', ()
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
   assert.deepEqual(settings.sharedFound(), {});
   write(CONFIG_FILE, '{"defaultAgent": "codex"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last', launchVia: 'direct', closeAfterHandoff: true, focusNewTabs: 'auto', claudeMod: 'on' });
+  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last', launchVia: 'direct', closeAfterHandoff: true, allowResume: true, focusNewTabs: 'auto', claudeMod: 'on' });
   assert.deepEqual(warnings, []);
 });
 
 test('shared settings read the seven keys and drop invalid values', () => {
   const { settings, write, warnings } = fixture();
   write(CONFIG_FILE, '{"tabRouting": "caller", "terminal": "wezterm", "shell": "/opt/pwsh", "terminalWindow": "dedicated", "launchVia": "ori"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated', launchVia: 'ori', closeAfterHandoff: true, focusNewTabs: 'auto', claudeMod: 'on' });
+  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated', launchVia: 'ori', closeAfterHandoff: true, allowResume: true, focusNewTabs: 'auto', claudeMod: 'on' });
   write(CONFIG_FILE, '{"tabRouting": "nowhere", "terminal": 3, "shell": " ", "terminalWindow": "", "launchVia": "both"}');
   assert.deepEqual(settings.sharedFound(), { shell: 'auto' });
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
@@ -534,6 +534,25 @@ test('closeAfterHandoff defaults to true, reads a boolean and drops other values
   write(CONFIG_FILE, '{"closeAfterHandoff": "false"}');
   assert.deepEqual(settings.sharedFound(), {});
   assert.equal(settings.shared().closeAfterHandoff, true);
+});
+
+test('allowResume defaults to true, reads a boolean, writes false only when unchecked and drops other values', () => {
+  const { settings, home, write } = fixture();
+  const config = path.join(home, CONFIG_FILE);
+  assert.equal(settings.shared().allowResume, true);
+  write(CONFIG_FILE, '{"allowResume": false}');
+  assert.equal(settings.shared().allowResume, false);
+  assert.deepEqual(settings.sharedFound(), { allowResume: false });
+  write(CONFIG_FILE, '{"allowResume": "no"}');
+  assert.deepEqual(settings.sharedFound(), {});
+  assert.equal(settings.shared().allowResume, true);
+  fs.writeFileSync(config, '{"defaultAgent": "codex"}');
+  assert.ok(settings.setShared('allowResume', false));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { defaultAgent: 'codex', allowResume: false });
+  assert.ok(settings.setShared('allowResume', true));
+  assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { defaultAgent: 'codex' });
+  assert.equal(userSettingValue('allowResume', { globalValue: false, workspaceValue: true }), false);
+  assert.equal(userSettingValue('allowResume', { workspaceValue: false }), true);
 });
 
 test('focusNewTabs defaults to auto, reads the three modes, and auto removes the key', () => {

@@ -22,6 +22,7 @@ export interface SharedSettings {
   terminalWindow: TerminalWindow;
   launchVia: LaunchVia;
   closeAfterHandoff: boolean;
+  allowResume: boolean;
   focusNewTabs: FocusNewTabs;
   claudeMod: ClaudeMod;
 }
@@ -33,6 +34,7 @@ export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
   terminalWindow: 'last',
   launchVia: 'direct',
   closeAfterHandoff: true,
+  allowResume: true,
   focusNewTabs: AUTO,
   claudeMod: 'on',
 });
@@ -82,6 +84,7 @@ export function readSharedSettings(text: string, file: string): Partial<SharedSe
   const launchVia = oneOf(LAUNCH_VIA, root.launchVia);
   if (launchVia !== undefined) found.launchVia = launchVia;
   if (typeof root.closeAfterHandoff === 'boolean') found.closeAfterHandoff = root.closeAfterHandoff;
+  if (typeof root.allowResume === 'boolean') found.allowResume = root.allowResume;
   const focusNewTabs = oneOf(FOCUS_NEW_TABS, root.focusNewTabs);
   if (focusNewTabs !== undefined) found.focusNewTabs = focusNewTabs;
   const claudeMod = oneOf(CLAUDE_MOD, root.claudeMod);

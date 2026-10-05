@@ -8,6 +8,7 @@ import { ideCaller } from './ideClient.js';
 import { runJevCli } from './jev/cli.js';
 import { startJev } from './jev/service.js';
 import { Messaging } from './messaging/messaging.js';
+import { Resumes } from './resume.js';
 import { createServer } from './server.js';
 import { Service } from './service.js';
 import { TERMINAL_DRIVERS } from './terminals/index.js';
@@ -19,6 +20,7 @@ function scriptsDir(): string {
   return candidates.find((dir) => existsSync(path.join(dir, LAUNCHER_PS1))) ?? candidates[0]!;
 }
 
+const END_RECORD_MS = 2_000;
 const home = agentTabsHome();
 const service = new Service({
   home,
@@ -40,8 +42,12 @@ if (command === 'jev') {
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    messaging.stopSync();
-    process.exit(0);
+    const exit = () => {
+      messaging.stopSync();
+      process.exit(0);
+    };
+    setTimeout(exit, END_RECORD_MS).unref();
+    void messaging.recordEnd().catch(() => undefined).finally(exit);
   };
   process.on('exit', () => messaging.stopSync());
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => stop());
@@ -55,6 +61,13 @@ if (command === 'jev') {
     openTab: (input) => service.openTab(input),
     findHost: (id) => service.findHost(id),
   });
-  await createServer(service, jev, messaging, handoffs).connect(new StdioServerTransport());
+  const resumes = new Resumes({
+    home,
+    settings: () => service.settings(),
+    openTab: (input) => service.openTab(input),
+    liveHost: (host, product) => service.liveHost(host, product),
+    live: () => messaging.live(),
+  });
+  await createServer(service, jev, messaging, handoffs, resumes).connect(new StdioServerTransport());
   void service.refreshDetection().catch(() => undefined);
 }

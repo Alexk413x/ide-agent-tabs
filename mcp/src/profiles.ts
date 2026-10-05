@@ -10,6 +10,7 @@ export const PLUGIN_ENV_PREFIX = 'IDE_AGENT_TABS_';
 export const STARTUP_ENV = 'JEDITERM_SOURCE';
 export const TAB_ID_ENV = `${PLUGIN_ENV_PREFIX}ID`;
 export const AGENT_ENV = `${PLUGIN_ENV_PREFIX}AGENT`;
+export const ALLOW_RESUME_KEY = 'allowResume';
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -229,11 +230,20 @@ export interface TerminalSettings {
   launchVia: 'direct' | 'ori';
   focusNewTabs: FocusNewTabs;
   claudeMod: ClaudeMod;
+  allowResume: boolean;
 }
 
 export function resolveFocus(setting: FocusNewTabs, requested: boolean | undefined): boolean {
   if (setting === 'auto') return requested ?? false;
   return setting === 'always';
+}
+
+function flag(config: Record<string, unknown>, key: string, fallback: boolean, warnings: string[]): boolean {
+  const value = field(config, key);
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return value;
+  warnings.push(`Ignoring ${key} in ${CONFIG_FILE}: it must be true or false`);
+  return fallback;
 }
 
 function choice<T extends string>(config: Record<string, unknown>, key: string, values: readonly T[], warnings: string[]): T {
@@ -250,6 +260,7 @@ export function readTerminalSettings(config: Record<string, unknown>, warnings: 
   const launchVia = choice(config, 'launchVia', ['direct', 'ori'] as const, warnings);
   const focusNewTabs = choice(config, 'focusNewTabs', ['auto', 'always', 'never'] as const, warnings);
   const claudeMod = choice(config, 'claudeMod', ['on', 'off'] as const, warnings);
+  const allowResume = flag(config, ALLOW_RESUME_KEY, true, warnings);
   let preferredTerminal: string | undefined;
   const terminal = field(config, 'terminal');
   if (typeof terminal === 'string') preferredTerminal = !isBlank(terminal) && terminal !== AUTO ? terminal : undefined;
@@ -262,7 +273,7 @@ export function readTerminalSettings(config: Record<string, unknown>, warnings: 
   } else if (shellValue !== undefined && shellValue !== null) {
     warnings.push(`Ignoring shell in ${CONFIG_FILE}: it must be "auto" or the absolute path of a shell executable`);
   }
-  return { tabRouting, terminalWindow, launchVia, focusNewTabs, claudeMod, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
+  return { tabRouting, terminalWindow, launchVia, focusNewTabs, claudeMod, allowResume, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
 }
 
 export interface AgentSettings extends TerminalSettings {
@@ -287,7 +298,7 @@ export function resolveSettings(
     }
   }
   let configured: string | undefined;
-  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last', launchVia: 'direct', focusNewTabs: 'auto', claudeMod: 'on' };
+  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last', launchVia: 'direct', focusNewTabs: 'auto', claudeMod: 'on', allowResume: true };
   let jev = JEV_OFF;
   if (configText !== undefined) {
     let readable = true;

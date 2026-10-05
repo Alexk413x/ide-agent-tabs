@@ -202,6 +202,7 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
 |---|---|---|---|
 | Launch through OpenRouter (Ori) | `launchVia` | `direct`, `ori` | `direct` |
 | Close the old tab after a handoff | `closeAfterHandoff` | `true`, `false` | `true` |
+| Allow resuming closed sessions | `allowResume` | `true`, `false` | `true` |
 | Use the Claude Code mod (in-process messaging) | `claudeMod` | `on`, `off` | `on` |
 
 - Launch through OpenRouter (Ori): Start supported agents with `ori <agent>`, which bills model usage
@@ -214,6 +215,11 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
   `401 Missing Authentication header` in Ori 0.14.3; both are Ori limits.
 - Close the old tab after a handoff: After a handoff, the new session closes the old tab once both
   sides confirm. `false` leaves the old tab open, marked as handed off.
+- Allow resuming closed sessions: With `true`, agents can reopen a Claude Code, Codex or Antigravity CLI
+  session that ended in the last 7 days with `resume_tab`. A resume past the prompt cache, or of a large
+  session, re-reads the whole history at full input price, so the agent asks the user first. `false`
+  refuses every resume. The record of each ended session, in `~/.ide-agent-tabs/history/`, keeps no
+  transcript text beyond a 120-character preview of the last answer.
 - Use the Claude Code mod (in-process messaging): With `on`, Claude Code sessions message other agents
   with SendMessage and ListAgents, get their messages in-process, and have the `/agent-tabs` pane.
   `off` turns the mod off; Claude Code then uses the hooks, wake lines and messaging tools. Claude Code
@@ -224,7 +230,7 @@ To change a setting, use the IDE settings or edit `config.json` and keep every o
 
 - VS Code and editors built on it: **Settings > Extensions > Agent Tabs**, in the sections **Agent Tabs:
   IDE tabs** and **Agent Tabs: Terminal tabs**. The terminal and shell settings have a **Choose…** link
-  that lists the detected options. The launch and handoff settings are in the **Agent Tabs** section,
+  that lists the detected options. The launch, handoff and resume settings are in the **Agent Tabs** section,
   and the launch setting shows only when Ori is detected.
 - JetBrains IDEs: **Settings > Tools > Agent Tabs**, in the groups **IDE tabs** and **Terminal tabs**.
   The Shell row shows on Windows only. The launch setting sits next to **Default agent** and shows only

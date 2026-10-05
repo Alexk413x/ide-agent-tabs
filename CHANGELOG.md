@@ -6,9 +6,9 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 
 ## 0.6.0
 
-Plugin and MCP server 0.6.0, with VS Code extension 0.1.26 and JetBrains plugin 0.4.9 bundled. Both IDE
+Plugin and MCP server 0.6.0, with VS Code extension 0.1.27 and JetBrains plugin 0.4.10 bundled. Both IDE
 packages add the `agy` profile and icon, the profiles and icons of seven more agents, the Codex
-`Interrupt` hook and the tab settings.
+`Interrupt` hook, the tab settings and the **Allow resuming closed sessions** setting.
 
 ### Fixed
 
@@ -77,6 +77,25 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
 
 ### Added
 
+- Resume closed sessions.
+  - When a session ends (its server shuts down, `close_tab` closes it, or another server finds it dead),
+    the server writes `~/.ide-agent-tabs/history/<id>.json`, named by the agent's own session id: agent,
+    label, folder, product, model, effort, harness, `via`, start and end times, the last turn's input
+    tokens (from the Claude Code transcript or the Codex rollout) and a 120-character preview of the
+    last answer. Only the owner can read it, it holds no other transcript text, and it is deleted after
+    7 days. The Claude mod reports the Claude session id for this.
+  - `closed_sessions` lists them newest first, grouped by folder, one aligned line each: NAME, AGENT,
+    ENDED, SIZE, MODEL, WHERE and ID.
+  - `resume_tab` reopens one in its folder, IDE and model with `claude --resume`, `codex resume` or
+    `agy --conversation`. Other agents get an error that suggests `handoff`.
+  - A cost guard: a resume opens at once only within the prompt cache window (5 minutes, or 60 when the
+    transcript shows the 1-hour cache), with the same model and at most 50,000 tokens, and then says
+    "likely cached: about 10% of normal input cost". Any other resume needs `confirm: true` and returns
+    the size, the age and the offer of `handoff` as the cheaper fresh start.
+  - The `new-tab` skill handles "reopen my <agent> session from <when>", and asks the user before it
+    passes `confirm`.
+  - The setting **Allow resuming closed sessions** (`allowResume`, on by default) in VS Code, JetBrains
+    and the `setup` skill. Off, `resume_tab` refuses.
 - A Claude Code mod, loaded from `hooks/hooks.json` `modules` in Claude Code builds with function hooks.
   - `ListAgents` returns one list of every session that can take a message now: live native Claude
     peers and every Agent Tabs session, grouped by folder with the caller's folder first and cloud

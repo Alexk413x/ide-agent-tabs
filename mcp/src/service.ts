@@ -13,7 +13,8 @@ import {
   TAB_ID_ENV,
   type AgentSettings,
 } from './profiles.js';
-import { isSessionId, updatePresence, withState, type PresenceFile, type Via } from './messaging/sessions.js';
+import { recordEnded, transcriptDirs, type TranscriptDirs } from './messaging/closed.js';
+import { isSessionId, readPresence, updatePresence, withState, type PresenceFile, type Via } from './messaging/sessions.js';
 import { isProcessAlive, readRegistry, type Endpoint } from './registry.js';
 import { validateOpen, type OpenInput, type OpenRequest } from './request.js';
 import { chooseIde, chooseTerminal, type IdeCandidate, type Project } from './routing.js';
@@ -35,6 +36,7 @@ export interface ServiceDeps {
   newId?: () => string;
   selfCloseDelayMs?: number;
   shellProbe?: (runShells: boolean) => ShellProbe;
+  transcripts?: TranscriptDirs;
 }
 
 export class ToolError extends Error {}
@@ -319,6 +321,13 @@ export class Service {
     }).catch(() => undefined);
   }
 
+  async liveHost(host: string | null, product: string | null): Promise<string | undefined> {
+    const driver = host === null ? undefined : this.deps.drivers.find((d) => d.name === host);
+    if (driver) return (await driver.available(this.ctx).catch(() => false)) ? driver.name : undefined;
+    const { endpoints } = await this.registry();
+    return (endpoints.find((e) => e.id === host) ?? endpoints.find((e) => product !== null && e.product === product))?.id;
+  }
+
   async describeHost(host: string): Promise<string | undefined> {
     const driver = this.deps.drivers.find((d) => d.name === host);
     if (driver) return driver.label;
@@ -385,6 +394,8 @@ export class Service {
       throw new ToolError(`no id given, and ${TAB_ID_ENV} is not set, so this session was not opened as an agent tab`);
     }
     const self = target === this.deps.env[TAB_ID_ENV];
+    const ending = await readPresence(this.deps.home, target).catch(() => undefined);
+    const ended = () => (ending ? recordEnded(this.deps.home, ending, Date.now(), this.deps.transcripts ?? transcriptDirs(this.deps.env)).catch(() => undefined) : undefined);
     const record = (await this.store.read()).find((t) => t.id === target);
     if (record) {
       const driver = this.deps.drivers.find((d) => d.name === record.terminal);
@@ -394,6 +405,7 @@ export class Service {
         await this.store.remove(new Set([target]));
       };
       if (self) {
+        await ended();
         setTimeout(() => void close().catch(() => undefined), this.deps.selfCloseDelayMs ?? 500);
         return { id: target, ide: driver.name, closing: true };
       }
@@ -402,6 +414,7 @@ export class Service {
       } catch (e) {
         throw new ToolError(`${driver.label}: ${errorText(e)}`);
       }
+      await ended();
       return { id: target, ide: driver.name, closed: true };
     }
     const owner = await this.ideOwner(target);
@@ -411,6 +424,7 @@ export class Service {
     } catch (e) {
       throw new ToolError(errorText(e));
     }
+    await ended();
     return { id: target, ide: owner.id, closed: true };
   }
 
