@@ -1193,7 +1193,16 @@ export const register: Register = on => {
     const focused = pane.focus[pane.view]
 
     if (pane.view === 'agents' || pane.agent === null) {
-      const heading = <Text bold>{PANE_TITLE}</Text>
+      const heading = (
+        <Box flexDirection="column">
+          <Text bold>{PANE_TITLE}</Text>
+          {pane.notice ? (
+            <Text color="suggestion" wrap="truncate-end">
+              {pane.notice}
+            </Text>
+          ) : null}
+        </Box>
+      )
       const all = paneRows(hosts)
       if (!all.length) {
         return (
@@ -1288,11 +1297,6 @@ export const register: Register = on => {
               ))}
             </Box>
           ))}
-          {pane.notice ? (
-            <Text dimColor wrap="truncate-end">
-              {pane.notice}
-            </Text>
-          ) : null}
         </Box>
       )
     }
