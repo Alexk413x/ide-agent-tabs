@@ -652,9 +652,11 @@ export class Messaging {
     if (input.owner !== undefined && !isSessionId(input.owner)) throw new MailError(`not a session id: ${input.owner}`);
     const now = this.now();
     const claim = input.driver === true && this.isTab;
+    // Only Claude Code is offered the mod tool, and its first call can beat oninitialized's setClient.
+    if (this.agent === 'unknown') this.agent = 'claude';
     await this.updateOwn((p) => {
-      const { driver: _d, modBeat: _b, nativeName: _n, ...rest } = p;
-      const kept = input.driver === false ? rest : p;
+      const { driver: _d, modBeat: _b, nativeName: _n, ...rest } = { ...p, agent: this.agent };
+      const kept = input.driver === false ? rest : { ...p, agent: this.agent };
       const stated = input.state !== undefined && input.state !== effectiveState(kept, now) ? withState(kept, input.state as SessionState, now) : kept;
       const driven = input.driver !== false && (claim || p.driver === 'mod');
       return {
