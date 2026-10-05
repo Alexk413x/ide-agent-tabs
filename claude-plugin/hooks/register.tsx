@@ -73,7 +73,6 @@ const AGENT_GLYPHS: Record<string, { glyph: string; color: string }> = {
 }
 const OTHER_GLYPH = { glyph: '•', color: '#9aa4b2' }
 const ROW_MARK = '▎'
-const COPY_MARK = '⧉ '
 const FOLDER_MARK = '▸ '
 const MODEL_VENDOR = /^(claude|gpt)-/
 const NAME_COLORS: Record<string, string> = {
@@ -1276,7 +1275,7 @@ export const register: Register = on => {
           <Box key={`heading-${key}`} flexDirection="row" paddingLeft={2}>
             <Button key={key} plain label={label} {...focus(key)} onPress={() => openFolder($, path)} />
             <Box position="absolute" top={0} left={label.length + 4} display="none" hover={{ display: 'flex' }}>
-              <Button key={`copy-${key}`} plain dimColor label={`${COPY_MARK}${cut(path, Math.max(8, room - label.length))}`} onPress={() => copyPath($, path, e.surface)} />
+              <Button key={`copy-${key}`} plain dimColor label={cut(path, Math.max(8, room - label.length))} onPress={() => copyPath($, path, e.surface)} />
             </Box>
           </Box>
         )

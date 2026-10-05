@@ -861,7 +861,7 @@ describe('agents pane', () => {
       const heading = await ui.find({ type: 'Button', key: 'folder:4:C:\\W\\sub' })
       expect(heading?.text).toBe('▸ sub')
       const copy = await ui.find({ type: 'Button', key: 'copy-folder:4:C:\\W\\sub' })
-      expect(copy?.text).toBe('⧉ C:\\W\\sub')
+      expect(copy?.text).toBe('C:\\W\\sub')
 
       const tree = await $.ui.render({ surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       const scope = nodes(tree).find(n => n.props?.key === 'heading-folder:4:C:\\W\\sub')
