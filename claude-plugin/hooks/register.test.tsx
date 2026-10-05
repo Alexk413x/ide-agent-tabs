@@ -159,6 +159,7 @@ type WorldOptions = {
   mailOf?: (who: { session?: string; names: string[] }) => unknown[]
   older?: number
   historyError?: string
+  holdMessage?: boolean
   os?: string
   uname?: string
   dirs?: string[]
@@ -304,6 +305,7 @@ function world(on: On, options: WorldOptions = {}) {
         return ok({ total: list.length, messages: shown.map(m => ({ ...(m as object), text: String((m as { text: string }).text).slice(0, 200), textLength: String((m as { text: string }).text).length })) })
       }
       case 'message': {
+        if (options.holdMessage) return fail('held')
         const list = options.mailOf ? options.mailOf({ ...(e.args.session !== undefined ? { session: e.args.session as string } : {}), names: e.args.names as string[] }) : (options.history ?? [])
         return ok({ message: list.find(m => (m as { id: string }).id === e.args.id) ?? null })
       }
@@ -865,7 +867,7 @@ async function hasItem(ui: Ui, ref: string): Promise<boolean> {
   }
 }
 
-const titleLine = (width: number) => `Agent Tabs Messages${' '.repeat(width - 'Agent Tabs Messages'.length - 4)} ✕  `
+const titleLine = (_width: number) => 'Agent Tabs Messages'
 
 async function drawnLines(ui: Ui): Promise<string[]> {
   const { key } = await list(ui)
@@ -1011,8 +1013,6 @@ describe('agents pane', () => {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       expect(await underlined(ui)).toEqual([])
       await ui.key({ key: 'down', in: 'agents' })
-      expect(await underlined(ui)).toEqual([' ✕  '])
-      await ui.key({ key: 'down', in: 'agents' })
       expect(await underlined(ui)).toEqual(['▸ w'])
       await ui.key({ key: 'down', in: 'agents' })
       expect(await underlined(ui)).toEqual(['plugins-fa', ' (this session)', 'idle · Claude Code · opus-5-5'])
@@ -1039,7 +1039,7 @@ describe('agents pane', () => {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       expect(await ui.find({ type: 'Client' })).toBeUndefined()
       expect((await ui.find({ type: 'Button', key: 'agent:id:tab-d' }))?.text).toBe('docs-9b')
-      expect((await ui.find({ type: 'Button', key: 'close' }))?.text).toBe('✕')
+      expect(await ui.find({ type: 'Button', key: 'close' })).toBeUndefined()
       expect((await ui.find({ type: 'Text', text: /^ *2 $/ }))?.props.bold).toBe(true)
       w.runs.length = 0
       await ui.press({ key: 'folder:4:C:\\a' })
@@ -1050,41 +1050,6 @@ describe('agents pane', () => {
       expect(await ui.find({ type: 'Button', key: 'reply' })).toBeDefined()
       await ui.press({ key: 'back' })
       await ui.press({ key: 'back' })
-      await ui.unmount()
-    }
-  })
-
-  test('the close chip takes all 4 cells at the right of the title or Back line, and a click or Enter closes the pane', { timeoutMs: 30_000 }, async ($, on) => {
-    const w = world(on, { tab: 'tab-c', history: HISTORY })
-    await start($)
-    for (const surface of SURFACES) {
-      for (const view of ['agents', 'messages', 'detail'] as const) {
-        await openPane($)
-        const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-        while ((await list(ui)).key !== 'agents') await click(ui, 'back')
-        if (view !== 'agents') await click(ui, 'agent:id:tab-d')
-        if (view === 'detail') await click(ui, 'msg:m-aaaaaaaaaaaaaaa1')
-        const { key, props } = await list(ui)
-        const width = PANE_PROPS().bodyColumns
-        expect(positionOf(props, itemFor(props, 'close'))).toEqual({ x: width - 4, y: 0 })
-        for (const x of [width - 4, width - 3, width - 2, width - 1]) {
-          await ui.pointer({ type: 'move', x, y: 0, in: key })
-          expect(await underlined(ui)).toEqual([' ✕  '])
-        }
-        await ui.pointer({ type: 'move', x: width - 5, y: 0, in: key })
-        expect(await underlined(ui)).toEqual([])
-        expect(w.panes.open).toEqual(['agent-tabs'])
-        await click(ui, 'close')
-        expect(w.panes.open).toEqual([])
-        await ui.unmount()
-      }
-      await openPane($)
-      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-      while ((await list(ui)).key !== 'agents') await click(ui, 'back')
-      await ui.key({ key: 'down', in: 'agents' })
-      expect(await underlined(ui)).toEqual([' ✕  '])
-      await ui.key({ key: 'return', in: 'agents' })
-      expect(w.panes.open).toEqual([])
       await ui.unmount()
     }
   })
@@ -1261,7 +1226,7 @@ describe('agents pane', () => {
       expect(history.session).toBe('tab-d')
       expect(history.names).toContain('docs-9b [11aa22]')
       expect(await drawnLines(ui)).toEqual([
-        ` ← Back${' '.repeat(PANE_PROPS().bodyColumns - 1 - '← Back'.length - 4)} ✕  `,
+        ' ← Back',
         ' ',
         '    docs-9b · 2 messages',
         '    ● permission · 1d · Claude Code · opus-5-5 · high',
@@ -1285,7 +1250,7 @@ describe('agents pane', () => {
       expect(await underlined(ui)).toEqual([`${local(AT(2))}  ↑ ${NATIVE.replace(/\s*\[[^\]]*\]$/, '')} · Done, both look fine.`])
 
       await click(ui, 'msg:m-aaaaaaaaaaaaaaa1')
-      expect(await drawnLines(ui)).toEqual([` ← Back  ↩ Reply${' '.repeat(PANE_PROPS().bodyColumns - 1 - '← Back  ↩ Reply'.length - 4)} ✕  `])
+      expect(await drawnLines(ui)).toEqual([' ← Back  ↩ Reply'])
       expect(await textIn(ui, 'From: w-1a')).toBeDefined()
       expect(await textIn(ui, 'To: docs-9b [11aa22]')).toBeDefined()
       expect(await textIn(ui, 'Time: 2026-10-04 09:01:00Z')).toBeDefined()
@@ -1831,10 +1796,25 @@ describe('counts and the messages view', () => {
       expect(lines.filter(l => /^ {2}\d\d:\d\d {2}/.test(l))).toHaveLength(2)
       await click(ui, `msg:${history[1]!.id}`)
       expect(await textIn(ui, long)).toBeDefined()
+      expect((await drawnLines(ui)).map(l => l.trim())).not.toContain('Fetching the rest of this message…')
       await click(ui, 'back')
       await click(ui, 'back')
       await ui.unmount()
     }
+  })
+
+  test('a long message shows its preview and a loading line until the full text arrives', async ($, on) => {
+    const long = 'y'.repeat(500)
+    const history = [msg(1, 'a', long)]
+    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: LISTING_OF, mailOf: who => (who.session === 'tab-d' ? history : []), holdMessage: true })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await click(ui, 'agent:id:tab-d')
+    await click(ui, `msg:${history[0]!.id}`)
+    expect(await textIn(ui, `${long.slice(0, 200)}…`)).toBeDefined()
+    expect(await textIn(ui, 'Fetching the rest of this message…')).toBeDefined()
+    await ui.unmount()
   })
 
   test('a failed history read says so in the pane instead of showing an empty list', async ($, on) => {

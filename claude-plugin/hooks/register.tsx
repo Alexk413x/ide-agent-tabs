@@ -83,7 +83,8 @@ const REPLY_LABEL = '↩ Reply'
 const READING = 'Reading messages…'
 const NO_MESSAGES = 'No messages sent or received through Agent Tabs or SendMessage in the last 7 days.'
 const NO_SESSIONS = 'No other agent session is live.'
-const CLOSE_LABEL = ' ✕  '
+const LOADING_SESSIONS = 'Rounding up your agents…'
+const LOADING_MESSAGE = 'Fetching the rest of this message…'
 const HEADER_INDENT = 4
 const FOLDER_MARK = '▸ '
 const MODEL_VENDOR = /^(claude|gpt)-/
@@ -996,7 +997,6 @@ export type PaneAct =
   | { act: 'message'; id: string }
   | { act: 'back' }
   | { act: 'reply' }
-  | { act: 'close' }
 
 const isAct = (data: unknown): data is PaneAct => typeof data === 'object' && data !== null && typeof (data as { act?: unknown }).act === 'string'
 
@@ -1012,29 +1012,25 @@ export function centered(text: string, width: number): { indent: number; text: s
 
 const centeredLines = (text: string, width: number): ListLine[] => centered(text, width).map(c => ({ indent: c.indent, parts: [{ text: c.text, dim: true }] }))
 
-const closeChip = (used: number, width: number): ListPart[] => [
-  { text: ' '.repeat(Math.max(1, width - used - CLOSE_LABEL.length)) },
-  { text: CLOSE_LABEL, underline: true, item: 'close' },
-]
 
 const partsWidth = (indent: number, parts: readonly ListPart[]) => indent + parts.reduce((n, p) => n + p.text.length, 0)
 
 export const countWidth = (rows: readonly AgentTabsPaneRow[]) => Math.max(1, ...rows.map(r => countText(r).length))
 const countText = (r: AgentTabsPaneRow) => (r.messages === null ? '·' : String(r.messages))
 
-export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number, notice: string | null = null): ListProps {
-  const acts: Record<string, PaneAct> = { close: { act: 'close' } }
+export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number, notice: string | null = null, loading = false): ListProps {
+  const acts: Record<string, PaneAct> = {}
   const room = Math.max(8, width - 4 - 6)
   const title: ListPart[] = [{ text: PANE_TITLE, bold: true }]
   const header: ListGroup = {
     border: false,
     lines: [
-      { indent: 0, parts: [...title, ...closeChip(partsWidth(0, title), width)] },
+      { indent: 0, parts: title },
       ...(notice ? [{ indent: 0, parts: [{ text: cut(notice, width), color: 'suggestion' }] }] : []),
     ],
   }
   const rows = paneRows(hosts)
-  if (!rows.length) return { groups: [header, { border: false, lines: centeredLines(NO_SESSIONS, width) }], acts, width }
+  if (!rows.length) return { groups: [header, { border: false, lines: centeredLines(loading ? LOADING_SESSIONS : NO_SESSIONS, width) }], acts, width }
   const counted = countWidth(rows)
   let n = 0
   const groups: ListGroup[] = hosts.map(host => {
@@ -1112,14 +1108,14 @@ export const countLabel = (n: number) => (n === 1 ? '1 message' : `${n} messages
 export const olderLine = (total: number, shown: number) => `${total - shown} older ${total - shown === 1 ? 'message' : 'messages'} not shown`
 
 export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], total: number | null, hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
-  const acts: Record<string, PaneAct> = { back: { act: 'back' }, close: { act: 'close' } }
+  const acts: Record<string, PaneAct> = { back: { act: 'back' } }
   const where = sessionPlace(pane.agent, hosts)
   const dot = where ? DOT_COLORS[where.row.state] : undefined
   const room = Math.max(8, width - HEADER_INDENT)
   const back: ListPart[] = [{ text: BACK_LABEL, underline: true, item: 'back' }]
   const details = pane.agent ? sessionDetails(pane.agent) : ''
   const lines: ListLine[] = [
-    { indent: 1, parts: [...back, ...closeChip(partsWidth(1, back), width)] },
+    { indent: 1, parts: back },
     { indent: 0, parts: [{ text: ' ' }] },
     { indent: HEADER_INDENT, parts: [{ text: cut(`${withoutRef(pane.agent?.name ?? '')} · ${total === null ? '…' : countLabel(total)}`, room), bold: true }] },
     ...(where
@@ -1143,8 +1139,8 @@ export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMe
 export function detailChips(width: number): ListProps {
   const chips: ListPart[] = [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: REPLY_LABEL, underline: true, item: 'reply' }]
   return {
-    groups: [{ border: false, lines: [{ indent: 1, parts: [...chips, ...closeChip(partsWidth(1, chips), width)] }] }],
-    acts: { back: { act: 'back' }, reply: { act: 'reply' }, close: { act: 'close' } },
+    groups: [{ border: false, lines: [{ indent: 1, parts: chips }] }],
+    acts: { back: { act: 'back' }, reply: { act: 'reply' } },
     width,
   }
 }
@@ -1410,7 +1406,6 @@ export const register: Register = on => {
     if (act.act === 'folder') await openFolder($, act.path)
     else if (act.act === 'copy') await copyPath($, act.path, e.surface)
     else if (act.act === 'back') await goUp($)
-    else if (act.act === 'close') await $.ui.close({ id: PANE })
     else if (act.act === 'message') await goTo($, { view: 'detail', message: act.id })
     else if (act.act === 'session') {
       const { value: hosts = [] } = await $.state.get(paneHostsRef)
@@ -1432,9 +1427,10 @@ export const register: Register = on => {
     const { Box, Text, Button } = table
     const Client = (e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in table ? table.Client : undefined
     const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
-    const { value: hosts = [] } = await $.state.get(paneHostsRef)
+    const { value: loadedHosts } = await $.state.get(paneHostsRef)
+    const hosts = loadedHosts ?? []
+    const loading = loadedHosts === undefined
     const width = Math.max(20, e.props.bodyColumns)
-    const close = <Button key="close" label="✕" onPress={() => $.ui.close({ id: PANE })} />
     const empty = (text: string) =>
       centered(text, width).map((c, i) => (
         <Text key={`empty-${i}`} dimColor>
@@ -1443,12 +1439,11 @@ export const register: Register = on => {
       ))
 
     if (pane.view === 'agents' || pane.agent === null) {
-      if (Client) return <Client key="agents" module="./list.tsx" width="100%" props={agentsList(hosts, width, pane.notice ?? null)} />
+      if (Client) return <Client key="agents" module="./list.tsx" width="100%" props={agentsList(hosts, width, pane.notice ?? null, loading)} />
       const heading = (
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between">
             <Text bold>{PANE_TITLE}</Text>
-            {close}
           </Box>
           {pane.notice ? (
             <Text color="suggestion" wrap="truncate-end">
@@ -1462,7 +1457,7 @@ export const register: Register = on => {
         return (
           <Box flexDirection="column">
             {heading}
-            {empty(NO_SESSIONS)}
+            {empty(loading ? LOADING_SESSIONS : NO_SESSIONS)}
           </Box>
         )
       }
@@ -1569,7 +1564,6 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
             {back}
-            {close}
           </Box>
           <Text> </Text>
           <Box flexDirection="column" paddingLeft={HEADER_INDENT}>
@@ -1618,7 +1612,6 @@ export const register: Register = on => {
           {chips ?? (
             <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
               {back}
-              {close}
             </Box>
           )}
           <Text dimColor>That message is no longer in the 7-day log.</Text>
@@ -1637,7 +1630,6 @@ export const register: Register = on => {
               <Button key="back" label="Back" onPress={() => goUp($)} />
               <Button key="reply" label="Reply" onPress={() => fillReply($, line)} />
             </Box>
-            {close}
           </Box>
         )}
         {pane.agent.id !== null && <Text dimColor>Session: {pane.agent.id}</Text>}
@@ -1651,6 +1643,13 @@ export const register: Register = on => {
         <Box marginTop={1}>
           <Text wrap="wrap">{whole?.id === m.id ? whole.text : (m.textLength ?? m.text.length) > m.text.length ? `${m.text}…` : m.text}</Text>
         </Box>
+        {whole?.id !== m.id && (m.textLength ?? m.text.length) > m.text.length && (
+          <Box marginTop={1}>
+            <Text dimColor italic>
+              {LOADING_MESSAGE}
+            </Text>
+          </Box>
+        )}
       </Box>
     )
   })

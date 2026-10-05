@@ -1143,7 +1143,7 @@ transcript in the fullscreen layout from 110 columns, and opens inline above the
 of these options seats it inline: `rows` is the inline height, which the dock ignores, and `focus` is a
 request for the keys only.
 
-- **Agents:** the heading `Agent Tabs Messages`, with the close chip at its right, then the sessions from the `ListAgents` merge code, in
+- **Agents:** the heading `Agent Tabs Messages`, then the sessions from the `ListAgents` merge code, in
   the `ListAgents` groups and order, this session included. Each IDE or terminal group is a Box with
   `borderStyle: "round"` and `paddingX: 1`, stacked with no gap and as wide as the pane. The API draws
   no border title, so the host name is the bold first line inside the box. Folders follow, with one
@@ -1171,10 +1171,8 @@ request for the keys only.
   (`OS` is `Windows_NT`), `open <path>` on macOS and `xdg-open <path>` on Linux (`uname -s`), with the
   resolved path. `explorer.exe` exits 1 even when it opened the folder, so on Windows only a failed
   start counts as an error.
-- The close chip is the mod's own, ` ✕  `: 4 cells right-aligned to the pane width, all of them the
-  target, underlined when lit. It closes the pane, as Esc does from the agents view, and sits on the
-  title line of the agents view and on the Back line of the messages and detail views. The engine's own
-  close mark on the frame stays as it is.
+- The pane has no close control of its own: the engine's close mark on the frame, Esc from the agents
+  view, and `/agent-messages` close it.
 - A blank line comes before each session. Each session takes two lines. Line 1, indented four: the session's message count, bold, padded to
   the widest count in view so the names align, dim when it is `0` (`·` when the count isn't known), then an agent glyph in the agent's
   colour (Claude `✻` `#d97757`, Codex `◆` `#10a37f`, Antigravity `▲` `#8b7cf6`, others `•` `#9aa4b2`),
@@ -1188,7 +1186,7 @@ request for the keys only.
   model, cut with `…` to the room the box leaves. Both lines are one item: the pointer anywhere on
   either lights both, with `▎` at column 2 and both lines underlined, and a click on either opens the
   session's messages. No background colour and no inversion. The session id is not in this view.
-- **Messages** of the chosen agent: `← Back` at indent 1 with the close chip, a blank line, then at indent
+- **Messages** of the chosen agent: `← Back` at indent 1, a blank line, then at indent
   4 the bold `<name> · <n> messages` (the name without its `[ref]`), the state dot and the dim details as
   on the session's line 2, `<folder> · <IDE or terminal>`, and a dim line with the full name when it
   carries a `[ref]` and `Session: <id>` when the id is known, joined by ` · `; a blank line; then, when
@@ -1196,7 +1194,7 @@ request for the keys only.
   sent or received through Agent Tabs or SendMessage with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
   `HH:MM  ↘ peer  first line…` for received, in local time. A message line lights like a session, with
   `▎` at column 0, and a click opens its detail.
-- **Detail:** the `← Back` and `↩ Reply` chips at indent 1 with the close chip, which underline when lit, then the session id, from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
+- **Detail:** the `← Back` and `↩ Reply` chips at indent 1, which underline when lit, then the session id, from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
   closes the pane and fills the prompt with `Reply to <name> (message <id>): `, which never submits; a
   dialog-held pane would refuse the fill.
 - An empty view's dim text (`No other agent session is live.`, `No messages sent or received …`) is
