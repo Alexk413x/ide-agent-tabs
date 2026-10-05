@@ -1,4 +1,4 @@
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderSurface } from 'claude-code'
 
 import type {
   AgentTabsActivity,
@@ -816,6 +816,11 @@ async function openFolder($: EngineInterface, path: string) {
   if (ran === undefined || (platform !== 'windows' && ran.exitCode !== 0)) $.ui.toast(`Agent Tabs: ${argv[0]} could not open ${at.realPath}.`)
 }
 
+async function copyPath($: EngineInterface, path: string, surface: RenderSurface) {
+  const copied = await $.ui.copy({ text: path, surface }).catch(() => undefined)
+  $.ui.toast(copied?.isCopied ? `Agent Tabs: path copied · ${path}` : `Agent Tabs: couldn't copy the path · ${path}`)
+}
+
 export function hhmm(iso: string): string {
   const at = new Date(iso)
   if (Number.isNaN(at.getTime())) return '--:--'
@@ -1251,9 +1256,7 @@ export const register: Register = on => {
           <Box key={`heading-${key}`} flexDirection="row" paddingLeft={2}>
             <Button key={key} plain label={label} hover={{ underline: true, bold: true }} {...focus(key)} onPress={() => openFolder($, path)} />
             <Box position="absolute" top={0} left={label.length + 4} display="none" hover={{ display: 'flex' }}>
-              <Text dimColor wrap="truncate-end">
-                {path}
-              </Text>
+              <Button key={`copy-${key}`} plain label={path} hover={{ underline: true }} onPress={() => copyPath($, path, e.surface)} />
             </Box>
           </Box>
         )
