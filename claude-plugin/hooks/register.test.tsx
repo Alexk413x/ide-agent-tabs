@@ -806,8 +806,8 @@ describe('agents pane', () => {
       const marks2 = (key: string) => boxes(key).filter(n => n.props?.position === 'absolute')
       const shown = marks2('c1a2b3c4-0000')
       expect(shown.map(n => [n.props?.left, n.props?.display, n.hover])).toEqual([
-        [2, undefined, undefined],
-        [2, undefined, undefined],
+        [2, 'none', { display: 'flex' }],
+        [2, 'none', { display: 'flex' }],
       ])
       const hidden = marks2('tab-d')
       expect(hidden.map(n => [n.props?.left, n.props?.display, n.hover])).toEqual([
@@ -860,32 +860,32 @@ describe('agents pane', () => {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       const heading = await ui.find({ type: 'Button', key: 'folder:4:C:\\W\\sub' })
       expect(heading?.text).toBe('▸ sub')
-      const card = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && b.text === 'C:\\W\\sub')
-      expect(card?.props).toEqual({ position: 'absolute', top: 0, left: '▸ sub'.length + 4, display: 'none' })
-      expect((await ui.find({ type: 'Button', key: 'copy-folder:4:C:\\W\\sub' }))?.text).toBe('C:\\W\\sub')
+      const copy = await ui.find({ type: 'Button', key: 'copy-folder:4:C:\\W\\sub' })
+      expect(copy?.text).toBe('⧉ C:\\W\\sub')
 
       const tree = await $.ui.render({ surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       const scope = nodes(tree).find(n => n.props?.key === 'heading-folder:4:C:\\W\\sub')
-      const reveal = nodes(scope).find(n => n.props?.position === 'absolute')
+      const reveal = nodes(scope).find(n => n.type === 'Box' && n.props?.display === 'none')
       expect(reveal?.hover).toEqual({ display: 'flex' })
-      expect(nodes(reveal).some(n => n.type === 'Button' && n.props?.label === 'C:\\W\\sub')).toBe(true)
-      expect(nodes(scope).find(n => n.type === 'Button')?.hover).toEqual({ underline: true, bold: true })
+      expect(reveal?.props?.position).toBeUndefined()
+      expect(nodes(scope).find(n => n.type === 'Button')?.hover).toBeUndefined()
 
       w.runs.length = 0
       await ui.press({ key: 'folder:4:C:\\W\\sub' })
       expect(w.runs).toEqual([['explorer.exe', 'C:\\W\\sub']])
-      expect(w.toasts).toEqual([])
+      expect(await ui.find({ type: 'Text', text: 'Opened C:\\W\\sub in File Explorer (it may be behind this window).' })).toBeDefined()
 
       w.runs.length = 0
       await ui.press({ key: 'copy-folder:4:C:\\W\\sub' })
       expect(w.copies.splice(0)).toEqual(['C:\\W\\sub'])
       expect(w.runs).toEqual([])
-      expect(w.toasts.splice(0)).toEqual(['Agent Tabs: path copied · C:\\W\\sub'])
+      expect(await ui.find({ type: 'Text', text: 'Copied C:\\W\\sub' })).toBeDefined()
 
       w.runs.length = 0
       await ui.press({ key: 'folder:4:C:\\w' })
       expect(w.runs).toEqual([])
-      expect(w.toasts.splice(0)).toEqual(['Agent Tabs: C:\\w is not a folder on this machine.'])
+      expect(await ui.find({ type: 'Text', text: 'C:\\w is not a folder on this machine.' })).toBeDefined()
+      expect(w.toasts).toEqual([])
       await ui.unmount()
     }
   })
@@ -915,7 +915,7 @@ describe('agents pane', () => {
         w.runs.length = 0
         await ui.press({ key: 'folder:1:/home/me/notes.txt' })
         expect(w.runs).toEqual([])
-        expect(w.toasts.at(-1)).toBe('Agent Tabs: /home/me/notes.txt is not a folder on this machine.')
+        expect(await ui.find({ type: 'Text', text: '/home/me/notes.txt is not a folder on this machine.' })).toBeDefined()
         await ui.unmount()
       }
     })
