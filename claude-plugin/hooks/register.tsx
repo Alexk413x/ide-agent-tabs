@@ -53,6 +53,8 @@ const inboxRef = { plugin: 'ide-agent-tabs', key: 'inbox' } as const
 
 const PANE = 'agent-tabs'
 const PANE_COMMANDS = ['agent-messages']
+const OPEN_TOOL_NAME = 'open_agent_messages'
+const OPEN_TOOL = /^mcp__ide-agent-tabs__open_agent_messages$/
 const PANE_COMMAND = /^agent-messages$/
 const PANE_TITLE = 'Agent Tabs Messages'
 const PANE_ROWS = 18
@@ -975,6 +977,14 @@ export const register: Register = on => {
     for (const name of PANE_COMMANDS) {
       await $.command.register({ name, description: 'Show or hide the Agent Tabs Messages pane: agents, and the messages each sent or received' }).catch(() => undefined)
     }
+    await $.tool
+      .register({
+        name: OPEN_TOOL_NAME,
+        description:
+          "Open the user's Agent Tabs Messages pane. Call it only when the user asks to see agent messages, the agents pane, or one agent's messages. With agent (a name from ListAgents), it opens on that agent's messages.",
+        inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'A session name from ListAgents' } } },
+      })
+      .catch(() => undefined)
     $.ui.invalidate('tool.describe')
     const { value: open = false } = await $.state.get(paneOpenRef)
     if (open && (await $.ui.panes()).some(pane => pane.id === PANE)) await showPane($)
@@ -1082,6 +1092,21 @@ export const register: Register = on => {
 
   // $.mcp.call and $.tool.call go through the permission check, which would ask the person for every poll.
   on('tool.check', { tool: OWN_CALLS }, ($, e, next) => (next.origin.plugin === $.plugin.name ? { decision: 'allow' } : next(e)))
+
+  on('tool.check', { tool: OPEN_TOOL }, () => ({ decision: 'allow' }))
+
+  on('tool.call', { tool: OPEN_TOOL }, async ($, e) => {
+    const { value: me } = await $.state.get(selfRef)
+    if (!me) return { result: { opened: false }, text: 'The Agent Tabs mod is not running in this session.' }
+    const agent = typeof (e as { agent?: unknown }).agent === 'string' ? ((e as { agent: string }).agent).trim() : ''
+    if (agent === '') {
+      await openPaneOn($, { view: 'agents', agent: null, message: null })
+      return { result: { opened: true }, text: `${PANE_TITLE} pane opened.` }
+    }
+    const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
+    await openPaneOn($, { view: 'messages', agent: senderPick(rows, agent, undefined), message: null })
+    return { result: { opened: true, agent }, text: `${PANE_TITLE} pane opened on ${agent}'s messages.` }
+  })
 
   on('tool.describe', { tool: PEER_TOOLS }, async ($, e, next) => {
     const described = await next(e)
@@ -1244,7 +1269,15 @@ export const register: Register = on => {
             </Box>
             <Box flexDirection="row" paddingLeft={6}>
               {mark}
-              <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), room)} onPress={open(r)} />
+              {nameColor(r) !== undefined ? (
+                <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), room)} onPress={open(r)} />
+              ) : (
+                <Box key={`info:${r.key}`}>
+                  <Text dimColor wrap="truncate-end">
+                    {cut(detailLine(r), room)}
+                  </Text>
+                </Box>
+              )}
             </Box>
           </Box>
         )
