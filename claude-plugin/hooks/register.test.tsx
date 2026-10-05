@@ -171,6 +171,11 @@ function world(on: On, options: WorldOptions = {}) {
     return { isFilled: true }
   })
   on('session.receive', (_$, e) => ({ text: e.text }))
+  const envSet: { name: string; value?: string }[] = []
+  on('env.set', (_$, e) => {
+    envSet.push({ name: e.name, ...(e.value === undefined ? {} : { value: e.value }) })
+    return { value: undefined }
+  })
   mock.env(on, { ...(options.tab === undefined ? {} : { IDE_AGENT_TABS_ID: options.tab }), ...(options.effort === undefined ? {} : { CLAUDE_EFFORT: options.effort }) })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', () => ({ sessionId: 'b2f0c4de-0000-4000-8000-000000000000' }) as never)
@@ -241,7 +246,7 @@ function world(on: On, options: WorldOptions = {}) {
     }
   })
   const ops = (op: string) => calls.filter(c => c.args.op === op)
-  return { calls, ops, statuses, toasts, submitted, native, counts, mail, clock, model, panes }
+  return { calls, ops, statuses, toasts, submitted, native, counts, mail, clock, model, panes, envSet }
 }
 
 async function start($: Engine) {
@@ -760,5 +765,16 @@ describe('claudeMod off', () => {
     expect(await $.session.send({ to: 'codex-1a2b', text: 'hi', origin: MODEL })).toEqual({ isDelivered: true })
     expect(w.native).toEqual([{ to: 'codex-1a2b', text: 'hi' }])
     expect(w.ops('send')).toHaveLength(0)
+    expect(w.envSet).toEqual([{ name: 'IDE_AGENT_TABS_MOD' }])
+  })
+})
+
+describe('classic hook marker', () => {
+  test('a driving mod marks its tab so the classic hooks exit at once, and clears the mark when it hands the tab back', async ($, on) => {
+    const w = world(on, { tab: 'tab-c' })
+    await start($)
+    expect(w.envSet).toEqual([{ name: 'IDE_AGENT_TABS_MOD', value: 'tab-c' }])
+    await $.session.end({ reason: 'exit' } as never)
+    expect(w.envSet.at(-1)).toEqual({ name: 'IDE_AGENT_TABS_MOD' })
   })
 })
