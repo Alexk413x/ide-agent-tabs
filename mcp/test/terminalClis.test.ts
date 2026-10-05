@@ -10,7 +10,9 @@ import {
   kittySocketDir,
   kittyInputCalls,
   kittySpawnArgs,
+  parseKittyOsWindows,
   parseKittyWindowId,
+  planKittyPlace,
   parseKittyWindows,
 } from '../src/terminals/kitty.js';
 import {
@@ -18,6 +20,7 @@ import {
   parseTmuxSessions,
   parseTmuxWindow,
   parseTmuxWindowList,
+  planDedicatedTmuxTarget,
   planTmuxTarget,
   tmuxInputArgs,
   tmuxOpenArgs,
@@ -28,6 +31,8 @@ import {
   isNoGuiError,
   parsePaneId,
   parseWeztermPanes,
+  parseWeztermPaneWindows,
+  planWeztermTargets,
   weztermCliArgs,
   weztermInputArgs,
   weztermLocations,
@@ -35,6 +40,7 @@ import {
   weztermSpawnArgs,
   weztermStartArgs,
 } from '../src/terminals/wezterm.js';
+import type { TerminalTab } from '../src/terminals/types.js';
 
 const argv = ['/bin/zsh', '-l', '-i', '-c', 'script', 'agent-tabs', '/l.sh', '/s.spec'];
 
@@ -70,7 +76,12 @@ test('WezTerm is looked for in its install folders', () => {
     '/Applications/WezTerm.app/Contents/MacOS/wezterm',
     '/Users/u/Applications/WezTerm.app/Contents/MacOS/wezterm',
   ]);
-  assert.deepEqual(weztermLocations('linux', '/home/u', undefined), []);
+  assert.deepEqual(weztermLocations('linux', '/home/u', undefined), [
+    '/usr/bin/wezterm',
+    '/usr/local/bin/wezterm',
+    '/home/u/.local/bin/wezterm',
+    '/home/linuxbrew/.linuxbrew/bin/wezterm',
+  ]);
 });
 
 test('WezTerm GUI sockets are found in its runtime folder, only for running GUIs, newest first', () => {
@@ -141,11 +152,12 @@ test('tmux opens in the most recently attached session, else in the agents sessi
   assert.deepEqual(planTmuxTarget([]), { newSession: 'agents' });
 });
 
-test('tmux gets our paths in -e, a title without # or ;, and no folder', () => {
+test('tmux gets our paths through env without -e, a title without # or ;, and no folder', () => {
   const o = { title: 'Cl#{pane_pid}aude;', launcher: '/d/agent-launch.sh', spec: '/h/t.spec', argv };
-  const tail = ['-n', 'Cl {pane_pid}aude', '-e', 'IDE_AGENT_TABS_LAUNCHER=/d/agent-launch.sh', '-e', 'IDE_AGENT_TABS_SPEC=/h/t.spec', '--', ...argv];
+  const tail = ['-n', 'Cl {pane_pid}aude', '--', '/usr/bin/env', 'IDE_AGENT_TABS_LAUNCHER=/d/agent-launch.sh', 'IDE_AGENT_TABS_SPEC=/h/t.spec', ...argv];
   assert.deepEqual(tmuxOpenArgs({ session: '$2', detached: false }, o), ['new-window', '-P', '-F', '#{window_id} #{session_id} #{pid} #{socket_path}', '-t', '$2:', ...tail]);
   assert.deepEqual(tmuxOpenArgs({ newSession: 'agents' }, o), ['new-session', '-d', '-s', 'agents', '-P', '-F', '#{window_id} #{session_id} #{pid} #{socket_path}', ...tail]);
+  assert.ok(!tmuxOpenArgs({ newSession: 'agents' }, o).includes('-e'), 'new-session -e needs tmux 3.2');
   assert.throws(() => tmuxOpenArgs({ newSession: 'agents' }, { ...o, spec: '/h/a;b.spec' }), /';'/);
   assert.equal(tmuxTitle('#;'), 'Agent');
 });
@@ -183,4 +195,91 @@ test('typing a line sends the text and a separate Enter, with no bracketed paste
     assert.throws(() => weztermInputArgs('1', bad), /one line/);
     assert.throws(() => kittyInputCalls('unix:/k', '1', bad), /one line/);
   }
+});
+
+const nearTab = (over: Partial<TerminalTab>): TerminalTab => ({ id: 'caller', terminal: 'x', agent: 'claude', path: '/w', createdAt: 0, ...over });
+
+test('WezTerm spawns in the caller pane\'s window, a remembered window, or a new one it remembers', () => {
+  assert.deepEqual(weztermSpawnArgs('/w', argv, { paneId: '7' }), ['spawn', '--pane-id', '7', '--cwd', '/w', '--', ...argv]);
+  assert.deepEqual(weztermSpawnArgs('/w', argv, { windowId: '2' }), ['spawn', '--window-id', '2', '--cwd', '/w', '--', ...argv]);
+  assert.deepEqual(weztermSpawnArgs('/w', argv, { newWindow: true }), ['spawn', '--new-window', '--cwd', '/w', '--', ...argv]);
+  assert.throws(() => weztermSpawnArgs('/w', argv, { windowId: '2 --x' }), /not a WezTerm id/);
+
+  const panes = new Map([['7', '1'], ['8', '2']]);
+  assert.deepEqual(planWeztermTargets(undefined, undefined, undefined, undefined), [{ remember: false }]);
+  assert.deepEqual(planWeztermTargets({ window: 'last' }, undefined, { id: '2', socket: '/g' }, panes), [{ remember: false }]);
+  assert.deepEqual(planWeztermTargets({ window: 'dedicated' }, undefined, { id: '2', socket: '/g' }, panes), [
+    { socket: '/g', place: { windowId: '2' }, remember: false },
+    { place: { newWindow: true }, remember: true },
+  ]);
+  assert.deepEqual(planWeztermTargets({ window: 'dedicated' }, undefined, { id: '9', socket: '/g' }, panes), [{ place: { newWindow: true }, remember: true }], 'a closed window is made again');
+  assert.deepEqual(planWeztermTargets({ window: 'dedicated' }, undefined, { id: '2', socket: '/g' }, undefined), [{ place: { newWindow: true }, remember: true }]);
+  const near = nearTab({ terminal: 'wezterm', terminalId: '7', socket: '/n' });
+  assert.deepEqual(planWeztermTargets({ window: 'last', near }, panes, undefined, undefined), [
+    { socket: '/n', place: { paneId: '7' }, remember: false },
+    { remember: false },
+  ]);
+  assert.deepEqual(planWeztermTargets({ window: 'last', near }, new Map(), undefined, undefined), [{ remember: false }], 'a caller pane that is gone falls back');
+
+  const list = JSON.stringify([{ window_id: 0, pane_id: 3 }, { window_id: 1, pane_id: 7 }, { pane_id: 9 }]);
+  assert.deepEqual([...parseWeztermPaneWindows(list)], [['3', '0'], ['7', '1'], ['9', '']]);
+});
+
+test('kitty opens a tab next to the caller, in a remembered OS window, or in a new OS window it remembers', () => {
+  const o = { address: 'unix:/k', cwd: '/w', title: 't', launcher: '/l.sh', spec: '/s.spec', argv };
+  assert.deepEqual(kittyLaunchArgs({ ...o, place: { windowId: '12' } }).slice(3, 7), ['launch', '--type=tab', '--match', 'window_id:12']);
+  assert.deepEqual(kittyLaunchArgs({ ...o, place: { osWindow: true } }).slice(3, 6), ['launch', '--type=os-window', '--cwd']);
+  assert.deepEqual(kittyLaunchArgs(o).slice(3, 6), ['launch', '--type=tab', '--cwd']);
+  assert.throws(() => kittyLaunchArgs({ ...o, place: { windowId: 'recent:0' } }), /not a kitty window id/);
+
+  const osWindows = new Map([['1', ['10', '11']], ['2', []]]);
+  assert.deepEqual(planKittyPlace(undefined, 'unix:/k', undefined, undefined, undefined), { address: 'unix:/k' });
+  assert.deepEqual(planKittyPlace({ window: 'dedicated' }, 'unix:/k', undefined, { id: '1', socket: 'unix:/r' }, osWindows), { address: 'unix:/r', place: { windowId: '10' } });
+  assert.deepEqual(planKittyPlace({ window: 'dedicated' }, 'unix:/k', undefined, { id: '2', socket: 'unix:/r' }, osWindows), { address: 'unix:/k', place: { osWindow: true } });
+  assert.deepEqual(planKittyPlace({ window: 'dedicated' }, 'unix:/k', undefined, undefined, undefined), { address: 'unix:/k', place: { osWindow: true } });
+  const near = nearTab({ terminal: 'kitty', terminalId: '11', socket: 'unix:/n' });
+  assert.deepEqual(planKittyPlace({ window: 'dedicated', near }, 'unix:/k', new Set(['11']), undefined, undefined), { address: 'unix:/n', place: { windowId: '11' } });
+  assert.deepEqual(planKittyPlace({ window: 'last', near }, 'unix:/k', new Set(), undefined, undefined), { address: 'unix:/k' });
+
+  const ls = JSON.stringify([{ id: 1, tabs: [{ windows: [{ id: 10 }, { id: 11 }] }] }, { id: 2, tabs: [{ windows: [{ id: 20 }] }] }]);
+  assert.deepEqual([...parseKittyOsWindows(ls)], [['1', ['10', '11']], ['2', ['20']]]);
+  assert.deepEqual([...parseKittyWindows(ls)], ['10', '11', '20']);
+});
+
+test('tmux uses a dedicated agent-tabs session, or opens next to the caller\'s window on its server', () => {
+  const sessions = [
+    { attached: 1, lastAttached: 5, id: '$1', name: 'work' },
+    { attached: 0, lastAttached: 0, id: '$4', name: 'agent-tabs' },
+  ];
+  assert.deepEqual(planDedicatedTmuxTarget(sessions), { session: '$4', detached: true });
+  assert.deepEqual(planDedicatedTmuxTarget([{ ...sessions[1]!, attached: 1 }]), { session: '$4', detached: false });
+  assert.deepEqual(planDedicatedTmuxTarget(sessions.slice(0, 1)), { newSession: 'agent-tabs' });
+  assert.deepEqual(planTmuxTarget(sessions), { session: '$1', detached: false }, 'the last mode keeps its plan');
+  const o = { title: 't', launcher: '/d/agent-launch.sh', spec: '/h/t.spec', argv };
+  assert.deepEqual(tmuxOpenArgs({ after: '@7', socket: '/tmp/tmux-1/default' }, o).slice(0, 9), [
+    '-S', '/tmp/tmux-1/default', 'new-window', '-a', '-t', '@7', '-P', '-F', '#{window_id} #{session_id} #{pid} #{socket_path}',
+  ]);
+});
+
+test('tmux opens a background window with -d, and kitty keeps focus with --keep-focus, only when focus is false', () => {
+  const t = { title: 't', launcher: '/d/agent-launch.sh', spec: '/h/t.spec', argv };
+  const near = { after: '@7', socket: '/s' };
+  assert.deepEqual(tmuxOpenArgs({ session: '$2', detached: false }, { ...t, focus: false }).slice(0, 2), ['new-window', '-d']);
+  assert.deepEqual(tmuxOpenArgs(near, { ...t, focus: false }).slice(2, 5), ['new-window', '-d', '-a']);
+  for (const focus of [true, undefined]) {
+    const o = focus === undefined ? t : { ...t, focus };
+    assert.ok(!tmuxOpenArgs({ session: '$2', detached: false }, o).includes('-d'), String(focus));
+    assert.ok(!tmuxOpenArgs(near, o).includes('-d'), String(focus));
+  }
+  assert.deepEqual(
+    tmuxOpenArgs({ newSession: 'agents' }, { ...t, focus: true }).slice(0, 2),
+    ['new-session', '-d'],
+    'a new session is always detached; no client sees it until one attaches',
+  );
+
+  const k = { address: 'unix:/k', cwd: '/w', title: 't', launcher: '/l.sh', spec: '/s.spec', argv };
+  assert.deepEqual(kittyLaunchArgs({ ...k, focus: false }).slice(3, 6), ['launch', '--type=tab', '--keep-focus']);
+  assert.deepEqual(kittyLaunchArgs({ ...k, focus: false, place: { osWindow: true } }).slice(3, 6), ['launch', '--type=os-window', '--keep-focus']);
+  assert.ok(!kittyLaunchArgs({ ...k, focus: true }).includes('--keep-focus'));
+  assert.ok(!kittyLaunchArgs(k).includes('--keep-focus'));
 });

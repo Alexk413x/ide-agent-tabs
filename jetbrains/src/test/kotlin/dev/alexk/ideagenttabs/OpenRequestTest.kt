@@ -163,4 +163,46 @@ class OpenRequestTest {
         assumeTrue("Windows paths", File.separatorChar == '\\')
         assertEquals(1, closestBase(Path.of("c:\\WORK\\Repo"), listOf(Path.of("C:\\work"), Path.of("C:\\work\\repo"))))
     }
+
+    @Test
+    fun `parses an optional model and via`() {
+        val path = dir.toString().replace("\\", "\\\\")
+        val request = OpenRequest.parse("""{"path":"$path","model":"anthropic/claude-sonnet-4.5:beta","via":"ori"}""")
+        assertEquals("anthropic/claude-sonnet-4.5:beta", request.model)
+        assertEquals(LaunchVia.ORI, request.via)
+        assertEquals(LaunchVia.DIRECT, OpenRequest.parse("""{"path":"$path","via":"direct"}""").via)
+        val bare = OpenRequest.parse("""{"path":"$path"}""")
+        assertNull(bare.model)
+        assertNull(bare.via)
+        assertNull(OpenRequest.parse("""{"path":"$path","model":null,"via":null}""").model)
+        val bad = listOf(
+            """"model":"" """,
+            """"model":"has space"""",
+            """"model":"a;b"""",
+            """"model":"${"x".repeat(201)}"""",
+            """"model":1""",
+            """"via":"cloud"""",
+            """"via":"ORI"""",
+            """"via":1""",
+        )
+        for (field in bad) {
+            val body = """{"path":"$path",$field}"""
+            assertThrows(body, IllegalArgumentException::class.java) { OpenRequest.parse(body) }
+        }
+        assertEquals(200, OpenRequest.of(dir.toString(), null, model = "x".repeat(200)).model?.length)
+    }
+
+    @Test
+    fun `focus is an optional boolean that defaults to false`() {
+        val path = dir.toString().replace("\\", "\\\\")
+        assertEquals(false, OpenRequest.parse("""{"path":"$path"}""").focus)
+        assertEquals(false, OpenRequest.parse("""{"path":"$path","focus":null}""").focus)
+        assertEquals(true, OpenRequest.parse("""{"path":"$path","focus":true}""").focus)
+        assertEquals(false, OpenRequest.parse("""{"path":"$path","focus":false}""").focus)
+        for (bad in listOf("\"true\"", "1", "{}")) {
+            val body = """{"path":"$path","focus":$bad}"""
+            assertThrows(body, IllegalArgumentException::class.java) { OpenRequest.parse(body) }
+        }
+        assertEquals(false, OpenRequest.of(dir.toString(), null).focus)
+    }
 }

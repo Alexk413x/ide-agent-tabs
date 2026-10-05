@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import {
@@ -9,16 +9,32 @@ import {
   KEEP_MS,
   mailboxDir,
   MAX_SENT_PER_MINUTE,
+  MAX_READ_CHARS,
+  MAX_TEXT_CHARS,
   MAX_UNREAD,
   newMessageId,
+  peekUnread,
   reserveSend,
+  takeBatch,
   takeMessages,
   waitForMessage,
   type Message,
 } from '../src/messaging/mailbox.js';
-import { Messaging, type Hosts } from '../src/messaging/messaging.js';
+import { AGY_MAX_WAIT_S, Messaging, type Hosts } from '../src/messaging/messaging.js';
+import { runHook } from '../src/messaging/hook.js';
 import { unreadReminder, wakeLine } from '../src/messaging/notice.js';
-import { agentFromClient, effectiveState, liveSessions, presencePath, readPresence, WAKE_TIMEOUT_MS } from '../src/messaging/sessions.js';
+import {
+  agentFromClient,
+  BUSY_STALE_MS,
+  effectiveState,
+  liveSessions,
+  PRESENCE_BEATS_MISSED,
+  presencePath,
+  readPresence,
+  updatePresence,
+  WAKE_TIMEOUT_MS,
+  type SessionState,
+} from '../src/messaging/sessions.js';
 import { tempDir } from './tempDir.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -54,6 +70,12 @@ test('maps MCP client names to agent names', () => {
   assert.equal(agentFromClient('gemini-cli-mcp-client'), 'gemini');
   assert.equal(agentFromClient('github-copilot-cli'), 'copilot');
   assert.equal(agentFromClient('opencode'), 'opencode');
+  assert.equal(agentFromClient('antigravity-client'), 'agy');
+  assert.equal(agentFromClient('grok-shell-ide-agent-tabs'), 'grok');
+  assert.equal(agentFromClient('qwen-cli-mcp-client-ide-agent-tabs'), 'qwen');
+  assert.equal(agentFromClient('goose-cli'), 'goose');
+  assert.equal(agentFromClient('pi'), 'pi');
+  assert.equal(agentFromClient('pipeline'), 'pipeline', 'pi matches only as the whole name');
   assert.equal(agentFromClient('My Agent!'), 'MyAgent');
   assert.equal(agentFromClient(undefined), 'unknown');
 });
@@ -145,7 +167,7 @@ test('presence files: written at start, stale ones ignored and removed, and dele
   const a = session(home, 'tab-a', 100, { isAlive });
   await a.start();
   const presence = JSON.parse(readFileSync(presencePath(home, 'tab-a'), 'utf8'));
-  assert.deepEqual({ ...presence, startedAt: undefined }, { id: 'tab-a', agent: 'codex', path: '/w/tab-a', pid: 100, startedAt: undefined, state: 'unknown' });
+  assert.deepEqual({ ...presence, startedAt: undefined }, { id: 'tab-a', agent: 'codex', path: '/w/tab-a', pid: 100, startedAt: undefined, state: 'unknown', beatMs: 60_000 });
 
   const child = session(home, 'tab-a', 200, { isAlive, randomId: () => 's-child0000001' });
   await child.start();
@@ -164,8 +186,11 @@ test('presence files: written at start, stale ones ignored and removed, and dele
   assert.deepEqual((await liveSessions(home, isAlive)).map((s) => s.id).sort(), ['s-child0000001', 's-loose0000001', 'tab-a']);
   assert.ok(!existsSync(presencePath(home, 'dead')));
   assert.ok(existsSync(presencePath(home, 'stub')), 'a fresh stub from a hook waits for its server');
-  await liveSessions(home, isAlive, Date.now() + 2 * 60 * 60 * 1000);
-  assert.ok(!existsSync(presencePath(home, 'stub')));
+  const stubs = tempDir('iat-pres-');
+  mkdirSync(path.join(stubs, 'sessions'));
+  writeFileSync(presencePath(stubs, 'stub'), JSON.stringify({ id: 'stub', state: 'idle' }));
+  await liveSessions(stubs, isAlive, Date.now() + 2 * 60 * 60 * 1000);
+  assert.ok(!existsSync(presencePath(stubs, 'stub')), 'a stub whose server never came is removed after an hour');
 
   child.stopSync();
   assert.ok(existsSync(presencePath(home, 'tab-a')), "a server never deletes another server's presence");
@@ -228,6 +253,11 @@ test('a session without a tab id takes codex-<thread> unless another live server
   assert.equal((await readPresence(home, `codex-${THREAD}`))!.pid, 100);
 });
 
+async function until(done: () => boolean, ms: number): Promise<void> {
+  const end = Date.now() + ms;
+  while (!done() && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+}
+
 async function pair(typed: Typed[], ok = true) {
   const home = tempDir('iat-pair-');
   const a = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-a', IDE_AGENT_TABS_AGENT: 'codex' }, pid: 1, cwd: '/a', hosts: hosts(typed, ok), isAlive: () => true });
@@ -238,8 +268,7 @@ async function pair(typed: Typed[], ok = true) {
 }
 
 async function setState(home: string, id: string, state: string) {
-  const file = presencePath(home, id);
-  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), state }));
+  await updatePresence(home, id, (p) => ({ ...p!, state: state as SessionState }));
 }
 
 test('send wakes an idle session with the fixed line, and only queues for any other state', async () => {
@@ -249,14 +278,39 @@ test('send wakes an idle session with the fixed line, and only queues for any ot
   await setState(home, 'tab-b', 'busy');
   assert.equal((await a.send({ to: 'tab-b', text: 'x' })).delivery, 'queued');
   await setState(home, 'tab-b', 'idle');
-  const woken = await a.send({ to: 'tab-b', text: 'secret; $(rm -rf /)' });
+  const woken = await a.send({ to: 'tab-b', text: 'secret; `rm -rf /`' });
   assert.equal(woken.delivery, 'woken');
   assert.deepEqual(typed, [{ id: 'tab-b', host: 'fake-term', text: 'Agent Tabs: new message from codex tab-a. Call read_messages.' }]);
   const after = (await readPresence(home, 'tab-b'))!;
   assert.equal(after.state, 'waking', 'a woken session is marked waking so a second message does not type again');
   assert.equal(after.host, 'fake-term');
-  assert.equal((await a.send({ to: 'tab-b', text: 'x' })).delivery, 'queued');
+  assert.equal((await a.send({ to: 'tab-b', text: 'y' })).delivery, 'queued');
   assert.equal(typed.length, 1);
+});
+
+test('a queued send keeps retrying the wake-up until the message is read', async () => {
+  const typed: Typed[] = [];
+  const home = tempDir('iat-pair-');
+  const a = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-a', IDE_AGENT_TABS_AGENT: 'codex' }, pid: 1, cwd: '/a', hosts: hosts(typed), isAlive: () => true, rewakeEveryMs: 20 });
+  const b = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-b', IDE_AGENT_TABS_AGENT: 'claude' }, pid: 2, cwd: '/b', hosts: hosts([]), isAlive: () => true });
+  await a.start();
+  await b.start();
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  try {
+    assert.equal((await a.send({ to: 'tab-b', text: 'x' })).delivery, 'queued', 'state unknown');
+    await pause(80);
+    assert.equal(typed.length, 0, 'no wake line while the state allows none');
+    await setState(home, 'tab-b', 'idle');
+    await pause(150);
+    assert.equal(typed.length, 1, 'the retry types once the session is idle');
+    assert.equal((await readPresence(home, 'tab-b'))!.state, 'waking');
+    await setState(home, 'tab-b', 'idle');
+    await b.read();
+    await pause(150);
+    assert.equal(typed.length, 1, 'a read message ends the retries');
+  } finally {
+    a.stopFollowUps();
+  }
 });
 
 test('a failed wake-up leaves the message queued and the session idle', async () => {
@@ -302,8 +356,7 @@ test('send refuses bad targets and ids; read marks read and wraps the text as un
   await assert.rejects(a.send({ to: 'tab-b', text: ' ' }), /empty/);
   await assert.rejects(a.send({ to: 'tab-b', text: 'x', replyTo: 'nope' }), /message id/);
   const sent = await a.send({ to: 'tab-b', text: 'please review' });
-  const file = presencePath(home, 'tab-b');
-  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), nudges: 2 }));
+  await updatePresence(home, 'tab-b', (p) => ({ ...p!, nudges: 2 }));
   const read = await b.read();
   assert.equal((await readPresence(home, 'tab-b'))!.nudges, 0, 'reading resets the turn-end count');
   assert.match(read.notice!, /not from your user/);
@@ -346,6 +399,221 @@ test('a waking session counts as idle again once the wake line had time to start
   assert.equal(effectiveState(waking, at + WAKE_TIMEOUT_MS), 'idle');
   assert.equal(effectiveState(waking, at - 1), 'idle');
   assert.equal(effectiveState({ state: 'waking' }, at), 'idle');
-  assert.equal(effectiveState({ state: 'busy', stateAt: new Date(at).toISOString() }, at + 10 * WAKE_TIMEOUT_MS), 'busy');
+  const busy = { state: 'busy' as const, stateAt: new Date(at).toISOString() };
+  assert.equal(effectiveState(busy, at + BUSY_STALE_MS - 1), 'busy');
+  assert.equal(effectiveState(busy, at + BUSY_STALE_MS), 'idle', 'a turn with no hook for BUSY_STALE_MS was interrupted');
+  assert.equal(effectiveState({ state: 'permission', stateAt: busy.stateAt }, at + 10 * BUSY_STALE_MS), 'permission', 'a wake line never answers a permission prompt');
   assert.equal(effectiveState({}, at), 'unknown');
+});
+
+test('one read returns at most MAX_READ_CHARS of text and leaves the rest unread', async () => {
+  const { home, a, b } = await pair([]);
+  for (let i = 0; i < 3; i++) await a.send({ to: 'tab-b', text: String(i).repeat(MAX_TEXT_CHARS) });
+  a.stopFollowUps();
+  const first = await b.read();
+  assert.equal(first.messages.length, Math.max(1, Math.floor(MAX_READ_CHARS / MAX_TEXT_CHARS)));
+  assert.equal(first.remaining, 3 - first.messages.length);
+  assert.equal(readdirSync(path.join(mailboxDir(home, 'tab-b'), 'new')).length, first.remaining);
+  const rest: string[] = [];
+  for (let r = await b.read(); r.messages.length; r = await b.read()) rest.push(...r.messages.map((m) => m.text[0]!));
+  assert.deepEqual([...first.messages.map((m) => m.text[0]!), ...rest], ['0', '1', '2']);
+});
+
+test('a read cancelled before it answers leaves the messages unread', async () => {
+  const { home, a, b } = await pair([]);
+  await a.send({ to: 'tab-b', text: 'keep me' });
+  a.stopFollowUps();
+  const cancel = new AbortController();
+  cancel.abort();
+  await assert.rejects(b.read(cancel.signal), /cancelled/);
+  assert.deepEqual((await peekUnread(home, 'tab-b')).map((m) => m.text), ['keep me']);
+  assert.equal((await b.read()).messages[0]!.text, 'keep me');
+});
+
+test('a wait cancelled after it takes a message puts the message back', async () => {
+  const home = tempDir('iat-mail-');
+  await deliver(home, message('tab-b', { text: 'keep me' }));
+  const cancel = new AbortController();
+  cancel.abort();
+  assert.equal(await waitForMessage(home, 'tab-b', {}, 1_000, cancel.signal), undefined);
+  assert.deepEqual((await peekUnread(home, 'tab-b')).map((m) => m.text), ['keep me']);
+});
+
+test('a file that cannot be read now stays unread, and one that is not a message is set aside', async () => {
+  const home = tempDir('iat-mail-');
+  await deliver(home, message('tab-b', { text: 'good' }));
+  const box = mailboxDir(home, 'tab-b');
+  mkdirSync(path.join(box, 'new', '0-m-00000000000000aa.json'));
+  writeFileSync(path.join(box, 'new', '0-m-00000000000000bb.json'), '{not json');
+  const batch = await takeBatch(home, 'tab-b');
+  assert.deepEqual(batch.messages.map((m) => m.text), ['good']);
+  assert.equal(batch.unreadable, 1);
+  assert.deepEqual(readdirSync(path.join(box, 'new')), ['0-m-00000000000000aa.json']);
+  assert.deepEqual(readdirSync(path.join(box, 'bad')), ['0-m-00000000000000bb.json']);
+});
+
+test('a restarted server forgets the busy state and nudges its dead predecessor left behind', async () => {
+  const home = tempDir('iat-restart-');
+  const old = new Date(Date.now() - 5 * 60_000).toISOString();
+  mkdirSync(path.join(home, 'sessions'));
+  writeFileSync(
+    presencePath(home, 'tab-b'),
+    JSON.stringify({ id: 'tab-b', agent: 'claude', path: '/b', pid: 7, startedAt: old, state: 'busy', stateAt: old, nudges: 3, owner: 'gone' }),
+  );
+  const b = session(home, 'tab-b', 8, { isAlive: (pid) => pid !== 7 });
+  await b.start();
+  const p = (await readPresence(home, 'tab-b'))!;
+  assert.equal(p.state, 'unknown');
+  assert.equal(p.nudges, undefined);
+  assert.equal(p.owner, undefined);
+});
+
+test('a restarted server keeps a state its own agent set just before it started', async () => {
+  const home = tempDir('iat-restart-');
+  const now = new Date().toISOString();
+  mkdirSync(path.join(home, 'sessions'));
+  writeFileSync(presencePath(home, 'tab-b'), JSON.stringify({ id: 'tab-b', agent: 'claude', path: '/b', pid: 7, startedAt: now, state: 'busy', stateAt: now }));
+  const b = session(home, 'tab-b', 8, { isAlive: (pid) => pid !== 7 });
+  await b.start();
+  assert.equal((await readPresence(home, 'tab-b'))!.state, 'busy');
+});
+
+test('a wake that fails on a cached host finds the host again and types there', async () => {
+  const typed: Typed[] = [];
+  const home = tempDir('iat-pair-');
+  const moving: Hosts = {
+    findHost: async () => 'new-ide',
+    typeInto: async (id, host, text) => {
+      if (host !== 'new-ide') return { ok: false, reason: `no running IDE or terminal with id ${host}` };
+      typed.push({ id, host, text });
+      return { ok: true };
+    },
+  };
+  const a = session(home, 'tab-a', 1, { hosts: moving });
+  const b = session(home, 'tab-b', 2);
+  await a.start();
+  await b.start();
+  await updatePresence(home, 'tab-b', (p) => ({ ...p!, host: 'old-ide', state: 'idle', stateAt: new Date(Date.now() - 10_000).toISOString() }));
+  const sent = await a.send({ to: 'tab-b', text: 'x' });
+  a.stopFollowUps();
+  assert.equal(sent.delivery, 'woken');
+  assert.deepEqual(typed.map((t) => t.host), ['new-ide']);
+  assert.equal((await readPresence(home, 'tab-b'))!.host, 'new-ide');
+});
+
+test('a send that fails to deliver gives its rate slot back', async () => {
+  const { home, a } = await pair([]);
+  for (let i = 0; i < MAX_UNREAD; i++) await deliver(home, message('tab-b'));
+  for (let i = 0; i < MAX_SENT_PER_MINUTE + 1; i++) await assert.rejects(a.send({ to: 'tab-b', text: `x${i}` }), /50 unread/);
+  a.stopFollowUps();
+});
+
+test('the same message sent again within DEDUPE_MS is not delivered twice', async () => {
+  const { home, a } = await pair([]);
+  const first = await a.send({ to: 'tab-b', text: 'review this' });
+  const again = await a.send({ to: 'tab-b', text: 'review this' });
+  const other = await a.send({ to: 'tab-b', text: 'review that' });
+  a.stopFollowUps();
+  assert.equal(again.id, first.id);
+  assert.equal(again.duplicate, true);
+  assert.notEqual(other.id, first.id);
+  assert.equal((await peekUnread(home, 'tab-b')).length, 2);
+});
+
+test('a presence whose heartbeat stopped counts as gone even if its pid is reused', async () => {
+  const home = tempDir('iat-beat-');
+  mkdirSync(path.join(home, 'sessions'));
+  const file = presencePath(home, 'tab-b');
+  const now = new Date().toISOString();
+  writeFileSync(file, JSON.stringify({ id: 'tab-b', agent: 'claude', path: '/b', pid: 7, startedAt: now, state: 'idle', stateAt: now, beatMs: 1_000 }));
+  assert.equal((await liveSessions(home, () => true)).length, 1);
+  const old = new Date(Date.now() - PRESENCE_BEATS_MISSED * 1_000 - 1_000);
+  utimesSync(file, old, old);
+  assert.equal((await liveSessions(home, () => true)).length, 0);
+  assert.ok(!existsSync(file));
+});
+
+test('a presence from a server without a heartbeat still lives by its pid', async () => {
+  const home = tempDir('iat-beat-');
+  mkdirSync(path.join(home, 'sessions'));
+  const file = presencePath(home, 'tab-b');
+  const now = new Date().toISOString();
+  writeFileSync(file, JSON.stringify({ id: 'tab-b', agent: 'claude', path: '/b', pid: 7, startedAt: now, state: 'idle', stateAt: now }));
+  const old = new Date(Date.now() - DAY);
+  utimesSync(file, old, old);
+  assert.equal((await liveSessions(home, () => true)).length, 1);
+});
+
+test('a server keeps its presence fresh and writes it again if it goes missing', async () => {
+  const home = tempDir('iat-beat-');
+  const b = session(home, 'tab-b', 2, { heartbeatMs: 20 });
+  await b.start();
+  const file = presencePath(home, 'tab-b');
+  assert.equal((await readPresence(home, 'tab-b'))!.beatMs, 20);
+  rmSync(file);
+  await new Promise((r) => setTimeout(r, 120));
+  b.stopHeartbeat();
+  assert.ok(existsSync(file));
+});
+
+test('a tab still starting is not typed into, and the follow-up wakes it once it is up', async () => {
+  const typed: Typed[] = [];
+  const home = tempDir('iat-pair-');
+  const a = session(home, 'tab-a', 1, { hosts: hosts(typed), rewakeEveryMs: 30 });
+  const b = session(home, 'tab-b', 2);
+  await a.start();
+  await b.start();
+  await updatePresence(home, 'tab-b', (p) => ({ ...p!, host: 'fake-term', state: 'idle', stateAt: new Date(Date.now() + 200).toISOString() }));
+  try {
+    assert.equal((await a.send({ to: 'tab-b', text: 'hi' })).delivery, 'queued');
+    assert.equal(typed.length, 0);
+    await until(() => typed.length > 0, 5_000);
+    assert.equal(typed.length, 1);
+  } finally {
+    a.stopFollowUps();
+  }
+});
+
+test('an Antigravity CLI session waits at most AGY_MAX_WAIT_S, inside its 3-minute tool limit', async () => {
+  const home = tempDir('iat-agy-');
+  const env = { IDE_AGENT_TABS_ID: 'tab-agy', IDE_AGENT_TABS_AGENT: 'agy' };
+  const agy = new Messaging({ home, env, pid: 3, cwd: '/a', hosts: hosts([]), isAlive: () => true });
+  await agy.start();
+  const cancel = new AbortController();
+  cancel.abort();
+  assert.equal((await agy.wait({ timeout: 600 }, cancel.signal)).waitedSeconds, AGY_MAX_WAIT_S);
+  assert.ok(AGY_MAX_WAIT_S < 180);
+  agy.stopHeartbeat();
+});
+
+test('a Claude tab whose turn just ended is not typed into until its prompt has sat idle', async () => {
+  const typed: Typed[] = [];
+  const home = tempDir('iat-pair-');
+  const a = session(home, 'tab-a', 1, { hosts: hosts(typed), rewakeEveryMs: 20 });
+  const b = session(home, 'tab-b', 2, { env: { IDE_AGENT_TABS_ID: 'tab-b', IDE_AGENT_TABS_AGENT: 'claude' } });
+  await a.start();
+  await b.start();
+  const at = Date.now() - 10_000;
+  await runHook({ cli: 'claude', event: 'Stop', input: {}, home, sessionId: 'tab-b', now: at });
+  try {
+    assert.equal((await a.send({ to: 'tab-b', text: 'hi' })).delivery, 'queued', 'the user may be typing a new prompt');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(typed.length, 0);
+    await runHook({ cli: 'claude', event: 'Notification', input: { notification_type: 'idle_prompt' }, home, sessionId: 'tab-b', now: at });
+    await until(() => typed.length > 0, 3_000);
+    assert.equal(typed.length, 1, 'the follow-up wakes it once the prompt is idle');
+  } finally {
+    a.stopFollowUps();
+  }
+});
+
+test('a CLI without an input-idle signal is woken as soon as its turn ends', async () => {
+  const typed: Typed[] = [];
+  const home = tempDir('iat-pair-');
+  const a = session(home, 'tab-a', 1, { hosts: hosts(typed) });
+  await a.start();
+  await session(home, 'tab-b', 2).start();
+  await runHook({ cli: 'codex', event: 'Stop', input: {}, home, sessionId: 'tab-b', now: Date.now() - 10_000 });
+  assert.equal((await a.send({ to: 'tab-b', text: 'hi' })).delivery, 'woken');
+  a.stopFollowUps();
 });

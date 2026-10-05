@@ -27,15 +27,22 @@ data class AgentProfile(
     val promptFlag: String? = null,
     val env: Map<String, String> = emptyMap(),
     val icon: String? = null,
+    val modelFlag: String? = null,
 ) {
-    fun launch(prompt: String?, callerArgs: List<String> = emptyList(), callerEnv: Map<String, String> = emptyMap()) =
-        AgentLaunch(
-            agent = name,
-            command = command,
-            args = args + callerArgs + listOfNotNull(promptFlag?.takeIf { prompt != null }),
-            prompt = prompt,
-            env = env + callerEnv,
-        )
+    fun launch(
+        prompt: String?,
+        callerArgs: List<String> = emptyList(),
+        callerEnv: Map<String, String> = emptyMap(),
+        model: String? = null,
+    ) = AgentLaunch(
+        agent = name,
+        command = command,
+        args = args + listOfNotNull(modelFlag?.let { flag -> model?.let { listOf(flag, it) } }).flatten() + callerArgs +
+            listOfNotNull(promptFlag?.takeIf { prompt != null }),
+        prompt = prompt,
+        env = env + callerEnv,
+        via = LaunchVia.DIRECT,
+    )
 }
 
 class AgentLaunch(
@@ -44,7 +51,76 @@ class AgentLaunch(
     val args: List<String>,
     val prompt: String?,
     val env: Map<String, String>,
+    val via: LaunchVia = LaunchVia.DIRECT,
 )
+
+const val ORI_COMMAND = "ori"
+val ORI_PROFILES = setOf("claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent")
+private val ORI_CMD_UNSAFE = Regex("[|\"%^&<>]")
+private val SHIM_EXTENSIONS = listOf(".exe", ".cmd", ".bat")
+
+class LaunchContext(
+    val prompt: String? = null,
+    val args: List<String> = emptyList(),
+    val env: Map<String, String> = emptyMap(),
+    val model: String? = null,
+    val via: LaunchVia? = null,
+    val setting: LaunchVia = LaunchVia.DIRECT,
+    val ori: DetectedOri? = null,
+    val windows: Boolean = false,
+    val searchPath: String = "",
+)
+
+private fun isCmdShim(command: String, searchPath: String): Boolean {
+    val lower = command.lowercase()
+    if (lower.endsWith(".cmd") || lower.endsWith(".bat")) return true
+    if (lower.endsWith(".exe") || lower.endsWith(".com") || lower.endsWith(".ps1")) return false
+    for (raw in searchPath.split(File.pathSeparatorChar)) {
+        val dir = raw.trim().trim('"')
+        if (dir.isEmpty()) continue
+        val hit = SHIM_EXTENSIONS.firstOrNull { ext ->
+            runCatching { Path.of(dir, command + ext) }.getOrNull()?.let { Files.exists(it, LinkOption.NOFOLLOW_LINKS) } == true
+        }
+        if (hit != null) return hit != ".exe"
+    }
+    return true
+}
+
+private fun oriRefusal(profile: AgentProfile, context: LaunchContext, oriArgs: List<String>): String? {
+    val ori = context.ori ?: return "Ori is not installed"
+    if (profile.name !in ORI_PROFILES) return "Ori does not support ${profile.name}"
+    if (profile.name !in ori.agents) return "Ori does not list ${profile.name} as launchable"
+    if (context.windows && isCmdShim(profile.command, context.searchPath) && oriArgs.any { ORI_CMD_UNSAFE.containsMatchIn(it) }) {
+        return "Ori refuses an argument with | \" % ^ & < or > when the agent is a .cmd shim on Windows"
+    }
+    return null
+}
+
+private val GOOSE_RUN_ARGS = listOf("run", "-s")
+private val GOOSE_EMPTY_ARGS = listOf("session")
+
+private fun withoutPrompt(profile: AgentProfile, prompt: String?): AgentProfile =
+    if (prompt == null && profile.command == "goose" && profile.args == GOOSE_RUN_ARGS) profile.copy(args = GOOSE_EMPTY_ARGS) else profile
+
+fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
+    val profile = withoutPrompt(requested, context.prompt)
+    if ((context.via ?: context.setting) == LaunchVia.ORI) {
+        val flag = listOfNotNull(profile.promptFlag?.takeIf { context.prompt != null })
+        val model = context.model?.let { listOf("--model", it) }.orEmpty()
+        val args = listOf(profile.name) + model + profile.args + context.args + flag
+        val refusal = oriRefusal(profile, context, args + listOfNotNull(context.prompt))
+        if (refusal == null) {
+            return AgentLaunch(profile.name, ORI_COMMAND, args, context.prompt, profile.env + context.env, LaunchVia.ORI)
+        }
+        if (context.via == LaunchVia.ORI) throw IllegalArgumentException("${profile.name} can't launch through Ori: $refusal")
+    }
+    if (context.model != null && profile.modelFlag == null) {
+        throw IllegalArgumentException(
+            "${profile.name} has no model option; open it without model, or set modelFlag for it in agents.json",
+        )
+    }
+    return profile.launch(context.prompt, context.args, context.env, context.model)
+}
 
 // Same strings as CODEX_TAB_ARGS in mcp/src/profiles.ts, which explains them; mcp/test/codexTab.test.ts checks both.
 val CODEX_TAB_ARGS = listOf(
@@ -60,14 +136,25 @@ val CODEX_TAB_ARGS = listOf(
     "-c",
     "hooks.Stop=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'Stop', session_id = '\${session_id}', turn_id = '\${turn_id}' }, timeout = 10 }] }]",
     "-c",
-    "hooks.state={ '/<session-flags>/config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, 'C:\\<session-flags>\\config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, '/<session-flags>/config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, 'C:\\<session-flags>\\config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, '/<session-flags>/config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, 'C:\\<session-flags>\\config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, '/<session-flags>/config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, 'C:\\<session-flags>\\config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' } }",
+    "hooks.Interrupt=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'Interrupt', session_id = '\${session_id}', turn_id = '\${turn_id}' }, timeout = 3 }] }]",
+    "-c",
+    "hooks.state={ '/<session-flags>/config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, 'C:\\<session-flags>\\config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, '/<session-flags>/config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, 'C:\\<session-flags>\\config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, '/<session-flags>/config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, 'C:\\<session-flags>\\config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, '/<session-flags>/config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, 'C:\\<session-flags>\\config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, '/<session-flags>/config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' }, 'C:\\<session-flags>\\config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' } }",
 )
 
 val BUILTIN_PROFILES = listOf(
-    AgentProfile("claude", "Claude Code", "claude"),
-    AgentProfile("codex", "Codex", "codex", CODEX_TAB_ARGS),
-    AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i"),
-    AgentProfile("copilot", "Copilot CLI", "copilot", promptFlag = "-i"),
+    AgentProfile("claude", "Claude Code", "claude", modelFlag = "--model"),
+    AgentProfile("codex", "Codex", "codex", CODEX_TAB_ARGS, modelFlag = "-m"),
+    AgentProfile("agy", "Antigravity CLI", "agy", promptFlag = "-i", modelFlag = "--model"),
+    AgentProfile("copilot", "Copilot CLI", "copilot", promptFlag = "-i", modelFlag = "--model"),
+    AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i", modelFlag = "-m"),
+    AgentProfile("grok", "Grok Build", "grok", modelFlag = "-m"),
+    AgentProfile("pi", "Pi", "pi", modelFlag = "--model"),
+    AgentProfile("hermes", "Hermes", "hermes", listOf("chat"), promptFlag = "-q", modelFlag = "-m"),
+    AgentProfile("opencode", "OpenCode", "opencode", promptFlag = "--prompt", modelFlag = "-m"),
+    AgentProfile("qwen", "Qwen Code", "qwen", promptFlag = "-i", modelFlag = "-m"),
+    AgentProfile("goose", "Goose", "goose", listOf("run", "-s"), promptFlag = "-t", modelFlag = "--model"),
+    // Without --local-provider, --oss stops at a picker between LM Studio and Ollama.
+    AgentProfile("codex-local", "Codex (local)", "codex", CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "ollama"), modelFlag = "-m"),
 )
 
 fun parseProfiles(text: String): List<AgentProfile> {
@@ -85,6 +172,10 @@ fun parseProfiles(text: String): List<AgentProfile> {
         if (promptFlag != null && (promptFlag.isBlank() || '\u0000' in promptFlag)) {
             throw IllegalArgumentException("$name.promptFlag must not be blank")
         }
+        val modelFlag = obj.optString("$name.modelFlag", "modelFlag")
+        if (modelFlag != null && (modelFlag.isBlank() || '\u0000' in modelFlag)) {
+            throw IllegalArgumentException("$name.modelFlag must not be blank")
+        }
         val env = obj.optStringMap("$name.env", "env")
         checkEnv(env, "$name.env")
         AgentProfile(
@@ -95,6 +186,7 @@ fun parseProfiles(text: String): List<AgentProfile> {
             promptFlag = promptFlag,
             env = env,
             icon = obj.optString("$name.icon", "icon")?.takeIf { it.isNotBlank() },
+            modelFlag = modelFlag,
         )
     }
 }
@@ -128,7 +220,7 @@ fun withDefaultAgent(existing: String?, name: String): String {
     return GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n"
 }
 
-private fun parseJsonObject(text: String, file: String): JsonObject {
+internal fun parseJsonObject(text: String, file: String): JsonObject {
     val json = try {
         JsonParser.parseString(text)
     } catch (e: Exception) {
@@ -208,6 +300,58 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
         true
     } catch (e: Exception) {
         warn("Could not save the default agent to $configFile: ${e.message}")
+        false
+    }
+
+    fun shared(): SharedSettings {
+        if (!Files.isRegularFile(configFile)) return SharedSettings()
+        return try {
+            readSharedSettings(Files.readString(configFile))
+        } catch (e: Exception) {
+            warn("Ignoring $configFile: ${e.message}")
+            SharedSettings()
+        }
+    }
+
+    fun setTabRouting(value: TabRouting): Boolean = saveShared("tabRouting", value.value)
+
+    fun setTerminal(value: String): Boolean = saveShared("terminal", value)
+
+    fun setShell(value: String): Boolean = saveShared("shell", value)
+
+    fun setTerminalWindow(value: TerminalWindow): Boolean = saveShared("terminalWindow", value.value)
+
+    fun setLaunchVia(value: LaunchVia): Boolean = saveShared("launchVia", value.value)
+
+    fun setFocusNewTabs(value: FocusNewTabs): Boolean = saveShared("focusNewTabs", value.value)
+
+    fun setClaudeMod(on: Boolean): Boolean = saveShared("claudeMod", if (on) AUTO else CLAUDE_MOD_OFF)
+
+    fun setCloseAfterHandoff(value: Boolean): Boolean = saveFlag("closeAfterHandoff", value, default = true)
+
+    fun setAllowResume(value: Boolean): Boolean = saveFlag("allowResume", value, default = true)
+
+    private fun saveFlag(key: String, value: Boolean, default: Boolean): Boolean = try {
+        val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null
+        writeAtomically(configFile, withSharedFlag(existing, key, value, default))
+        true
+    } catch (e: Exception) {
+        warn("Could not save $key to $configFile: ${e.message}")
+        false
+    }
+
+    fun detected(): Detected = try {
+        parseDetected(Files.readString(home.resolve(DETECTED_FILE)))
+    } catch (e: Exception) {
+        Detected()
+    }
+
+    private fun saveShared(key: String, value: String): Boolean = try {
+        val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null
+        writeAtomically(configFile, withSharedValue(existing, key, value))
+        true
+    } catch (e: Exception) {
+        warn("Could not save $key to $configFile: ${e.message}")
         false
     }
 

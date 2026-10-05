@@ -8,9 +8,12 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
+import com.intellij.util.concurrency.AppExecutorUtil
 import org.jetbrains.ide.BuiltInServerManager
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 @Service(Service.Level.APP)
 class EndpointFile : Disposable {
@@ -22,6 +25,8 @@ class EndpointFile : Disposable {
     @Volatile
     private var file: Path? = null
 
+    private var beat: ScheduledFuture<*>? = null
+
     @Synchronized
     fun write() {
         if (file != null) return
@@ -32,16 +37,27 @@ class EndpointFile : Disposable {
             pid = pid,
             url = "http://127.0.0.1:$port$ENDPOINT_BASE",
             token = token,
-        )
+            startedAt = System.currentTimeMillis(),
+        ).toString()
         val target = ideAgentTabsHome().resolve("endpoints").resolve("jetbrains-$pid.json")
+        file = target
         try {
-            file = writeAtomically(target, entry.toString(), private = true)
+            writeAtomically(target, entry, private = true)
         } catch (e: Exception) {
             LOG.warn("Could not write $target", e)
         }
+        beat = AppExecutorUtil.getAppScheduledExecutorService().scheduleWithFixedDelay({
+            try {
+                beatEndpoint(target, entry)
+            } catch (e: Exception) {
+                LOG.warn("Could not refresh $target", e)
+            }
+        }, ENDPOINT_BEAT_MS, ENDPOINT_BEAT_MS, TimeUnit.MILLISECONDS)
     }
 
+    @Synchronized
     override fun dispose() {
+        beat?.cancel(false)
         val written = file ?: return
         try {
             Files.deleteIfExists(written)

@@ -5,12 +5,24 @@ step.
 
 A profile says how to start one agent CLI. Every IDE uses the same built-in profiles:
 
-| Name | Label | Command | First prompt |
-|---|---|---|---|
-| `claude` | Claude Code | `claude` | positional |
-| `codex` | Codex | `codex` and fixed `args` that give the tab its Agent Tabs server and messaging hooks | positional |
-| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
-| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
+| Name | Label | Command | First prompt | Model flag |
+|---|---|---|---|---|
+| `claude` | Claude Code | `claude` | positional | `--model` |
+| `codex` | Codex | `codex` and fixed `args` that give the tab its Agent Tabs server and messaging hooks | positional | `-m` |
+| `agy` | Antigravity CLI | `agy` | `-i <prompt>` | `--model` |
+| `copilot` | Copilot CLI | `copilot` | `-i <prompt>` | `--model` |
+| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` | `-m` |
+| `grok` | Grok Build | `grok` | positional | `-m` |
+| `pi` | Pi | `pi` | positional | `--model` |
+| `hermes` | Hermes | `hermes chat` | `-q <prompt>` | `-m` |
+| `opencode` | OpenCode | `opencode` | `--prompt <prompt>` | `-m` |
+| `qwen` | Qwen Code | `qwen` | `-i <prompt>` | `-m` |
+| `goose` | Goose | `goose run -s`, or `goose session` when there is no prompt | `-t <prompt>` | `--model` |
+| `codex-local` | Codex (local) | `codex`, the `codex` profile's fixed `args`, then `--oss --local-provider ollama` | positional | `-m` |
+
+The `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose` and `codex-local` profiles come from each CLI's
+documentation and are untested. Codex (local) needs Ollama 0.13.4 or later. Lists of agents use this
+order, then custom profiles.
 
 A profile in `agents.json` with the same name overrides a built-in one. An `agents.json` profile named
 `codex` replaces the built-in `args` too, so its tabs lose messaging unless it copies them.
@@ -33,6 +45,8 @@ Add or override profiles in `~/.ide-agent-tabs/agents.json`:
 - `args`: arguments before the caller's `args`.
 - `promptFlag`: the flag placed before the prompt. Leave it out when the prompt is positional. With no
   prompt, neither the flag nor a prompt is passed.
+- `modelFlag`: the flag placed before a model that `open_tab` passes. Without it, a model for this
+  profile is an error.
 - `env`: environment variables for the session. The caller's `env` wins on a clash.
 - `icon`: optional path to an SVG file for menus.
 

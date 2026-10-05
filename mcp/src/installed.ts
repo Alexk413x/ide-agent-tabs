@@ -30,3 +30,12 @@ export function isInstalled(command: string, pathVar: string, isWindows: boolean
   if (command.includes('/') || command.includes(path.sep)) return false;
   return names.some((name) => findOnPath(pathVar, name) !== undefined);
 }
+
+export function isCmdShim(command: string, pathVar: string): boolean {
+  for (const raw of pathVar.split(path.delimiter)) {
+    const dir = raw.trim().replace(/^"+|"+$/g, '');
+    if (dir === '') continue;
+    for (const ext of ['.exe', '.cmd', '.bat']) if (exists(path.join(dir, command + ext))) return ext !== '.exe';
+  }
+  return true;
+}

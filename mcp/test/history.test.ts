@@ -1,0 +1,156 @@
+import assert from 'node:assert/strict';
+import { readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { test } from 'node:test';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { RECEIVED_LOG, SENT_LOG } from '../src/messaging/history.js';
+import { cleanMail, KEEP_MS, mailboxDir } from '../src/messaging/mailbox.js';
+import { Messaging, type Hosts } from '../src/messaging/messaging.js';
+import { resolveSettings } from '../src/profiles.js';
+import { createServer, MOD_TOOL } from '../src/server.js';
+import { Service } from '../src/service.js';
+import { tempDir } from './tempDir.js';
+
+const hosts: Hosts = { findHost: async () => undefined, typeInto: async () => ({ ok: true }) };
+
+function session(home: string, id: string, agent: string, pid: number, now?: () => number) {
+  return new Messaging({ home, env: { IDE_AGENT_TABS_ID: id, IDE_AGENT_TABS_AGENT: agent }, pid, cwd: `/w/${id}`, hosts, isAlive: () => true, ...(now ? { now } : {}) });
+}
+
+const files = (dir: string) => readdirSync(dir).filter((n) => n.endsWith('.json')).sort();
+
+test('every send writes an owner-only sent-log entry beside the mailbox', async () => {
+  const home = tempDir('iat-hist-');
+  const a = session(home, 'tab-a', 'codex', 1);
+  const b = session(home, 'tab-b', 'claude', 2);
+  await a.start();
+  await b.start();
+  try {
+    const sent = await a.send({ to: 'tab-b', text: 'review x.ts' });
+    const dir = path.join(mailboxDir(home, 'tab-a'), SENT_LOG);
+    const [name] = files(dir);
+    assert.match(name!, new RegExp(`^\\d+-${sent.id}\\.json$`));
+    if (process.platform !== 'win32') assert.equal(statSync(path.join(dir, name!)).mode & 0o777, 0o600);
+    const record = JSON.parse(readFileSync(path.join(dir, name!), 'utf8'));
+    assert.deepEqual(
+      { id: record.id, route: record.route, from: record.from.id, to: record.to.id, text: record.text, delivery: record.delivery },
+      { id: sent.id, route: 'agent-tabs', from: 'tab-a', to: 'tab-b', text: 'review x.ts', delivery: 'queued' },
+    );
+  } finally {
+    a.stopFollowUps();
+    a.stopSync();
+    b.stopSync();
+  }
+});
+
+test('history merges sent, received and native traffic oldest first, and marks nothing read', async () => {
+  const home = tempDir('iat-hist-');
+  let clock = Date.now() - 10 * 60_000;
+  const now = () => clock;
+  const a = session(home, 'tab-a', 'codex', 1, now);
+  const b = session(home, 'tab-b', 'claude', 2, now);
+  await a.start();
+  await b.start();
+  try {
+    await b.modPresence({ driver: true, nativeName: 'plugins-fa [6a3948]', state: 'busy' });
+    await b.modLog({ direction: 'received', peer: 'docs-9b [11aa22]', text: 'native hello', at: clock - 60_000 });
+    const first = await a.send({ to: 'tab-b', text: 'from codex' });
+    clock += 60_000;
+    const reply = await b.send({ to: 'tab-a', text: 'from claude', replyTo: first.id });
+    clock += 60_000;
+    await b.modLog({ direction: 'sent', peer: 'docs-9b [11aa22]', text: 'native reply', delivery: 'delivered' });
+
+    const unreadB = files(path.join(mailboxDir(home, 'tab-b'), 'new'));
+    const unreadA = files(path.join(mailboxDir(home, 'tab-a'), 'new'));
+    const { messages } = await b.modHistory({ id: 'tab-b', names: ['plugins-fa [6a3948]'] });
+    assert.deepEqual(
+      messages.map((m) => [m.direction, m.peer.id ?? m.peer.name, m.text, m.route]),
+      [
+        ['received', 'docs-9b [11aa22]', 'native hello', 'native'],
+        ['received', 'tab-a', 'from codex', 'agent-tabs'],
+        ['sent', 'tab-a', 'from claude', 'agent-tabs'],
+        ['sent', 'docs-9b [11aa22]', 'native reply', 'native'],
+      ],
+    );
+    assert.equal(messages[1]!.status, 'unread');
+    assert.equal(messages[2]!.replyTo, first.id);
+    assert.deepEqual([messages[2]!.delivery, messages[2]!.status], ['queued', 'unread'], 'the sent log knows the delivery, the mailbox the status');
+    assert.equal(messages[3]!.delivery, 'delivered');
+    assert.equal(new Set(messages.map((m) => m.id)).size, 4, 'a message in a sent log and a mailbox appears once');
+    assert.ok(messages.some((m) => m.id === reply.id));
+
+    const fromCodex = (await a.modHistory({ id: 'tab-a', names: [] })).messages;
+    assert.deepEqual(fromCodex.map((m) => [m.direction, m.text]), [
+      ['sent', 'from codex'],
+      ['received', 'from claude'],
+    ]);
+    const nativePeer = (await b.modHistory({ names: ['docs-9b [11aa22]'] })).messages;
+    assert.deepEqual(nativePeer.map((m) => [m.direction, m.text]), [
+      ['sent', 'native hello'],
+      ['received', 'native reply'],
+    ], 'a native peer without Agent Tabs shows the traffic logged by sessions that talked to it');
+
+    assert.deepEqual(files(path.join(mailboxDir(home, 'tab-b'), 'new')), unreadB, 'history leaves new/ as it was');
+    assert.deepEqual(files(path.join(mailboxDir(home, 'tab-a'), 'new')), unreadA);
+  } finally {
+    a.stopFollowUps();
+    b.stopFollowUps();
+    a.stopSync();
+    b.stopSync();
+  }
+});
+
+test('log refuses a bad peer or direction, and history needs a session or a name', async () => {
+  const home = tempDir('iat-hist-');
+  const b = session(home, 'tab-b', 'claude', 2);
+  await b.start();
+  await assert.rejects(b.modLog({ direction: 'sent', peer: 'a\nb', text: 'x' }), /peer must be one printable line/);
+  await assert.rejects(b.modLog({ direction: 'sideways' as never, peer: 'p', text: 'x' }), /direction/);
+  await assert.rejects(b.modHistory({ names: [] }), /needs session or names/);
+  await assert.rejects(b.modHistory({ id: '../x', names: [] }), /not a session id/);
+  b.stopSync();
+});
+
+test('cleanMail drops sent-log and received-log entries after 7 days, like read mail', async () => {
+  const home = tempDir('iat-hist-');
+  const b = session(home, 'tab-b', 'claude', 2);
+  await b.start();
+  await b.modLog({ direction: 'sent', peer: 'p', text: 'old' });
+  await b.modLog({ direction: 'received', peer: 'p', text: 'old' });
+  await b.modLog({ direction: 'sent', peer: 'p', text: 'new' });
+  const old = new Date(Date.now() - KEEP_MS - 60_000);
+  for (const folder of [SENT_LOG, RECEIVED_LOG]) {
+    const dir = path.join(mailboxDir(home, 'tab-b'), folder);
+    for (const name of files(dir).filter((n) => JSON.parse(readFileSync(path.join(dir, n), 'utf8')).text === 'old')) utimesSync(path.join(dir, name), old, old);
+  }
+  await cleanMail(home, new Set(['tab-b']));
+  assert.equal(files(path.join(mailboxDir(home, 'tab-b'), SENT_LOG)).length, 1);
+  assert.equal(files(path.join(mailboxDir(home, 'tab-b'), RECEIVED_LOG)).length, 0);
+  b.stopSync();
+});
+
+test('claudeMod comes from config.json: on by default, off when set, a warning otherwise', async () => {
+  assert.equal(resolveSettings(undefined, undefined).claudeMod, 'on');
+  assert.equal(resolveSettings(undefined, JSON.stringify({ claudeMod: 'off' })).claudeMod, 'off');
+  const bad = resolveSettings(undefined, JSON.stringify({ claudeMod: false }));
+  assert.equal(bad.claudeMod, 'on');
+  assert.match(bad.warnings.join(' '), /claudeMod/);
+
+  const home = tempDir('iat-hist-');
+  writeFileSync(path.join(home, 'config.json'), JSON.stringify({ claudeMod: 'off' }));
+  const service = new Service({ home, scriptsDir: home, platform: 'linux', env: { PATH: '' }, callIde: async () => ({}), drivers: [] });
+  const messaging = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-c' }, pid: 3, cwd: '/w', hosts: service, isAlive: () => true });
+  await messaging.start();
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  await createServer(service, undefined, messaging).connect(serverSide);
+  const client = new Client({ name: 'claude-code', version: '1.0.0' });
+  await client.connect(clientSide);
+  try {
+    const result = (await client.callTool({ name: MOD_TOOL, arguments: { op: 'settings' } })) as { content: { text: string }[] };
+    assert.deepEqual(JSON.parse(result.content[0]!.text), { claudeMod: 'off' });
+  } finally {
+    await client.close();
+    messaging.stopSync();
+  }
+});

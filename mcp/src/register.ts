@@ -4,25 +4,50 @@ import { ensurePrivateDir, readTextIfExists } from './files.js';
 import { isInstalled } from './installed.js';
 import { BUILTIN_PROFILES } from './profiles.js';
 import {
+  agySettingsFile,
   copilotHooks,
+  gooseHooks,
+  gooseManifest,
+  goosePluginDir,
+  gooseRoot,
+  grokHome,
+  grokHooks,
+  hasAgyAllowRule,
+  hasAgyHooks,
   hasCodexSettings,
+  hasHermesApprovals,
+  hasHermesHooks,
   hasOurHooks,
+  hermesAllowlistFile,
+  hermesHome,
   hookConfigFile,
   isHookAgent,
   mergeHookSettings,
+  qwenHome,
+  withAgyAllowRule,
+  withAgyHooks,
   withCodexSettings,
+  withHermesApprovals,
+  withHermesHooks,
   type HookAgent,
 } from './hookConfig.js';
+import { readTomlTable, tomlTable, withTomlTable } from './tomlTable.js';
+import { editYaml, readYaml, setYamlEntry } from './yamlConfig.js';
 import { AGENT_ENV, TAB_ID_ENV } from './profiles.js';
 import { hookCopyPath, refreshServerCopy, serverCopyDir, serverCopyPath, serverHash } from './serverCopy.js';
 import type { RunResult } from './process.js';
 import { cliFailure, findCliOnPath, runCliResult, type SyncContext } from './sync.js';
 
 export const SERVER_NAME = 'ide-agent-tabs';
-export const AGENTS = ['codex', 'gemini', 'copilot', 'opencode'] as const;
+export const AGENTS = ['codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose'] as const;
 export type AgentName = (typeof AGENTS)[number];
 const CLI_TIMEOUT_MS = 30_000;
 const OPENCODE_SCHEMA = 'https://opencode.ai/config.json';
+const OPENCODE_TIMEOUT_MS = 660_000;
+const TOOL_TIMEOUT_S = 660;
+const GOOSE_TIMEOUT_S = 700;
+const QWEN_TIMEOUT_MS = 700_000;
+type JsonAgent = 'copilot' | 'agy' | 'opencode' | 'pi' | 'qwen';
 
 export type RegisterContext = Omit<SyncContext, 'bundleDir'>;
 
@@ -51,14 +76,20 @@ export const CODEX_WINDOWS_REFUSAL =
 
 function profileOf(agent: AgentName) {
   const builtin = BUILTIN_PROFILES.find((p) => p.name === agent);
-  return { command: builtin?.command ?? agent, label: builtin?.label ?? 'OpenCode' };
+  return { command: builtin?.command ?? agent, label: builtin?.label ?? agent };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function configFile(agent: AgentName, env: NodeJS.ProcessEnv, userHome: string, exists: (file: string) => boolean = existsSync): string {
+export function configFile(
+  agent: AgentName,
+  env: NodeJS.ProcessEnv,
+  userHome: string,
+  exists: (file: string) => boolean = existsSync,
+  platform: NodeJS.Platform = process.platform,
+): string {
   switch (agent) {
     case 'codex':
       return path.join(env.CODEX_HOME || path.join(userHome, '.codex'), 'config.toml');
@@ -66,11 +97,28 @@ export function configFile(agent: AgentName, env: NodeJS.ProcessEnv, userHome: s
       return path.join(env.GEMINI_CLI_HOME || userHome, '.gemini', 'settings.json');
     case 'copilot':
       return path.join(env.COPILOT_HOME || path.join(userHome, '.copilot'), 'mcp-config.json');
+    case 'agy':
+      return path.join(userHome, '.gemini', 'config', 'mcp_config.json');
     case 'opencode': {
       const dir = path.join(env.XDG_CONFIG_HOME || path.join(userHome, '.config'), 'opencode');
       const json = path.join(dir, 'opencode.json');
       const jsonc = path.join(dir, 'opencode.jsonc');
       return !exists(json) && exists(jsonc) ? jsonc : json;
+    }
+    case 'grok':
+      return path.join(grokHome(env, userHome), 'config.toml');
+    case 'pi':
+      return path.join(env.PI_CODING_AGENT_DIR || path.join(userHome, '.pi', 'agent'), 'mcp.json');
+    case 'hermes':
+      return path.join(hermesHome(env, userHome, platform), 'config.yaml');
+    case 'qwen':
+      return path.join(qwenHome(env, userHome), 'settings.json');
+    case 'goose': {
+      const root = gooseRoot(env);
+      if (root !== undefined) return path.join(root, 'config', 'config.yaml');
+      return platform === 'win32'
+        ? path.join(env.APPDATA || path.join(userHome, 'AppData', 'Roaming'), 'Block', 'goose', 'config', 'config.yaml')
+        : path.join(userHome, '.config', 'goose', 'config.yaml');
     }
   }
 }
@@ -93,7 +141,28 @@ export const copilotEntry = (server: string) => ({
   env: { [TAB_ID_ENV]: `\${${TAB_ID_ENV}}`, [AGENT_ENV]: `\${${AGENT_ENV}}` },
   tools: ['*'],
 });
-export const opencodeEntry = (server: string) => ({ type: 'local', command: ['node', server], enabled: true });
+export const agyEntry = (server: string) => ({ command: 'node', args: [server] });
+// OpenCode applies timeout (ms) to tool calls too, and its default would cut wait_for_message short.
+export const opencodeEntry = (server: string) => ({ type: 'local', command: ['node', server], enabled: true, timeout: OPENCODE_TIMEOUT_MS });
+const tabEnv = () => ({ [TAB_ID_ENV]: `\${${TAB_ID_ENV}}`, [AGENT_ENV]: `\${${AGENT_ENV}}` });
+// Grok Build passes its own environment to the server, and may refuse a ${VAR} it can't expand, so no env table.
+export const grokTable = (server: string) => tomlTable('mcp_servers', SERVER_NAME, { command: 'node', args: [server] });
+// Pi hides MCP tools behind its codemode tool unless the server is exposed directly, and times a request out after 60 s.
+export const piEntry = (server: string) => ({ command: 'node', args: [server], env: tabEnv(), timeout: TOOL_TIMEOUT_S, exposure: 'direct' });
+// Hermes passes an MCP server only the variables its env names, and times a tool call out after 300 s.
+export const hermesEntry = (server: string) => ({ command: 'node', args: [server], env: tabEnv(), timeout: TOOL_TIMEOUT_S });
+export const qwenEntry = (server: string) => ({ command: 'node', args: [server], env: tabEnv(), timeout: QWEN_TIMEOUT_MS });
+export const gooseEntry = (server: string) => ({
+  name: SERVER_NAME,
+  type: 'stdio',
+  cmd: 'node',
+  args: [server],
+  enabled: true,
+  timeout: GOOSE_TIMEOUT_S,
+  envs: {},
+  env_keys: [],
+  description: 'Agent Tabs',
+});
 
 export function stripJsonComments(text: string): string {
   let out = '';
@@ -225,11 +294,21 @@ async function readJsonIfExists(file: string): Promise<Record<string, unknown> |
   return text === undefined || text.trim() === '' ? undefined : parseConfig(text, file, true);
 }
 
+const hookFile = (ctx: RegisterContext, agent: HookAgent) => hookConfigFile(agent, ctx.env, ctx.userHome, ctx.platform);
+const sameJson = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
 async function hooksInstalled(ctx: RegisterContext, agent: HookAgent): Promise<boolean> {
   const hook = hookCopyPath(ctx.home, ctx.platform);
-  const file = hookConfigFile(agent, ctx.env, ctx.userHome);
+  const file = hookFile(ctx, agent);
+  if (agent === 'hermes') {
+    const allowlist = await readJsonIfExists(hermesAllowlistFile(ctx.env, ctx.userHome, ctx.platform));
+    return hasHermesHooks(readYaml(await readTextIfExists(file), file), hook) && hasHermesApprovals(allowlist, hook);
+  }
   const root = await readJsonIfExists(file);
+  if (agent === 'grok') return sameJson(root, grokHooks(hook));
+  if (agent === 'goose') return sameJson(root, gooseHooks(hook)) && existsSync(path.join(goosePluginDir(ctx.env, ctx.userHome), 'plugin.json'));
   if (agent === 'copilot') return root !== undefined && JSON.stringify(root) === JSON.stringify(copilotHooks(hook));
+  if (agent === 'agy') return root !== undefined && hasAgyHooks(root, hook);
   return root !== undefined && hasOurHooks(root, agent, hook);
 }
 
@@ -244,24 +323,54 @@ async function installCodexSettings(ctx: RegisterContext): Promise<void> {
   if (next !== undefined) await writeConfig(config, next);
 }
 
+async function changeYaml(file: string, change: Parameters<typeof editYaml>[2]): Promise<void> {
+  const next = editYaml(await readTextIfExists(file), file, change);
+  if (next !== undefined) await writeConfig(file, next);
+}
+
 async function installHooks(ctx: RegisterContext, agent: HookAgent): Promise<void> {
   const hook = hookCopyPath(ctx.home, ctx.platform);
-  const file = hookConfigFile(agent, ctx.env, ctx.userHome);
+  const file = hookFile(ctx, agent);
   if (agent === 'copilot') return changeJson(file, () => copilotHooks(hook));
+  if (agent === 'grok') return changeJson(file, () => grokHooks(hook));
+  if (agent === 'goose') {
+    await changeJson(path.join(goosePluginDir(ctx.env, ctx.userHome), 'plugin.json'), () => gooseManifest());
+    return changeJson(file, () => gooseHooks(hook));
+  }
+  if (agent === 'hermes') {
+    await changeYaml(file, (doc) => withHermesHooks(doc, file, hook));
+    const allowlist = hermesAllowlistFile(ctx.env, ctx.userHome, ctx.platform);
+    return changeJson(allowlist, (root) => withHermesApprovals(root, allowlist, hook));
+  }
+  if (agent === 'agy') return changeJson(file, (root) => withAgyHooks(root, hook));
   await changeJson(file, (root) => mergeHookSettings(root, file, agent, hook));
 }
 
 async function removeHooks(ctx: RegisterContext, agent: HookAgent): Promise<void> {
-  const file = hookConfigFile(agent, ctx.env, ctx.userHome);
-  if (agent === 'copilot') {
+  const file = hookFile(ctx, agent);
+  if (agent === 'copilot' || agent === 'grok') {
     await fs.rm(file, { force: true });
     return;
   }
+  if (agent === 'goose') {
+    const dir = goosePluginDir(ctx.env, ctx.userHome);
+    await fs.rm(file, { force: true });
+    await fs.rm(path.join(dir, 'plugin.json'), { force: true });
+    for (const empty of [path.dirname(file), dir]) await fs.rmdir(empty).catch(() => undefined);
+    return;
+  }
+  if (agent === 'hermes') {
+    const allowlist = hermesAllowlistFile(ctx.env, ctx.userHome, ctx.platform);
+    if ((await readTextIfExists(allowlist)) !== undefined) await changeJson(allowlist, (root) => withHermesApprovals(root, allowlist, undefined));
+  }
   if ((await readTextIfExists(file)) === undefined) return;
+  if (agent === 'hermes') return changeYaml(file, (doc) => withHermesHooks(doc, file, undefined));
+  if (agent === 'agy') return changeJson(file, (root) => withAgyHooks(root, undefined));
   await changeJson(file, (root) => mergeHookSettings(root, file, agent, undefined));
 }
 
-const sectionOf = (agent: 'gemini' | 'copilot' | 'opencode') => (agent === 'opencode' ? 'mcp' : 'mcpServers');
+const sectionOf = (agent: 'gemini' | JsonAgent) => (agent === 'opencode' ? 'mcp' : 'mcpServers');
+const yamlSection = (agent: 'hermes' | 'goose') => (agent === 'hermes' ? 'mcp_servers' : 'extensions');
 
 async function readEntry(ctx: RegisterContext, agent: AgentName, file: string): Promise<unknown> {
   if (agent === 'codex') {
@@ -273,13 +382,19 @@ async function readEntry(ctx: RegisterContext, agent: AgentName, file: string): 
   }
   const text = await readTextIfExists(file);
   if (text === undefined || text.trim() === '') return undefined;
+  if (agent === 'grok') return readTomlTable(text, 'mcp_servers', SERVER_NAME);
+  if (agent === 'hermes' || agent === 'goose') {
+    const section = readYaml(text, file)?.[yamlSection(agent)];
+    const entry = isObject(section) ? section[SERVER_NAME] : undefined;
+    return agent === 'goose' && isObject(entry) ? { command: entry.cmd, args: entry.args } : entry;
+  }
   const section = parseConfig(text, file, true)[sectionOf(agent)];
   return isObject(section) ? section[SERVER_NAME] : undefined;
 }
 
 export async function agentStatus(ctx: RegisterContext, agent: AgentName): Promise<AgentStatus> {
   const { command, label } = profileOf(agent);
-  const config = configFile(agent, ctx.env, ctx.userHome);
+  const config = configFile(agent, ctx.env, ctx.userHome, existsSync, ctx.platform);
   const installed = isInstalled(command, ctx.env.PATH ?? ctx.env.Path ?? '', ctx.platform === 'win32');
   const status: AgentStatus = { agent, label, installed, registered: false, path: null, stable: false, config, hooks: takesHooks(agent) ? false : null };
   if (agent === 'codex' && !installed) return status;
@@ -288,7 +403,12 @@ export async function agentStatus(ctx: RegisterContext, agent: AgentName): Promi
     const entry = await readEntry(ctx, agent, config);
     if (entry === undefined) return status;
     const registered = entryServerPath(entry) ?? null;
-    const settings = agent !== 'codex' || hasCodexSettings(await readTextIfExists(config));
+    const settings =
+      agent === 'codex'
+        ? hasCodexSettings(await readTextIfExists(config))
+        : agent === 'agy'
+          ? hasAgyAllowRule(await readJsonIfExists(agySettingsFile(ctx.userHome)))
+          : true;
     return {
       ...status,
       registered: true,
@@ -300,18 +420,30 @@ export async function agentStatus(ctx: RegisterContext, agent: AgentName): Promi
   }
 }
 
-async function editConfig(file: string, agent: 'copilot' | 'opencode', entry: unknown): Promise<void> {
-  const skeleton = agent === 'opencode' ? { $schema: OPENCODE_SCHEMA } : {};
-  const next = withServerEntry(await readTextIfExists(file), file, sectionOf(agent), entry, skeleton);
+const JSON_ENTRIES: Record<JsonAgent, (server: string) => unknown> = { copilot: copilotEntry, agy: agyEntry, opencode: opencodeEntry, pi: piEntry, qwen: qwenEntry };
+
+async function editConfig(file: string, agent: Exclude<AgentName, 'codex' | 'gemini'>, server: string | undefined): Promise<void> {
+  const text = await readTextIfExists(file);
+  let next: string | undefined;
+  if (agent === 'grok') next = withTomlTable(text, file, 'mcp_servers', SERVER_NAME, server === undefined ? undefined : grokTable(server));
+  else if (agent === 'hermes' || agent === 'goose') {
+    if (server === undefined && text === undefined) return;
+    const entry = server === undefined ? undefined : agent === 'hermes' ? hermesEntry(server) : gooseEntry(server);
+    next = editYaml(text, file, (doc) => setYamlEntry(doc, yamlSection(agent), SERVER_NAME, entry, file));
+  } else {
+    const skeleton = agent === 'opencode' ? { $schema: OPENCODE_SCHEMA } : {};
+    next = withServerEntry(text, file, sectionOf(agent), server === undefined ? undefined : JSON_ENTRIES[agent](server), skeleton);
+  }
   if (next !== undefined) await writeConfig(file, next);
 }
 
 async function register(ctx: RegisterContext, agent: AgentName, server: string, file: string): Promise<void> {
   if (agent === 'codex' || agent === 'gemini') await changeWithCli(ctx, agent, registerArgs(agent, server));
-  else await editConfig(file, agent, agent === 'copilot' ? copilotEntry(server) : opencodeEntry(server));
+  else await editConfig(file, agent, server);
   if (agent === 'codex') {
     await installCodexSettings(ctx);
   }
+  if (agent === 'agy') await setAgyAllowRule(ctx, true);
   if (takesHooks(agent)) await installHooks(ctx, agent);
 }
 
@@ -319,6 +451,14 @@ async function unregister(ctx: RegisterContext, agent: AgentName, file: string):
   if (takesHooks(agent)) await removeHooks(ctx, agent);
   if (agent === 'codex' || agent === 'gemini') await changeWithCli(ctx, agent, unregisterArgs(agent));
   else await editConfig(file, agent, undefined);
+  if (agent === 'agy') await setAgyAllowRule(ctx, false);
+}
+
+// Antigravity CLI asks before each call to an MCP tool it has no allow rule for, and denies the call in -p runs.
+async function setAgyAllowRule(ctx: RegisterContext, allow: boolean): Promise<void> {
+  const file = agySettingsFile(ctx.userHome);
+  if (!allow && (await readTextIfExists(file)) === undefined) return;
+  await changeJson(file, (root) => withAgyAllowRule(root, file, allow));
 }
 
 export async function serverStatus(ctx: RegisterContext) {
@@ -368,7 +508,7 @@ async function registerOne(ctx: RegisterContext, agent: AgentName, server: strin
     !after.registered || !after.stable
       ? `${after.config} doesn't hold the ${SERVER_NAME} entry after registering`
       : after.hooks === false
-        ? `the Agent Tabs hooks aren't in ${isHookAgent(agent) ? hookConfigFile(agent, ctx.env, ctx.userHome) : after.config} after registering`
+        ? `the Agent Tabs hooks aren't in ${isHookAgent(agent) ? hookFile(ctx, agent) : after.config} after registering`
         : undefined;
   return outcome(after, after.error ?? missing);
 }
