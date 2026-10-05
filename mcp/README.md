@@ -18,8 +18,8 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 | `list_tabs` | `ide` (optional) | Open tabs across all IDEs and terminals, or in one |
 | `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux |
 | `close_tab` | `id` (optional) | The closed tab. With no `id`, it closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
-| `list_sessions` | none | Live agent sessions in a fixed agent order: `name` (what Claude Code's `SendMessage` takes: a Claude session's native name, else `shortName`), `shortName` (such as `codex-f99f`, which `send_message` also takes), `id`, `session` (the first 8 characters of `id`), `agent`, `harness` (the agent CLI, with ` via OpenRouter` for an Ori launch), `model` and `effort` (`null` when unknown), `route` (`native` or `agent-tabs`), `state`, `tab`, `where` (the IDE product or terminal app, from the live endpoint or the label stored when the tab opened; `null` when neither is known, never a raw host id), `host` (IDE and project, or terminal), `ide` (the host's id), `path` and `folder`, `nativeName` for a Claude session that has one, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
-| `send_message` | `to` (an `id` or `shortName`), `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
+| `list_sessions` | none | Live agent sessions in a fixed agent order: `name` and `shortName` (what Claude Code's `SendMessage` takes, in its native style: a Claude session's native name, else `<folder>-<id hex>`, such as `the-index-34`), `legacyName` (the older form, such as `codex-f99f`, which `send_message` still takes), `id`, `session` (the first 8 characters of `id`), `agent`, `harness` (the agent CLI, with ` via OpenRouter` for an Ori launch), `model` and `effort` (`null` when unknown), `route` (`native` or `agent-tabs`), `state`, `tab`, `where` (the IDE product or terminal app, from the live endpoint or the label stored when the tab opened; `null` when neither is known, never a raw host id), `host` (IDE and project, or terminal), `ide` (the host's id), `path` and `folder`, `nativeName` for a Claude session that has one, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
+| `send_message` | `to` (an `id`, `name` or `legacyName`), `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
 | `read_messages` | none | The caller's unread messages, marked read, under a `notice` that they come from other agents |
 | `wait_for_message` | optional `timeout` (seconds, default 60, at most 600, or 170 in an Antigravity CLI session), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
 | `handoff` | `path`, and `brief` or `goal`, `done`, `next`, `files`, `openQuestions`, and optional `agent`, `model`, `via`, `ide`, `focus` | The handoff `id`, the `brief` path, the `newTab` id, and `next`: the steps the caller follows to wait for the takeover and stop |
@@ -318,8 +318,8 @@ to answer a message that needs no answer.
 In a Claude Code build with function hooks, the plugin's mod (`claude-plugin/hooks/register.tsx`) bridges
 Claude Code's own tools to Agent Tabs:
 
-- `ListAgents` also lists every other Agent Tabs session, with its agent, state, tab, host, folder and
-  `via`.
+- `ListAgents` also lists every other Agent Tabs session and this one, grouped by IDE or terminal and
+  folder, with its native-style name, state, start, harness, model, effort and session.
 - `SendMessage` to an Agent Tabs session's name goes to its mailbox. A native Claude peer's name goes
   the native way.
 - In a tab, the mod delivers incoming mail as a framed peer prompt when the session is idle, and shows

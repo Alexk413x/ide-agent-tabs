@@ -42,6 +42,8 @@ export interface PresenceFile {
   project?: string;
   model?: string;
   effort?: string;
+  agentType?: string;
+  agentColor?: AgentColor;
   product?: string;
 }
 
@@ -56,6 +58,10 @@ export interface Presence extends PresenceFile {
 export const isSessionId = (id: string) => SESSION_ID.test(id);
 export const isModel = (value: string) => /^[^\x00-\x1f\x7f]{1,128}$/.test(value);
 export const isEffort = (value: string) => /^[A-Za-z0-9._-]{1,32}$/.test(value);
+export const AGENT_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'pink', 'cyan'] as const;
+export type AgentColor = (typeof AGENT_COLORS)[number];
+export const isAgentType = (value: string) => /^[A-Za-z0-9._:-]{1,128}$/.test(value);
+export const isAgentColor = (value: string): value is AgentColor => (AGENT_COLORS as readonly string[]).includes(value);
 
 export const presencePath = (home: string, id: string) => path.join(home, SESSIONS_DIR, `${id}.json`);
 
@@ -125,6 +131,8 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...str('project'),
     ...str('model'),
     ...str('effort'),
+    ...(typeof o.agentType === 'string' && isAgentType(o.agentType) ? { agentType: o.agentType } : {}),
+    ...(typeof o.agentColor === 'string' && isAgentColor(o.agentColor) ? { agentColor: o.agentColor } : {}),
     ...str('product'),
   };
 }

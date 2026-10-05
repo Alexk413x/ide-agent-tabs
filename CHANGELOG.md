@@ -13,9 +13,14 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 - The Claude Code mod's pane is **Agent Tabs Messages**, in its title and at the top of the agents view.
   `/agent-tabs-messages` opens it too, beside `/agent-tabs`.
 - The agents view groups sessions by IDE or terminal (`Antigravity IDE`, `Windows Terminal`, and so on),
-  with `Other` for an unknown host and the cloud group last. Under each, the folders open there, then the
-  session lines, indented. A session line drops the IDE or terminal column. The order inside a folder,
-  the coloured states and a blank line before each group stay.
+  each in a rounded box with its name as the first line, with `Other` for an unknown host, then
+  `Remote Control` and the cloud group last. Under each come the folders open there, by base name
+  (`▸ ide-agent-tabs`), with a blank line between them.
+- Each session takes two lines: a coloured state dot, an agent glyph in the agent's colour (Claude `✻`,
+  Codex `◆`, Antigravity `▲`, others `•`) and the name; then, dim, the state, time since start, harness,
+  model (without a leading `claude-` or `gpt-`) and effort, leaving out unknown parts. Either line opens
+  the session. The focused session is highlighted across both lines. The session id moves to the
+  messages and detail views.
 - A folder heading shows the folder's base name. Hovering it shows the full path. Pressing it opens the
   folder in the file manager: `explorer.exe` on Windows, `open` on macOS, `xdg-open` on Linux, run by
   argv with no shell. A path that doesn't exist or isn't a folder is refused with a toast.
@@ -25,8 +30,29 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
   `✉ <n> new from <names>` and an **Open** button, which opens the pane on the newest sender's messages.
   Its hotkey is `o` once the band has the keyboard (ctrl+x tab or a click). The band hides while the
   pane is open and once nothing is unread.
-- The arrival toast ends with `· /agent-tabs to view`.
-- `ListAgents` output is unchanged.
+- The arrival toast ends with `· /agent-tabs to view`, and the toast and status line name the sender as
+  `list_sessions` does.
+- `ListAgents` in a Claude Code session uses the pane's layout, one line per session: IDE or terminal
+  headings, folder base names indented two, session lines indented four with no `WHERE` column, then
+  `Remote Control` and cloud. The native `This session is …` line stays first. `list_sessions` keeps
+  the full paths.
+- The pane and `ListAgents` list the calling session too, marked `(this session)`.
+- Every session has a name in Claude Code's native style, such as `plugins-82`: a Claude session's
+  native name, else the folder's base name, lowercased, and 2 hex characters of the session id, longer
+  only when two listed names would collide. `list_sessions` gives it as `name` and `shortName`, and the
+  older `codex-c66c` style as `legacyName`. `send_message`, the mod's `send` op and SendMessage through
+  the mod take the name, the legacy name or the full id.
+
+- A Claude session started as an agent type (`--agent` or the `agent` setting) records the type and
+  its definition's `color` in presence. `list_sessions` shows `agentType` and `agentColor`, the pane
+  draws the session's name in that colour, and line 2 shows `Claude Code (<type>)`.
+
+### Fixed
+
+- A Claude tab on 0.5.3, which reports no native name, no longer shows twice. The mod joins it to the
+  native peer whose name, without its suffix, matches the tab's folder and whose start time agrees
+  within 2 minutes plus the native listing's precision, when exactly one peer and one tab fit. The
+  joined line shows the native name with the tab's host, folder and session data.
 
 ## 0.6.0
 

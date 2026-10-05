@@ -694,10 +694,17 @@ other agent CLIs. For that, every session that runs the MCP server can message e
   value nobody recorded from `config.toml` in `CODEX_HOME`, or else `~/.codex`, when it starts: the
   top-level `model` and `model_reasoning_effort`, or those of the `[profiles.<name>]` table that a
   top-level `profile` selects.
-- `list_sessions` gives each session a `shortName`: the agent, a dash, and the first 4 letters and digits
-  of its id after any `s-` or `codex-` prefix, such as `codex-f99f`. When two live sessions of one agent
-  share those characters, both take more until they differ. `send_message` and the mod's `send` take a
-  `shortName` as well as the full id.
+- `list_sessions` names every session in Claude Code's native style, such as `plugins-82` or
+  `the-index-34`. A Claude session with a `nativeName` uses it. Every other session, including non-Claude
+  agents and Claude tabs on 0.5.3, gets `<folder>-<suffix>`: `<folder>` is the base name of its folder,
+  lowercased, with every character outside `a-z`, `0-9` and `-` replaced by `-`, cut to 24 characters,
+  and with leading and trailing dashes trimmed. `<suffix>` is the first 2 hex characters of the id after
+  any `s-` or `codex-` prefix, continued by a SHA-256 hex digest of the id when the id runs out. A name
+  that would equal another listed name, native names included, takes one more character at a time until
+  it differs, so a name stays the same for the session's life unless a new session collides with it.
+  The row carries the name as `name` and `shortName`, and `legacyName`, the older form: the agent, a
+  dash, and the first 4 letters and digits of the id, such as `codex-f99f`. `send_message` and the
+  mod's `send` take the name, the legacy name or the full id.
 - A Claude tab whose mod runs adds `driver`, `modBeat` and `nativeName` (see
   [Claude Code mod](#claude-code-mod)).
 - Every change to a presence file happens under a lock file next to it, because the server, the hooks
@@ -893,7 +900,8 @@ It makes Claude Code's native `ListAgents` and `SendMessage` reach every Agent T
 delivers a Claude tab's mail in-process instead of through a typed wake line.
 
 The mod writes no presence or mailbox file. Its only file access is `$.fs.list` and `$.fs.read` on its own
-`new/` folder, and `$.fs.stat` on a folder heading the person presses in the pane. Everything else goes
+`new/` folder, `$.fs.stat` on a folder heading the person presses in the pane, and `$.fs.read` and
+`$.fs.list` of agent definition files (see [Agent type](#agent-type)). Everything else goes
 through the internal `agent_tabs_mod` tool of the plugin's own MCP server, so the server's locks, validation, rate limit and dedupe apply. The mod finds the server's name
 with `$.mcp.connect("ide-agent-tabs")`: `plugin:ide-agent-tabs:ide-agent-tabs` for the installed plugin,
 `ide-agent-tabs` under `--plugin-dir`. `$.mcp.call` and `$.tool.call` pass through the permission check,
@@ -952,50 +960,75 @@ every session that can take a message now. The result still matches `{ listing: 
 ```
 This session is plugins-fa [6a3948] — the name other sessions use to message it (…).
 
-C:\w
-  claude-01d0                           idle        45m  Claude Code (no native name)  —                         —       Windows Terminal    01d00000
-  codex-c0de                            busy        10m  Codex                         —                         —       Windows Terminal    c0dec0de
-  codex-1a2b                            idle        2d   Codex via OpenRouter          gpt-5.5                   medium  Windows Terminal    codex-1a
-  agy-a0a0                              busy        5h   Antigravity CLI               gemini-3-pro              —       Antigravity IDE     a0a0a0a0
+IntelliJ IDEA
+  w
+    plugins-fa [6a3948] (this session)    idle        —    Claude Code                   claude-opus-5-5           —       c1a2b3c4
+  docs
+    docs-9b [11aa22]                      permission  1d   Claude Code                   claude-opus-5-5           high    tab-d
 
-C:\docs
-  docs-9b [11aa22]                      permission  1d   Claude Code                   claude-opus-5-5           high    IntelliJ IDEA       tab-d
+Antigravity IDE
+  w
+    w-a0                                  busy        5h   Antigravity CLI               gemini-3-pro              —       a0a0a0a0
 
-C:\e2e
-  E2E testing plugin [b39a20]           idle        18m  Claude Code                   claude-sonnet-5-5-20261…  —       Visual Studio Code  e2e00000
+tmux build
+  Folder not known
+    nightly-sync [c0ffee]                 idle        3h   Claude Code (background)      —                         —       —
 
-Folder not known
-  nightly-sync [c0ffee]                 idle        3h   Claude Code (background)      —                         —       tmux build          —
+Visual Studio Code
+  e2e
+    E2E testing plugin [b39a20]           idle        18m  Claude Code                   claude-sonnet-5-5-20261…  —       e2e00000
+
+Windows Terminal
+  w
+    w-01                                  idle        45m  Claude Code (no native name)  —                         —       01d00000
+    w-c0                                  busy        10m  Codex                         —                         —       c0dec0de
+    w-1a                                  idle        2d   Codex via OpenRouter          gpt-5.5                   medium  codex-1a
+  a
+    a-a2                                  idle        4m   Antigravity CLI               —                         —       a2a2a2a2
+  sub
+    sub-9e                                idle        —    Gemini CLI                    —                         —       9e9e0000
+
+Other
+  z
+    z-ed                                  idle        30s  zed-agent                     —                         —       zed10000
+
+Remote Control
+    Laptop RC [rc0001]                    idle        —    Claude Code                   —                         —       —
 
 Cloud (can receive, can't reply)
-  Guide 3-to-4 player support [77aa01]  cloud       —    Claude Code                   —                         —       cloud               —
+    Guide 3-to-4 player support [77aa01]  cloud       —    Claude Code                   —                         —       —
+    Fix flaky test [77aa02]               cloud       —    Claude Code                   —                         —       —
 
 Left out: 150 Remote Control offline, 1 offline, 1 that can't take messages, 69 more ListAgents did not show. /list-agents shows every session, including offline ones.
 ```
 
-This shows some of the groups from the test listing. The columns align across all groups.
+This is the test listing. The columns align across all groups.
 
 - The native `This session is <name> —` line stays first, unchanged, because the handover reads the
   native name from it.
-- Sessions follow, grouped by folder. Each group is a blank line, the full folder path, and one line per
-  session indented two spaces. The caller's own folder comes first, then the others in case-insensitive
-  order. Native Claude peers whose folder isn't known come next under `Folder not known`, and cloud
-  sessions last under `Cloud (can receive, can't reply)`, with state and where `cloud`. The session
-  itself is not listed.
-- Each line has the columns `NAME`, `STATE`, `STARTED`, `HARNESS`, `MODEL`, `EFFORT`, `WHERE` and
-  `SESSION`, with no header row, two spaces apart and aligned across all groups. A column wider than its
-  cap (`STATE` 10, `STARTED` 6, `HARNESS` 32, `MODEL` 24, `EFFORT` 8, `WHERE` 24, `SESSION` 8) is cut with
-  `…`. `NAME` is never cut. An unknown value shows as `—`.
-  - `NAME` is what `SendMessage` takes: a Claude session's native name, else the row's `shortName`.
+- Sessions follow in the pane's layout. Each group is a blank line, then an IDE or terminal heading
+  (the row's `where`, such as `Antigravity IDE` or `Windows Terminal`), then its folders by base name
+  indented two spaces, each followed by its session lines indented four. The caller's own host and own
+  folder come first, then the others in case-insensitive order (folders by base name), `Other` for an
+  unknown host, and `Folder not known` last within a host. Remote Control peers follow under
+  `Remote Control`, and cloud sessions last under `Cloud (can receive, can't reply)`, with state
+  `cloud`; neither has folder lines. The full paths stay in `list_sessions`.
+- The calling session is listed too, in its own host and folder, its name followed by
+  `(this session)`. When it is the only session, `No other session can take a message right now.`
+  follows the groups.
+- Each line has the columns `NAME`, `STATE`, `STARTED`, `HARNESS`, `MODEL`, `EFFORT` and `SESSION`, with
+  no header row, two spaces apart and aligned across all groups. A column wider than its cap (`STATE`
+  10, `STARTED` 6, `HARNESS` 32, `MODEL` 24, `EFFORT` 8, `SESSION` 8) is cut with `…`. `NAME` is never
+  cut. An unknown value shows as `—`.
+  - `NAME` is what `SendMessage` takes: a Claude session's native name, else the row's `name` from
+    `list_sessions` (see [Sessions](#sessions)).
   - `STARTED` is the time since the session started, in native `ListAgents` style: the largest whole
     unit, such as `42s`, `15m`, `7h` or `3d`, with seconds rounded into the minute. An Agent Tabs
     session uses `startedAt` from `list_sessions`; a native peer uses its `started … ago` field. Cloud
     rows and rows with no start show `—`.
   - `HARNESS` is the agent CLI's label, with ` via OpenRouter` for a session started through Ori, and
-    ` (no native name)` for a Claude tab with no native name, such as one on 0.5.3.
+    ` (no native name)` for a Claude tab with no native name that no native peer joined.
   - `MODEL` and `EFFORT` come from the presence file (see [Sessions](#sessions)).
-  - `WHERE` is the IDE product or terminal app, with no project, from the `list_sessions` row's `where`.
-    It never shows a raw host id.
   - `SESSION` is the first 8 characters of the session id.
 - Inside a group, lines sort by agent, in the order `claude`, `codex`, `agy`, `copilot`, `gemini`,
   `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local`, then other agents by name. Within an
@@ -1008,10 +1041,17 @@ This shows some of the groups from the test listing. The columns align across al
   can't classify, with state `unknown`. A `background` row shows its kind in `HARNESS`.
 - A Claude session appears once. An Agent Tabs row with a native name (the row's `name` when `route` is
   `native`, else `nativeName`) joins the native row of that name, first by the exact name, then by the
-  name without its `[ref]` when exactly one row on each side carries it. The joined line keeps the
-  native name and takes the rest from Agent Tabs. A native peer with no Agent Tabs session shows `—`
-  for model, effort and session. A native-routed Agent Tabs row that the native list doesn't show is
-  listed by its `shortName`, which the mailbox reaches.
+  name without its `[ref]` when exactly one row on each side carries it.
+- A Claude Agent Tabs row with no native name, such as a tab on 0.5.3, joins a local native peer when
+  the peer's name without its `[ref]` and its last `-<suffix>` equals the slug of the row's folder base
+  name, and the two start times agree within 2 minutes plus the unit of the native `started … ago`
+  (a minute for `18m`, an hour for `3h`). It joins only when the row has exactly one such peer and the
+  peer exactly one such row; otherwise both lines stay. The mod recomputes this at each listing and
+  writes nothing back to the presence file.
+- A joined line keeps the native name and takes the rest from Agent Tabs. A native peer with no Agent
+  Tabs session shows `—` for model, effort and session. A native-routed Agent Tabs row that the native
+  list doesn't show is listed by its `legacyName`, which the mailbox reaches, and so is a row whose name
+  equals a native peer's name.
 - `Subagents` and `Teammates` paragraphs and the native notes, such as a session list that didn't
   complete, follow the groups unchanged.
 - The last line counts what the list leaves out: Remote Control sessions that are offline, other
@@ -1032,10 +1072,24 @@ This shows some of the groups from the test listing. The columns align across al
   isn't one printable line of at most 128 characters (`model`) or a word of at most 32 letters, digits,
   dots, dashes or underscores (`effort`).
 
+#### Agent type
+
+- A session started as an agent type (`--agent`, or `agent` in settings) gets it from `agent_type` in
+  `classic.SessionStart`, or from the merged settings' `agent` at `session.start`. The API lists no
+  agent definitions, so the mod reads the definition file: `<cwd>/.claude/agents/<type>.md`, then
+  `<config>/agents/<type>.md` (`CLAUDE_CONFIG_DIR`, else `~/.claude`), and in each folder any `.md`
+  whose frontmatter `name` is the type. A `<plugin>:<name>` type is read from `agents/<name>.md` under
+  the plugin's `installPath` in `<config>/plugins/installed_plugins.json`.
+- The frontmatter `color` counts when it is one of `red`, `blue`, `green`, `yellow`, `purple`,
+  `orange`, `pink` or `cyan`. The mod sends `presence` with `agentType` and, when found, `agentColor`
+  once per type, and `list_sessions` shows both, `null` for a default session. Other CLIs report no
+  agent type with a colour, so they send none.
+
 #### SendMessage
 
-A `session.send` hook sends to Agent Tabs when `e.to` is any row's `shortName`, the name or id of a row
-whose `route` is `agent-tabs`, or the tab id of a native row. It returns `{ isDelivered: true }`, or
+A `session.send` hook sends to Agent Tabs when `e.to` is the name, `shortName`, `legacyName` or id of a
+row whose `route` is `agent-tabs`, or the `legacyName` or tab id of a native row. The calling session's
+own row never matches. It returns `{ isDelivered: true }`, or
 `{ isDelivered: false, reason }` with the server's error, without calling `next`. Every other name,
 including each native peer name, goes to `next(e)` unchanged.
 
@@ -1060,7 +1114,8 @@ including each native peer name, goes to `next(e)` unchanged.
 
 #### UI
 
-- `$.ui.status` shows the unread count and the first sender, such as `✉ 2 · codex-1a2b`, and clears at 0.
+- `$.ui.status` shows the unread count and the oldest sender's name, such as `✉ 2 · plugins-82`, and
+  clears at 0.
 - `$.ui.toast` announces each arrival: `✉ Agent Tabs message from <sender> · /agent-tabs to view`.
 - A `ui.render` hook on `UserMessage` draws the mod's own delivery prompts (origin `plugin` with this
   plugin's name, or `peer`, and text in the delivery frame) as a card: sender and agent, folder, a reply
@@ -1086,26 +1141,37 @@ transcript in the fullscreen layout from 110 columns, and opens inline above the
 of these options seats it inline: `rows` is the inline height, which the dock ignores, and `focus` is a
 request for the keys only.
 
-- **Agents:** the heading `Agent Tabs Messages`, then the sessions from the `ListAgents` merge code,
-  grouped by IDE or terminal (the row's `where`, such as `Antigravity IDE` or `Windows Terminal`), with
-  the session's own host first, the others in case-insensitive order, `Other` for an unknown host, and
-  `Cloud (can receive, can't reply)` last. Under each host come its folders, indented two spaces, the
-  session's own folder first, then by base name, then `Folder not known`; then the session lines,
-  indented four. A blank line comes before each host group and before each folder after the first. A
-  line has name, state, time since start, harness, model, effort and session, with no IDE or terminal
-  column. Inside a folder the `ListAgents` order applies. The state is coloured by theme key: `idle`
-  success, `busy` warning, `permission` error, `waking` suggestion, anything else dim.
-- A folder heading is a Button labelled with the folder's base name, in a keyed Box. A Box drawn
+- **Agents:** the heading `Agent Tabs Messages`, then the sessions from the `ListAgents` merge code, in
+  the `ListAgents` groups and order, this session included. Each IDE or terminal group is a Box with
+  `borderStyle: "round"` and `paddingX: 1`, stacked with no gap and as wide as the pane. The API draws
+  no border title, so the host name is the bold first line inside the box. Folders follow, with one
+  blank line between folders inside a box.
+- A folder heading is a plain Button labelled `▸ <base name>`, indented two, in a keyed Box. Its hover
+  underlines it and draws it bold; a Button label has no bold at rest. A Box drawn
   `position: "absolute"` and `display: "none"` with `hover: { display: "flex" }` beside it shows the full
-  path while the pointer is on the heading. Pressing the heading checks the path with `$.fs.stat` and
-  `resolve`, refuses one that doesn't exist or isn't a folder with a toast, and runs, by argv with no
-  shell, `explorer.exe <path>` on Windows (`OS` is `Windows_NT`), `open <path>` on macOS and
-  `xdg-open <path>` on Linux (`uname -s`), with the resolved path. `explorer.exe` exits 1 even when it
-  opened the folder, so on Windows only a failed start counts as an error.
-- **Messages** of the chosen agent: everything it sent or received through Agent Tabs or SendMessage
-  with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
+  path while the pointer is on the heading. `Folder not known` is bold text with the same mark.
+  Pressing the heading checks the path with `$.fs.stat` and `resolve`, refuses one that doesn't exist
+  or isn't a folder with a toast, and runs, by argv with no shell, `explorer.exe <path>` on Windows
+  (`OS` is `Windows_NT`), `open <path>` on macOS and `xdg-open <path>` on Linux (`uname -s`), with the
+  resolved path. `explorer.exe` exits 1 even when it opened the folder, so on Windows only a failed
+  start counts as an error.
+- Each session takes two lines. Line 1, indented four: a state dot `●` (`idle` success, `busy`
+  warning, `permission` error, `waking` suggestion, anything else dim), an agent glyph in the agent's
+  colour (Claude `✻` `#d97757`, Codex `◆` `#10a37f`, Antigravity `▲` `#8b7cf6`, others `•` `#9aa4b2`),
+  the name as a plain Button, never cut, and ` (this session)` in italics for the calling session. A
+  session with an `agentColor` draws its name as Text in that colour (`red` `#e5534b`, `blue` `#539bf5`,
+  `green` `#57ab5a`, `yellow` `#c69026`, `purple` `#b083f0`, `orange` `#e0823d`, `pink` `#e275ad`, `cyan`
+  `#39c5cf`), because a Button label takes no colour; line 2 is then its only Button.
+  Line 2, indented six, a dim plain Button: `<state> · <started> · <harness> · <model> · <effort>`,
+  with ` (<agentType>)` after the harness when the session runs an agent type,
+  leaving out every unknown part and its separator, with a leading `claude-` or `gpt-` dropped from the
+  model, cut with `…` to the room the box leaves. Either Button opens the session's messages. The
+  session holding the focus gets `backgroundColor: "#264f78"` across both lines. The session id is not
+  in this view.
+- **Messages** of the chosen agent: a `Session: <id>` line when the id is known, then everything it
+  sent or received through Agent Tabs or SendMessage with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
   `HH:MM  ↘ peer  first line…` for received, in local time.
-- **Detail:** from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
+- **Detail:** the session id, from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
   closes the pane and fills the prompt with `Reply to <name> (message <id>): `, which never submits; a
   dialog-held pane would refuse the fill.
 
@@ -1156,7 +1222,8 @@ keep working when the model calls them.
 the `ListAgents` list (folder groups, alignment and cuts, order, the Claude join, the cloud group, the
 left-out count and the fallback), model and effort reports, `SendMessage` routing both ways, by short
 name and for every listed name, inbound delivery when idle and when busy,
-release after a failed submit, the permission rule, tool deferral, the card and its **Open in Agent
+release after a failed submit, the permission rule, tool deferral, the self row, the native-style names, the agent type and colour lookup and its pane drawing, the 0.5.3 join (a unique match, an
+ambiguous match, a time mismatch and a slug mismatch), the Remote Control group, the card and its **Open in Agent
 Tabs** button on the terminal and desktop surfaces, the unread band appearing, opening the newest sender
 and hiding, the toast text, the pane's host and folder grouping, the folder hover card and press (the
 argv on Windows, macOS and Linux, and the refusals), the fullscreen open with a docked pane, the pane's
@@ -1164,7 +1231,7 @@ three views on both surfaces, its navigation, Reply, `$.state` across a
 reload, no reads while closed, the native log, and `claudeMod` off. `mcp/test/history.test.ts` covers
 the sent log, `history` order and merge, that `history` marks nothing read, log retention and the
 `claudeMod` setting. `mcp/test/mod.test.ts` covers the server side: the driver rules, the stale-beat
-fallback, claims, the `list_sessions` rows, short names and their resolution in `send_message`, the model
+fallback, claims, the `list_sessions` rows, native-style names, legacy names and their resolution in `send_message`, the model
 and effort a mod reports, and the Codex config defaults. `mcp/test/agentHook.test.ts` covers the model
 and effort in hook payloads, and `mcp/test/integration.test.ts` the model `open_tab` records.
 

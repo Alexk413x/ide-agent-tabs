@@ -36,6 +36,9 @@ export type AgentTabsPaneRow = {
   session: string | null
   id: string | null
   names: string[]
+  self: boolean
+  agentType: string | null
+  agentColor: string | null
 }
 
 export type AgentTabsPaneFolder = { path: string | null; heading: string | null; rows: AgentTabsPaneRow[] }
