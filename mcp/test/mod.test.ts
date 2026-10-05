@@ -246,6 +246,20 @@ test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', 
   }
 });
 
+test('a mod presence call that beats the client name still records the session as Claude', async () => {
+  const home = tempDir('iat-mod-race-');
+  const m = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-r' }, pid: 7, cwd: '/r', hosts: { findHost: async () => undefined, typeInto: async () => ({ ok: true }) }, isAlive: () => true });
+  await m.start();
+  try {
+    assert.equal((await readPresence(home, 'tab-r'))!.agent, 'unknown');
+    await m.modPresence({ driver: true, nativeName: 'plugins-fa [6a3948]', state: 'idle' });
+    assert.equal((await readPresence(home, 'tab-r'))!.agent, 'claude');
+  } finally {
+    m.stopHeartbeat();
+    m.stopSync();
+  }
+});
+
 test('one take claims every waiting message up to MAX_READ_CHARS, at least one, and leaves the rest', async () => {
   const home = tempDir('iat-mod-take-');
   const m = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-t', IDE_AGENT_TABS_AGENT: 'claude' }, pid: 9, cwd: '/t', hosts: { findHost: async () => undefined, typeInto: async () => ({ ok: true }) }, isAlive: () => true });
