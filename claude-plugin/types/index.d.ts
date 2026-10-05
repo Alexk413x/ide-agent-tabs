@@ -22,6 +22,7 @@ export type AgentTabsPane = {
   agent: AgentTabsPick | null
   message: string | null
   focus: { agents: string | null; messages: string | null; detail: string | null }
+  notice?: string | null
 }
 
 export type AgentTabsPaneRow = {

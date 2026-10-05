@@ -19,13 +19,16 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 - Each session takes two lines: a coloured state dot, an agent glyph in the agent's colour (Claude `✻`,
   Codex `◆`, Antigravity `▲`, others `•`) and the name; then, dim, the state, time since start, harness,
   model (without a leading `claude-` or `gpt-`) and effort, leaving out unknown parts. Either line opens
-  the session. A `▎` mark shows on both lines of the focused or hovered session, with no background colour. The session id moves to the
-  messages and detail views.
-- A folder heading shows the folder's base name. Hovering it shows the full path. Pressing it opens the
-  folder in the file manager: `explorer.exe` on Windows, `open` on macOS, `xdg-open` on Linux, run by
-  argv with no shell. A path that doesn't exist or isn't a folder is refused with a toast. On Windows
+  the session. A `▎` mark shows on both lines of the hovered session, with no background colour and no
+  other hover effect. Nothing is selected when the pane opens. The session id moves to the messages and
+  detail views.
+- A folder heading shows the folder's base name. Pressing it opens the folder in the file manager:
+  `explorer.exe` on Windows, `open` on macOS, `xdg-open` on Linux, run by argv with no shell. On Windows
   the folder window opens behind the IDE, because Windows doesn't let a background process take the
-  foreground. Pressing the full path shown on hover copies it to the clipboard.
+  foreground. Hovering the heading shows the full path on the line below; pressing that line copies the
+  path to the clipboard.
+- Actions in the pane report on a line at its bottom for 6 seconds, because the pane holds toasts while
+  it's open.
 - The card of a delivered peer message has an **Open in Agent Tabs** button, which opens the pane on that
   message.
 - While the session has unread Agent Tabs mail, a band above the prompt shows

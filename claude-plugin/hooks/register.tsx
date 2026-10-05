@@ -61,6 +61,7 @@ const OTHER_HOST = 'Other'
 const BAND_NAMES = 3
 const SENDERS_READ = 20
 const OPEN_TIMEOUT_MS = 10_000
+const NOTICE_MS = 6_000
 const PANE_REFRESH_MS = 2_000
 const RECEIVED_ORIGINS = ['peer', 'peer-send-message']
 const RECEIVED_FROM = [/\bfrom="([^"\n]{1,128})"/, /^From: ([^\n]{1,128})$/m, /\bfrom ([^\s:,()]{1,64}(?: \[[^\]\n]{1,32}\])?)[:,]/]
@@ -72,6 +73,7 @@ const AGENT_GLYPHS: Record<string, { glyph: string; color: string }> = {
 }
 const OTHER_GLYPH = { glyph: '•', color: '#9aa4b2' }
 const ROW_MARK = '▎'
+const COPY_MARK = '⧉ '
 const FOLDER_MARK = '▸ '
 const MODEL_VENDOR = /^(claude|gpt)-/
 const NAME_COLORS: Record<string, string> = {
@@ -803,22 +805,32 @@ async function hostPlatform($: EngineInterface): Promise<HostPlatform> {
   return platformOf(os, uname?.stdout)
 }
 
+// The pane holds toasts while it's open, so actions taken in the pane report inside it.
+async function notify($: EngineInterface, text: string) {
+  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  await $.state.set(paneRef, { ...pane, notice: text })
+  $.clock.after(NOTICE_MS, () => {
+    void $.state.get(paneRef).then(({ value }) => (value?.notice === text ? $.state.set(paneRef, { ...value, notice: null }) : undefined))
+  })
+}
+
 async function openFolder($: EngineInterface, path: string) {
   const at = await $.fs.stat(path, { resolve: true }).catch(() => undefined)
   if (at?.kind !== 'dir' || at.realPath === undefined) {
-    $.ui.toast(`Agent Tabs: ${path} is not a folder on this machine.`)
+    await notify($, `${path} is not a folder on this machine.`)
     return
   }
   const platform = await hostPlatform($)
   const argv = folderOpener(platform, at.realPath)
   const ran = await $.process.run(argv, { timeoutMs: OPEN_TIMEOUT_MS }).catch(() => undefined)
   // explorer.exe exits 1 even when it opened the folder, so only a failed start counts on Windows.
-  if (ran === undefined || (platform !== 'windows' && ran.exitCode !== 0)) $.ui.toast(`Agent Tabs: ${argv[0]} could not open ${at.realPath}.`)
+  if (ran === undefined || (platform !== 'windows' && ran.exitCode !== 0)) await notify($, `${argv[0]} could not open ${at.realPath}.`)
+  else await notify($, platform === 'windows' ? `Opened ${at.realPath} in File Explorer (it may be behind this window).` : `Opened ${at.realPath}.`)
 }
 
 async function copyPath($: EngineInterface, path: string, surface: RenderSurface) {
   const copied = await $.ui.copy({ text: path, surface }).catch(() => undefined)
-  $.ui.toast(copied?.isCopied ? `Agent Tabs: path copied · ${path}` : `Agent Tabs: couldn't copy the path · ${path}`)
+  await notify($, copied?.isCopied ? `Copied ${path}` : `Couldn't copy ${path}`)
 }
 
 export function hhmm(iso: string): string {
@@ -1201,13 +1213,12 @@ export const register: Register = on => {
       const room = Math.max(8, width - 4 - 6)
       const pick = (r: AgentTabsPaneRow): AgentTabsPick => ({ key: r.key, name: r.name, id: r.id, names: r.names })
       const open = (r: AgentTabsPaneRow) => () => goTo($, { view: 'messages', agent: pick(r), message: null })
-      const focus = (key: string) => (key === first ? { autoFocus: true as const } : {})
+      const focus = (key: string) => (focused !== null && key === first ? { autoFocus: true as const } : {})
       const line = (r: AgentTabsPaneRow) => {
-        const selected = first === `agent:${r.key}` || first === `info:${r.key}`
         const glyph = AGENT_GLYPHS[r.agent] ?? OTHER_GLYPH
         const dot = DOT_COLORS[r.state]
         const mark = (
-          <Box position="absolute" top={0} left={2} {...(selected ? {} : { display: 'none' as const, hover: { display: 'flex' as const } })}>
+          <Box position="absolute" top={0} left={2} display="none" hover={{ display: 'flex' }}>
             <Text>{ROW_MARK}</Text>
           </Box>
         )
@@ -1253,10 +1264,10 @@ export const register: Register = on => {
         const key = folderKey(hi, f)
         const label = `${FOLDER_MARK}${f.heading}`
         return (
-          <Box key={`heading-${key}`} flexDirection="row" paddingLeft={2}>
-            <Button key={key} plain label={label} hover={{ underline: true, bold: true }} {...focus(key)} onPress={() => openFolder($, path)} />
-            <Box position="absolute" top={0} left={label.length + 4} display="none" hover={{ display: 'flex' }}>
-              <Button key={`copy-${key}`} plain label={path} hover={{ underline: true }} onPress={() => copyPath($, path, e.surface)} />
+          <Box key={`heading-${key}`} flexDirection="column" paddingLeft={2}>
+            <Button key={key} plain label={label} {...focus(key)} onPress={() => openFolder($, path)} />
+            <Box paddingLeft={2} display="none" hover={{ display: 'flex' }}>
+              <Button key={`copy-${key}`} plain dimColor label={`${COPY_MARK}${cut(path, room)}`} onPress={() => copyPath($, path, e.surface)} />
             </Box>
           </Box>
         )
@@ -1277,6 +1288,11 @@ export const register: Register = on => {
               ))}
             </Box>
           ))}
+          {pane.notice ? (
+            <Text dimColor wrap="truncate-end">
+              {pane.notice}
+            </Text>
+          ) : null}
         </Box>
       )
     }
