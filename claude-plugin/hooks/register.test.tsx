@@ -965,7 +965,7 @@ describe('agents pane', () => {
       expect(history.session).toBe('tab-d')
       expect(history.names).toContain('docs-9b [11aa22]')
       const lines = (await ui.findAll({ type: 'Button' })).map(b => b.text)
-      expect(lines).toEqual(['Back', `${local(AT(1))}  ↘ w-1a  Please review x.ts…`, `${local(AT(2))}  ↑ ${NATIVE}  Done, both look fine.`])
+      expect(lines).toEqual(['Back', `${local(AT(1))}  ↘ w-1a · Please review x.ts…`, `${local(AT(2))}  ↑ ${NATIVE.replace(/\s*\[[^\]]*\]$/, '')} · Done, both look fine.`])
       expect(await ui.find({ type: 'Text', text: 'docs-9b [11aa22] · 2 messages' })).toBeDefined()
 
       await ui.press({ key: 'msg:m-aaaaaaaaaaaaaaa1' })
