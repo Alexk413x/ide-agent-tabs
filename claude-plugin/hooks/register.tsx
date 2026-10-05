@@ -50,6 +50,8 @@ const paneRef = { plugin: 'ide-agent-tabs', key: 'pane' } as const
 const paneOpenRef = { plugin: 'ide-agent-tabs', key: 'paneOpen' } as const
 const paneHostsRef = { plugin: 'ide-agent-tabs', key: 'paneHosts' } as const
 const paneHistoryRef = { plugin: 'ide-agent-tabs', key: 'paneHistory' } as const
+const paneTotalRef = { plugin: 'ide-agent-tabs', key: 'paneTotal' } as const
+const paneMessageRef = { plugin: 'ide-agent-tabs', key: 'paneMessage' } as const
 const inboxRef = { plugin: 'ide-agent-tabs', key: 'inbox' } as const
 
 const PANE = 'agent-tabs'
@@ -78,6 +80,7 @@ const OTHER_GLYPH = { glyph: '•', color: '#9aa4b2' }
 const ROW_MARK = '▎'
 const BACK_LABEL = '← Back'
 const REPLY_LABEL = '↩ Reply'
+const READING = 'Reading messages…'
 const NO_MESSAGES = 'No messages sent or received through Agent Tabs or SendMessage in the last 7 days.'
 const NO_SESSIONS = 'No other agent session is live.'
 const CLOSE_LABEL = ' ✕  '
@@ -902,14 +905,31 @@ async function refreshPane($: EngineInterface) {
   const { value: shownHosts } = await $.state.get(paneHostsRef)
   if (JSON.stringify(shownHosts) !== JSON.stringify(hosts)) await $.state.set(paneHostsRef, hosts)
   if (pane.view === 'agents' || pane.agent === null) return
-  const reply = (await callMod($, me.server, {
-    op: 'history',
-    ...(pane.agent.id !== null ? { session: pane.agent.id } : {}),
-    names: pane.agent.names.slice(0, 8),
-  }).catch(() => undefined)) as { messages?: AgentTabsMessage[] } | undefined
-  if (reply?.messages === undefined) return
-  const { value: shownHistory } = await $.state.get(paneHistoryRef)
-  if (JSON.stringify(shownHistory) !== JSON.stringify(reply.messages)) await $.state.set(paneHistoryRef, reply.messages)
+  const who = { ...(pane.agent.id !== null ? { session: pane.agent.id } : {}), names: pane.agent.names.slice(0, 8) }
+  let reply: { total?: number; messages?: AgentTabsMessage[] } | undefined
+  try {
+    reply = (await callMod($, me.server, { op: 'history', ...who })) as typeof reply
+  } catch (error) {
+    await notify($, `Couldn't read ${withoutRef(pane.agent.name)}'s messages: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`)
+  }
+  if (reply?.messages !== undefined) {
+    const { value: shownHistory } = await $.state.get(paneHistoryRef)
+    if (JSON.stringify(shownHistory) !== JSON.stringify(reply.messages)) await $.state.set(paneHistoryRef, reply.messages)
+    const total = reply.total ?? reply.messages.length
+    const { value: shownTotal } = await $.state.get(paneTotalRef)
+    if (shownTotal !== total) await $.state.set(paneTotalRef, total)
+  }
+  if (pane.view !== 'detail' || pane.message === null) return
+  const { value: shownMessage } = await $.state.get(paneMessageRef)
+  if (shownMessage?.id === pane.message) return
+  const whole = (await callMod($, me.server, { op: 'message', ...who, id: pane.message }).catch(() => undefined)) as { message?: AgentTabsMessage | null } | undefined
+  if (whole?.message) await $.state.set(paneMessageRef, whole.message)
+}
+
+async function clearHistory($: EngineInterface) {
+  await $.state.set(paneHistoryRef, [])
+  await $.state.set(paneTotalRef, null)
+  await $.state.set(paneMessageRef, null)
 }
 
 const paneTimer: { current: { cancel: () => void } | null } = { current: null }
@@ -929,7 +949,8 @@ async function hidePane($: EngineInterface) {
 async function goTo($: EngineInterface, change: Partial<AgentTabsPane>) {
   const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
   const next = { ...pane, ...change }
-  if (next.agent?.key !== pane.agent?.key) await $.state.set(paneHistoryRef, [])
+  if (next.agent?.key !== pane.agent?.key) await clearHistory($)
+  else if (next.message !== pane.message) await $.state.set(paneMessageRef, null)
   await $.state.set(paneRef, next)
   await refreshPane($).catch(() => undefined)
 }
@@ -949,7 +970,7 @@ function senderPick(rows: readonly SessionRow[], name: string, id?: string): Age
 
 async function openPaneOn($: EngineInterface, change: Pick<AgentTabsPane, 'view' | 'agent' | 'message'>) {
   const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
-  await $.state.set(paneHistoryRef, [])
+  await clearHistory($)
   await $.state.set(paneRef, { ...pane, ...change })
   await $.ui.open(PANE_OPEN)
   await showPane($)
@@ -1037,6 +1058,7 @@ export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number, n
         })
       }
       for (const r of f.rows) {
+        lines.push({ indent: 0, parts: [] })
         const id = `s${n++}`
         acts[id] = { act: 'session', key: r.key }
         const glyph = AGENT_GLYPHS[r.agent] ?? OTHER_GLYPH
@@ -1087,7 +1109,9 @@ export function sessionPlace(agent: AgentTabsPick | null, hosts: readonly AgentT
 
 export const countLabel = (n: number) => (n === 1 ? '1 message' : `${n} messages`)
 
-export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
+export const olderLine = (total: number, shown: number) => `${total - shown} older ${total - shown === 1 ? 'message' : 'messages'} not shown`
+
+export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], total: number | null, hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
   const acts: Record<string, PaneAct> = { back: { act: 'back' }, close: { act: 'close' } }
   const where = sessionPlace(pane.agent, hosts)
   const dot = where ? DOT_COLORS[where.row.state] : undefined
@@ -1097,7 +1121,7 @@ export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMe
   const lines: ListLine[] = [
     { indent: 1, parts: [...back, ...closeChip(partsWidth(1, back), width)] },
     { indent: 0, parts: [{ text: ' ' }] },
-    { indent: HEADER_INDENT, parts: [{ text: cut(`${withoutRef(pane.agent?.name ?? '')} · ${countLabel(messages.length)}`, room), bold: true }] },
+    { indent: HEADER_INDENT, parts: [{ text: cut(`${withoutRef(pane.agent?.name ?? '')} · ${total === null ? '…' : countLabel(total)}`, room), bold: true }] },
     ...(where
       ? [
           { indent: HEADER_INDENT, parts: [{ text: '● ', ...(dot !== undefined ? { color: dot } : { dim: true }) }, { text: cut(detailLine(where.row), Math.max(8, room - 2)), dim: true }] },
@@ -1106,7 +1130,8 @@ export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMe
       : []),
     ...(details !== '' ? [{ indent: HEADER_INDENT, parts: [{ text: cut(details, room), dim: true }] }] : []),
     { indent: 0, parts: [{ text: ' ' }] },
-    ...(messages.length === 0 ? centeredLines(NO_MESSAGES, width) : []),
+    ...(messages.length === 0 ? centeredLines(total === null ? READING : NO_MESSAGES, width) : []),
+    ...(total !== null && total > messages.length ? [{ indent: 2, parts: [{ text: olderLine(total, messages.length), dim: true }] }] : []),
     ...messages.map((m, i): ListLine => {
       acts[`m${i}`] = { act: 'message', id: m.id }
       return { item: `m${i}`, indent: 2, mark: 0, parts: [{ text: messageLine(m, hosts, width - 2), underline: true }] }
@@ -1456,7 +1481,7 @@ export const register: Register = on => {
           </Box>
         )
         return (
-          <Box key={`row-${r.key}`} flexDirection="column">
+          <Box key={`row-${r.key}`} flexDirection="column" marginTop={1}>
             <Box flexDirection="row" paddingLeft={4}>
               {mark}
               {r.messages ? (
@@ -1533,10 +1558,11 @@ export const register: Register = on => {
     }
 
     const { value: messages = [] } = await $.state.get(paneHistoryRef)
+    const { value: total = null } = await $.state.get(paneTotalRef)
     const back = <Button key="back" label="Back" onPress={() => goUp($)} />
 
     if (pane.view === 'messages' || pane.message === null) {
-      if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, hosts, width)} />
+      if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, total, hosts, width)} />
       const where = sessionPlace(pane.agent, hosts)
       const dot = where ? DOT_COLORS[where.row.state] : undefined
       return (
@@ -1548,7 +1574,7 @@ export const register: Register = on => {
           <Text> </Text>
           <Box flexDirection="column" paddingLeft={HEADER_INDENT}>
             <Text bold wrap="truncate-end">
-              {withoutRef(pane.agent.name)} · {countLabel(messages.length)}
+              {withoutRef(pane.agent.name)} · {total === null ? '…' : countLabel(total)}
             </Text>
             {where && (
               <Box flexDirection="row">
@@ -1570,7 +1596,8 @@ export const register: Register = on => {
             )}
           </Box>
           <Text> </Text>
-          {messages.length === 0 && empty(NO_MESSAGES)}
+          {messages.length === 0 && empty(total === null ? READING : NO_MESSAGES)}
+          {total !== null && total > messages.length && <Text dimColor>{`  ${olderLine(total, messages.length)}`}</Text>}
           {messages.map(m => (
             <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
               <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
@@ -1599,6 +1626,7 @@ export const register: Register = on => {
       )
     }
     const { value: me } = await $.state.get(selfRef)
+    const { value: whole = null } = await $.state.get(paneMessageRef)
     const line = replyLine(m, me?.id, hosts)
     const delivery = [m.delivery, m.status].filter(v => v !== undefined).join(' · ') || '—'
     return (
@@ -1621,7 +1649,7 @@ export const register: Register = on => {
           Delivery: {delivery} · {m.route === 'native' ? 'SendMessage' : 'Agent Tabs'}
         </Text>
         <Box marginTop={1}>
-          <Text wrap="wrap">{m.text}</Text>
+          <Text wrap="wrap">{whole?.id === m.id ? whole.text : (m.textLength ?? m.text.length) > m.text.length ? `${m.text}…` : m.text}</Text>
         </Box>
       </Box>
     )

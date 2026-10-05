@@ -26,6 +26,7 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 - A session's messages screen leads with `← Back`, then its title, status line, folder and IDE or
   terminal, and full name and session id, indented under it. The pane has its own `✕` close chip at
   the right of the title or Back line. An empty view's text is centred.
+- A blank line comes before each session in the agents view.
 - The pane shows session names without their trailing `[ref]` (`plugins-82`). A session's messages
   screen puts the full name and `Session: <id>` on a dim line under its title. ListAgents,
   `list_sessions` and SendMessage keep the full names.
@@ -74,6 +75,11 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 
 ### Fixed
 
+- A session with a long history showed its message count in the agents view but `0 messages` on its
+  screen. Its `history` reply was over Claude Code's MCP output limit, which swaps the result for an
+  error text, so the pane parsed nothing. `history` now returns the total and text previews of the
+  newest messages that fit, the screen shows the total and `<n> older messages not shown`, the detail
+  reads the whole message with a new `message` op, and a failed read says so in the pane.
 - A Claude tab on 0.5.3, which reports no native name, no longer shows twice. The mod joins it to the
   native peer whose name, without its suffix, matches the tab's folder and whose start time agrees
   within 2 minutes plus the native listing's precision, when exactly one peer and one tab fit. The

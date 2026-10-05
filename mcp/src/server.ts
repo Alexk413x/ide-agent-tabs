@@ -19,7 +19,7 @@ export const SERVER_NAME = 'ide-agent-tabs';
 export const SERVER_VERSION = PACKAGE_VERSION;
 export const HOOK_TOOL = 'agent_tabs_hook';
 export const MOD_TOOL = 'agent_tabs_mod';
-export const MOD_OPS = ['presence', 'send', 'take', 'ack', 'release', 'sessions', 'log', 'history', 'counts', 'settings'] as const;
+export const MOD_OPS = ['presence', 'send', 'take', 'ack', 'release', 'sessions', 'log', 'history', 'message', 'counts', 'settings'] as const;
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 type Reply = (extra: Extra, work: () => Promise<unknown>) => Promise<CallToolResult>;
@@ -250,6 +250,8 @@ async function modOp(messaging: Messaging, service: Service, input: ModInput): P
       });
     case 'history':
       return messaging.modHistory({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] });
+    case 'message':
+      return messaging.modMessage({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] }, need(input.id, 'id'));
     case 'counts':
       return messaging.modCounts((input.agents ?? []).map((a) => ({ ...(a.session !== undefined ? { id: a.session } : {}), names: a.names })));
     case 'settings':
@@ -282,10 +284,10 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
       description:
         "Internal: the Agent Tabs mod inside Claude Code calls this to report the session's state, bridge SendMessage and ListAgents, and deliver its mail. Don't call it.",
       inputSchema: {
-        op: z.enum(MOD_OPS).describe('presence, send, take, ack, release, sessions, log, history, counts or settings.'),
+        op: z.enum(MOD_OPS).describe('presence, send, take, ack, release, sessions, log, history, message, counts or settings.'),
         direction: z.enum(['sent', 'received']).optional().describe('log: sent from or received by this session.'),
         peer: z.string().max(128).optional().describe("log: the other session's name."),
-        id: z.string().max(64).optional().describe('log: the message id, when it has one.'),
+        id: z.string().max(64).optional().describe('log: the message id, when it has one. message: the message to return whole.'),
         at: z.number().optional().describe('log: when, in milliseconds since the epoch.'),
         delivery: z.string().max(200).optional().describe('log: what became of a sent message.'),
         session: z.string().max(128).optional().describe("history: the session id. presence: Claude Code's own session id."),

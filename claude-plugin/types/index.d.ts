@@ -65,6 +65,7 @@ export type AgentTabsMessage = {
   replyTo?: string
   delivery?: string
   status?: 'unread' | 'delivering' | 'read'
+  textLength?: number
 }
 
 declare module 'claude-code' {
@@ -77,6 +78,8 @@ declare module 'claude-code' {
       paneHosts: AgentTabsPaneHost[]
       inbox: AgentTabsInbox | null
       paneHistory: AgentTabsMessage[]
+      paneTotal: number | null
+      paneMessage: AgentTabsMessage | null
     }
   }
 }

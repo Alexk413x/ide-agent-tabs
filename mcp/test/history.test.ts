@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { RECEIVED_LOG, SENT_LOG } from '../src/messaging/history.js';
+import { HISTORY_REPLY_CHARS, PREVIEW_CHARS, RECEIVED_LOG, SENT_LOG } from '../src/messaging/history.js';
 import { cleanMail, KEEP_MS, mailboxDir } from '../src/messaging/mailbox.js';
 import { Messaging, type Hosts } from '../src/messaging/messaging.js';
 import { resolveSettings } from '../src/profiles.js';
@@ -168,7 +168,7 @@ test('counts match the history each session shows, and a refresh reads only the 
     await b.modLog({ direction: 'sent', peer: 'docs-9b [11aa22]', text: 'native', delivery: 'delivered' });
     const whos = [{ id: 'tab-a', names: [] }, { id: 'tab-b', names: ['plugins-fa [6a3948]'] }, { names: ['docs-9b [11aa22]'] }, { names: [] }];
     const { counts } = await b.modCounts(whos);
-    const shown = await Promise.all(whos.slice(0, 3).map(async (who) => (await b.modHistory(who)).messages.length));
+    const shown = await Promise.all(whos.slice(0, 3).map(async (who) => (await b.modHistory(who)).total));
     assert.deepEqual(counts, [...shown, null]);
     assert.deepEqual(counts, [2, 3, 1, null]);
 
@@ -178,6 +178,37 @@ test('counts match the history each session shows, and a refresh reads only the 
     assert.deepEqual((await b.modCounts(whos)).counts, [2, 3, 1, null], 'a file already read is not read again');
     await a.send({ to: 'tab-b', text: 'three' });
     assert.deepEqual((await b.modCounts(whos)).counts, [3, 4, 1, null], 'a new file is read');
+  } finally {
+    a.stopFollowUps();
+    b.stopFollowUps();
+    a.stopSync();
+    b.stopSync();
+  }
+});
+
+test('a long history fits one MCP reply: its full total, text previews of the newest messages, and each message whole on request', async () => {
+  const home = tempDir('iat-hist-');
+  let clock = Date.now() - 60 * 60_000;
+  const a = session(home, 'tab-a', 'codex', 1, () => clock);
+  const b = session(home, 'tab-b', 'claude', 2, () => clock);
+  await a.start();
+  await b.start();
+  try {
+    for (let i = 0; i < 200; i++) {
+      clock += 1_000;
+      await b.modLog({ direction: i % 2 ? 'sent' : 'received', peer: 'docs-9b [11aa22]', text: `${i} ${'y'.repeat(3_000)}`, at: clock });
+    }
+    const who = { id: 'tab-b', names: [] };
+    const reply = await b.modHistory(who);
+    assert.ok(JSON.stringify(reply).length < HISTORY_REPLY_CHARS, 'the reply stays under the MCP output limit');
+    assert.equal(reply.total, 200);
+    assert.deepEqual((await b.modCounts([who])).counts, [200], 'the count is the total the reply reports');
+    assert.ok(reply.messages.length > 0 && reply.messages.length < 200);
+    assert.equal(reply.messages.at(-1)!.text.split(' ')[0], '199', 'the newest messages are the ones kept');
+    assert.ok(reply.messages.every((m) => m.text.length === PREVIEW_CHARS && m.textLength > PREVIEW_CHARS));
+    const whole = await b.modMessage(who, reply.messages[0]!.id);
+    assert.equal(whole.message?.text.length, reply.messages[0]!.textLength);
+    assert.deepEqual(await b.modMessage(who, 'm-0000000000000000'), { message: null });
   } finally {
     a.stopFollowUps();
     b.stopFollowUps();

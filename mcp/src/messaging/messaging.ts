@@ -26,7 +26,7 @@ import {
 import { readCodexConfig } from './codexConfig.js';
 import { recordEnded, transcriptDirs, type TranscriptDirs } from './closed.js';
 import { runHook } from './hook.js';
-import { history, historyCounts, logId, MailIndex, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
+import { history, historyCounts, logId, MailIndex, previews, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
   agentFromClient,
@@ -678,11 +678,21 @@ export class Messaging {
     return { id };
   }
 
-  async modHistory(who: Who) {
+  private historyOf(who: Who) {
     if (who.id !== undefined && !isSessionId(who.id)) throw new MailError(`not a session id: ${who.id}`);
     const names = who.names.filter((n) => NATIVE_NAME.test(n)).slice(0, 8);
     if (who.id === undefined && names.length === 0) throw new MailError('history needs session or names');
-    return { messages: await history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names }, this.mailIndex) };
+    return history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names }, this.mailIndex);
+  }
+
+  async modHistory(who: Who) {
+    const items = await this.historyOf(who);
+    return { total: items.length, messages: previews(items) };
+  }
+
+  async modMessage(who: Who, id: string) {
+    const message = (await this.historyOf(who)).find((m) => m.id === id);
+    return { message: message ?? null };
   }
 
   async modCounts(whos: readonly Who[]) {
