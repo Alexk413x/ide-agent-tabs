@@ -19,6 +19,9 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
   headings and the Back and Reply chips work the same way. VS Code and mobile keep the Buttons. The list
   draws one row per line, box edges included, so the pointer lights the line under it; a folder's
   revealed path stays lit across the gap and for 300 ms after the pointer leaves.
+- The pane shows session names without their trailing `[ref]` (`plugins-82`). A session's messages
+  screen puts the full name and `Session: <id>` on a dim line under its title. ListAgents,
+  `list_sessions` and SendMessage keep the full names.
 - An agent opens the pane when the user asks, through the mod's `open_agent_messages` tool, optionally on
   one agent's messages (`agent`: a name from ListAgents).
 - A message line reads `HH:MM  ↑ name · text…`: the peer's name without its `[ref]`, then the first line
