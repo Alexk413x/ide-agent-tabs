@@ -13,6 +13,7 @@ import type {
   AgentTabsSender,
   AgentTabsView,
 } from '../types'
+import type { ListGroup, ListLine, ListProps } from './list'
 
 const SERVER = 'ide-agent-tabs'
 const MOD_TOOL = 'agent_tabs_mod'
@@ -75,6 +76,9 @@ const AGENT_GLYPHS: Record<string, { glyph: string; color: string }> = {
 }
 const OTHER_GLYPH = { glyph: '•', color: '#9aa4b2' }
 const ROW_MARK = '▎'
+const BACK_LABEL = '← Back'
+const REPLY_LABEL = '↩ Reply'
+const NO_MESSAGES = 'No messages sent or received through Agent Tabs or SendMessage in the last 7 days.'
 const FOLDER_MARK = '▸ '
 const MODEL_VENDOR = /^(claude|gpt)-/
 const NAME_COLORS: Record<string, string> = {
@@ -955,6 +959,85 @@ async function fillReply($: EngineInterface, text: string) {
   if (!filled.isFilled) $.ui.toast(`Agent Tabs: the prompt didn't take the reply line. ${text}`)
 }
 
+export type PaneAct =
+  | { act: 'session'; key: string }
+  | { act: 'folder'; path: string }
+  | { act: 'copy'; path: string }
+  | { act: 'message'; id: string }
+  | { act: 'back' }
+  | { act: 'reply' }
+
+const isAct = (data: unknown): data is PaneAct => typeof data === 'object' && data !== null && typeof (data as { act?: unknown }).act === 'string'
+
+export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
+  const acts: Record<string, PaneAct> = {}
+  const room = Math.max(8, width - 4 - 6)
+  let n = 0
+  const groups: ListGroup[] = hosts.map(host => {
+    const lines: ListLine[] = [{ indent: 0, parts: [{ text: cut(host.heading, Math.max(8, width - 4)), bold: true }] }]
+    host.folders.forEach((f, fi) => {
+      if (fi > 0) lines.push({ indent: 0, parts: [] })
+      if (f.heading !== null && f.path === null) lines.push({ indent: 2, parts: [{ text: `${FOLDER_MARK}${f.heading}`, bold: true }] })
+      if (f.heading !== null && f.path !== null) {
+        const id = n++
+        const label = `${FOLDER_MARK}${f.heading}`
+        acts[`f${id}`] = { act: 'folder', path: f.path }
+        acts[`c${id}`] = { act: 'copy', path: f.path }
+        const shown = [`f${id}`, `c${id}`]
+        lines.push({
+          indent: 2,
+          parts: [
+            { text: label, bold: true, underline: true, item: `f${id}` },
+            { text: '  ', revealOn: shown },
+            { text: cut(f.path, Math.max(8, room - label.length)), dim: true, underline: true, item: `c${id}`, revealOn: shown },
+          ],
+        })
+      }
+      for (const r of f.rows) {
+        const id = `s${n++}`
+        acts[id] = { act: 'session', key: r.key }
+        const glyph = AGENT_GLYPHS[r.agent] ?? OTHER_GLYPH
+        const dot = DOT_COLORS[r.state]
+        const color = r.agentColor !== null ? NAME_COLORS[r.agentColor] : undefined
+        lines.push({
+          item: id,
+          indent: 4,
+          mark: 2,
+          parts: [
+            { text: '● ', ...(dot !== undefined ? { color: dot } : { dim: true }) },
+            { text: `${glyph.glyph} `, color: glyph.color },
+            { text: r.name, underline: true, ...(color !== undefined ? { color } : {}) },
+            ...(r.self ? [{ text: THIS_SESSION, italic: true, underline: true }] : []),
+          ],
+        })
+        lines.push({ item: id, indent: 6, mark: 2, parts: [{ text: cut(detailLine(r), room), dim: true, underline: true }] })
+      }
+    })
+    return { border: true, lines }
+  })
+  return { groups, acts }
+}
+
+export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
+  const acts: Record<string, PaneAct> = { back: { act: 'back' } }
+  const count = messages.length === 1 ? '1 message' : `${messages.length} messages`
+  const lines: ListLine[] = [
+    { indent: 0, parts: [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: `${pane.agent?.name ?? ''} · ${count}`, bold: true }] },
+    ...(pane.agent?.id ? [{ indent: 0, parts: [{ text: `Session: ${pane.agent.id}`, dim: true }] }] : []),
+    ...(messages.length === 0 ? [{ indent: 0, parts: [{ text: NO_MESSAGES, dim: true }] }] : []),
+    ...messages.map((m, i): ListLine => {
+      acts[`m${i}`] = { act: 'message', id: m.id }
+      return { item: `m${i}`, indent: 2, mark: 0, parts: [{ text: messageLine(m, hosts, width - 2), underline: true }] }
+    }),
+  ]
+  return { groups: [{ border: false, lines }], acts }
+}
+
+export const detailChips = (): ListProps => ({
+  groups: [{ border: false, lines: [{ indent: 0, parts: [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: REPLY_LABEL, underline: true, item: 'reply' }] }] }],
+  acts: { back: { act: 'back' }, reply: { act: 'reply' } },
+})
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -1210,8 +1293,32 @@ export const register: Register = on => {
     return moved
   })
 
+  on('ui.message', { component: 'Pane' }, async ($, e) => {
+    if (e.requestId !== PANE || !isAct(e.data)) return {}
+    const act = e.data
+    if (act.act === 'folder') await openFolder($, act.path)
+    else if (act.act === 'copy') await copyPath($, act.path, e.surface)
+    else if (act.act === 'back') await goUp($)
+    else if (act.act === 'message') await goTo($, { view: 'detail', message: act.id })
+    else if (act.act === 'session') {
+      const { value: hosts = [] } = await $.state.get(paneHostsRef)
+      const r = paneRows(hosts).find(one => one.key === act.key)
+      if (r) await goTo($, { view: 'messages', agent: { key: r.key, name: r.name, id: r.id, names: r.names }, message: null })
+    } else if (act.act === 'reply') {
+      const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+      const { value: messages = [] } = await $.state.get(paneHistoryRef)
+      const { value: hosts = [] } = await $.state.get(paneHostsRef)
+      const { value: me } = await $.state.get(selfRef)
+      const m = messages.find(one => one.id === pane.message)
+      if (m) await fillReply($, replyLine(m, me?.id, hosts))
+    }
+    return {}
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const table = $.ui.resolve(e)
+    const { Box, Text, Button } = table
+    const Client = (e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in table ? table.Client : undefined
     const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
     const { value: hosts = [] } = await $.state.get(paneHostsRef)
     const width = Math.max(20, e.props.bodyColumns)
@@ -1236,6 +1343,14 @@ export const register: Register = on => {
           </Box>
         )
       }
+      if (Client) {
+        return (
+          <Box flexDirection="column">
+            {heading}
+            <Client key="agents" module="./list.tsx" width="100%" props={agentsList(hosts, width)} />
+          </Box>
+        )
+      }
       const folderKey = (hi: number, f: AgentTabsPaneFolder) => `folder:${hi}:${f.path}`
       const nameColor = (r: AgentTabsPaneRow) => (r.agentColor !== null ? NAME_COLORS[r.agentColor] : undefined)
       const room = Math.max(8, width - 4 - 6)
@@ -1256,11 +1371,11 @@ export const register: Register = on => {
               {dot !== undefined ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
               <Text color={glyph.color}>{glyph.glyph} </Text>
               {nameColor(r) !== undefined ? (
-                <Text color={nameColor(r)}>
+                <Text color={nameColor(r)} hover={{ underline: true }}>
                   {r.name}
                 </Text>
               ) : (
-                <Button key={`agent:${r.key}`} plain label={r.name} onPress={open(r)} />
+                <Button key={`agent:${r.key}`} plain label={r.name} hover={{ underline: true }} onPress={open(r)} />
               )}
               {r.self && (
                 <Text italic wrap="truncate-end">
@@ -1270,15 +1385,7 @@ export const register: Register = on => {
             </Box>
             <Box flexDirection="row" paddingLeft={6}>
               {mark}
-              {nameColor(r) !== undefined ? (
-                <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), room)} onPress={open(r)} />
-              ) : (
-                <Box key={`info:${r.key}`}>
-                  <Text dimColor wrap="truncate-end">
-                    {cut(detailLine(r), room)}
-                  </Text>
-                </Box>
-              )}
+              <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), room)} hover={{ underline: true }} onPress={open(r)} />
             </Box>
           </Box>
         )
@@ -1331,6 +1438,7 @@ export const register: Register = on => {
     const back = <Button key="back" label="Back" onPress={() => goUp($)} />
 
     if (pane.view === 'messages' || pane.message === null) {
+      if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, hosts, width)} />
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" gap={2}>
@@ -1340,7 +1448,7 @@ export const register: Register = on => {
             </Text>
           </Box>
           {pane.agent.id !== null && <Text dimColor>Session: {pane.agent.id}</Text>}
-          {messages.length === 0 && <Text dimColor>No messages sent or received through Agent Tabs or SendMessage in the last 7 days.</Text>}
+          {messages.length === 0 && <Text dimColor>{NO_MESSAGES}</Text>}
           {messages.map(m => (
             <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
               <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
@@ -1354,10 +1462,11 @@ export const register: Register = on => {
     }
 
     const m = messages.find(one => one.id === pane.message)
+    const chips = Client ? <Client key="chips" module="./list.tsx" props={detailChips()} /> : undefined
     if (m === undefined) {
       return (
         <Box flexDirection="column">
-          {back}
+          {chips ?? back}
           <Text dimColor>That message is no longer in the 7-day log.</Text>
         </Box>
       )
@@ -1367,10 +1476,12 @@ export const register: Register = on => {
     const delivery = [m.delivery, m.status].filter(v => v !== undefined).join(' · ') || '—'
     return (
       <Box flexDirection="column">
-        <Box flexDirection="row" gap={2}>
-          <Button key="back" label="Back" onPress={() => goUp($)} />
-          <Button key="reply" label="Reply" onPress={() => fillReply($, line)} />
-        </Box>
+        {chips ?? (
+          <Box flexDirection="row" gap={2}>
+            <Button key="back" label="Back" onPress={() => goUp($)} />
+            <Button key="reply" label="Reply" onPress={() => fillReply($, line)} />
+          </Box>
+        )}
         {pane.agent.id !== null && <Text dimColor>Session: {pane.agent.id}</Text>}
         <Text>From: {partyName(m.from, hosts)}</Text>
         <Text>To: {partyName(m.to, hosts)}</Text>

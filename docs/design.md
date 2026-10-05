@@ -1146,11 +1146,19 @@ request for the keys only.
   `borderStyle: "round"` and `paddingX: 1`, stacked with no gap and as wide as the pane. The API draws
   no border title, so the host name is the bold first line inside the box. Folders follow, with one
   blank line between folders inside a box.
-- A folder heading is a plain Button labelled `▸ <base name>`, indented two, in a keyed Box. Its hover
-  underlines it and draws it bold; a Button label has no bold at rest. A Box drawn
-  `position: "absolute"` and `display: "none"` with `hover: { display: "flex" }` beside it shows the full
-  path while the pointer is on the heading. `Folder not known` is bold text with the same mark.
-  Pressing the heading checks the path with `$.fs.stat` and `resolve`, refuses one that doesn't exist
+- On the terminal and desktop the boxes and rows below the title are one `Client`, `hooks/list.tsx`,
+  so no Button inverts under the pointer or the focus. The mod hands it groups of lines, each part with
+  its text, style and the item it belongs to, and an `acts` table from item to action. The module
+  tracks the hovered item from `onPointer` (`move`, `enter`, `leave`) and the focused item from `onKey`
+  (`up`, `down`, `tab`, shift+`tab`), which reach it once a click gives it the keys. A lit item, hovered
+  or focused, draws `▎` at its lines' mark column and underlines its parts. A left `up`, or `return` or
+  space on the focused item, posts that item's act; the mod's `ui.message` hook on the pane runs it:
+  `session`, `folder`, `copy`, `message`, `back` or `reply`. VS Code and mobile get the Buttons below:
+  the Elements table types no `Client` there, and the test kit's VS Code table answers one that draws
+  nothing, so the mod checks the surface, not the table.
+- A folder heading is `▸ <base name>`, bold, indented two. Hovering or focusing it underlines it and
+  shows the full path to its right; the path is its own item, dim, which copies itself when clicked.
+  `Folder not known` is bold text with the same mark. Pressing the heading checks the path with `$.fs.stat` and `resolve`, refuses one that doesn't exist
   or isn't a folder with a toast, and runs, by argv with no shell, `explorer.exe <path>` on Windows
   (`OS` is `Windows_NT`), `open <path>` on macOS and `xdg-open <path>` on Linux (`uname -s`), with the
   resolved path. `explorer.exe` exits 1 even when it opened the folder, so on Windows only a failed
@@ -1158,22 +1166,21 @@ request for the keys only.
 - Each session takes two lines. Line 1, indented four: a state dot `●` (`idle` success, `busy`
   warning, `permission` error, `waking` suggestion, anything else dim), an agent glyph in the agent's
   colour (Claude `✻` `#d97757`, Codex `◆` `#10a37f`, Antigravity `▲` `#8b7cf6`, others `•` `#9aa4b2`),
-  the name as a plain Button, never cut, and ` (this session)` in italics for the calling session. A
-  session with an `agentColor` draws its name as Text in that colour (`red` `#e5534b`, `blue` `#539bf5`,
-  `green` `#57ab5a`, `yellow` `#c69026`, `purple` `#b083f0`, `orange` `#e0823d`, `pink` `#e275ad`, `cyan`
-  `#39c5cf`), because a Button label takes no colour; line 2 is then its only Button.
-  Line 2, indented six, a dim plain Button: `<state> · <started> · <harness> · <model> · <effort>`,
+  the name, never cut, and ` (this session)` in italics for the calling session. A session with an
+  `agentColor` draws its name in that colour (`red` `#e5534b`, `blue` `#539bf5`, `green` `#57ab5a`,
+  `yellow` `#c69026`, `purple` `#b083f0`, `orange` `#e0823d`, `pink` `#e275ad`, `cyan` `#39c5cf`).
+  Line 2, indented six, dim: `<state> · <started> · <harness> · <model> · <effort>`,
   with ` (<agentType>)` after the harness when the session runs an agent type,
   leaving out every unknown part and its separator, with a leading `claude-` or `gpt-` dropped from the
-  model, cut with `…` to the room the box leaves. Either Button opens the session's messages. The
-  session's two lines sit in one keyed Box, and each line holds a `▎` mark at column 2 in a Box drawn
-  `position: "absolute"`: shown for the session holding the focus, else `display: "none"` with
-  `hover: { display: "flex" }`, so the pointer anywhere on either line marks both. No background colour. The session id is not
-  in this view.
-- **Messages** of the chosen agent: a `Session: <id>` line when the id is known, then everything it
+  model, cut with `…` to the room the box leaves. Both lines are one item: the pointer anywhere on
+  either lights both, with `▎` at column 2 and both lines underlined, and a click on either opens the
+  session's messages. No background colour and no inversion. The session id is not in this view.
+- **Messages** of the chosen agent: `← Back` and the agent's name and count, a `Session: <id>` line
+  when the id is known, then everything it
   sent or received through Agent Tabs or SendMessage with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
-  `HH:MM  ↘ peer  first line…` for received, in local time.
-- **Detail:** the session id, from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
+  `HH:MM  ↘ peer  first line…` for received, in local time. A message line lights like a session, with
+  `▎` at column 0, and a click opens its detail.
+- **Detail:** the `← Back` and `↩ Reply` chips, which underline when lit, then the session id, from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
   closes the pane and fills the prompt with `Reply to <name> (message <id>): `, which never submits; a
   dialog-held pane would refuse the fill.
 
@@ -1227,7 +1234,7 @@ name and for every listed name, inbound delivery when idle and when busy,
 release after a failed submit, the permission rule, tool deferral, the self row, the native-style names, the agent type and colour lookup and its pane drawing, the 0.5.3 join (a unique match, an
 ambiguous match, a time mismatch and a slug mismatch), the Remote Control group, the card and its **Open in Agent
 Tabs** button on the terminal and desktop surfaces, the unread band appearing, opening the newest sender
-and hiding, the toast text, the pane's host and folder grouping, the folder hover card and press (the
+and hiding, the toast text, the pane's host and folder grouping, the list Client's hover, focus keys and clicks (pointer `move`, `down`, `up` and `leave`, and `down`, `up` and `return` through the kit), the Buttons on VS Code and mobile, the folder hover card and press (the
 argv on Windows, macOS and Linux, and the refusals), the fullscreen open with a docked pane, the pane's
 three views on both surfaces, its navigation, Reply, `$.state` across a
 reload, no reads while closed, the native log, and `claudeMod` off. `mcp/test/history.test.ts` covers

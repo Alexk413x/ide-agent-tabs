@@ -10,14 +10,17 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 
 ### Changed
 
-  `/agent-messages` opens and closes it; it replaces `/agent-tabs`. Nothing in the pane is pre-selected,
-  and the only hover effect is the `▎` side line.
+- The Claude Code mod's pane is **Agent Tabs Messages**, in its title and at the top of the agents view.
+  `/agent-messages` opens and closes it; it replaces `/agent-tabs`. Nothing in the pane is pre-selected.
+- On the terminal and desktop, the pane's rows are drawn by a `Client` module, so nothing in it is
+  inverted under the pointer or the focus. Hovering a session marks both its lines with `▎` and
+  underlines both; a left click on either line opens its messages. Once a click gives the list the keys,
+  the arrow keys or Tab move a focus that looks the same, and Enter opens it. Message rows, folder
+  headings and the Back and Reply chips work the same way. VS Code and mobile keep the Buttons.
 - An agent opens the pane when the user asks, through the mod's `open_agent_messages` tool, optionally on
   one agent's messages (`agent`: a name from ListAgents).
 - A message line reads `HH:MM  ↑ name · text…`: the peer's name without its `[ref]`, then the first line
   of the text, cut to fit.
-- Only a session's name is pressable; its second line is plain text, so hovering inverts just the name.
-  Claude Code inverts every pressable element under the pointer, and the mod API can't turn that off.
 - The agents view groups sessions by IDE or terminal (`Antigravity IDE`, `Windows Terminal`, and so on),
   each in a rounded box with its name as the first line, with `Other` for an unknown host, then
   `Remote Control` and the cloud group last. Under each come the folders open there, by base name
@@ -25,8 +28,7 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 - Each session takes two lines: a coloured state dot, an agent glyph in the agent's colour (Claude `✻`,
   Codex `◆`, Antigravity `▲`, others `•`) and the name; then, dim, the state, time since start, harness,
   model (without a leading `claude-` or `gpt-`) and effort, leaving out unknown parts. Either line opens
-  the session. A `▎` mark shows on both lines of the hovered session, with no background colour and no
-  other hover effect. Nothing is selected when the pane opens. The session id moves to the messages and
+  the session. Nothing is selected when the pane opens. The session id moves to the messages and
   detail views.
 - A folder heading shows the folder's base name. Pressing it opens the folder in the file manager:
   `explorer.exe` on Windows, `open` on macOS, `xdg-open` on Linux, run by argv with no shell. On Windows
