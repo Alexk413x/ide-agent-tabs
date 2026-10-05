@@ -12,6 +12,10 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 
   `/agent-messages` opens and closes it; it replaces `/agent-tabs`. Nothing in the pane is pre-selected,
   and the only hover effect is the `▎` side line.
+- An agent opens the pane when the user asks, through the mod's `open_agent_messages` tool, optionally on
+  one agent's messages (`agent`: a name from ListAgents).
+- Only a session's name is pressable; its second line is plain text, so hovering inverts just the name.
+  Claude Code inverts every pressable element under the pointer, and the mod API can't turn that off.
 - The agents view groups sessions by IDE or terminal (`Antigravity IDE`, `Windows Terminal`, and so on),
   each in a rounded box with its name as the first line, with `Other` for an unknown host, then
   `Remote Control` and the cloud group last. Under each come the folders open there, by base name

@@ -738,6 +738,25 @@ async function openPane($: Engine, command = 'agent-messages', presentation = PR
 }
 
 describe('agents pane', () => {
+  test('an agent opens the pane through open_agent_messages, on the agents view or on the messages of one agent', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: HISTORY })
+    const registered: string[] = []
+    on('tool.register', (_$, e) => {
+      registered.push(e.name)
+      return { value: undefined } as never
+    })
+    await start($)
+    expect(registered).toContain('open_agent_messages')
+    const opened = await $.tool.call({ tool: 'mcp__ide-agent-tabs__open_agent_messages' } as never)
+    expect((opened as { text?: string }).text).toBe('Agent Tabs Messages pane opened.')
+    expect(w.panes.open).toEqual(['agent-tabs'])
+    const onAgent = await $.tool.call({ tool: 'mcp__ide-agent-tabs__open_agent_messages', agent: 'docs-9b [11aa22]' } as never)
+    expect((onAgent as { text?: string }).text).toBe("Agent Tabs Messages pane opened on docs-9b [11aa22]'s messages.")
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    expect(await ui.find({ type: 'Text', text: 'docs-9b [11aa22] · 2 messages' })).toBeDefined()
+    await ui.unmount()
+  })
+
   test('/agent-messages toggles one pane, closed by default, and reads nothing while closed', async ($, on) => {
     const w = world(on, { tab: 'tab-c', history: HISTORY })
     await start($)
@@ -782,12 +801,12 @@ describe('agents pane', () => {
       expect((await ui.find({ type: 'Box', key: 'folder-4-1' }))?.props.marginTop).toBe(1)
       expect((await ui.find({ type: 'Box', key: 'heading-folder:4:C:\\a' }))?.props.paddingLeft).toBe(2)
 
-      const info = async (key: string) => (await ui.find({ type: 'Button', key: `info:id:${key}` }))?.text
+      const info = async (key: string) => (await ui.find({ key: `info:id:${key}` }))?.text
       expect(await info('codex-1a2b')).toBe('idle · 2d · Codex via OpenRouter · 5.5 · medium')
       expect(await info('tab-d')).toBe('permission · 1d · Claude Code · opus-5-5 · high')
       expect(await info('01d00000-3333')).toBe('idle · 45m · Claude Code (no native name)')
       expect(await info('9e9e0000-7777')).toBe('idle · Gemini CLI')
-      expect((await ui.find({ type: 'Button', key: 'info:id:codex-1a2b' }))?.props.dimColor).toBe(true)
+      expect(await ui.find({ type: 'Button', key: 'info:id:codex-1a2b' })).toBeUndefined()
       const texts = (await ui.findAll({})).map(e => e.text)
       for (const id of ['codex-1a', '01d00000', 'a0a0a0a0', 'c1a2b3c4']) expect(texts.some(t => t.includes(id))).toBe(false)
 
@@ -826,19 +845,19 @@ describe('agents pane', () => {
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS(30) })
       expect((await ui.find({ type: 'Button', key: 'agent:id:e2e00000-4444' }))?.text).toBe('E2E testing plugin [b39a20]')
-      const line = (await ui.find({ type: 'Button', key: 'info:id:codex-1a2b' }))?.text ?? ''
+      const line = (await ui.find({ key: 'info:id:codex-1a2b' }))?.text ?? ''
       expect(line).toBe('idle · 2d · Codex v…')
       expect(line.length).toBe(30 - 4 - 6)
       await ui.unmount()
     }
   })
 
-  test('pressing either line of a session opens its messages, which show its session id', async ($, on) => {
+  test('pressing a session name opens its messages, which show its session id; line 2 is plain text', async ($, on) => {
     world(on, { tab: 'tab-c', history: HISTORY })
     await start($)
     await openPane($)
     for (const surface of SURFACES) {
-      for (const key of ['agent:id:tab-d', 'info:id:tab-d']) {
+      for (const key of ['agent:id:tab-d']) {
         const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
         await ui.press({ key })
         expect(await ui.find({ type: 'Text', text: 'docs-9b [11aa22] · 2 messages' })).toBeDefined()
