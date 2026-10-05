@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { typeLine } from './input';
 import { editorLocation, launchScripts, revivedTabs, terminalEnv, unixShell, windowsShell } from './launch';
 import { AgentLaunch, AgentProfile, AgentSettings, CONFIG_FILE, isInstalled, planLaunch } from './profiles';
-import { endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
+import { ENDPOINT_BEAT_MS, beatEndpoint, endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { closestBase } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
 import { AUTO, SHARED_DEFAULTS, SharedSettings, userSettingValue } from './sharedSettings';
@@ -394,8 +394,29 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
   }
   const file = path.join(home, 'endpoints', endpointFileName(process.pid, newWindowId()));
   try {
-    writeAtomically(file, endpointJson({ product: vscode.env.appName, version: vscode.version, pid: process.pid, url: apiUrl(port), token }), true);
-    context.subscriptions.push({ dispose: () => fs.rmSync(file, { force: true }) });
+    const content = endpointJson({
+      product: vscode.env.appName,
+      version: vscode.version,
+      pid: process.pid,
+      url: apiUrl(port),
+      token,
+      startedAt: Date.now(),
+      beatMs: ENDPOINT_BEAT_MS,
+    });
+    writeAtomically(file, content, true);
+    const beat = setInterval(() => {
+      try {
+        beatEndpoint(file, content);
+      } catch (e) {
+        log.error(`Could not refresh ${file}: ${(e as Error).message}`);
+      }
+    }, ENDPOINT_BEAT_MS);
+    context.subscriptions.push({
+      dispose: () => {
+        clearInterval(beat);
+        fs.rmSync(file, { force: true });
+      },
+    });
     log.info(`Agent tab server at ${apiUrl(port)}, registered in ${file}`);
   } catch (e) {
     log.error(`Could not write ${file}: ${(e as Error).message}`);

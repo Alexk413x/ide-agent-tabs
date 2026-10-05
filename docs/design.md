@@ -37,7 +37,9 @@ The file name without `.json` is the IDE's id in the MCP tools.
   "version": "2026.2.2",
   "pid": 12345,
   "url": "http://127.0.0.1:63342/ide-agent-tabs",
-  "token": "<64 hex characters>"
+  "token": "<64 hex characters>",
+  "startedAt": 1700000000000,
+  "beatMs": 60000
 }
 ```
 
@@ -47,8 +49,14 @@ The file name without `.json` is the IDE's id in the MCP tools.
 - Write the file atomically: write a temporary file in the same folder, then rename it.
 - On macOS and Linux, create the folder with mode `0700` and the file with mode `0600`. On Windows, the
   folder inherits the user profile's permissions, which already exclude other users.
+- `startedAt` is the IDE's start time in epoch milliseconds. `beatMs` is the heartbeat interval.
+- Every `beatMs` milliseconds, set the file's modification time to now. If the file is missing, write it
+  again. Stop beating when the IDE or window closes.
 - Delete the file when the IDE or window closes.
 - Readers ignore a file whose `pid` isn't a running process, and may delete it.
+- Readers also ignore a file with `beatMs` whose modification time is more than 5 × `beatMs` old, and may
+  delete it, because Windows reuses a pid. A file without `beatMs` follows the `pid` rule alone. A file
+  without `startedAt` takes its modification time as the start time.
 - A reader that sees a `protocol` value it doesn't know skips that file.
 
 To use a folder other than `~/.ide-agent-tabs`, set the environment variable `IDE_AGENT_TABS_HOME` (VS Code

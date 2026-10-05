@@ -6,12 +6,16 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 
 ## 0.6.0
 
-Plugin and MCP server 0.6.0, with VS Code extension 0.1.25 and JetBrains plugin 0.4.8 bundled. Both IDE
+Plugin and MCP server 0.6.0, with VS Code extension 0.1.26 and JetBrains plugin 0.4.9 bundled. Both IDE
 packages add the `agy` profile and icon, the profiles and icons of seven more agents, the Codex
 `Interrupt` hook and the tab settings.
 
 ### Fixed
 
+- A crashed IDE's endpoint no longer looks alive when Windows reuses its pid. Both IDEs write `beatMs`
+  and `startedAt` into the endpoint file and touch the file every 60 seconds. The JetBrains plugin
+  writes the file again if it is deleted. The MCP server skips and deletes an endpoint with `beatMs`
+  that missed 5 beats, and keeps the pid-only rule for endpoints from older IDE builds.
 - `send_message` wakes a fresh tab. A Claude tab reports idle at `SessionStart` with source `startup`,
   and a tab that `open_tab` starts without a prompt counts as idle 10 seconds after launch.
 - A wake line no longer lands in a prompt the user is typing in a Claude tab. Claude Code's `Stop` fires
@@ -66,6 +70,10 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
   `--keep-focus`, in tmux with `new-window -d`, and in iTerm2 and Ghostty on macOS the previous tab is
   selected again. Windows Terminal and WezTerm have no background option, so their new tab still comes
   to the front.
+- A server that fails to register its session, such as on a lock timeout, retries after 1, 3 and 9
+  seconds and logs each failure to stderr. If every attempt fails, `list_sessions`, `send_message` and
+  `read_messages` return a `warnings` entry, `this session isn't registered: <error>`, instead of
+  leaving the session silently missing from the list.
 
 ### Added
 

@@ -35,7 +35,7 @@ if (command === 'jev') {
   process.exitCode = await runJevCli(args, jev, off);
 } else {
   const messaging = new Messaging({ home, env: process.env, pid: process.pid, cwd: process.cwd(), hosts: service });
-  await messaging.start().catch(() => undefined);
+  await messaging.startRegistered({ log: (message) => console.error(`ide-agent-tabs: ${message}`) });
   let stopping = false;
   const stop = () => {
     if (stopping) return;

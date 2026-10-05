@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hashAllIdeSources } from './ide-sources.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'claude-plugin', 'dist');
@@ -36,13 +37,27 @@ const bundleIsCurrent = () => {
   return false;
 };
 
+const idePackagesAreCurrent = () => {
+  const recorded = JSON.parse(readFileSync(path.join(dist, 'ide', 'versions.json'), 'utf8')).sources;
+  const current = hashAllIdeSources();
+  if (!recorded) {
+    console.error('claude-plugin/dist/ide/versions.json has no source hashes; run node scripts/pack-ides.mjs');
+    return false;
+  }
+  const stale = Object.keys(current).filter((ide) => recorded[ide] !== current[ide]);
+  for (const ide of stale) console.error(`${ide}/ changed since the last repack; run node scripts/pack-ides.mjs`);
+  return !stale.length;
+};
+
 const steps = [
   ['typecheck', () => run('npm', ['run', 'typecheck'], path.join(root, 'mcp'))],
   ...(skipTests ? [] : [['test', () => run('npm', ['test'], path.join(root, 'mcp'))]]),
   ['bundle is current', bundleIsCurrent],
   ['plugin version', () => run('node', ['scripts/check-plugin-version.mjs'], root)],
+  ['ide packages current', idePackagesAreCurrent],
   ['validate plugin', () => run('claude', ['plugin', 'validate', '--strict', 'claude-plugin'], root)],
   ...(skipTests ? [] : [['mod tests', () => run('claude', ['plugin', 'test', 'claude-plugin'], root)]]),
+  ...(skipTests ? [] : [['script tests', () => run('node', ['--test', 'scripts/test/bump.test.mjs'], root)]]),
   ['validate marketplace', () => run('claude', ['plugin', 'validate', '--strict', '.'], root)],
   ...(skipTests || skipIde ? [] : [['ide tests', () => run('node', ['scripts/pack-ides.mjs', '--test'], root)]]),
 ];

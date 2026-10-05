@@ -1,4 +1,8 @@
 {
-  "vscode": "0.1.25",
-  "jetbrains": "0.4.8"
+  "vscode": "0.1.26",
+  "jetbrains": "0.4.9",
+  "sources": {
+    "vscode": "71306fde27cf0fb0462fdae222b6753004cd7bd62a1dbbfe9ff1f2a2a3017b57",
+    "jetbrains": "96cb6a185969580a9174aa1c53b680f353eed71f298b9c20156f74fa837ded12"
+  }
 }
