@@ -204,6 +204,8 @@ interface ModInput {
   state?: (typeof MOD_STATES)[number] | undefined;
   model?: string | undefined;
   effort?: string | undefined;
+  agentType?: string | undefined;
+  agentColor?: string | undefined;
   to?: string | undefined;
   text?: string | undefined;
   replyTo?: string | undefined;
@@ -223,6 +225,8 @@ async function modOp(messaging: Messaging, service: Service, input: ModInput): P
         ...(input.state !== undefined ? { state: input.state } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        ...(input.agentType !== undefined ? { agentType: input.agentType } : {}),
+        ...(input.agentColor !== undefined ? { agentColor: input.agentColor } : {}),
         ...(input.session !== undefined ? { owner: input.session } : {}),
       });
     case 'send':
@@ -288,6 +292,8 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
         state: z.enum(MOD_STATES).optional().describe('presence: idle, busy or permission.'),
         model: z.string().max(128).optional().describe("presence: the session's model."),
         effort: z.string().max(32).optional().describe("presence: the session's effort level."),
+        agentType: z.string().max(128).optional().describe('presence: the agent definition the session runs as, when not the default.'),
+        agentColor: z.string().max(16).optional().describe("presence: that agent definition's color."),
         to: z.string().optional().describe(`send: ${SESSION_ID}`),
         text: z.string().max(MAX_TEXT_CHARS).optional().describe('send: the message.'),
         replyTo: z.string().optional().describe(`send: ${MESSAGE_ID}`),
@@ -311,7 +317,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
     {
       title: 'List agent sessions',
       description:
-        'List the live agent sessions on this machine that can exchange messages, in a fixed agent order: name (the name Claude Code\'s SendMessage takes: a Claude session\'s native name, else shortName), shortName (<agent>-<first id characters>, which send_message also takes), id, session (the first 8 characters of id), agent, harness (the agent CLI, with " via OpenRouter" when started through Ori), model and effort (null when unknown), route (native for a Claude session that SendMessage reaches directly, else agent-tabs), state (idle, busy, permission, waking or unknown), tab (its tab id, or null), where (the IDE or terminal app), host (the IDE and project or the terminal of its tab), ide (that host\'s id), path and folder (its working folder), nativeName (a Claude session\'s native name), via (ori or direct, when known), handedOffTo for a session that handed its work to another, and self for this session. The result has a warnings list when this session failed to register, which leaves it out of every list. ' +
+        'List the live agent sessions on this machine that can exchange messages, in a fixed agent order: name (the name Claude Code\'s SendMessage takes, in Claude Code\'s native style: a Claude session\'s native name, else <folder>-<2 or more id hex characters>), shortName (the same name, which send_message also takes), legacyName (the older <agent>-<first id characters> name, which send_message still takes), id, session (the first 8 characters of id), agent, harness (the agent CLI, with " via OpenRouter" when started through Ori), model and effort (null when unknown), agentType and agentColor (the agent definition a Claude session runs as and its color, null for the default), route (native for a Claude session that SendMessage reaches directly, else agent-tabs), state (idle, busy, permission, waking or unknown), tab (its tab id, or null), where (the IDE or terminal app), host (the IDE and project or the terminal of its tab), ide (that host\'s id), path and folder (its working folder), nativeName (a Claude session\'s native name), via (ori or direct, when known), handedOffTo for a session that handed its work to another, and self for this session. The result has a warnings list when this session failed to register, which leaves it out of every list. ' +
         "Call it before send_message for the recipient's id; don't guess ids. To start a new session instead, call open_tab.",
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -328,7 +334,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
         'To start a new session on a task, call open_tab with a prompt instead. ' +
         `Returns the message id and delivery: woken or queued. Limits: ${MAX_TEXT_CHARS.toLocaleString('en-US')} characters, 20 messages a minute, 50 unread messages per mailbox.`,
       inputSchema: {
-        to: z.string().describe(`${SESSION_ID} Its shortName from list_sessions also works.`),
+        to: z.string().describe(`${SESSION_ID} Its name from list_sessions, or its older legacyName, also works.`),
         text: z.string().min(1).max(MAX_TEXT_CHARS).describe('The message.'),
         replyTo: z.string().optional().describe(`${MESSAGE_ID} Set it when this answers that message.`),
       },
