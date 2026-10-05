@@ -154,3 +154,34 @@ test('claudeMod comes from config.json: on by default, off when set, a warning o
     messaging.stopSync();
   }
 });
+
+test('counts match the history each session shows, and a refresh reads only the files it has not seen', async () => {
+  const home = tempDir('iat-hist-');
+  const a = session(home, 'tab-a', 'codex', 1);
+  const b = session(home, 'tab-b', 'claude', 2);
+  await a.start();
+  await b.start();
+  try {
+    await b.modPresence({ driver: true, nativeName: 'plugins-fa [6a3948]', state: 'busy' });
+    await a.send({ to: 'tab-b', text: 'one' });
+    await b.send({ to: 'tab-a', text: 'two' });
+    await b.modLog({ direction: 'sent', peer: 'docs-9b [11aa22]', text: 'native', delivery: 'delivered' });
+    const whos = [{ id: 'tab-a', names: [] }, { id: 'tab-b', names: ['plugins-fa [6a3948]'] }, { names: ['docs-9b [11aa22]'] }, { names: [] }];
+    const { counts } = await b.modCounts(whos);
+    const shown = await Promise.all(whos.slice(0, 3).map(async (who) => (await b.modHistory(who)).messages.length));
+    assert.deepEqual(counts, [...shown, null]);
+    assert.deepEqual(counts, [2, 3, 1, null]);
+
+    const sentLog = path.join(mailboxDir(home, 'tab-a'), SENT_LOG);
+    const [first] = files(sentLog);
+    writeFileSync(path.join(sentLog, first!), 'not json any more');
+    assert.deepEqual((await b.modCounts(whos)).counts, [2, 3, 1, null], 'a file already read is not read again');
+    await a.send({ to: 'tab-b', text: 'three' });
+    assert.deepEqual((await b.modCounts(whos)).counts, [3, 4, 1, null], 'a new file is read');
+  } finally {
+    a.stopFollowUps();
+    b.stopFollowUps();
+    a.stopSync();
+    b.stopSync();
+  }
+});

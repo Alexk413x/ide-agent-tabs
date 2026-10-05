@@ -38,6 +38,7 @@ export type AgentTabsPaneRow = {
   id: string | null
   names: string[]
   self: boolean
+  messages: number | null
   agentType: string | null
   agentColor: string | null
 }

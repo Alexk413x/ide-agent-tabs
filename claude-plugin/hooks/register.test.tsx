@@ -296,6 +296,8 @@ function world(on: On, options: WorldOptions = {}) {
         return ok({ id: 'm-2222222222222222' })
       case 'history':
         return ok({ messages: options.history ?? [] })
+      case 'counts':
+        return ok({ counts: (e.args.agents as { session?: string }[]).map(a => (a.session === 'tab-d' ? (options.history ?? []).length : 0)) })
       default:
         return fail(`unknown op ${String(e.args.op)}`)
     }
@@ -686,52 +688,52 @@ const PANE_OPEN = { id: 'agent-tabs', title: 'Agent Tabs Messages', focus: true,
 const AGENT_LINES = [
   "IntelliJ IDEA",
   "  ▸ w",
-  "    ● ✻ plugins-fa (this session)",
-  "      idle · Claude Code · opus-5-5",
+  "    0 ✻ plugins-fa (this session)",
+  "      ● idle · Claude Code · opus-5-5",
   "",
   "  ▸ docs",
-  "    ● ✻ docs-9b",
-  "      permission · 1d · Claude Code · opus-5-5 · high",
+  "    2 ✻ docs-9b",
+  "      ● permission · 1d · Claude Code · opus-5-5 · high",
   "Antigravity IDE",
   "  ▸ w",
-  "    ● ▲ w-a0",
-  "      busy · 5h · Antigravity CLI · gemini-3-pro",
+  "    0 ▲ w-a0",
+  "      ● busy · 5h · Antigravity CLI · gemini-3-pro",
   "tmux build",
   "  ▸ Folder not known",
-  "    ● ✻ nightly-sync",
-  "      idle · 3h · Claude Code (background)",
+  "    0 ✻ nightly-sync",
+  "      ● idle · 3h · Claude Code (background)",
   "Visual Studio Code",
   "  ▸ e2e",
-  "    ● ✻ E2E testing plugin",
-  "      idle · 18m · Claude Code · sonnet-5-5-20261001-extended-preview",
+  "    0 ✻ E2E testing plugin",
+  "      ● idle · 18m · Claude Code · sonnet-5-5-20261001-extended-preview",
   "Windows Terminal",
   "  ▸ w",
-  "    ● ✻ w-01",
-  "      idle · 45m · Claude Code (no native name)",
-  "    ● ◆ w-c0",
-  "      busy · 10m · Codex",
-  "    ● ◆ w-1a",
-  "      idle · 2d · Codex via OpenRouter · 5.5 · medium",
+  "    0 ✻ w-01",
+  "      ● idle · 45m · Claude Code (no native name)",
+  "    0 ◆ w-c0",
+  "      ● busy · 10m · Codex",
+  "    0 ◆ w-1a",
+  "      ● idle · 2d · Codex via OpenRouter · 5.5 · medium",
   "",
   "  ▸ a",
-  "    ● ▲ a-a2",
-  "      idle · 4m · Antigravity CLI",
+  "    0 ▲ a-a2",
+  "      ● idle · 4m · Antigravity CLI",
   "",
   "  ▸ sub",
-  "    ● • sub-9e",
-  "      idle · Gemini CLI",
+  "    0 • sub-9e",
+  "      ● idle · Gemini CLI",
   "Other",
   "  ▸ z",
-  "    ● • z-ed",
-  "      idle · 30s · zed-agent",
+  "    0 • z-ed",
+  "      ● idle · 30s · zed-agent",
   "Remote Control",
-  "    ● ✻ Laptop RC",
-  "      idle · Claude Code",
+  "    0 ✻ Laptop RC",
+  "      ● idle · Claude Code",
   "Cloud (can receive, can't reply)",
-  "    ● ✻ Guide 3-to-4 player support",
-  "      cloud · Claude Code",
-  "    ● ✻ Fix flaky test",
-  "      cloud · Claude Code",
+  "    0 ✻ Guide 3-to-4 player support",
+  "      ● cloud · Claude Code",
+  "    0 ✻ Fix flaky test",
+  "      ● cloud · Claude Code",
 ]
 
 type Node = { type?: string; props?: Record<string, unknown>; hover?: unknown; children?: unknown[] }
@@ -836,6 +838,8 @@ async function hasItem(ui: Ui, ref: string): Promise<boolean> {
   }
 }
 
+const titleLine = (width: number) => `Agent Tabs Messages${' '.repeat(width - 'Agent Tabs Messages'.length - 4)} ✕  `
+
 async function drawnLines(ui: Ui): Promise<string[]> {
   const { key } = await list(ui)
   return (await ui.findAll({ in: key, type: 'Box' })).filter(b => b.key?.startsWith('line-')).map(b => b.text)
@@ -899,16 +903,16 @@ describe('agents pane', () => {
   })
 
   test('the agents view boxes each IDE or terminal, then folders, then two-line sessions, on terminal and desktop', async ($, on) => {
-    world(on, { tab: 'tab-c' })
+    world(on, { tab: 'tab-c', history: HISTORY })
     await start($)
     await openPane($)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       expect(await textIn(ui, 'Agent Tabs Messages')).toBeDefined()
-      expect(await drawnLines(ui)).toEqual(AGENT_LINES)
+      expect(await drawnLines(ui)).toEqual([titleLine(PANE_PROPS().bodyColumns), ...AGENT_LINES])
       const { props } = await list(ui)
-      expect(props.groups).toHaveLength(8)
-      expect(props.groups.every(g => g.border)).toBe(true)
+      expect(props.groups).toHaveLength(9)
+      expect(props.groups.map(g => g.border)).toEqual([false, ...Array(8).fill(true)])
       const edges = (await ui.findAll({ in: 'agents', type: 'Box' })).filter(b => b.key?.startsWith('edge-')).map(b => b.text)
       expect(edges).toHaveLength(16)
       expect(edges[0]).toBe(`╭${'─'.repeat(118)}╮`)
@@ -938,9 +942,9 @@ describe('agents pane', () => {
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS(30) })
       const lines = await drawnLines(ui)
-      expect(lines).toContain('    ● ✻ E2E testing plugin')
-      expect(lines).toContain('      idle · 2d · Codex v…')
-      expect('idle · 2d · Codex v…'.length).toBe(30 - 4 - 6)
+      expect(lines).toContain('    0 ✻ E2E testing plugin')
+      expect(lines).toContain('      ● idle · 2d · Codex…')
+      expect('● idle · 2d · Codex…'.length).toBe(30 - 4 - 6)
       await ui.unmount()
     }
   })
@@ -954,9 +958,9 @@ describe('agents pane', () => {
         const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
         const { key, props, item } = await hover(ui, 'agent:id:tab-d', nth)
         const lines = await drawnLines(ui)
-        const at = lines.indexOf('  ▎ ● ✻ docs-9b')
+        const at = lines.indexOf('  ▎ 2 ✻ docs-9b')
         expect(at).toBeGreaterThan(0)
-        expect(lines[at + 1]).toBe('  ▎   permission · 1d · Claude Code · opus-5-5 · high')
+        expect(lines[at + 1]).toBe('  ▎   ● permission · 1d · Claude Code · opus-5-5 · high')
         expect(lines.filter(l => l.includes('▎'))).toHaveLength(2)
         expect(await underlined(ui)).toEqual(['docs-9b', 'permission · 1d · Claude Code · opus-5-5 · high'])
         await ui.pointer({ type: 'leave', ...positionOf(props, item, nth), in: key })
@@ -980,13 +984,15 @@ describe('agents pane', () => {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       expect(await underlined(ui)).toEqual([])
       await ui.key({ key: 'down', in: 'agents' })
+      expect(await underlined(ui)).toEqual([' ✕  '])
+      await ui.key({ key: 'down', in: 'agents' })
       expect(await underlined(ui)).toEqual(['▸ w'])
       await ui.key({ key: 'down', in: 'agents' })
       expect(await underlined(ui)).toEqual(['plugins-fa', ' (this session)', 'idle · Claude Code · opus-5-5'])
       await ui.key({ key: 'down', in: 'agents' })
       await ui.key({ key: 'down', in: 'agents' })
       expect(await underlined(ui)).toEqual(['docs-9b', 'permission · 1d · Claude Code · opus-5-5 · high'])
-      expect((await drawnLines(ui)).filter(l => l.includes('▎'))).toEqual(['  ▎ ● ✻ docs-9b', '  ▎   permission · 1d · Claude Code · opus-5-5 · high'])
+      expect((await drawnLines(ui)).filter(l => l.includes('▎'))).toEqual(['  ▎ 2 ✻ docs-9b', '  ▎   ● permission · 1d · Claude Code · opus-5-5 · high'])
       await ui.key({ key: 'up', in: 'agents' })
       expect(await underlined(ui)).toEqual(['▸ docs'])
       await ui.key({ key: 'down', in: 'agents' })
@@ -1006,6 +1012,8 @@ describe('agents pane', () => {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       expect(await ui.find({ type: 'Client' })).toBeUndefined()
       expect((await ui.find({ type: 'Button', key: 'agent:id:tab-d' }))?.text).toBe('docs-9b')
+      expect((await ui.find({ type: 'Button', key: 'close' }))?.text).toBe('✕')
+      expect((await ui.find({ type: 'Text', text: /^ *2 $/ }))?.props.bold).toBe(true)
       w.runs.length = 0
       await ui.press({ key: 'folder:4:C:\\a' })
       expect(w.runs).toEqual([['explorer.exe', 'C:\\a']])
@@ -1016,6 +1024,124 @@ describe('agents pane', () => {
       await ui.press({ key: 'back' })
       await ui.press({ key: 'back' })
       await ui.unmount()
+    }
+  })
+
+  test('the close chip takes all 4 cells at the right of the title or Back line, and a click or Enter closes the pane', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: HISTORY })
+    await start($)
+    for (const surface of SURFACES) {
+      for (const view of ['agents', 'messages', 'detail'] as const) {
+        await openPane($)
+        const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+        while ((await list(ui)).key !== 'agents') await click(ui, 'back')
+        if (view !== 'agents') await click(ui, 'agent:id:tab-d')
+        if (view === 'detail') await click(ui, 'msg:m-aaaaaaaaaaaaaaa1')
+        const { key, props } = await list(ui)
+        const width = PANE_PROPS().bodyColumns
+        expect(positionOf(props, itemFor(props, 'close'))).toEqual({ x: width - 4, y: 0 })
+        for (const x of [width - 4, width - 3, width - 2, width - 1]) {
+          await ui.pointer({ type: 'move', x, y: 0, in: key })
+          expect(await underlined(ui)).toEqual([' ✕  '])
+        }
+        await ui.pointer({ type: 'move', x: width - 5, y: 0, in: key })
+        expect(await underlined(ui)).toEqual([])
+        expect(w.panes.open).toEqual(['agent-tabs'])
+        await click(ui, 'close')
+        expect(w.panes.open).toEqual([])
+        await ui.unmount()
+      }
+      await openPane($)
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      while ((await list(ui)).key !== 'agents') await click(ui, 'back')
+      await ui.key({ key: 'down', in: 'agents' })
+      expect(await underlined(ui)).toEqual([' ✕  '])
+      await ui.key({ key: 'return', in: 'agents' })
+      expect(w.panes.open).toEqual([])
+      await ui.unmount()
+    }
+  })
+
+  test("a session's count is the number of messages its messages screen lists, bold, and a zero is a dim 0, padded to the widest count", async ($, on) => {
+    world(on, { tab: 'tab-c', history: HISTORY })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      expect(await drawnLines(ui)).toContain('    2 ✻ docs-9b')
+      const two = await ui.find({ in: 'agents', type: 'Text', text: '2' })
+      expect([two?.props.bold, two?.props.dimColor]).toEqual([true, undefined])
+      const zero = await ui.find({ in: 'agents', type: 'Text', text: '0' })
+      expect([zero?.props.bold, zero?.props.dimColor]).toEqual([true, true])
+      await click(ui, 'agent:id:tab-d')
+      expect(await textIn(ui, 'docs-9b · 2 messages')).toBeDefined()
+      const shown = (await drawnLines(ui)).filter(l => /^ {2}\d\d:\d\d {2}/.test(l))
+      expect(shown).toHaveLength(2)
+      await click(ui, 'back')
+      await ui.unmount()
+    }
+  })
+
+  test('counts are padded to the widest count so names stay aligned, and none is asked for while the pane is closed', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: Array.from({ length: 12 }, (_, i) => ({ ...HISTORY[0]!, id: `m-${String(i).padStart(16, 'a')}` })) })
+    await start($)
+    await w.clock.advance(10_000)
+    expect(w.ops('counts')).toHaveLength(0)
+    await openPane($)
+    expect(w.ops('counts')).toHaveLength(1)
+    expect(w.ops('counts')[0]!.args.agents).toContainEqual({ session: 'tab-d', names: ['docs-9b [11aa22]', 'claude-tabd', 'tab-d'] })
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    const lines = await drawnLines(ui)
+    expect(lines).toContain('    12 ✻ docs-9b')
+    expect(lines).toContain('     0 ◆ w-1a')
+    await ui.unmount()
+    expect((await openPane($)).text).toBe('Agent Tabs Messages pane closed.')
+    const asked = w.ops('counts').length
+    await w.clock.advance(10_000)
+    expect(w.ops('counts')).toHaveLength(asked)
+  })
+
+  test('an empty messages view centres its dim text in the pane width, wrapped when it is wider', async ($, on) => {
+    const lone = row({ id: '5e5e0000-1111', agent: 'codex', state: 'idle', path: 'C:\w', where: 'Windows Terminal' })
+    world(on, { tab: 'tab-c', rows: [ROWS[0]!, lone], listing: HEADER })
+    await start($)
+    await openPane($)
+    const message = 'No messages sent or received through Agent Tabs or SendMessage in the last 7 days.'
+    for (const surface of SURFACES) {
+      for (const columns of [120, 40]) {
+        const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS(columns) })
+        await click(ui, 'agent:id:5e5e0000-1111')
+        const after = (await drawnLines(ui)).slice(7)
+        expect(after.map(l => l.trim()).join(' ')).toBe(message)
+        expect(after.length).toBe(columns === 120 ? 1 : 3)
+        for (const line of after) {
+          expect(Math.abs(line.length - line.trimStart().length - (columns - line.trim().length) / 2)).toBeLessThan(1)
+          expect(line.length).toBeLessThanOrEqual(columns)
+        }
+        expect((await ui.find({ in: 'messages', type: 'Text', text: after[0]!.trim() }))?.props.dimColor).toBe(true)
+        await click(ui, 'back')
+        await ui.unmount()
+      }
+    }
+  })
+
+  test('an empty agents view centres its dim text in the pane width, wrapped when it is wider', async ($, on) => {
+    world(on, { tab: 'tab-c', rows: [], listing: HEADER })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      for (const columns of [60, 24]) {
+        const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS(columns) })
+        const lines = (await drawnLines(ui)).slice(1)
+        expect(lines.map(l => l.trim()).join(' ')).toBe('No other agent session is live.')
+        expect(lines.length).toBe(columns === 60 ? 1 : 2)
+        for (const line of lines) {
+          expect(Math.abs(line.length - line.trimStart().length - (columns - line.trim().length) / 2)).toBeLessThan(1)
+          expect(line.length).toBeLessThanOrEqual(columns)
+        }
+        expect((await ui.find({ in: 'agents', type: 'Text', text: lines[0]!.trim() }))?.props.dimColor).toBe(true)
+        await ui.unmount()
+      }
     }
   })
 
@@ -1085,14 +1211,14 @@ describe('agents pane', () => {
   }
 
   test('/agent-messages in the fullscreen layout opens the pane with nothing that seats it inline, and the docked pane draws the groups', async ($, on) => {
-    const w = world(on, { tab: 'tab-c' })
+    const w = world(on, { tab: 'tab-c', history: HISTORY })
     await start($)
     await openPane($, 'agent-messages', { isFullscreen: true, columns: 200 })
     expect(w.panes.opened).toEqual([PANE_OPEN])
     const viewport = { columns: 200, rows: 50, isFullscreen: true }
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', viewport, props: { ...PANE_PROPS(80), placement: 'dock' as const } })
-      expect(await drawnLines(ui)).toEqual(AGENT_LINES)
+      expect(await drawnLines(ui)).toEqual([titleLine(80), ...AGENT_LINES])
       await ui.unmount()
     }
   })
@@ -1108,25 +1234,31 @@ describe('agents pane', () => {
       expect(history.session).toBe('tab-d')
       expect(history.names).toContain('docs-9b [11aa22]')
       expect(await drawnLines(ui)).toEqual([
-        '← Back  docs-9b · 2 messages',
-        'docs-9b [11aa22] · Session: tab-d',
+        ` ← Back${' '.repeat(PANE_PROPS().bodyColumns - 1 - '← Back'.length - 4)} ✕  `,
+        ' ',
+        '    docs-9b · 2 messages',
+        '    ● permission · 1d · Claude Code · opus-5-5 · high',
+        '    docs · IntelliJ IDEA',
+        '    docs-9b [11aa22] · Session: tab-d',
         ' ',
         `  ${local(AT(1))}  ↘ w-1a · Please review x.ts…`,
         `  ${local(AT(2))}  ↑ ${NATIVE.replace(/\s*\[[^\]]*\]$/, '')} · Done, both look fine.`,
       ])
+      expect((await ui.find({ in: 'messages', type: 'Text', text: '● ' }))?.props.color).toBe('error')
+      expect((await ui.find({ in: 'messages', type: 'Text', text: 'docs · IntelliJ IDEA' }))?.props.dimColor).toBe(true)
       expect((await ui.find({ in: 'messages', type: 'Text', text: 'docs-9b [11aa22] · Session: tab-d' }))?.props.dimColor).toBe(true)
-      for (const y of [1, 2]) {
+      for (const y of [1, 2, 3, 4, 5, 6]) {
         await ui.pointer({ type: 'move', x: 4, y, in: 'messages' })
         expect(await underlined(ui)).toEqual([])
       }
-      await ui.pointer({ type: 'move', x: 4, y: 3, in: 'messages' })
+      await ui.pointer({ type: 'move', x: 4, y: 7, in: 'messages' })
       expect(await underlined(ui)).toEqual([`${local(AT(1))}  ↘ w-1a · Please review x.ts…`])
       await hover(ui, 'msg:m-aaaaaaaaaaaaaaa2')
       expect((await drawnLines(ui)).filter(l => l.startsWith('▎'))).toEqual([`▎ ${local(AT(2))}  ↑ ${NATIVE.replace(/\s*\[[^\]]*\]$/, '')} · Done, both look fine.`])
       expect(await underlined(ui)).toEqual([`${local(AT(2))}  ↑ ${NATIVE.replace(/\s*\[[^\]]*\]$/, '')} · Done, both look fine.`])
 
       await click(ui, 'msg:m-aaaaaaaaaaaaaaa1')
-      expect(await drawnLines(ui)).toEqual(['← Back  ↩ Reply'])
+      expect(await drawnLines(ui)).toEqual([` ← Back  ↩ Reply${' '.repeat(PANE_PROPS().bodyColumns - 1 - '← Back  ↩ Reply'.length - 4)} ✕  `])
       expect(await textIn(ui, 'From: w-1a')).toBeDefined()
       expect(await textIn(ui, 'To: docs-9b [11aa22]')).toBeDefined()
       expect(await textIn(ui, 'Time: 2026-10-04 09:01:00Z')).toBeDefined()
@@ -1415,8 +1547,8 @@ describe('joining a Claude tab with no native name', () => {
     await openPane($)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-      const bold = (await ui.findAll({ in: 'agents', type: 'Text' })).filter(t => t.props.bold === true && !t.text.startsWith('▸')).map(t => t.text)
-      expect(bold).toEqual(['IntelliJ IDEA', 'Remote Control', "Cloud (can receive, can't reply)"])
+      const bold = (await ui.findAll({ in: 'agents', type: 'Text' })).filter(t => t.props.bold === true && !t.text.startsWith('▸') && !/^\s*[\d·]+$/.test(t.text)).map(t => t.text)
+      expect(bold).toEqual(['Agent Tabs Messages', 'IntelliJ IDEA', 'Remote Control', "Cloud (can receive, can't reply)"])
       await ui.unmount()
     }
   })
@@ -1479,7 +1611,7 @@ describe('agent type and colour', () => {
     await openPane($)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-      expect(await drawnLines(ui)).toContain('      idle · 9m · Claude Code (reviewer) · opus-5-5')
+      expect(await drawnLines(ui)).toContain('      ● idle · 9m · Claude Code (reviewer) · opus-5-5')
       const name = await textIn(ui, 'plugins-7e')
       expect([name?.text, name?.props.color]).toEqual(['plugins-7e', '#b083f0'])
       expect((await textIn(ui, 'w-1a'))?.props.color).toBeUndefined()
@@ -1534,18 +1666,18 @@ describe('list client hit test', () => {
         await ui.pointer({ type: 'move', x: 1, y: 0, in: 'agents' })
         expect(await underlined(ui)).toEqual([])
         const body = text.replace(/^│ /, '')
-        const isLine1 = /^ {4}● /.test(body)
-        const isLine2 = /^ {6}\S/.test(body) && /^ {4}● /.test(drawn[y - 1]!.replace(/^│ /, ''))
+        const isLine1 = /^ {4} *[\d·]+ \S /.test(body)
+        const isLine2 = /^ {6}● /.test(body) && /^ {4} *[\d·]+ \S /.test(drawn[y - 1]!.replace(/^│ /, ''))
         const isFolder = /^ {2}▸ (?!Folder not known)/.test(body)
         await ui.pointer({ type: 'move', x: isFolder ? 4 : isLine1 ? 6 : 8, y, in: 'agents' })
         const lit = await underlined(ui)
         const marked = (await rowsDrawn(ui)).flatMap((t, i) => (t.includes('▎') ? [i] : []))
         if (isLine1) {
           sessions++
-          expect(lit[0]).toBe(body.replace(/^ {4}● \S /, '').replace(/ (\(this session\))?\s*│$/, '').trimEnd())
+          expect(lit[0]).toBe(body.replace(/^ {4} *[\d·]+ \S /, '').replace(/ (\(this session\))?\s*│$/, '').trimEnd())
           expect(marked).toEqual([y, y + 1])
         } else if (isLine2) {
-          expect(lit.at(-1)).toBe(body.replace(/\s*│$/, '').trim())
+          expect(lit.at(-1)).toBe(body.replace(/\s*│$/, '').trim().replace(/^● /, ''))
           expect(marked).toEqual([y - 1, y])
         } else if (isFolder) {
           folders++
