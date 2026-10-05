@@ -27,7 +27,7 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
   the folder window opens behind the IDE, because Windows doesn't let a background process take the
   foreground. Hovering the heading shows the full path to its right; pressing the path copies the
   path to the clipboard.
-- Actions in the pane report on a line at its bottom for 6 seconds, because the pane holds toasts while
+- Actions in the pane report on a line under its title for 6 seconds, because the pane holds toasts while
   it's open.
 - The card of a delivered peer message has an **Open in Agent Tabs** button, which opens the pane on that
   message.
