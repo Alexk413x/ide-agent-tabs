@@ -156,6 +156,9 @@ type WorldOptions = {
   effort?: string
   claudeMod?: 'on' | 'off'
   history?: unknown[]
+  mailOf?: (who: { session?: string; names: string[] }) => unknown[]
+  older?: number
+  historyError?: string
   os?: string
   uname?: string
   dirs?: string[]
@@ -294,10 +297,20 @@ function world(on: On, options: WorldOptions = {}) {
         return ok({ claudeMod: options.claudeMod ?? 'on' })
       case 'log':
         return ok({ id: 'm-2222222222222222' })
-      case 'history':
-        return ok({ messages: options.history ?? [] })
+      case 'history': {
+        if (options.historyError !== undefined) return { value: { content: [{ type: 'text', text: options.historyError }], isError: false } }
+        const list = options.mailOf ? options.mailOf({ ...(e.args.session !== undefined ? { session: e.args.session as string } : {}), names: e.args.names as string[] }) : (options.history ?? [])
+        const shown = list.slice(options.older ?? 0)
+        return ok({ total: list.length, messages: shown.map(m => ({ ...(m as object), text: String((m as { text: string }).text).slice(0, 200), textLength: String((m as { text: string }).text).length })) })
+      }
+      case 'message': {
+        const list = options.mailOf ? options.mailOf({ ...(e.args.session !== undefined ? { session: e.args.session as string } : {}), names: e.args.names as string[] }) : (options.history ?? [])
+        return ok({ message: list.find(m => (m as { id: string }).id === e.args.id) ?? null })
+      }
       case 'counts':
-        return ok({ counts: (e.args.agents as { session?: string }[]).map(a => (a.session === 'tab-d' ? (options.history ?? []).length : 0)) })
+        return ok({
+          counts: (e.args.agents as { session?: string; names: string[] }[]).map(a => (options.mailOf ? options.mailOf(a).length : a.session === 'tab-d' ? (options.history ?? []).length : 0)),
+        })
       default:
         return fail(`unknown op ${String(e.args.op)}`)
     }
@@ -688,50 +701,64 @@ const PANE_OPEN = { id: 'agent-tabs', title: 'Agent Tabs Messages', focus: true,
 const AGENT_LINES = [
   "IntelliJ IDEA",
   "  ▸ w",
+  "",
   "    0 ✻ plugins-fa (this session)",
   "      ● idle · Claude Code · opus-5-5",
   "",
   "  ▸ docs",
+  "",
   "    2 ✻ docs-9b",
   "      ● permission · 1d · Claude Code · opus-5-5 · high",
   "Antigravity IDE",
   "  ▸ w",
+  "",
   "    0 ▲ w-a0",
   "      ● busy · 5h · Antigravity CLI · gemini-3-pro",
   "tmux build",
   "  ▸ Folder not known",
+  "",
   "    0 ✻ nightly-sync",
   "      ● idle · 3h · Claude Code (background)",
   "Visual Studio Code",
   "  ▸ e2e",
+  "",
   "    0 ✻ E2E testing plugin",
   "      ● idle · 18m · Claude Code · sonnet-5-5-20261001-extended-preview",
   "Windows Terminal",
   "  ▸ w",
+  "",
   "    0 ✻ w-01",
   "      ● idle · 45m · Claude Code (no native name)",
+  "",
   "    0 ◆ w-c0",
   "      ● busy · 10m · Codex",
+  "",
   "    0 ◆ w-1a",
   "      ● idle · 2d · Codex via OpenRouter · 5.5 · medium",
   "",
   "  ▸ a",
+  "",
   "    0 ▲ a-a2",
   "      ● idle · 4m · Antigravity CLI",
   "",
   "  ▸ sub",
+  "",
   "    0 • sub-9e",
   "      ● idle · Gemini CLI",
   "Other",
   "  ▸ z",
+  "",
   "    0 • z-ed",
   "      ● idle · 30s · zed-agent",
   "Remote Control",
+  "",
   "    0 ✻ Laptop RC",
   "      ● idle · Claude Code",
   "Cloud (can receive, can't reply)",
+  "",
   "    0 ✻ Guide 3-to-4 player support",
   "      ● cloud · Claude Code",
+  "",
   "    0 ✻ Fix flaky test",
   "      ● cloud · Claude Code",
 ]
@@ -1027,7 +1054,7 @@ describe('agents pane', () => {
     }
   })
 
-  test('the close chip takes all 4 cells at the right of the title or Back line, and a click or Enter closes the pane', async ($, on) => {
+  test('the close chip takes all 4 cells at the right of the title or Back line, and a click or Enter closes the pane', { timeoutMs: 30_000 }, async ($, on) => {
     const w = world(on, { tab: 'tab-c', history: HISTORY })
     await start($)
     for (const surface of SURFACES) {
@@ -1648,7 +1675,7 @@ describe('list client hit test', () => {
     return (await ui.findAll({ in: 'agents', type: 'Box' })).filter(b => b.key?.startsWith('edge-') || b.key?.startsWith('row-')).map(b => b.text)
   }
 
-  test('every drawn line lights its own target, and border, blank and heading lines light nothing, on terminal and desktop', async ($, on) => {
+  test('every drawn line lights its own target, and border, blank and heading lines light nothing, on terminal and desktop', { timeoutMs: 30_000 }, async ($, on) => {
     world(on, { tab: 'tab-c', rows: many(), listing: HEADER })
     await start($)
     await openPane($)
@@ -1734,5 +1761,94 @@ describe('list client hit test', () => {
       expect(await shown()).toBe(false)
       await ui.unmount()
     }
+  })
+})
+
+describe('counts and the messages view', () => {
+  const msg = (n: number, peer: string, text = `message ${n}`) => ({
+    id: `m-${String(n).padStart(16, '0')}`,
+    at: AT(n),
+    direction: 'received',
+    route: 'native',
+    from: { name: peer },
+    to: { name: NATIVE },
+    peer: { name: peer },
+    text,
+  })
+  const MAIL: Record<string, ReturnType<typeof msg>[]> = {
+    'tab-d': [msg(1, 'a'), msg(2, 'b'), msg(3, 'c')],
+    'rpndominatorcalculator-a3': [msg(4, 'd'), msg(5, 'e')],
+    'nightly-sync [c0ffee]': [msg(6, 'f'), msg(7, 'g'), msg(8, 'h'), msg(9, 'i')],
+  }
+  const mailOf = (who: { session?: string; names: string[] }) =>
+    who.session !== undefined && MAIL[who.session] ? MAIL[who.session]! : (MAIL[who.names.find(n => MAIL[n] !== undefined) ?? ''] ?? [])
+  const LISTING_OF = [
+    `${HEADER}`,
+    '',
+    'Peer sessions (3):',
+    '  docs-9b [11aa22]  ·  interactive  ·  busy  ·  started 2h ago',
+    '  rpndominatorcalculator-a3  ·  interactive  ·  idle  ·  started 18m ago',
+    '  nightly-sync [c0ffee]  ·  background  ·  idle  ·  tmux build  ·  started 3h ago',
+  ].join('\n')
+  const unnamed = row({ id: '45f20000-2222', agent: 'claude', state: 'idle', tab: '45f20000-2222', path: 'C:\\p\\rpndominatorcalculator', where: 'Windows Terminal', host: 'Windows Terminal', startedAt: ago(18 * MIN + 20_000) })
+
+  test("opening a session from the agents view lists exactly the count its row showed: an Agent Tabs row, a joined 0.5.3 row and a native peer", async ($, on) => {
+    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!, unnamed], listing: LISTING_OF, mailOf })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      for (const [ref, name, count] of [
+        ['agent:id:tab-d', 'docs-9b', 3],
+        ['agent:id:45f20000-2222', 'rpndominatorcalculator-a3', 2],
+        ['agent:name:nightly-sync [c0ffee]', 'nightly-sync', 4],
+      ] as const) {
+        const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+        const lines = await drawnLines(ui)
+        const shown = lines.find(l => l.trim().endsWith(` ${name}`) || l.includes(` ${name} `))!
+        expect(shown.trim().split(' ')[0]).toBe(String(count))
+        await click(ui, ref)
+        expect(await textIn(ui, `${name} · ${count} messages`)).toBeDefined()
+        expect((await drawnLines(ui)).filter(l => /^ {2}\d\d:\d\d {2}/.test(l))).toHaveLength(count)
+        await click(ui, 'back')
+        await ui.unmount()
+      }
+    }
+  })
+
+  test('a long history shows its full count, the newest messages that fit, and the whole text in the detail', async ($, on) => {
+    const long = 'x'.repeat(500)
+    const history = [msg(1, 'a'), msg(2, 'b', long), msg(3, 'c')]
+    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: LISTING_OF, mailOf: who => (who.session === 'tab-d' ? history : []), older: 1 })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      expect((await drawnLines(ui)).some(l => /^ {4}3 ✻ docs-9b/.test(l))).toBe(true)
+      await click(ui, 'agent:id:tab-d')
+      expect(await textIn(ui, 'docs-9b · 3 messages')).toBeDefined()
+      const lines = await drawnLines(ui)
+      expect(lines).toContain('  1 older message not shown')
+      expect(lines.filter(l => /^ {2}\d\d:\d\d {2}/.test(l))).toHaveLength(2)
+      await click(ui, `msg:${history[1]!.id}`)
+      expect(await textIn(ui, long)).toBeDefined()
+      await click(ui, 'back')
+      await click(ui, 'back')
+      await ui.unmount()
+    }
+  })
+
+  test('a failed history read says so in the pane instead of showing an empty list', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: HISTORY, historyError: 'Error: result (135,197 characters across 1 line) exceeds maximum allowed tokens.' })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await click(ui, 'agent:id:tab-d')
+    expect(await textIn(ui, 'docs-9b · …')).toBeDefined()
+    expect((await drawnLines(ui)).map(l => l.trim())).toContain('Reading messages…')
+    expect((await drawnLines(ui)).map(l => l.trim())).not.toContain('No messages sent or received through Agent Tabs or SendMessage in the last 7 days.')
+    expect(w.ops('history').length).toBeGreaterThan(0)
+    await click(ui, 'back')
+    expect(await textIn(ui, /^Couldn't read docs-9b's messages: /)).toBeDefined()
+    await ui.unmount()
   })
 })

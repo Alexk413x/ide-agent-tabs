@@ -918,7 +918,8 @@ itself raised the call. The model's own calls to those tools keep the engine's d
 | `ack`, `release` | `claim` | `ack` moves the claimed messages to `cur/`; `release` returns them to `new/`. |
 | `sessions` | none | The `list_sessions` rows. |
 | `log` | `direction` (`sent` or `received`), `peer`, `text`, optional `id`, `at`, `delivery` | Records a native SendMessage message of this session in its `sent-log/` or `received-log/`. |
-| `history` | `session` and/or `names` | Every message the session sent or received, oldest first (see [Agents pane](#agents-pane)). |
+| `history` | `session` and/or `names` | `total`, the number of messages the session sent or received, and `messages`: the newest of them, oldest first, with each `text` cut to 200 characters and its full `textLength`, as many as fit in about 59,000 characters (see [Agents pane](#agents-pane)). Claude Code replaces an MCP result over its output limit, about 25,000 tokens, with an error text, so a full history of long messages never reached the pane. |
+| `message` | `session` and/or `names`, `id` | `message`: that one message of the same history, whole, or `null`. |
 | `counts` | `agents`: up to 500 of `{ session?, names }`, as `history` takes one | `counts`: for each, the number of messages `history` would list, or `null` for one with neither a valid session nor a name. |
 | `settings` | none | `claudeMod` from `config.json`. |
 
@@ -1174,7 +1175,7 @@ request for the keys only.
   target, underlined when lit. It closes the pane, as Esc does from the agents view, and sits on the
   title line of the agents view and on the Back line of the messages and detail views. The engine's own
   close mark on the frame stays as it is.
-- Each session takes two lines. Line 1, indented four: the session's message count, bold, padded to
+- A blank line comes before each session. Each session takes two lines. Line 1, indented four: the session's message count, bold, padded to
   the widest count in view so the names align, dim when it is `0` (`·` when the count isn't known), then an agent glyph in the agent's
   colour (Claude `✻` `#d97757`, Codex `◆` `#10a37f`, Antigravity `▲` `#8b7cf6`, others `•` `#9aa4b2`),
   the name without its trailing `[ref]`, never cut, and ` (this session)` in italics for the calling session. A session with an
@@ -1190,7 +1191,8 @@ request for the keys only.
 - **Messages** of the chosen agent: `← Back` at indent 1 with the close chip, a blank line, then at indent
   4 the bold `<name> · <n> messages` (the name without its `[ref]`), the state dot and the dim details as
   on the session's line 2, `<folder> · <IDE or terminal>`, and a dim line with the full name when it
-  carries a `[ref]` and `Session: <id>` when the id is known, joined by ` · `; a blank line; then everything it
+  carries a `[ref]` and `Session: <id>` when the id is known, joined by ` · `; a blank line; then, when
+  the history holds more than fit in one reply, a dim `<n> older messages not shown`; then everything it
   sent or received through Agent Tabs or SendMessage with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
   `HH:MM  ↘ peer  first line…` for received, in local time. A message line lights like a session, with
   `▎` at column 0, and a click opens its detail.
