@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFi
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hashAllIdeSources } from './ide-sources.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'claude-plugin', 'dist', 'ide');
@@ -62,16 +63,25 @@ function runStep(command, args, options) {
 const jdk = findJdk();
 console.log(`Using JDK ${jdk}`);
 const gradlew = path.join(root, 'jetbrains', windows ? 'gradlew.bat' : 'gradlew');
-runStep(gradlew, ['buildPlugin', '--console=plain'], {
-  cwd: path.join(root, 'jetbrains'),
-  env: { ...process.env, JAVA_HOME: jdk },
-});
-runStep(windows ? 'npm.cmd' : 'npm', ['run', 'package'], { cwd: path.join(root, 'vscode') });
+const gradle = (task, ...more) =>
+  runStep(gradlew, [task, ...more, '--no-build-cache', '--console=plain'], {
+    cwd: path.join(root, 'jetbrains'),
+    env: { ...process.env, JAVA_HOME: jdk },
+  });
+const npm = windows ? 'npm.cmd' : 'npm';
+if (process.argv.includes('--test')) {
+  gradle('test', '--rerun-tasks');
+  runStep(npm, ['test'], { cwd: path.join(root, 'vscode') });
+  console.log('IDE tests passed.');
+  process.exit(0);
+}
+gradle('buildPlugin');
+runStep(npm, ['run', 'package'], { cwd: path.join(root, 'vscode') });
 
 const zip = path.join(root, 'jetbrains', 'build', 'distributions', `ide-agent-tabs-${jetbrainsVersion}.zip`);
 const vsix = path.join(root, 'vscode', `ide-agent-tabs-${vscodeVersion}.vsix`);
 mkdirSync(out, { recursive: true });
 copyFileSync(zip, path.join(out, 'ide-agent-tabs-jetbrains.zip'));
 copyFileSync(vsix, path.join(out, 'ide-agent-tabs.vsix'));
-writeFileSync(path.join(out, 'versions.json'), `${JSON.stringify({ vscode: vscodeVersion, jetbrains: jetbrainsVersion }, null, 2)}\n`);
+writeFileSync(path.join(out, 'versions.json'), `${JSON.stringify({ vscode: vscodeVersion, jetbrains: jetbrainsVersion, sources: hashAllIdeSources() }, null, 2)}\n`);
 console.log(`Packed VS Code ${vscodeVersion} and JetBrains ${jetbrainsVersion} into ${path.relative(root, out)}`);

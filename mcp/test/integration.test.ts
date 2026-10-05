@@ -10,9 +10,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { ideCaller } from '../src/ideClient.js';
 import { createServer, SERVER_VERSION } from '../src/server.js';
-import { Service } from '../src/service.js';
+import { readPresence } from '../src/messaging/sessions.js';
+import { FRESH_TAB_START_MS, Service } from '../src/service.js';
 import type { LaunchSpec } from '../src/spec.js';
-import type { TerminalDriver, TerminalTab } from '../src/terminals/types.js';
+import type { OpenOptions, TerminalDriver, TerminalTab } from '../src/terminals/types.js';
 
 const TOKEN = 'f'.repeat(64);
 let ideToken = TOKEN;
@@ -77,6 +78,7 @@ function fakeIde(req: http.IncomingMessage, res: http.ServerResponse) {
 }
 
 const opened: { spec: LaunchSpec; title: string }[] = [];
+const openOptions: (OpenOptions | undefined)[] = [];
 const closed: string[] = [];
 const liveTerminalTabs = new Set<string>();
 const fakeTerminal: TerminalDriver = {
@@ -84,8 +86,9 @@ const fakeTerminal: TerminalDriver = {
   label: 'Fake Terminal',
   capabilities: { open: 'tab', list: 'yes', close: 'yes' },
   available: async () => true,
-  open: async (_ctx, spec, title) => {
+  open: async (_ctx, spec, title, options) => {
     opened.push({ spec, title });
+    openOptions.push(options);
     liveTerminalTabs.add(spec.id);
     return { id: spec.id, terminal: 'fake-term', agent: spec.agent, path: spec.cwd, createdAt: Date.now(), terminalId: `t-${spec.id}` };
   },
@@ -157,6 +160,13 @@ test('list_ides reads the registry, drops dead entries and shows terminals', asy
     { id: `jetbrains-${process.pid}`, ide: 'jetbrains', product: 'Fake Studio', version: '1.0', projects: [{ name: 'proj', path: project, focused: true }] },
   );
   assert.deepEqual(json.terminals, [{ id: 'fake-term', name: 'Fake Terminal', capabilities: { open: 'tab', list: 'yes', close: 'yes' }, preferred: false }]);
+  assert.deepEqual(json.shells, []);
+  const detected = JSON.parse(readFileSync(path.join(home, 'detected.json'), 'utf8'));
+  assert.equal(detected.version, 1);
+  assert.equal(detected.platform, 'linux');
+  assert.deepEqual(detected.terminals, [{ id: 'fake-term', name: 'Fake Terminal' }]);
+  assert.deepEqual(detected.shells, []);
+  assert.ok(Date.parse(detected.detectedAt) > 0);
   assert.equal(readdirSync(endpoints).length, 2, 'the dead entry is deleted and the future one kept');
   const info = seen.find((s) => s.route === 'info')!;
   assert.equal(info.headers['content-type'], 'application/json');
@@ -168,7 +178,7 @@ test('list_agents reports profiles, installed state and the default, and warns o
   writeFileSync(path.join(home, 'config.json'), JSON.stringify({ defaultAgent: 'probe' }));
   const { json } = await call('list_agents');
   assert.equal(json.default, 'probe');
-  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'gemini', 'copilot', 'probe']);
+  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'probe']);
   assert.equal(json.agents.at(-1).installed, true);
   assert.equal(json.agents[0].installed, false);
 
@@ -184,7 +194,25 @@ test('open_tab routes a path inside an open project to that IDE and forwards the
   assert.equal(json.id, 'ide-tab-1');
   assert.equal(json.agent, 'codex');
   assert.match(json.reason, /open project proj contains the path/);
-  assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', prompt: 'hi "there"', args: ['--yolo'], env: { A: 'b' } });
+  assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', prompt: 'hi "there"', args: ['--yolo'], env: { A: 'b' }, focus: false });
+});
+
+test('a tab opened without a prompt counts as idle once it has had time to start, so a message wakes it', async () => {
+  const prompted = await call('open_tab', { path: project, prompt: 'go', model: 'claude-opus-5-5' });
+  assert.deepEqual(
+    await readPresence(home, prompted.json.id),
+    { id: prompted.json.id, via: 'direct', project: 'proj', model: 'claude-opus-5-5', product: prompted.json.product },
+    'a tab with a prompt starts busy and reports its state itself; the model and IDE product it opened with are kept for list_sessions',
+  );
+  const before = Date.now();
+  const fresh = await call('open_tab', { path: project });
+  const presence = (await readPresence(home, fresh.json.id))!;
+  assert.equal(presence.state, 'idle');
+  assert.equal(presence.host, fresh.json.ide);
+  assert.equal(presence.model, undefined);
+  assert.equal(typeof presence.product, 'string');
+  assert.ok(Date.parse(presence.stateAt!) >= before + FRESH_TAB_START_MS);
+  for (const tab of [prompted, fresh]) assert.ok(!(await call('close_tab', { id: tab.json.id })).isError);
 });
 
 test('open_tab falls back to the most recently started IDE and adds the next step to IDE errors', async () => {
@@ -289,6 +317,31 @@ test('close_tab with no id closes the caller\'s own tab from IDE_AGENT_TABS_ID',
   delete env.IDE_AGENT_TABS_ID;
 });
 
+test("tabRouting caller opens a terminal caller's tab in its own terminal window, even when an IDE has the project", async () => {
+  const caller = await call('open_tab', { path: outside, ide: 'fake-term' });
+  assert.deepEqual(openOptions.at(-1), { window: 'last', focus: false });
+  env.IDE_AGENT_TABS_ID = caller.json.id;
+  try {
+    const byProject = await call('open_tab', { path: project, prompt: 'p' });
+    assert.equal(byProject.json.ide, `jetbrains-${process.pid}`, 'the default keeps project routing');
+
+    writeFileSync(path.join(home, 'config.json'), JSON.stringify({ tabRouting: 'caller', terminalWindow: 'dedicated' }));
+    const byCaller = await call('open_tab', { path: project, prompt: 'c' });
+    assert.equal(byCaller.json.ide, 'fake-term');
+    assert.equal(byCaller.json.reason, "tabRouting is caller; the caller's terminal window");
+    assert.equal(openOptions.at(-1)?.window, 'dedicated');
+    assert.equal(openOptions.at(-1)?.near?.id, caller.json.id);
+
+    const named = await call('open_tab', { path: project, prompt: 'n', ide: `jetbrains-${process.pid}` });
+    assert.equal(named.json.ide, `jetbrains-${process.pid}`, 'a named ide wins over tabRouting');
+    for (const id of [byProject.json.id, byCaller.json.id, named.json.id]) assert.ok(!(await call('close_tab', { id })).isError);
+  } finally {
+    delete env.IDE_AGENT_TABS_ID;
+    writeFileSync(path.join(home, 'config.json'), '{}');
+    await call('close_tab', { id: caller.json.id });
+  }
+});
+
 test('with no IDE running, open_tab uses the preferred terminal, or explains why it cannot', async () => {
   const live = path.join(endpoints, `jetbrains-${process.pid}.json`);
   const saved = readFileSync(live, 'utf8');
@@ -314,4 +367,64 @@ test('the server reports the version of its package and of the Claude Code plugi
   const version = (file: string) => JSON.parse(readFileSync(path.join(import.meta.dirname, file), 'utf8')).version;
   assert.equal(SERVER_VERSION, version('../package.json'));
   assert.equal(SERVER_VERSION, version('../../claude-plugin/.claude-plugin/plugin.json'));
+});
+
+test('open_tab passes a model and via to the IDE, and builds the model flag into a terminal launch', async () => {
+  await call('open_tab', { path: project, agent: 'codex', model: 'gpt-5.5', via: 'direct' });
+  assert.deepEqual(seen.at(-1)!.body, { path: path.normalize(project), agent: 'codex', model: 'gpt-5.5', via: 'direct', focus: false });
+  const term = await call('open_tab', { path: project, agent: 'claude', model: 'opus', ide: 'fake-term' });
+  assert.ok(!term.isError, term.text);
+  assert.deepEqual(opened.at(-1)!.spec.args.slice(0, 2), ['--model', 'opus']);
+  const noOri = await call('open_tab', { path: project, agent: 'claude', via: 'ori', ide: 'fake-term' });
+  assert.ok(noOri.isError);
+  assert.match(noOri.text, /claude can't launch through Ori: Ori isn't installed/);
+  const badModel = await call('open_tab', { path: project, model: 'two words' });
+  assert.ok(badModel.isError);
+  for (const id of [term.json.id]) await call('close_tab', { id });
+});
+
+test('open_tab focus: auto follows the call, always and never decide alone, for IDE and terminal tabs', async () => {
+  const cases: [string | undefined, boolean | undefined, boolean][] = [
+    [undefined, undefined, false],
+    ['auto', undefined, false],
+    ['auto', true, true],
+    ['auto', false, false],
+    ['always', undefined, true],
+    ['always', true, true],
+    ['always', false, true],
+    ['never', undefined, false],
+    ['never', true, false],
+    ['never', false, false],
+  ];
+  const opened: string[] = [];
+  try {
+    for (const [setting, focus, expected] of cases) {
+      writeFileSync(path.join(home, 'config.json'), JSON.stringify(setting === undefined ? {} : { focusNewTabs: setting }));
+      const label = `${setting} with ${focus}`;
+      const args = { path: project, ...(focus !== undefined ? { focus } : {}) };
+      const ide = await call('open_tab', args);
+      assert.ok(!ide.isError, ide.text);
+      assert.equal(seen.at(-1)!.body.focus, expected, `IDE: ${label}`);
+      const term = await call('open_tab', { ...args, ide: 'fake-term' });
+      assert.ok(!term.isError, term.text);
+      assert.equal(openOptions.at(-1)?.focus, expected, `terminal: ${label}`);
+      opened.push(ide.json.id, term.json.id);
+    }
+    writeFileSync(path.join(home, 'config.json'), JSON.stringify({ focusNewTabs: 'sometimes' }));
+    const agents = await call('list_agents');
+    assert.ok(agents.json.warnings.some((w: string) => /focusNewTabs/.test(w)));
+    await call('open_tab', { path: project });
+    assert.equal(seen.at(-1)!.body.focus, false, 'an unknown value falls back to auto');
+    opened.push(ideTabs.at(-1)!.id as string);
+    assert.ok((await call('open_tab', { path: project, focus: 'yes' })).isError);
+  } finally {
+    writeFileSync(path.join(home, 'config.json'), '{}');
+    for (const id of opened) await call('close_tab', { id });
+  }
+});
+
+test('list_agents says which agents take a model', async () => {
+  const { json } = await call('list_agents');
+  assert.equal(json.agents.find((a: { name: string }) => a.name === 'claude').model, true);
+  assert.ok(['direct', 'ori'].includes(json.launchVia));
 });

@@ -107,6 +107,13 @@ export function optStringMap(obj: JsonObject, key: string, field = key): Record<
   return result;
 }
 
+export function optBoolean(obj: JsonObject, key: string, field = key): boolean | undefined {
+  const value = obj[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'boolean') throw new BadRequest(`${field} must be true or false`);
+  return value;
+}
+
 export function parseCloseId(body: string): string {
   const id = optString(parseObject(body), 'id');
   if (id === undefined || isBlank(id)) throw new BadRequest('id is required');
@@ -138,17 +145,31 @@ export function isAbsolutePath(p: string, windows = process.platform === 'win32'
   return p.startsWith('/');
 }
 
+export const MODEL_PATTERN = /^[A-Za-z0-9._:/@+-]{1,200}$/;
+
 export interface OpenRequest {
   path: string;
   prompt?: string;
   args: string[];
   env: Record<string, string>;
   agent?: string;
+  model?: string;
+  via?: 'ori' | 'direct';
+  focus: boolean;
 }
 
 export function parseOpenRequest(body: string): OpenRequest {
   const obj = parseObject(body);
-  return openRequestOf(optString(obj, 'path'), optString(obj, 'prompt'), optStringList(obj, 'args'), optStringMap(obj, 'env'), optString(obj, 'agent'));
+  return openRequestOf(
+    optString(obj, 'path'),
+    optString(obj, 'prompt'),
+    optStringList(obj, 'args'),
+    optStringMap(obj, 'env'),
+    optString(obj, 'agent'),
+    optString(obj, 'model'),
+    optString(obj, 'via'),
+    optBoolean(obj, 'focus'),
+  );
 }
 
 export function openRequestOf(
@@ -157,6 +178,9 @@ export function openRequestOf(
   args: string[] = [],
   env: Record<string, string> = {},
   agent?: string,
+  model?: string,
+  via?: string,
+  focus = false,
 ): OpenRequest {
   if (dir === undefined || isBlank(dir)) throw new BadRequest('path is required');
   if (dir.includes('\0') || !isAbsolutePath(dir)) throw new BadRequest('path must be absolute');
@@ -174,12 +198,19 @@ export function openRequestOf(
   if (prompt !== undefined && prompt.includes('\0')) throw new BadRequest('prompt holds a NUL');
   checkEnv(env, 'env');
   if (agent !== undefined && isBlank(agent)) throw new BadRequest('agent must not be blank');
+  if (model !== undefined && !MODEL_PATTERN.test(model)) {
+    throw new BadRequest('model must be 1 to 200 characters from letters, digits and . _ : / @ + -');
+  }
+  if (via !== undefined && via !== 'ori' && via !== 'direct') throw new BadRequest("via must be 'ori' or 'direct'");
   return {
     path: stripTrailingSeparator(path.normalize(dir)),
     prompt: prompt !== undefined && !isBlank(prompt) ? prompt : undefined,
     args,
     env,
     agent,
+    model,
+    via,
+    focus,
   };
 }
 

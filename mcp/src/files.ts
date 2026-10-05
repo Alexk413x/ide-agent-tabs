@@ -1,5 +1,7 @@
+import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { isProcessAlive } from './registry.js';
 
 export async function ensurePrivateDir(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
@@ -68,22 +70,46 @@ export async function removeStaleFiles(dir: string, suffixes: string[], maxAgeMs
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function withFileLock<T>(file: string, work: () => Promise<T>, timeoutMs = 5_000): Promise<T> {
+export const LOCK_STALE_MS = 10_000;
+export const LOCK_WAIT_MS = 15_000;
+
+export interface LockOptions {
+  timeoutMs?: number;
+}
+
+function lockOwner(text: string | undefined): number | undefined {
+  const pid = Number(/^(\d+) /.exec(text ?? '')?.[1]);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+async function isAbandoned(lock: string): Promise<string | undefined> {
+  const [text, stat] = await Promise.all([readTextIfExists(lock).catch(() => undefined), fs.stat(lock).catch(() => undefined)]);
+  if (text === undefined || !stat) return undefined;
+  const owner = lockOwner(text);
+  const dead = owner !== undefined && !isProcessAlive(owner);
+  return dead || Date.now() - stat.mtimeMs > LOCK_STALE_MS ? text : undefined;
+}
+
+async function removeIfStill(lock: string, text: string): Promise<void> {
+  if ((await readTextIfExists(lock).catch(() => undefined)) === text) await fs.rm(lock, { force: true }).catch(() => undefined);
+}
+
+export async function withFileLock<T>(file: string, work: () => Promise<T>, options: LockOptions = {}): Promise<T> {
   const lock = `${file}.lock`;
+  const token = `${process.pid} ${randomBytes(8).toString('hex')}`;
   await ensurePrivateDir(path.dirname(file));
-  const deadline = Date.now() + timeoutMs;
+  const deadline = Date.now() + (options.timeoutMs ?? LOCK_WAIT_MS);
   for (;;) {
     try {
-      const handle = await fs.open(lock, 'wx', 0o600);
-      await handle.close();
+      await fs.writeFile(lock, token, { flag: 'wx', mode: 0o600 });
       break;
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       // Windows answers EPERM, not EEXIST, while another process's delete of the lock is still pending.
       if (code !== 'EEXIST' && !(process.platform === 'win32' && code === 'EPERM')) throw e;
-      const stat = await fs.stat(lock).catch(() => undefined);
-      if (stat && Date.now() - stat.mtimeMs > 10_000) {
-        await fs.rm(lock, { force: true });
+      const abandoned = await isAbandoned(lock);
+      if (abandoned !== undefined) {
+        await removeIfStill(lock, abandoned);
         continue;
       }
       if (Date.now() > deadline) throw new Error(`timed out waiting for ${lock}`);
@@ -93,6 +119,6 @@ export async function withFileLock<T>(file: string, work: () => Promise<T>, time
   try {
     return await work();
   } finally {
-    await fs.rm(lock, { force: true });
+    await removeIfStill(lock, token);
   }
 }

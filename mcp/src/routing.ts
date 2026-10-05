@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { TabRouting } from './profiles.js';
 
 export interface Project {
   name: string;
@@ -38,7 +39,16 @@ interface Match {
   depth: number;
 }
 
-export function chooseIde(candidates: IdeCandidate[], target: string, isWindows: boolean, callerIde?: string): IdeChoice | undefined {
+export function chooseIde(
+  candidates: IdeCandidate[],
+  target: string,
+  isWindows: boolean,
+  callerIde?: string,
+  routing: TabRouting = 'project',
+): IdeChoice | undefined {
+  if (routing === 'caller' && candidates.some((c) => c.id === callerIde && c.projects.length > 0)) {
+    return { id: callerIde!, reason: "tabRouting is caller; the caller's IDE" };
+  }
   const matches: Match[] = [];
   for (const candidate of candidates) {
     let best: Match | undefined;

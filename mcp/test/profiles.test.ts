@@ -3,11 +3,13 @@ import { test } from 'node:test';
 import {
   BUILTIN_PROFILES,
   checkEnv,
+  CODEX_TAB_ARGS,
   ConfigError,
   launchOf,
   mergeProfiles,
   parseProfiles,
   readDefaultAgent,
+  resolveFocus,
   resolveSettings,
   type AgentProfile,
 } from '../src/profiles.js';
@@ -22,10 +24,26 @@ const p = (over: Partial<AgentProfile> & { name: string }): AgentProfile => ({
 
 test('built-in profiles match the design', () => {
   const s = resolveSettings(undefined, undefined);
-  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'gemini', 'copilot']);
-  assert.deepEqual(s.profiles.map((x) => x.label), ['Claude Code', 'Codex', 'Gemini CLI', 'Copilot CLI']);
-  assert.deepEqual(s.profiles.map((x) => x.command), ['claude', 'codex', 'gemini', 'copilot']);
-  assert.deepEqual(s.profiles.map((x) => x.promptFlag), [undefined, undefined, '-i', '-i']);
+  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
+  assert.deepEqual(s.profiles.map((x) => x.label), [
+    'Claude Code',
+    'Codex',
+    'Antigravity CLI',
+    'Copilot CLI',
+    'Gemini CLI',
+    'Grok Build',
+    'Pi',
+    'Hermes',
+    'OpenCode',
+    'Qwen Code',
+    'Goose',
+    'Codex (local)',
+  ]);
+  assert.deepEqual(s.profiles.map((x) => x.command), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex']);
+  assert.deepEqual(s.profiles.map((x) => x.promptFlag), [undefined, undefined, '-i', '-i', '-i', undefined, undefined, '-q', '--prompt', '-i', '-t', undefined]);
+  assert.deepEqual(s.profiles.find((x) => x.name === 'hermes')!.args, ['chat']);
+  assert.deepEqual(s.profiles.find((x) => x.name === 'goose')!.args, ['run', '-s']);
+  assert.deepEqual(s.profiles.find((x) => x.name === 'codex-local')!.args, [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama']);
   assert.equal(s.defaultAgent.name, 'claude');
   assert.deepEqual(s.warnings, []);
 });
@@ -46,9 +64,9 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     }),
     undefined,
   );
-  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'gemini', 'copilot', 'opencode-local', 'bare']);
+  assert.deepEqual(s.profiles.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'opencode-local', 'bare']);
   assert.deepEqual(s.profiles[1], p({ name: 'codex', label: 'Codex (fast)', args: ['--model', 'o4'] }));
-  assert.deepEqual(s.profiles[4], {
+  assert.deepEqual(s.profiles[12], {
     name: 'opencode-local',
     label: 'OpenCode (LM Studio)',
     command: 'opencode',
@@ -57,7 +75,7 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     env: { LMSTUDIO: '1' },
     icon: 'icons/opencode.svg',
   });
-  assert.equal(s.profiles[5]!.label, 'bare');
+  assert.equal(s.profiles[13]!.label, 'bare');
   assert.deepEqual(s.warnings, []);
 });
 
@@ -140,10 +158,59 @@ test('the preferred terminal comes from config', () => {
   assert.equal(resolveSettings(undefined, '{"terminal": "ghostty"}').preferredTerminal, 'ghostty');
   assert.equal(resolveSettings(undefined, '{"terminal": ""}').preferredTerminal, undefined);
   assert.equal(resolveSettings(undefined, '{}').preferredTerminal, undefined);
+  assert.equal(resolveSettings(undefined, '{"terminal": "auto"}').preferredTerminal, undefined);
+});
+
+test('tab routing, shell and terminal window come from config, with defaults and warnings', () => {
+  const none = resolveSettings(undefined, undefined);
+  assert.equal(none.tabRouting, 'project');
+  assert.equal(none.terminalWindow, 'last');
+  assert.equal(none.shell, undefined);
+
+  const set = resolveSettings(undefined, JSON.stringify({ tabRouting: 'caller', terminalWindow: 'dedicated', shell: 'C:/Tools/pwsh.exe' }));
+  assert.equal(set.tabRouting, 'caller');
+  assert.equal(set.terminalWindow, 'dedicated');
+  assert.equal(set.shell, 'C:/Tools/pwsh.exe');
+  assert.deepEqual(set.warnings, []);
+  assert.equal(resolveSettings(undefined, '{"shell": "/usr/bin/pwsh"}').shell, '/usr/bin/pwsh');
+  assert.equal(resolveSettings(undefined, '{"shell": "auto"}').shell, undefined);
+
+  const bad = resolveSettings(undefined, JSON.stringify({ tabRouting: 'nearest', terminalWindow: 3, shell: 'pwsh.exe', terminal: 7, defaultAgent: 'codex' }));
+  assert.equal(bad.tabRouting, 'project');
+  assert.equal(bad.terminalWindow, 'last');
+  assert.equal(bad.shell, undefined);
+  assert.equal(bad.preferredTerminal, undefined);
+  assert.equal(bad.defaultAgent.name, 'codex');
+  assert.equal(bad.warnings.length, 4);
+  const all = bad.warnings.join(' | ');
+  assert.match(all, /tabRouting .*"project" or "caller"/);
+  assert.match(all, /terminalWindow .*"last" or "dedicated"/);
+  assert.match(all, /shell .*absolute path/);
+  assert.match(all, /terminal .*must be a string/);
+});
+
+test('focusNewTabs comes from config: auto follows the call, always and never decide alone', () => {
+  assert.equal(resolveSettings(undefined, undefined).focusNewTabs, 'auto');
+  for (const mode of ['auto', 'always', 'never'] as const) {
+    const settings = resolveSettings(undefined, JSON.stringify({ focusNewTabs: mode }));
+    assert.equal(settings.focusNewTabs, mode);
+    assert.deepEqual(settings.warnings, []);
+  }
+  const bad = resolveSettings(undefined, JSON.stringify({ focusNewTabs: true }));
+  assert.equal(bad.focusNewTabs, 'auto');
+  assert.match(bad.warnings.join(' '), /focusNewTabs .*"auto" or "always" or "never"/);
+
+  assert.equal(resolveFocus('auto', undefined), false);
+  assert.equal(resolveFocus('always', undefined), true);
+  assert.equal(resolveFocus('never', undefined), false);
+  assert.equal(resolveFocus('auto', true), true);
+  assert.equal(resolveFocus('auto', false), false);
+  assert.equal(resolveFocus('always', false), true);
+  assert.equal(resolveFocus('never', true), false);
 });
 
 test('merge keeps built-in order and appends new profiles in file order', () => {
   const merged = mergeProfiles(BUILTIN_PROFILES, [p({ name: 'z' }), p({ name: 'gemini', label: 'G' }), p({ name: 'a' })]);
-  assert.deepEqual(merged.map((x) => x.name), ['claude', 'codex', 'gemini', 'copilot', 'z', 'a']);
-  assert.equal(merged[2]!.label, 'G');
+  assert.deepEqual(merged.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'z', 'a']);
+  assert.equal(merged[4]!.label, 'G');
 });

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { promises as fs, watch, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { ensurePrivateDir, readTextIfExists, withFileLock, writeAtomically } from '../files.js';
@@ -8,6 +8,7 @@ export const MAIL_DIR = 'mail';
 export const MAX_TEXT_CHARS = 32_000;
 export const MAX_SENT_PER_MINUTE = 20;
 export const MAX_UNREAD = 50;
+export const MAX_READ_CHARS = 40_000;
 export const KEEP_MS = 7 * 24 * 60 * 60 * 1000;
 const TMP_MAX_AGE_MS = 60 * 60 * 1000;
 const MINUTE_MS = 60_000;
@@ -38,7 +39,9 @@ export interface MessageFilter {
 }
 
 export const mailboxDir = (home: string, id: string) => path.join(home, MAIL_DIR, id);
-const sub = (home: string, id: string, name: 'tmp' | 'new' | 'cur') => path.join(mailboxDir(home, id), name);
+type Folder = 'tmp' | 'new' | 'cur' | 'bad' | 'held';
+const sub = (home: string, id: string, name: Folder) => path.join(mailboxDir(home, id), name);
+export const unreadDir = (home: string, id: string) => sub(home, id, 'new');
 
 export const newMessageId = () => `m-${randomBytes(8).toString('hex')}`;
 
@@ -86,6 +89,7 @@ export async function unreadNames(home: string, id: string): Promise<string[]> {
 }
 
 export async function peekUnread(home: string, id: string): Promise<Message[]> {
+  await returnStaleClaims(home, id);
   const dir = sub(home, id, 'new');
   const messages: Message[] = [];
   for (const name of await unreadNames(home, id)) {
@@ -95,20 +99,55 @@ export async function peekUnread(home: string, id: string): Promise<Message[]> {
   return messages;
 }
 
-export async function reserveSend(home: string, senderId: string, now = Date.now()): Promise<void> {
+export const DEDUPE_MS = 60_000;
+
+export interface SendRecord {
+  id: string;
+  to: string;
+  digest: string;
+}
+
+interface SentEntry extends Partial<SendRecord> {
+  at: number;
+}
+
+function parseSent(text: string | undefined, now: number): SentEntry[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(text ?? '[]');
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(json)) return [];
+  const keep = Math.max(MINUTE_MS, DEDUPE_MS);
+  return json
+    .map((e): SentEntry | undefined => (typeof e === 'number' ? { at: e } : typeof e?.at === 'number' ? (e as SentEntry) : undefined))
+    .filter((e): e is SentEntry => e !== undefined && now - e.at < keep);
+}
+
+export const sendDigest = (to: string, text: string, replyTo?: string) =>
+  createHash('sha256').update(JSON.stringify([to, replyTo ?? '', text])).digest('hex');
+
+export async function reserveSend(home: string, senderId: string, now = Date.now(), record?: SendRecord): Promise<{ duplicateOf?: string }> {
   const file = path.join(mailboxDir(home, senderId), SENT_FILE);
-  await withFileLock(file, async () => {
-    let times: number[] = [];
-    try {
-      const json: unknown = JSON.parse((await readTextIfExists(file)) ?? '[]');
-      if (Array.isArray(json)) times = json.filter((t): t is number => typeof t === 'number' && now - t < MINUTE_MS);
-    } catch {
-      times = [];
-    }
-    if (times.length >= MAX_SENT_PER_MINUTE) {
+  return withFileLock(file, async () => {
+    const entries = parseSent(await readTextIfExists(file), now);
+    const same = record && entries.find((e) => e.id !== undefined && e.to === record.to && e.digest === record.digest && now - e.at < DEDUPE_MS);
+    if (same) return { duplicateOf: same.id };
+    if (entries.filter((e) => now - e.at < MINUTE_MS).length >= MAX_SENT_PER_MINUTE) {
       throw new MailError(`this session sent ${MAX_SENT_PER_MINUTE} messages in the last minute; wait before sending more`);
     }
-    await writeAtomically(file, JSON.stringify([...times, now]));
+    await writeAtomically(file, JSON.stringify([...entries, { at: now, ...record }]));
+    return {};
+  });
+}
+
+export async function releaseSend(home: string, senderId: string, id: string): Promise<void> {
+  const file = path.join(mailboxDir(home, senderId), SENT_FILE);
+  await withFileLock(file, async () => {
+    const entries = parseSent(await readTextIfExists(file), Date.now());
+    const left = entries.filter((e) => e.id !== id);
+    if (left.length !== entries.length) await writeAtomically(file, JSON.stringify(left));
   });
 }
 
@@ -134,14 +173,15 @@ export async function deliver(home: string, message: Message, now = Date.now()):
 
 const RETRY_CODES = new Set(['EPERM', 'EBUSY', 'EACCES']);
 
-async function moveToCur(home: string, id: string, name: string): Promise<boolean> {
-  const from = path.join(sub(home, id, 'new'), name);
-  const to = path.join(sub(home, id, 'cur'), name);
+async function move(home: string, id: string, name: string, from: Folder, to: Folder): Promise<boolean> {
+  await ensurePrivateDir(sub(home, id, to));
+  const source = path.join(sub(home, id, from), name);
+  const target = path.join(sub(home, id, to), name);
   for (let attempt = 0; ; attempt++) {
     try {
-      await fs.rename(from, to);
+      await fs.rename(source, target);
       const now = new Date();
-      await fs.utimes(to, now, now).catch(() => undefined);
+      await fs.utimes(target, now, now).catch(() => undefined);
       return true;
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code ?? '';
@@ -156,22 +196,117 @@ async function moveToCur(home: string, id: string, name: string): Promise<boolea
 const matches = (m: Message, filter: MessageFilter) =>
   (filter.from === undefined || m.from.id === filter.from) && (filter.replyTo === undefined || m.replyTo === filter.replyTo);
 
+export interface Batch {
+  messages: Message[];
+  names: string[];
+  remaining: number;
+  unreadable: number;
+}
+
+export interface BatchLimits {
+  filter?: MessageFilter;
+  count?: number;
+  chars?: number;
+}
+
 // Node on Windows renames through an open handle, so two readers can both "move" one file. The lock makes
 // sure only one of them returns it.
-export async function takeMessages(home: string, id: string, filter: MessageFilter = {}, limit = Infinity): Promise<Message[]> {
+export async function takeBatch(home: string, id: string, limits: BatchLimits = {}): Promise<Batch> {
+  const { filter = {}, count = Infinity, chars = Infinity } = limits;
+  const batch: Batch = { messages: [], names: [], remaining: 0, unreadable: 0 };
   await ensureMailbox(home, id);
-  if ((await unreadNames(home, id)).length === 0) return [];
+  await returnStaleClaims(home, id);
+  if ((await unreadNames(home, id)).length === 0) return batch;
   return withFileLock(path.join(mailboxDir(home, id), 'read'), async () => {
-    const taken: Message[] = [];
+    let size = 0;
     for (const name of await unreadNames(home, id)) {
-      if (taken.length >= limit) break;
-      const message = parseMessage(await readTextIfExists(path.join(sub(home, id, 'new'), name)).catch(() => undefined));
-      if (message && !matches(message, filter)) continue;
-      if (!(await moveToCur(home, id, name)) || !message) continue;
-      taken.push(message);
+      let text: string | undefined;
+      try {
+        text = await readTextIfExists(path.join(sub(home, id, 'new'), name));
+      } catch {
+        continue;
+      }
+      if (text === undefined) continue;
+      const message = parseMessage(text);
+      if (!message) {
+        if (await move(home, id, name, 'new', 'bad')) batch.unreadable++;
+        continue;
+      }
+      if (!matches(message, filter)) continue;
+      const full = batch.messages.length >= count || (batch.messages.length > 0 && size + message.text.length > chars);
+      if (full) {
+        batch.remaining++;
+        continue;
+      }
+      if (!(await move(home, id, name, 'new', 'cur'))) continue;
+      size += message.text.length;
+      batch.messages.push(message);
+      batch.names.push(name);
     }
-    return taken;
+    return batch;
   });
+}
+
+export async function takeMessages(home: string, id: string, filter: MessageFilter = {}, limit = Infinity): Promise<Message[]> {
+  return (await takeBatch(home, id, { filter, count: limit })).messages;
+}
+
+export async function putBack(home: string, id: string, names: string[]): Promise<void> {
+  for (const name of names) await move(home, id, name, 'cur', 'new');
+}
+
+export const CLAIM_TIMEOUT_MS = 2 * 60_000;
+
+async function heldNames(home: string, id: string): Promise<string[]> {
+  const names = await fs.readdir(sub(home, id, 'held')).catch(() => [] as string[]);
+  return names.filter((n) => n.endsWith('.json')).sort();
+}
+
+// A claim parks messages in held/ until the claimer acks them into cur/ or releases them back to new/. move()
+// stamps the mtime, so a claim older than CLAIM_TIMEOUT_MS returns to new/ even after the claimer died.
+export async function returnStaleClaims(home: string, id: string, now = Date.now(), maxAgeMs = CLAIM_TIMEOUT_MS): Promise<number> {
+  let returned = 0;
+  if ((await heldNames(home, id)).length === 0) return returned;
+  await withFileLock(path.join(mailboxDir(home, id), 'read'), async () => {
+    for (const name of await heldNames(home, id)) {
+      const stat = await fs.stat(path.join(sub(home, id, 'held'), name)).catch(() => undefined);
+      if (stat && now - stat.mtimeMs >= maxAgeMs && (await move(home, id, name, 'held', 'new'))) returned++;
+    }
+  });
+  return returned;
+}
+
+export async function claimBatch(home: string, id: string, count: number, chars = MAX_READ_CHARS): Promise<Batch> {
+  const batch: Batch = { messages: [], names: [], remaining: 0, unreadable: 0 };
+  await ensureMailbox(home, id);
+  if ((await unreadNames(home, id)).length === 0) return batch;
+  return withFileLock(path.join(mailboxDir(home, id), 'read'), async () => {
+    let size = 0;
+    for (const name of await unreadNames(home, id)) {
+      const text = await readTextIfExists(path.join(sub(home, id, 'new'), name)).catch(() => undefined);
+      if (text === undefined) continue;
+      const message = parseMessage(text);
+      if (!message) {
+        if (await move(home, id, name, 'new', 'bad')) batch.unreadable++;
+        continue;
+      }
+      if (batch.messages.length >= count || (batch.messages.length > 0 && size + message.text.length > chars)) {
+        batch.remaining++;
+        continue;
+      }
+      if (!(await move(home, id, name, 'new', 'held'))) continue;
+      size += message.text.length;
+      batch.messages.push(message);
+      batch.names.push(name);
+    }
+    return batch;
+  });
+}
+
+export async function settleClaim(home: string, id: string, names: string[], to: 'cur' | 'new'): Promise<number> {
+  let moved = 0;
+  for (const name of names) if (await move(home, id, name, 'held', to)) moved++;
+  return moved;
 }
 
 export async function waitForMessage(
@@ -197,8 +332,12 @@ export async function waitForMessage(
   try {
     for (;;) {
       dirty = false;
-      const [message] = await takeMessages(home, id, filter, 1);
-      if (message) return message;
+      const { messages, names } = await takeBatch(home, id, { filter, count: 1 });
+      if (messages.length && signal?.aborted) {
+        await putBack(home, id, names);
+        return undefined;
+      }
+      if (messages.length) return messages[0];
       const left = deadline - Date.now();
       if (left <= 0 || signal?.aborted) return undefined;
       if (dirty) continue;
@@ -223,7 +362,7 @@ export async function waitForMessage(
 
 async function newestMtime(dir: string): Promise<number> {
   let newest = (await fs.stat(dir).catch(() => undefined))?.mtimeMs ?? 0;
-  for (const name of ['tmp', 'new', 'cur', SENT_FILE]) {
+  for (const name of ['tmp', 'new', 'cur', 'bad', 'held', 'sent-log', 'received-log', SENT_FILE]) {
     const file = path.join(dir, name);
     newest = Math.max(newest, (await fs.stat(file).catch(() => undefined))?.mtimeMs ?? 0);
     for (const child of await fs.readdir(file).catch(() => [] as string[])) {
@@ -250,6 +389,9 @@ export async function cleanMail(home: string, liveIds: Set<string>, now = Date.n
       continue;
     }
     await removeOlder(path.join(dir, 'cur'), KEEP_MS, now);
+    await removeOlder(path.join(dir, 'sent-log'), KEEP_MS, now);
+    await removeOlder(path.join(dir, 'received-log'), KEEP_MS, now);
+    await removeOlder(path.join(dir, 'bad'), KEEP_MS, now);
     await removeOlder(path.join(dir, 'tmp'), TMP_MAX_AGE_MS, now);
   }
 }

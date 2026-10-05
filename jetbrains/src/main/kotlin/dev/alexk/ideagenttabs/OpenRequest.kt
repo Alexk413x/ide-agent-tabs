@@ -12,6 +12,8 @@ const val MAX_PROMPT_CHARS = 30_000
 const val MAX_ENTRIES = 64
 const val MAX_INPUT_CHARS = 500
 
+val MODEL_PATTERN = Regex("[A-Za-z0-9._:/@+-]{1,200}")
+
 class Refusal(val status: Int, val message: String)
 
 // Pure module: no IDE or Netty types, so the admission rules test without a running IDE.
@@ -52,6 +54,13 @@ private fun JsonObject.string(name: String): String? {
         throw IllegalArgumentException("$name must be a string")
     }
     return value.asString
+}
+
+private fun JsonObject.boolean(name: String): Boolean? {
+    val value = get(name) ?: return null
+    if (value.isJsonNull) return null
+    if (!value.isJsonPrimitive || !value.asJsonPrimitive.isBoolean) throw IllegalArgumentException("$name must be true or false")
+    return value.asBoolean
 }
 
 fun parseCloseId(body: String): String {
@@ -105,13 +114,25 @@ data class OpenRequest(
     val args: List<String> = emptyList(),
     val env: Map<String, String> = emptyMap(),
     val agent: String? = null,
+    val model: String? = null,
+    val via: LaunchVia? = null,
+    val focus: Boolean = false,
 ) {
 
     companion object {
 
         fun parse(body: String): OpenRequest {
             val obj = parseObject(body)
-            return of(obj.string("path"), obj.string("prompt"), obj.stringList("args"), obj.stringMap("env"), obj.string("agent"))
+            return of(
+                obj.string("path"),
+                obj.string("prompt"),
+                obj.stringList("args"),
+                obj.stringMap("env"),
+                obj.string("agent"),
+                obj.string("model"),
+                obj.string("via"),
+                obj.boolean("focus") ?: false,
+            )
         }
 
         fun of(
@@ -120,6 +141,9 @@ data class OpenRequest(
             args: List<String> = emptyList(),
             env: Map<String, String> = emptyMap(),
             agent: String? = null,
+            model: String? = null,
+            via: String? = null,
+            focus: Boolean = false,
         ): OpenRequest {
             if (path.isNullOrBlank()) throw IllegalArgumentException("path is required")
             val dir = Path.of(path)
@@ -132,7 +156,11 @@ data class OpenRequest(
             if (args.any { it.length > MAX_PROMPT_CHARS }) throw IllegalArgumentException("an arg exceeds $MAX_PROMPT_CHARS characters")
             checkEnv(env, "env")
             if (agent != null && agent.isBlank()) throw IllegalArgumentException("agent must not be blank")
-            return OpenRequest(dir.normalize(), prompt?.takeIf { it.isNotBlank() }, args, env, agent)
+            if (model != null && !MODEL_PATTERN.matches(model)) {
+                throw IllegalArgumentException("model must be 1 to 200 characters from letters, digits and . _ : / @ + -")
+            }
+            val chosenVia = via?.let { LaunchVia.of(it) ?: throw IllegalArgumentException("via must be 'ori' or 'direct'") }
+            return OpenRequest(dir.normalize(), prompt?.takeIf { it.isNotBlank() }, args, env, agent, model, chosenVia, focus)
         }
     }
 }

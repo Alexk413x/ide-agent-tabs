@@ -30,6 +30,7 @@ const SESSION_ENV = new Set([
   'CODEX_SANDBOX_NETWORK_DISABLED',
   'GEMINI_CLI',
   'OPENCODE_SESSION_ID',
+  'ANTIGRAVITY_CLI_ALIAS',
 ]);
 
 // A terminal the server starts, or a tmux server it starts, keeps this environment for every later tab, so

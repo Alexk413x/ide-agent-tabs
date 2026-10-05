@@ -1,6 +1,6 @@
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { AgentProfile, AgentSettings } from './profiles';
+import { AgentLaunch, AgentProfile, AgentSettings, planLaunch } from './profiles';
 import { ENDPOINT_BASE } from './registry';
 import { BadRequest, checkAdmission, OpenRequest, parseCloseId, parseEmpty, parseInput, parseOpenRequest } from './request';
 
@@ -22,7 +22,7 @@ export interface TabInfo {
 export interface Host {
   info(): { ide: string; product: string; version: string; pid: number; projects: ProjectInfo[] };
   isInstalled(profile: AgentProfile): boolean;
-  open(request: OpenRequest, profile: AgentProfile): TabInfo | undefined;
+  open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch): TabInfo | undefined;
   close(id: string): boolean;
   input(id: string, text: string): boolean;
   list(): TabInfo[];
@@ -53,8 +53,19 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
           if (!named) throw new BadRequest(`unknown agent: ${request.agent}`);
           profile = named;
         }
-        const tab = host.open(request, profile);
-        return tab ? ok({ ...tab }) : fail(409, 'no open folder to host the tab');
+        const launch = planLaunch(profile, {
+          prompt: request.prompt,
+          args: request.args,
+          env: request.env,
+          model: request.model,
+          via: request.via,
+          setting: settings.shared().launchVia,
+          ori: settings.detected().ori,
+          windows: process.platform === 'win32',
+          searchPath: process.env.PATH ?? '',
+        });
+        const tab = host.open(request, profile, launch);
+        return tab ? ok({ ...tab, via: launch.via }) : fail(409, 'no open folder to host the tab');
       }
       case 'close': {
         const id = parseCloseId(body);

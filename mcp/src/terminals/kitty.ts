@@ -7,7 +7,8 @@ import { run } from '../process.js';
 import { checkPosixEnvNames, posixSpec, type LaunchSpec } from '../spec.js';
 import { findExecutable, GUI_SETTLE_MS, hangUp, pidTabsAlive, startDetached, terminalEnvironment } from './processes.js';
 import { checkArgvPaths, checkInputLine, ENTER_DELAY_MS, launcherName, loginShell, sleep, surfaceArgv, tabTitle } from './shell.js';
-import type { TerminalCapabilities, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
+import type { OpenOptions, TerminalCapabilities, TerminalContext, TerminalDriver, TerminalTab } from './types.js';
+import { readWindow, rememberWindow, type RememberedWindow } from './windowMemory.js';
 
 export const KITTY = 'kitty';
 export const KITTY_SOCKET_NAME = 'kitty-agent-tabs';
@@ -71,10 +72,27 @@ export function kittyAddresses(platform: NodeJS.Platform, env: NodeJS.ProcessEnv
   return dir ? findKittySockets(dir) : [];
 }
 
-export function kittyLaunchArgs(o: { address: string; cwd: string; title: string; launcher: string; spec: string; argv: string[] }): string[] {
+export type KittyPlace = { windowId: string } | { osWindow: true };
+
+function placeArgs(place: KittyPlace | undefined): string[] {
+  if (!place) return ['--type=tab'];
+  return 'osWindow' in place ? ['--type=os-window'] : ['--type=tab', '--match', `window_id:${place.windowId}`];
+}
+
+export function kittyLaunchArgs(o: {
+  address: string;
+  cwd: string;
+  title: string;
+  launcher: string;
+  spec: string;
+  argv: string[];
+  place?: KittyPlace;
+  focus?: boolean;
+}): string[] {
   checkArgvPaths('kitty', [o.address, o.cwd, o.launcher, o.spec]);
+  if (o.place && 'windowId' in o.place && !/^\d+$/.test(o.place.windowId)) throw new Error(`not a kitty window id: ${o.place.windowId}`);
   return [
-    '@', '--to', o.address, 'launch', '--type=tab', '--cwd', o.cwd,
+    '@', '--to', o.address, 'launch', ...placeArgs(o.place), ...(o.focus === false ? ['--keep-focus'] : []), '--cwd', o.cwd,
     '--env', `IDE_AGENT_TABS_LAUNCHER=${o.launcher}`,
     '--env', `IDE_AGENT_TABS_SPEC=${o.spec}`,
     '--tab-title', tabTitle(o.title),
@@ -104,21 +122,60 @@ export function parseKittyWindowId(stdout: string): string {
   return id;
 }
 
-export function parseKittyWindows(stdout: string): Set<string> {
-  const ids = new Set<string>();
+export function parseKittyOsWindows(stdout: string): Map<string, string[]> {
+  const byOsWindow = new Map<string, string[]>();
   const osWindows: unknown = JSON.parse(stdout);
   if (!Array.isArray(osWindows)) throw new Error('unexpected answer from kitten @ ls');
-  for (const w of osWindows as { tabs?: { windows?: { id?: unknown }[] }[] }[]) {
+  for (const w of osWindows as { id?: unknown; tabs?: { windows?: { id?: unknown }[] }[] }[]) {
+    const ids: string[] = [];
     for (const tab of w?.tabs ?? []) {
-      for (const win of tab?.windows ?? []) if (typeof win?.id === 'number') ids.add(String(win.id));
+      for (const win of tab?.windows ?? []) if (typeof win?.id === 'number') ids.push(String(win.id));
     }
+    if (typeof w?.id === 'number') byOsWindow.set(String(w.id), ids);
+    else byOsWindow.set(`unknown-${byOsWindow.size}`, ids);
   }
-  return ids;
+  return byOsWindow;
+}
+
+export function parseKittyWindows(stdout: string): Set<string> {
+  return new Set([...parseKittyOsWindows(stdout).values()].flat());
+}
+
+async function kittyLsByOsWindow(kitten: string, address: string): Promise<Map<string, string[]> | undefined> {
+  const result = await run(kitten, ['@', '--to', address, 'ls'], { timeoutMs: 10_000 }).catch(() => undefined);
+  return result?.code === 0 ? parseKittyOsWindows(result.stdout) : undefined;
 }
 
 async function kittyLs(kitten: string, address: string): Promise<Set<string> | undefined> {
-  const result = await run(kitten, ['@', '--to', address, 'ls'], { timeoutMs: 10_000 }).catch(() => undefined);
-  return result?.code === 0 ? parseKittyWindows(result.stdout) : undefined;
+  const byOsWindow = await kittyLsByOsWindow(kitten, address);
+  return byOsWindow && new Set([...byOsWindow.values()].flat());
+}
+
+export function planKittyPlace(
+  options: OpenOptions | undefined,
+  address: string,
+  nearWindows: Set<string> | undefined,
+  remembered: RememberedWindow | undefined,
+  rememberedOsWindows: Map<string, string[]> | undefined,
+): { address: string; place?: KittyPlace } {
+  const near = options?.near;
+  if (near?.socket && near.terminalId && nearWindows?.has(near.terminalId)) return { address: near.socket, place: { windowId: near.terminalId } };
+  if (options?.window !== 'dedicated') return { address };
+  const inWindow = remembered?.socket ? rememberedOsWindows?.get(remembered.id)?.[0] : undefined;
+  return inWindow && remembered?.socket ? { address: remembered.socket, place: { windowId: inWindow } } : { address, place: { osWindow: true } };
+}
+
+async function kittyPlace(kitten: string, address: string, home: string, options: OpenOptions | undefined) {
+  const near = options?.near?.socket ? await kittyLs(kitten, options.near.socket) : undefined;
+  const remembered = options?.window === 'dedicated' && !options.near ? await readWindow(home, KITTY) : undefined;
+  const osWindows = remembered?.socket ? await kittyLsByOsWindow(kitten, remembered.socket) : undefined;
+  return planKittyPlace(options, address, near, remembered, osWindows);
+}
+
+async function rememberOsWindow(kitten: string, home: string, address: string, windowId: string): Promise<void> {
+  const byOsWindow = await kittyLsByOsWindow(kitten, address);
+  const osWindow = [...(byOsWindow ?? [])].find(([, ids]) => ids.includes(windowId))?.[0];
+  if (osWindow !== undefined && /^\d+$/.test(osWindow)) await rememberWindow(home, KITTY, { id: osWindow, socket: address });
 }
 
 async function reachableSocket(kitten: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
@@ -149,7 +206,7 @@ export const kitty: TerminalDriver = {
     return (process.platform === 'darwin' || process.platform === 'linux') && findKitty(ctx) !== undefined;
   },
 
-  async open(ctx, spec: LaunchSpec, title) {
+  async open(ctx, spec: LaunchSpec, title, options) {
     const { kitty: exe, kitten } = tools(ctx);
     checkPosixEnvNames(spec.env);
     const shell = loginShell(ctx.env.SHELL, process.platform);
@@ -162,16 +219,29 @@ export const kitty: TerminalDriver = {
     const base = { id: spec.id, terminal: KITTY, agent: spec.agent, path: spec.cwd };
 
     if (address) {
-      const args = kittyLaunchArgs({ address, cwd: spec.cwd, title, launcher, spec: specFile, argv });
+      const target = await kittyPlace(kitten, address, ctx.home, options);
+      const args = kittyLaunchArgs({
+        address: target.address,
+        cwd: spec.cwd,
+        title,
+        launcher,
+        spec: specFile,
+        argv,
+        ...(target.place ? { place: target.place } : {}),
+        ...(options?.focus !== undefined ? { focus: options.focus } : {}),
+      });
       await writeNewPrivateFile(specFile, posixSpec(spec));
+      let windowId: string;
       try {
         const result = await run(kitten, args, { env, timeoutMs: 30_000 });
         if (result.code !== 0) throw new Error(`kitten @ launch failed: ${result.stderr.trim()}`);
-        return { ...base, createdAt: Date.now(), terminalId: parseKittyWindowId(result.stdout), socket: address };
+        windowId = parseKittyWindowId(result.stdout);
       } catch (e) {
         await fs.rm(specFile, { force: true });
         throw e;
       }
+      if (target.place && 'osWindow' in target.place) await rememberOsWindow(kitten, ctx.home, target.address, windowId).catch(() => undefined);
+      return { ...base, createdAt: Date.now(), terminalId: windowId, socket: target.address };
     }
 
     const pidFile = path.join(dir, `${spec.id}.pid`);

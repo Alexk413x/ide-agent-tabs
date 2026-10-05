@@ -1,5 +1,6 @@
 import { statSync } from 'node:fs';
 import path from 'node:path';
+import { MODEL_PATTERN, type LaunchVia } from './launchPlan.js';
 import { checkEnv, ConfigError, MAX_ENTRIES, MAX_PROMPT_CHARS, type Env } from './profiles.js';
 
 export interface OpenInput {
@@ -9,6 +10,9 @@ export interface OpenInput {
   args?: string[];
   env?: Env;
   ide?: string;
+  model?: string;
+  via?: LaunchVia;
+  focus?: boolean;
 }
 
 export interface OpenRequest {
@@ -18,6 +22,9 @@ export interface OpenRequest {
   args: string[];
   env: Env;
   ide?: string;
+  model?: string;
+  via?: LaunchVia;
+  focus?: boolean;
 }
 
 export function validateOpen(input: OpenInput, isDirectory = defaultIsDirectory): OpenRequest {
@@ -38,6 +45,9 @@ export function validateOpen(input: OpenInput, isDirectory = defaultIsDirectory)
   checkEnv(env, 'env');
   if (input.agent !== undefined && input.agent.trim() === '') throw new ConfigError('agent must not be blank');
   if (input.ide !== undefined && input.ide.trim() === '') throw new ConfigError('ide must not be blank');
+  if (input.model !== undefined && !MODEL_PATTERN.test(input.model)) throw new ConfigError(`model must match ${MODEL_PATTERN.source}`);
+  if (input.via !== undefined && input.via !== 'ori' && input.via !== 'direct') throw new ConfigError('via must be "ori" or "direct"');
+  if (input.focus !== undefined && typeof input.focus !== 'boolean') throw new ConfigError('focus must be true or false');
   return {
     path: path.normalize(dir),
     ...(input.agent !== undefined ? { agent: input.agent } : {}),
@@ -45,6 +55,9 @@ export function validateOpen(input: OpenInput, isDirectory = defaultIsDirectory)
     args,
     env,
     ...(input.ide !== undefined ? { ide: input.ide } : {}),
+    ...(input.model !== undefined ? { model: input.model } : {}),
+    ...(input.via !== undefined ? { via: input.via } : {}),
+    ...(input.focus !== undefined ? { focus: input.focus } : {}),
   };
 }
 

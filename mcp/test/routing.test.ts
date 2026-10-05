@@ -59,3 +59,21 @@ test('terminal choice: preferred, then platform default, else an error', () => {
   assert.equal((chooseTerminal(undefined, 'windows-terminal', ['windows-terminal']) as { name: string }).name, 'windows-terminal');
   assert.ok('error' in chooseTerminal(undefined, undefined, []));
 });
+
+test("caller routing picks the caller's IDE even when another IDE has the project", () => {
+  const owner = ide('owner', 9, [['app', '/w/app', true]]);
+  const caller = ide('caller', 1, [['other', '/o', false]]);
+  const choice = chooseIde([owner, caller], '/w/app/src', false, 'caller', 'caller');
+  assert.deepEqual(choice, { id: 'caller', reason: "tabRouting is caller; the caller's IDE" });
+  assert.equal(chooseIde([owner, caller], '/w/app/src', false, 'caller', 'project')?.id, 'owner');
+  assert.equal(chooseIde([owner, caller], '/w/app/src', false, 'caller')?.id, 'owner');
+});
+
+test('caller routing falls back to project matching when the caller is not in a running IDE', () => {
+  const owner = ide('owner', 1, [['app', '/w/app', true]]);
+  const recent = ide('recent', 9, [['q', '/q', false]]);
+  assert.equal(chooseIde([owner, recent], '/w/app', false, undefined, 'caller')?.id, 'owner');
+  assert.equal(chooseIde([owner, recent], '/w/app', false, 'gone', 'caller')?.id, 'owner');
+  assert.equal(chooseIde([owner, recent], '/elsewhere', false, 'windows-terminal', 'caller')?.id, 'recent');
+  assert.equal(chooseIde([ide('empty', 1, [])], '/w', false, 'empty', 'caller'), undefined);
+});

@@ -1,11 +1,11 @@
 # Agent Tabs for VS Code
 
-Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Gemini CLI and Copilot CLI, in
-editor tabs. You open a tab with one button. Another agent opens, lists and closes tabs through a local
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode,
+Qwen Code and Goose, in editor tabs. You open a tab with one button. Another agent opens, lists and closes tabs through a local
 HTTP API, the same API the JetBrains plugin serves.
 
 The extension runs in VS Code 1.100 or later, and in editors built on it, such as Cursor, Windsurf,
-VSCodium and Antigravity.
+VSCodium, Antigravity, Kiro, Positron and Trae.
 
 ## Install
 
@@ -39,6 +39,9 @@ Common command-line tools:
 | Windsurf | `windsurf` |
 | VSCodium | `codium` |
 | Antigravity | `antigravity-ide` |
+| Kiro | `kiro` |
+| Positron | `positron` |
+| Trae | `trae` |
 
 Without the Claude Code plugin, an extension installed by hand doesn't update by itself.
 
@@ -71,8 +74,42 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `gemini`, `copilot` | `claude` |
+| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `agy`, `copilot`, `gemini`, `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local` | `claude` |
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
+| `ideAgentTabs.launchVia` | `direct`, `ori` (start supported agents with `ori <agent>`, which bills model usage through OpenRouter). Needs Ori (`ori`) installed. | `direct` |
+| `ideAgentTabs.closeAfterHandoff` | `true` (the new session closes the old tab once both sides confirm a handoff), `false` (leave the old tab open, marked as handed off) | `true` |
+| `ideAgentTabs.allowResume` | `true` (agents can reopen a session that ended in the last 7 days with `resume_tab`, and ask you first when the resume re-reads its history at full price), `false` (refuse every resume) | `true` |
+| `ideAgentTabs.claudeMod` | `on` (Claude Code sessions message other agents through SendMessage and ListAgents and get their messages in-process), `off` (the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0). Claude Code sessions that start after the change pick it up. | `on` |
+
+Two more sections hold the settings that the MCP server and JetBrains IDEs share. They stay in sync with
+`~/.ide-agent-tabs/config.json`. A tab request that names an IDE, a terminal or an agent overrides them.
+The settings are user-level only: a workspace's `.vscode/settings.json` can't set them, and untrusted
+workspaces can't change the terminal or the shell.
+
+**Agent Tabs: IDE tabs**
+
+| Setting | Key | Values | Default |
+| --- | --- | --- | --- |
+| `ideAgentTabs.openNewTabsIn` | `tabRouting` | `project` (IDE that has the project open), `caller` (IDE the request came from) | `project` |
+| `ideAgentTabs.focusNewTabs` | `focusNewTabs` | `auto` (bring an agent's tab to the front only when the agent says you asked for it), `always`, `never`. A request's `focus` field wins. The New Agent Tab button always brings its tab to the front. | `auto` |
+
+**Agent Tabs: Terminal tabs**
+
+| Setting | Key | Values | Default |
+| --- | --- | --- | --- |
+| `ideAgentTabs.preferredTerminal` | `terminal` | `auto` or a terminal id, such as `windows-terminal` or `wezterm` | `auto` |
+| `ideAgentTabs.windowsShell` | `shell` | `auto` or the path to a PowerShell executable. Windows only. | `auto` |
+| `ideAgentTabs.terminalWindow` | `terminalWindow` | `last` (use my last window), `dedicated` (a dedicated Agent Tabs window) | `last` |
+
+The terminal and shell settings are text settings, because VS Code fixes a dropdown's choices in
+`package.json`. Each has a **Choose…** link, and a command (**Agent Tabs: Choose Preferred Terminal…**,
+**Agent Tabs: Choose Windows Shell…**) that lists the options in `~/.ide-agent-tabs/detected.json`, plus
+**Automatic** and, for the shell, **Custom path…**.
+
+`ideAgentTabs.launchVia` is user-level only, like the terminal settings, and stays in sync with `launchVia` in
+`config.json`. When it is `ori`, the status bar tooltip and the **New Agent Tab With…** menu tag the agents
+that start through Ori with "via OpenRouter", and the tab name carries the same tag. An agent that Ori can't
+launch starts directly. A request's `via` field overrides the setting for one tab.
 
 The editor title button, the status bar item and startup all use `ideAgentTabs.defaultAgent`. The
 setting stays in sync with `defaultAgent` in `~/.ide-agent-tabs/config.json`, so a change in the JetBrains
@@ -80,13 +117,16 @@ plugin or any other window shows up here too, and the MCP server uses the same d
 
 ## Agent profiles
 
-The built-in profiles are `claude`, `codex`, `gemini` and `copilot`. To add a profile or change a built-in
-one, edit `~/.ide-agent-tabs/agents.json`:
+The built-in profiles are `claude`, `codex`, `agy`, `copilot`, `gemini`, `grok`, `pi`, `hermes`, `opencode`,
+`qwen`, `goose` and `codex-local` (Codex with a local Ollama model). The Grok Build, Pi, Hermes, OpenCode, Qwen
+Code, Goose and Codex (local) profiles come from each CLI's documentation and haven't had a live test. The menus
+list only agents whose command is on `PATH`. To add a profile or change a built-in one, edit
+`~/.ide-agent-tabs/agents.json`:
 
 ```json
 {
-  "opencode": {
-    "label": "OpenCode",
+  "opencode-local": {
+    "label": "OpenCode (local model)",
     "command": "opencode",
     "args": ["--model", "<provider>/<model>"],
     "promptFlag": "--prompt",
@@ -94,6 +134,10 @@ one, edit `~/.ide-agent-tabs/agents.json`:
   }
 }
 ```
+
+Set `modelFlag` to the option that picks a model, such as `"--model"`, to let a request's `model` field
+reach the agent. The built-in profiles set it. A request with `model` for a profile without `modelFlag`
+fails, unless the tab starts through Ori.
 
 A relative `icon` path starts from `~/.ide-agent-tabs`. The extension reads both files again when they
 change.
@@ -110,7 +154,9 @@ registry, each route, the status codes and the security rules.
 
 - `open` opens the tab in the window that serves the request. The caller picks the window from the
   registry, for example by the folders that `info` lists.
-- A tab opened through the API doesn't take focus. A tab opened from the button does.
+- A tab opened through the API takes focus only when the request sets `"focus": true`. Otherwise
+  keyboard focus stays in the current editor, though the new tab still shows in the active editor
+  group. A tab opened from the button takes focus.
 - `info` reports every workspace folder in the window. Each folder's `focused` value is `true` when the
   window has focus.
 
@@ -135,7 +181,9 @@ can close its own tab.
 - A prompt holds up to 30,000 characters. `args` and `env` hold up to 64 entries each.
 - On Windows, a single environment variable holds up to 32,767 characters, so very long `args` lists can
   fail to start.
-- Agent tabs don't survive a window reload. The tab closes, and its id stops working.
+- Agent tabs don't survive a window reload. The tab closes, and its id stops working. An extension host
+  restart, as after an extension update, keeps the tabs: the extension finds them again by their
+  `IDE_AGENT_TABS_ID` and lists, closes and types into them under its new endpoint id.
 - Windows PowerShell 5.1 drops empty arguments and can split arguments that contain double quotes.
   Install PowerShell 7 to avoid this.
 - Tested on Windows. The bash launcher is tested through WSL. zsh, fish, macOS and remote workspaces

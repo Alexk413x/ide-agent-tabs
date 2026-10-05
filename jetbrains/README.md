@@ -1,7 +1,8 @@
 # Agent Tabs for JetBrains IDEs
 
 A plugin for IntelliJ IDEA, Android Studio and other JetBrains IDEs that opens AI coding-agent sessions,
-such as Claude Code, Codex, Gemini CLI and Copilot CLI, in editor tabs.
+such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode,
+Qwen Code and Goose, in editor tabs.
 
 - Click **New Agent Tab** in the main toolbar or the **Tools** menu, or press **Ctrl+Alt+A** (**⌘⌥A** on
   macOS), to start the default agent in the project root.
@@ -10,7 +11,7 @@ such as Claude Code, Codex, Gemini CLI and Copilot CLI, in editor tabs.
 - Open **Settings > Tools > Agent Tabs** to change the default agent.
 - The default agent can open by itself when a project opens. See [Open on startup](#open-on-startup).
 - Other programs, such as another agent session, can open, list and close tabs through a local HTTP
-  API. The IDE does not take focus.
+  API. The new tab takes focus only when the request asks for it.
 
 ## Requirements
 
@@ -61,8 +62,19 @@ The plugin knows these agents:
 |---|---|---|---|
 | `claude` | Claude Code | `claude` | positional |
 | `codex` | Codex | `codex --no-daemon` and `-c` options that add Agent Tabs messaging; needs Codex 0.158 or later | positional |
-| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
+| `agy` | Antigravity CLI | `agy` | `-i <prompt>` |
 | `copilot` | Copilot CLI | `copilot` | `-i <prompt>` |
+| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` |
+| `grok` | Grok Build | `grok` | positional |
+| `pi` | Pi | `pi` | positional |
+| `hermes` | Hermes | `hermes chat` | `-q <prompt>` |
+| `opencode` | OpenCode | `opencode` | `--prompt <prompt>` |
+| `qwen` | Qwen Code | `qwen` | `-i <prompt>` |
+| `goose` | Goose | `goose run -s`; needs a first prompt to start | `-t <prompt>` |
+| `codex-local` | Codex (local) | `codex` with the Agent Tabs options, `--oss` and `--local-provider ollama` | positional |
+
+The Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose and Codex (local) profiles come from each CLI's
+documentation and haven't had a live test.
 
 The menus list only agents whose command is on the IDE's `PATH`. On Windows, the plugin
 also looks for `.exe`, `.cmd`, `.bat` and `.ps1` files.
@@ -72,8 +84,8 @@ same name as a built-in one replaces it.
 
 ```json
 {
-  "opencode": {
-    "label": "OpenCode",
+  "opencode-local": {
+    "label": "OpenCode (local model)",
     "command": "opencode",
     "args": ["--model", "<provider>/<model>"],
     "promptFlag": "--prompt",
@@ -89,6 +101,7 @@ same name as a built-in one replaces it.
 | `label` | No | The name in menus. The default is the profile name. |
 | `args` | No | Arguments that go before the caller's `args`. |
 | `promptFlag` | No | The flag before the first prompt. Leave it out when the prompt is positional. |
+| `modelFlag` | No | The option that picks a model, such as `--model`. A request's `model` field needs it, unless the tab starts through Ori. The built-in agents set it. |
 | `env` | No | Environment variables for the session. The caller's `env` wins on a clash. |
 | `icon` | No | An SVG file for menus, as an absolute path or relative to `~/.ide-agent-tabs`. |
 
@@ -109,7 +122,31 @@ Open **Settings > Tools > Agent Tabs**.
 | Setting | Description |
 |---|---|
 | Default agent | The agent that **New Agent Tab** opens. Saved in `~/.ide-agent-tabs/config.json`. |
+| Launch through OpenRouter (Ori) | `direct` or `ori`. With `ori`, supported agents start as `ori <agent>`, which bills model usage through OpenRouter, and the menus and tab names carry "via OpenRouter". An agent that Ori can't launch starts directly. Shown only when Ori (`ori`) is installed. Saved as `launchVia`. |
+| Close the old tab after a handoff | After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off. Saved as `closeAfterHandoff`, written only when off. |
+| Allow resuming closed sessions | Agents can reopen a Claude Code, Codex or Antigravity CLI session that ended in the last 7 days with `resume_tab`. A resume past the prompt cache re-reads the whole history at full price, so the agent asks you first. Off refuses every resume. Saved as `allowResume`, written only when off. |
+| Use the Claude Code mod (in-process messaging) | Claude Code sessions message other agents with SendMessage and ListAgents and get their messages in-process. Off uses the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0. Claude Code sessions that start after the change pick it up. Saved as `claudeMod`, written only when off. |
 | Open on startup | When to open the default agent as a project opens. See [Open on startup](#open-on-startup). |
+
+The page has two more groups. Their settings are shared with VS Code and the MCP server, saved in
+`~/.ide-agent-tabs/config.json`. A tab request that names an IDE, a terminal or an agent overrides them.
+The choices in the terminal and shell lists come from `~/.ide-agent-tabs/detected.json`, which the MCP
+server writes. Without that file, only **Automatic** is listed, plus any value already saved.
+
+**IDE tabs**
+
+| Setting | Key | Description |
+|---|---|---|
+| Open new tabs in | `tabRouting` | Where a new agent tab opens when no IDE or terminal is named. `project` (**IDE that has the project open**, the default) or `caller` (**IDE the request came from**). |
+| Bring new agent tabs to the front | `focusNewTabs` | Whether a tab that an agent opens takes focus. `auto` (**When you asked for the tab**, the default): only when the agent says you asked for it. `always` or `never`. A request's `focus` field wins. The **New Agent Tab** button always brings its tab to the front. |
+
+**Terminal tabs**
+
+| Setting | Key | Description |
+|---|---|---|
+| Preferred terminal | `terminal` | Terminal for agent tabs when no IDE is running or a terminal is asked for. **Automatic** or a detected terminal. |
+| Shell (Windows) | `shell` | PowerShell that runs agent tabs in a terminal. **Automatic**, a detected PowerShell, or **Custom path…**. Windows only. |
+| Terminal window | `terminalWindow` | Whether terminal tabs join your last window or a window kept for Agent Tabs. `last` (**Use my last window**, the default) or `dedicated` (**A dedicated Agent Tabs window**). |
 
 ### Open on startup
 
@@ -175,6 +212,7 @@ the IDE refuses a browser-like `POST` before the plugin sees it. `curl` doesn't 
 | `prompt` | No | The session's first message. Up to 30,000 characters. |
 | `args` | No | Extra agent arguments, such as `["--plugin-dir", "/path/to/plugin"]`. Up to 64 strings. They go after the profile's `args` and before the prompt. |
 | `env` | No | Environment variables for the session, such as `{"MY_SETTING": "value"}`. Up to 64. Names that start with `IDE_AGENT_TABS_` or `JEDITERM_SOURCE` are refused. |
+| `focus` | No | `true` gives the new editor tab keyboard focus. `false` or absent keeps focus where it is; the new tab still becomes the selected editor tab. |
 
 The reply holds the tab's `id`, the `agent`, the `project` window it opened in, and the `path`. The tab
 opens in the open project that contains `path`, or in the last focused project window if none does.
@@ -184,6 +222,8 @@ opens in the open project that contains `path`, or in the last focused project w
 `POST {"id": "<tab id>"}` to `close`. Closing the tab ends its session. You can close only tabs this
 plugin opened. Each session can read its own id from the `IDE_AGENT_TABS_ID` environment variable,
 so a session can close its own tab when it finishes. `IDE_AGENT_TABS_AGENT` holds the agent name.
+After a plugin update or reload without an IDE restart, the plugin finds its open tabs again by their
+`IDE_AGENT_TABS_ID`, so you can still list, close and type into them.
 
 ### Input
 

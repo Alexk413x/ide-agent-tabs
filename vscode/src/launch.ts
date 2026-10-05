@@ -11,6 +11,10 @@ export const ARG_COUNT_ENV = `${PLUGIN_ENV_PREFIX}ARGC`;
 export const ARG_ENV_PREFIX = `${PLUGIN_ENV_PREFIX}ARG_`;
 export const PROMPT_ENV = `${PLUGIN_ENV_PREFIX}PROMPT`;
 
+export function editorLocation<Column>(column: Column, focus: boolean): { viewColumn: Column; preserveFocus: boolean } {
+  return { viewColumn: column, preserveFocus: !focus };
+}
+
 export type ShellKind = 'powershell' | 'posix' | 'fish';
 
 export interface LaunchScripts {
@@ -94,4 +98,31 @@ export function terminalEnv(
     if (isReservedEnv(name) && !own.has(name.toUpperCase())) env[name] = null;
   }
   return env;
+}
+
+export interface TerminalCreation {
+  name?: string;
+  cwd?: string | { fsPath: string };
+  env?: { [key: string]: string | null | undefined };
+}
+
+export interface RevivedTab<T> {
+  id: string;
+  agent: string;
+  path: string;
+  terminal: T;
+}
+
+export function revivedTabs<T extends { readonly creationOptions: Readonly<TerminalCreation> }>(
+  terminals: readonly T[],
+  known: (id: string, terminal: T) => boolean,
+): RevivedTab<T>[] {
+  const found = new Map<string, RevivedTab<T>>();
+  for (const terminal of terminals) {
+    const { env, cwd } = terminal.creationOptions;
+    const id = env?.[TAB_ID_ENV];
+    if (!id || found.has(id) || known(id, terminal)) continue;
+    found.set(id, { id, agent: env?.[AGENT_ENV] ?? '', path: typeof cwd === 'string' ? cwd : (cwd?.fsPath ?? ''), terminal });
+  }
+  return [...found.values()];
 }

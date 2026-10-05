@@ -12,12 +12,14 @@ import { tempDir } from './tempDir.js';
 
 const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const HOOK_TIMEOUT_S = 10;
+const INTERRUPT_TIMEOUT_S = 3;
 
-const HOOKS: [event: string, key: string, input: Record<string, string>][] = [
+const HOOKS: [event: string, key: string, input: Record<string, string>, timeout?: number][] = [
   ['UserPromptSubmit', 'user_prompt_submit', { event: 'UserPromptSubmit', session_id: '${session_id}', turn_id: '${turn_id}' }],
   ['PostToolUse', 'post_tool_use', { event: 'PostToolUse', session_id: '${session_id}', turn_id: '${turn_id}' }],
   ['PermissionRequest', 'permission_request', { event: 'PermissionRequest', session_id: '${session_id}', turn_id: '${turn_id}' }],
   ['Stop', 'stop', { event: 'Stop', session_id: '${session_id}', turn_id: '${turn_id}' }],
+  ['Interrupt', 'interrupt', { event: 'Interrupt', session_id: '${session_id}', turn_id: '${turn_id}' }, INTERRUPT_TIMEOUT_S],
 ];
 
 // Codex's hook_key for the -c layer: its synthetic source path resolved against "/" or "C:\".
@@ -32,8 +34,8 @@ function canonical(value: unknown): unknown {
 }
 
 // codex-rs hooks discovery: hook_hash, then config version_for_toml (SHA-256 of key-sorted compact JSON).
-function trustedHash(key: string, input: Record<string, string>): string {
-  const identity = { event_name: key, hooks: [{ type: 'mcp_tool', server: SERVER_NAME, tool: HOOK_TOOL, input, timeout: HOOK_TIMEOUT_S }] };
+function trustedHash(key: string, input: Record<string, string>, timeout: number): string {
+  const identity = { event_name: key, hooks: [{ type: 'mcp_tool', server: SERVER_NAME, tool: HOOK_TOOL, input, timeout }] };
   return `sha256:${createHash('sha256').update(JSON.stringify(canonical(identity))).digest('hex')}`;
 }
 
@@ -50,13 +52,13 @@ test('the Codex profile launches in-process with its own Agent Tabs server and t
   assert.match(overrides[0]!, /^mcp_servers\.ide-agent-tabs=\{ command = 'node', args = \['-e', '[^']+'\], env_vars = \['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'\], tool_timeout_sec = 660 \}$/);
 
   const hooks = HOOKS.map(
-    ([event, , input]) =>
-      `hooks.${event}=[{ hooks = [{ type = 'mcp_tool', server = '${SERVER_NAME}', tool = '${HOOK_TOOL}', input = ${table(input)}, timeout = ${HOOK_TIMEOUT_S} }] }]`,
+    ([event, , input, timeout = HOOK_TIMEOUT_S]) =>
+      `hooks.${event}=[{ hooks = [{ type = 'mcp_tool', server = '${SERVER_NAME}', tool = '${HOOK_TOOL}', input = ${table(input)}, timeout = ${timeout} }] }]`,
   );
   assert.deepEqual(overrides.slice(1, -1), hooks);
 
-  const state = HOOKS.flatMap(([, key, input]) =>
-    SESSION_FLAG_SOURCES.map((source) => `'${source}:${key}:0:0' = { trusted_hash = '${trustedHash(key, input)}' }`),
+  const state = HOOKS.flatMap(([, key, input, timeout = HOOK_TIMEOUT_S]) =>
+    SESSION_FLAG_SOURCES.map((source) => `'${source}:${key}:0:0' = { trusted_hash = '${trustedHash(key, input, timeout)}' }`),
   );
   assert.equal(overrides.at(-1), `hooks.state={ ${state.join(', ')} }`);
 });

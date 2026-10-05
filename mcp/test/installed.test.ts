@@ -3,7 +3,7 @@ import { lstatSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { tempDir } from './tempDir.js';
-import { findOnPath, isInstalled } from '../src/installed.js';
+import { findOnPath, isCmdShim, isInstalled } from '../src/installed.js';
 
 const home = tempDir('iat-installed-');
 const bin = path.join(home, 'bin');
@@ -42,4 +42,18 @@ test('finds the Microsoft Store pwsh alias', (t) => {
     return;
   }
   assert.equal(findOnPath(windowsApps, 'pwsh.exe'), path.join(windowsApps, 'pwsh.exe'));
+});
+
+test('a command is a .cmd shim when PATH finds its .cmd or .bat before an .exe, or finds nothing', () => {
+  const root = tempDir('iat-shim-');
+  const [a, b] = [path.join(root, 'a'), path.join(root, 'b')];
+  mkdirSync(a);
+  mkdirSync(b);
+  writeFileSync(path.join(a, 'codex.cmd'), '');
+  writeFileSync(path.join(b, 'codex.exe'), '');
+  writeFileSync(path.join(b, 'claude.exe'), '');
+  const pathVar = [a, b].join(path.delimiter);
+  assert.equal(isCmdShim('codex', pathVar), true);
+  assert.equal(isCmdShim('claude', pathVar), false);
+  assert.equal(isCmdShim('missing', pathVar), true);
 });
