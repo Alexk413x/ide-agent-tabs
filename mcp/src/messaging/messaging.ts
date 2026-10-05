@@ -26,7 +26,7 @@ import {
 import { readCodexConfig } from './codexConfig.js';
 import { recordEnded, transcriptDirs, type TranscriptDirs } from './closed.js';
 import { runHook } from './hook.js';
-import { history, logId, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
+import { history, historyCounts, logId, MailIndex, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
   agentFromClient,
@@ -205,6 +205,7 @@ export class Messaging {
   private agent: string;
   private readonly startedAt: string;
   private lastClean = 0;
+  private readonly mailIndex = new MailIndex();
   private threadId?: string;
   private ownHost?: Promise<string | undefined>;
   private identified: Promise<void> = Promise.resolve();
@@ -681,7 +682,16 @@ export class Messaging {
     if (who.id !== undefined && !isSessionId(who.id)) throw new MailError(`not a session id: ${who.id}`);
     const names = who.names.filter((n) => NATIVE_NAME.test(n)).slice(0, 8);
     if (who.id === undefined && names.length === 0) throw new MailError('history needs session or names');
-    return { messages: await history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names }) };
+    return { messages: await history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names }, this.mailIndex) };
+  }
+
+  async modCounts(whos: readonly Who[]) {
+    const valid = whos.map((who) => ({
+      ...(who.id !== undefined && isSessionId(who.id) ? { id: who.id } : {}),
+      names: who.names.filter((n) => NATIVE_NAME.test(n)).slice(0, 8),
+    }));
+    const counts = await historyCounts(this.deps.home, valid, this.mailIndex);
+    return { counts: counts.map((n, i) => (valid[i]!.id === undefined && valid[i]!.names.length === 0 ? null : n)) };
   }
 
   async modPresence(input: ModPresenceInput) {

@@ -919,6 +919,7 @@ itself raised the call. The model's own calls to those tools keep the engine's d
 | `sessions` | none | The `list_sessions` rows. |
 | `log` | `direction` (`sent` or `received`), `peer`, `text`, optional `id`, `at`, `delivery` | Records a native SendMessage message of this session in its `sent-log/` or `received-log/`. |
 | `history` | `session` and/or `names` | Every message the session sent or received, oldest first (see [Agents pane](#agents-pane)). |
+| `counts` | `agents`: up to 500 of `{ session?, names }`, as `history` takes one | `counts`: for each, the number of messages `history` would list, or `null` for one with neither a valid session nor a name. |
 | `settings` | none | `claudeMod` from `config.json`. |
 
 The server registers the tool only for a Claude Code client: it removes the tool for every other client
@@ -1141,7 +1142,7 @@ transcript in the fullscreen layout from 110 columns, and opens inline above the
 of these options seats it inline: `rows` is the inline height, which the dock ignores, and `focus` is a
 request for the keys only.
 
-- **Agents:** the heading `Agent Tabs Messages`, then the sessions from the `ListAgents` merge code, in
+- **Agents:** the heading `Agent Tabs Messages`, with the close chip at its right, then the sessions from the `ListAgents` merge code, in
   the `ListAgents` groups and order, this session included. Each IDE or terminal group is a Box with
   `borderStyle: "round"` and `paddingX: 1`, stacked with no gap and as wide as the pane. The API draws
   no border title, so the host name is the bold first line inside the box. Folders follow, with one
@@ -1157,7 +1158,7 @@ request for the keys only.
   `│ … │`, `╰─╯`), and a blank row holds a space, because an empty Text takes no height on the terminal
   and shifted every row below it. A left `up`, or `return` or
   space on the focused item, posts that item's act; the mod's `ui.message` hook on the pane runs it:
-  `session`, `folder`, `copy`, `message`, `back` or `reply`. VS Code and mobile get the Buttons below:
+  `session`, `folder`, `copy`, `message`, `back`, `reply` or `close`. VS Code and mobile get the Buttons below:
   the Elements table types no `Client` there, and the test kit's VS Code table answers one that draws
   nothing, so the mod checks the surface, not the table.
 - A folder heading is `▸ <base name>`, bold, indented two. Hovering or focusing it underlines it and
@@ -1169,35 +1170,45 @@ request for the keys only.
   (`OS` is `Windows_NT`), `open <path>` on macOS and `xdg-open <path>` on Linux (`uname -s`), with the
   resolved path. `explorer.exe` exits 1 even when it opened the folder, so on Windows only a failed
   start counts as an error.
-- Each session takes two lines. Line 1, indented four: a state dot `●` (`idle` success, `busy`
-  warning, `permission` error, `waking` suggestion, anything else dim), an agent glyph in the agent's
+- The close chip is the mod's own, ` ✕  `: 4 cells right-aligned to the pane width, all of them the
+  target, underlined when lit. It closes the pane, as Esc does from the agents view, and sits on the
+  title line of the agents view and on the Back line of the messages and detail views. The engine's own
+  close mark on the frame stays as it is.
+- Each session takes two lines. Line 1, indented four: the session's message count, bold, padded to
+  the widest count in view so the names align, dim when it is `0` (`·` when the count isn't known), then an agent glyph in the agent's
   colour (Claude `✻` `#d97757`, Codex `◆` `#10a37f`, Antigravity `▲` `#8b7cf6`, others `•` `#9aa4b2`),
   the name without its trailing `[ref]`, never cut, and ` (this session)` in italics for the calling session. A session with an
   `agentColor` draws its name in that colour (`red` `#e5534b`, `blue` `#539bf5`, `green` `#57ab5a`,
   `yellow` `#c69026`, `purple` `#b083f0`, `orange` `#e0823d`, `pink` `#e275ad`, `cyan` `#39c5cf`).
-  Line 2, indented six, dim: `<state> · <started> · <harness> · <model> · <effort>`,
+  Line 2, indented six: a state dot `●` (`idle` success, `busy` warning, `permission` error, `waking`
+  suggestion, anything else dim), then, dim, `<state> · <started> · <harness> · <model> · <effort>`,
   with ` (<agentType>)` after the harness when the session runs an agent type,
   leaving out every unknown part and its separator, with a leading `claude-` or `gpt-` dropped from the
   model, cut with `…` to the room the box leaves. Both lines are one item: the pointer anywhere on
   either lights both, with `▎` at column 2 and both lines underlined, and a click on either opens the
   session's messages. No background colour and no inversion. The session id is not in this view.
-- **Messages** of the chosen agent: `← Back` and `<name> · <n> messages`, the name without its `[ref]`;
-  a dim line with the full name when it carries a `[ref]` and `Session: <id>` when the id is known,
-  joined by ` · `; a blank line; then everything it
+- **Messages** of the chosen agent: `← Back` at indent 1 with the close chip, a blank line, then at indent
+  4 the bold `<name> · <n> messages` (the name without its `[ref]`), the state dot and the dim details as
+  on the session's line 2, `<folder> · <IDE or terminal>`, and a dim line with the full name when it
+  carries a `[ref]` and `Session: <id>` when the id is known, joined by ` · `; a blank line; then everything it
   sent or received through Agent Tabs or SendMessage with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
   `HH:MM  ↘ peer  first line…` for received, in local time. A message line lights like a session, with
   `▎` at column 0, and a click opens its detail.
-- **Detail:** the `← Back` and `↩ Reply` chips, which underline when lit, then the session id, from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
+- **Detail:** the `← Back` and `↩ Reply` chips at indent 1 with the close chip, which underline when lit, then the session id, from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
   closes the pane and fills the prompt with `Reply to <name> (message <id>): `, which never submits; a
   dialog-held pane would refuse the fill.
+- An empty view's dim text (`No other agent session is live.`, `No messages sent or received …`) is
+  centred in the pane width, wrapped by words to centred lines when it is wider.
 
 Back and Esc go up one level. Esc reaches the mod as `ui.close` with origin `person`; above the agents
 view the mod answers without `next`, so the pane stays open and goes up instead. The view, the chosen
 agent and message, and the focused row of each view live in `$.state`, so a reload keeps them, and a
 pane still open after a reload resumes its refresh.
 
-While the pane is open, the mod refreshes every 2 seconds: one `ListAgents` call and the `sessions` op,
-plus the `history` op in the messages and detail views. It writes `$.state` only when the data changed, so
+While the pane is open, the mod refreshes every 2 seconds: one `ListAgents` call, the `sessions` op and one
+`counts` op for every row shown, plus the `history` op in the messages and detail views. The server keeps
+each log and mailbox file it has parsed by its path, since a file is written once under its name and a
+status change moves it to another folder, so a refresh lists the folders and reads only new files. It writes `$.state` only when the data changed, so
 the pane redraws only then. While it is closed, nothing renders and nothing is read. The mod's own
 `ListAgents` call skips its merge hook, so the pane parses the native listing.
 

@@ -13,7 +13,7 @@ import type {
   AgentTabsSender,
   AgentTabsView,
 } from '../types'
-import type { ListGroup, ListLine, ListProps } from './list'
+import type { ListGroup, ListLine, ListPart, ListProps } from './list'
 
 const SERVER = 'ide-agent-tabs'
 const MOD_TOOL = 'agent_tabs_mod'
@@ -79,6 +79,9 @@ const ROW_MARK = '▎'
 const BACK_LABEL = '← Back'
 const REPLY_LABEL = '↩ Reply'
 const NO_MESSAGES = 'No messages sent or received through Agent Tabs or SendMessage in the last 7 days.'
+const NO_SESSIONS = 'No other agent session is live.'
+const CLOSE_LABEL = ' ✕  '
+const HEADER_INDENT = 4
 const FOLDER_MARK = '▸ '
 const MODEL_VENDOR = /^(claude|gpt)-/
 const NAME_COLORS: Record<string, string> = {
@@ -777,6 +780,7 @@ const paneRow = (e: Entry): AgentTabsPaneRow => ({
   id: e.id ?? null,
   names: e.names ?? [e.name],
   self: e.self === true,
+  messages: null,
   agentType: e.agentType ?? null,
   agentColor: e.agentColor ?? null,
 })
@@ -890,7 +894,11 @@ async function refreshPane($: EngineInterface) {
   if (!me || !open) return
   const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
   const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
-  const hosts = paneHosts(await readListing($).catch(() => undefined), rows, await $.clock.now())
+  const listed = paneHosts(await readListing($).catch(() => undefined), rows, await $.clock.now())
+  const agents = paneRows(listed).map(r => ({ ...(r.id !== null ? { session: r.id } : {}), names: r.names.slice(0, 8) }))
+  const counted = agents.length ? ((await callMod($, me.server, { op: 'counts', agents }).catch(() => undefined)) as { counts?: (number | null)[] } | undefined) : undefined
+  let at = 0
+  const hosts = listed.map(h => ({ ...h, folders: h.folders.map(f => ({ ...f, rows: f.rows.map(r => ({ ...r, messages: counted?.counts?.[at++] ?? null })) })) }))
   const { value: shownHosts } = await $.state.get(paneHostsRef)
   if (JSON.stringify(shownHosts) !== JSON.stringify(hosts)) await $.state.set(paneHostsRef, hosts)
   if (pane.view === 'agents' || pane.agent === null) return
@@ -967,12 +975,46 @@ export type PaneAct =
   | { act: 'message'; id: string }
   | { act: 'back' }
   | { act: 'reply' }
+  | { act: 'close' }
 
 const isAct = (data: unknown): data is PaneAct => typeof data === 'object' && data !== null && typeof (data as { act?: unknown }).act === 'string'
 
-export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
-  const acts: Record<string, PaneAct> = {}
+export function centered(text: string, width: number): { indent: number; text: string }[] {
+  const lines: string[] = []
+  for (const word of text.split(/\s+/).filter(w => w !== '')) {
+    const last = lines.at(-1)
+    if (last !== undefined && last.length + 1 + word.length <= width) lines[lines.length - 1] = `${last} ${word}`
+    else lines.push(word)
+  }
+  return lines.map(line => ({ indent: Math.max(0, Math.floor((width - line.length) / 2)), text: line }))
+}
+
+const centeredLines = (text: string, width: number): ListLine[] => centered(text, width).map(c => ({ indent: c.indent, parts: [{ text: c.text, dim: true }] }))
+
+const closeChip = (used: number, width: number): ListPart[] => [
+  { text: ' '.repeat(Math.max(1, width - used - CLOSE_LABEL.length)) },
+  { text: CLOSE_LABEL, underline: true, item: 'close' },
+]
+
+const partsWidth = (indent: number, parts: readonly ListPart[]) => indent + parts.reduce((n, p) => n + p.text.length, 0)
+
+export const countWidth = (rows: readonly AgentTabsPaneRow[]) => Math.max(1, ...rows.map(r => countText(r).length))
+const countText = (r: AgentTabsPaneRow) => (r.messages === null ? '·' : String(r.messages))
+
+export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number, notice: string | null = null): ListProps {
+  const acts: Record<string, PaneAct> = { close: { act: 'close' } }
   const room = Math.max(8, width - 4 - 6)
+  const title: ListPart[] = [{ text: PANE_TITLE, bold: true }]
+  const header: ListGroup = {
+    border: false,
+    lines: [
+      { indent: 0, parts: [...title, ...closeChip(partsWidth(0, title), width)] },
+      ...(notice ? [{ indent: 0, parts: [{ text: cut(notice, width), color: 'suggestion' }] }] : []),
+    ],
+  }
+  const rows = paneRows(hosts)
+  if (!rows.length) return { groups: [header, { border: false, lines: centeredLines(NO_SESSIONS, width) }], acts, width }
+  const counted = countWidth(rows)
   let n = 0
   const groups: ListGroup[] = hosts.map(host => {
     const lines: ListLine[] = [{ indent: 0, parts: [{ text: cut(host.heading, Math.max(8, width - 4)), bold: true }] }]
@@ -1005,32 +1047,66 @@ export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number): 
           indent: 4,
           mark: 2,
           parts: [
-            { text: '● ', ...(dot !== undefined ? { color: dot } : { dim: true }) },
+            { text: countText(r).padStart(counted), bold: true, ...(r.messages ? {} : { dim: true }) },
+            { text: ' ' },
             { text: `${glyph.glyph} `, color: glyph.color },
             { text: withoutRef(r.name), underline: true, ...(color !== undefined ? { color } : {}) },
             ...(r.self ? [{ text: THIS_SESSION, italic: true, underline: true }] : []),
           ],
         })
-        lines.push({ item: id, indent: 6, mark: 2, parts: [{ text: cut(detailLine(r), room), dim: true, underline: true }] })
+        lines.push({
+          item: id,
+          indent: 6,
+          mark: 2,
+          parts: [
+            { text: '● ', ...(dot !== undefined ? { color: dot } : { dim: true }) },
+            { text: cut(detailLine(r), Math.max(8, room - 2)), dim: true, underline: true },
+          ],
+        })
       }
     })
     return { border: true, lines }
   })
-  return { groups, acts, width }
+  return { groups: [header, ...groups], acts, width }
 }
 
 export function sessionDetails(agent: AgentTabsPick): string {
   return [agent.name !== withoutRef(agent.name) ? agent.name : undefined, agent.id !== null ? `Session: ${agent.id}` : undefined].filter(v => v !== undefined).join(' · ')
 }
 
+export function sessionPlace(agent: AgentTabsPick | null, hosts: readonly AgentTabsPaneHost[]) {
+  if (agent === null) return undefined
+  for (const host of hosts) {
+    for (const f of host.folders) {
+      const row = f.rows.find(r => r.key === agent.key)
+      if (row) return { row, folder: f.heading, host: host.heading }
+    }
+  }
+  return undefined
+}
+
+export const countLabel = (n: number) => (n === 1 ? '1 message' : `${n} messages`)
+
 export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
-  const acts: Record<string, PaneAct> = { back: { act: 'back' } }
-  const count = messages.length === 1 ? '1 message' : `${messages.length} messages`
+  const acts: Record<string, PaneAct> = { back: { act: 'back' }, close: { act: 'close' } }
+  const where = sessionPlace(pane.agent, hosts)
+  const dot = where ? DOT_COLORS[where.row.state] : undefined
+  const room = Math.max(8, width - HEADER_INDENT)
+  const back: ListPart[] = [{ text: BACK_LABEL, underline: true, item: 'back' }]
+  const details = pane.agent ? sessionDetails(pane.agent) : ''
   const lines: ListLine[] = [
-    { indent: 0, parts: [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: `${withoutRef(pane.agent?.name ?? '')} · ${count}`, bold: true }] },
-    ...(pane.agent && sessionDetails(pane.agent) !== '' ? [{ indent: 0, parts: [{ text: sessionDetails(pane.agent), dim: true }] }] : []),
+    { indent: 1, parts: [...back, ...closeChip(partsWidth(1, back), width)] },
     { indent: 0, parts: [{ text: ' ' }] },
-    ...(messages.length === 0 ? [{ indent: 0, parts: [{ text: NO_MESSAGES, dim: true }] }] : []),
+    { indent: HEADER_INDENT, parts: [{ text: cut(`${withoutRef(pane.agent?.name ?? '')} · ${countLabel(messages.length)}`, room), bold: true }] },
+    ...(where
+      ? [
+          { indent: HEADER_INDENT, parts: [{ text: '● ', ...(dot !== undefined ? { color: dot } : { dim: true }) }, { text: cut(detailLine(where.row), Math.max(8, room - 2)), dim: true }] },
+          { indent: HEADER_INDENT, parts: [{ text: cut([where.folder, where.host].filter(v => v !== null).join(' · '), room), dim: true }] },
+        ]
+      : []),
+    ...(details !== '' ? [{ indent: HEADER_INDENT, parts: [{ text: cut(details, room), dim: true }] }] : []),
+    { indent: 0, parts: [{ text: ' ' }] },
+    ...(messages.length === 0 ? centeredLines(NO_MESSAGES, width) : []),
     ...messages.map((m, i): ListLine => {
       acts[`m${i}`] = { act: 'message', id: m.id }
       return { item: `m${i}`, indent: 2, mark: 0, parts: [{ text: messageLine(m, hosts, width - 2), underline: true }] }
@@ -1039,10 +1115,14 @@ export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMe
   return { groups: [{ border: false, lines }], acts, width }
 }
 
-export const detailChips = (): ListProps => ({
-  groups: [{ border: false, lines: [{ indent: 0, parts: [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: REPLY_LABEL, underline: true, item: 'reply' }] }] }],
-  acts: { back: { act: 'back' }, reply: { act: 'reply' } },
-})
+export function detailChips(width: number): ListProps {
+  const chips: ListPart[] = [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: REPLY_LABEL, underline: true, item: 'reply' }]
+  return {
+    groups: [{ border: false, lines: [{ indent: 1, parts: [...chips, ...closeChip(partsWidth(1, chips), width)] }] }],
+    acts: { back: { act: 'back' }, reply: { act: 'reply' }, close: { act: 'close' } },
+    width,
+  }
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -1305,6 +1385,7 @@ export const register: Register = on => {
     if (act.act === 'folder') await openFolder($, act.path)
     else if (act.act === 'copy') await copyPath($, act.path, e.surface)
     else if (act.act === 'back') await goUp($)
+    else if (act.act === 'close') await $.ui.close({ id: PANE })
     else if (act.act === 'message') await goTo($, { view: 'detail', message: act.id })
     else if (act.act === 'session') {
       const { value: hosts = [] } = await $.state.get(paneHostsRef)
@@ -1328,11 +1409,22 @@ export const register: Register = on => {
     const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
     const { value: hosts = [] } = await $.state.get(paneHostsRef)
     const width = Math.max(20, e.props.bodyColumns)
+    const close = <Button key="close" label="✕" onPress={() => $.ui.close({ id: PANE })} />
+    const empty = (text: string) =>
+      centered(text, width).map((c, i) => (
+        <Text key={`empty-${i}`} dimColor>
+          {`${' '.repeat(c.indent)}${c.text}`}
+        </Text>
+      ))
 
     if (pane.view === 'agents' || pane.agent === null) {
+      if (Client) return <Client key="agents" module="./list.tsx" width="100%" props={agentsList(hosts, width, pane.notice ?? null)} />
       const heading = (
         <Box flexDirection="column">
-          <Text bold>{PANE_TITLE}</Text>
+          <Box flexDirection="row" justifyContent="space-between">
+            <Text bold>{PANE_TITLE}</Text>
+            {close}
+          </Box>
           {pane.notice ? (
             <Text color="suggestion" wrap="truncate-end">
               {pane.notice}
@@ -1345,18 +1437,11 @@ export const register: Register = on => {
         return (
           <Box flexDirection="column">
             {heading}
-            <Text dimColor>No other agent session is live.</Text>
+            {empty(NO_SESSIONS)}
           </Box>
         )
       }
-      if (Client) {
-        return (
-          <Box flexDirection="column">
-            {heading}
-            <Client key="agents" module="./list.tsx" width="100%" props={agentsList(hosts, width)} />
-          </Box>
-        )
-      }
+      const counted = countWidth(all)
       const folderKey = (hi: number, f: AgentTabsPaneFolder) => `folder:${hi}:${f.path}`
       const nameColor = (r: AgentTabsPaneRow) => (r.agentColor !== null ? NAME_COLORS[r.agentColor] : undefined)
       const room = Math.max(8, width - 4 - 6)
@@ -1374,7 +1459,13 @@ export const register: Register = on => {
           <Box key={`row-${r.key}`} flexDirection="column">
             <Box flexDirection="row" paddingLeft={4}>
               {mark}
-              {dot !== undefined ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
+              {r.messages ? (
+                <Text bold>{countText(r).padStart(counted)} </Text>
+              ) : (
+                <Text bold dimColor>
+                  {countText(r).padStart(counted)}{' '}
+                </Text>
+              )}
               <Text color={glyph.color}>{glyph.glyph} </Text>
               {nameColor(r) !== undefined ? (
                 <Text color={nameColor(r)} hover={{ underline: true }}>
@@ -1391,7 +1482,8 @@ export const register: Register = on => {
             </Box>
             <Box flexDirection="row" paddingLeft={6}>
               {mark}
-              <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), room)} hover={{ underline: true }} onPress={open(r)} />
+              {dot !== undefined ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
+              <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), Math.max(8, room - 2))} hover={{ underline: true }} onPress={open(r)} />
             </Box>
           </Box>
         )
@@ -1445,17 +1537,40 @@ export const register: Register = on => {
 
     if (pane.view === 'messages' || pane.message === null) {
       if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, hosts, width)} />
+      const where = sessionPlace(pane.agent, hosts)
+      const dot = where ? DOT_COLORS[where.row.state] : undefined
       return (
         <Box flexDirection="column">
-          <Box flexDirection="row" gap={2}>
+          <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
             {back}
-            <Text bold>
-              {withoutRef(pane.agent.name)} · {messages.length === 1 ? '1 message' : `${messages.length} messages`}
-            </Text>
+            {close}
           </Box>
-          {sessionDetails(pane.agent) !== '' && <Text dimColor>{sessionDetails(pane.agent)}</Text>}
           <Text> </Text>
-          {messages.length === 0 && <Text dimColor>{NO_MESSAGES}</Text>}
+          <Box flexDirection="column" paddingLeft={HEADER_INDENT}>
+            <Text bold wrap="truncate-end">
+              {withoutRef(pane.agent.name)} · {countLabel(messages.length)}
+            </Text>
+            {where && (
+              <Box flexDirection="row">
+                {dot !== undefined ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
+                <Text dimColor wrap="truncate-end">
+                  {detailLine(where.row)}
+                </Text>
+              </Box>
+            )}
+            {where && (
+              <Text dimColor wrap="truncate-end">
+                {[where.folder, where.host].filter(v => v !== null).join(' · ')}
+              </Text>
+            )}
+            {sessionDetails(pane.agent) !== '' && (
+              <Text dimColor wrap="truncate-end">
+                {sessionDetails(pane.agent)}
+              </Text>
+            )}
+          </Box>
+          <Text> </Text>
+          {messages.length === 0 && empty(NO_MESSAGES)}
           {messages.map(m => (
             <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
               <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
@@ -1469,11 +1584,16 @@ export const register: Register = on => {
     }
 
     const m = messages.find(one => one.id === pane.message)
-    const chips = Client ? <Client key="chips" module="./list.tsx" props={detailChips()} /> : undefined
+    const chips = Client ? <Client key="chips" module="./list.tsx" width="100%" props={detailChips(width)} /> : undefined
     if (m === undefined) {
       return (
         <Box flexDirection="column">
-          {chips ?? back}
+          {chips ?? (
+            <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
+              {back}
+              {close}
+            </Box>
+          )}
           <Text dimColor>That message is no longer in the 7-day log.</Text>
         </Box>
       )
@@ -1484,9 +1604,12 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {chips ?? (
-          <Box flexDirection="row" gap={2}>
-            <Button key="back" label="Back" onPress={() => goUp($)} />
-            <Button key="reply" label="Reply" onPress={() => fillReply($, line)} />
+          <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
+            <Box flexDirection="row" gap={2}>
+              <Button key="back" label="Back" onPress={() => goUp($)} />
+              <Button key="reply" label="Reply" onPress={() => fillReply($, line)} />
+            </Box>
+            {close}
           </Box>
         )}
         {pane.agent.id !== null && <Text dimColor>Session: {pane.agent.id}</Text>}
