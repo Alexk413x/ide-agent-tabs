@@ -686,11 +686,11 @@ const PANE_OPEN = { id: 'agent-tabs', title: 'Agent Tabs Messages', focus: true,
 const AGENT_LINES = [
   "IntelliJ IDEA",
   "  ▸ w",
-  "    ● ✻ plugins-fa [6a3948] (this session)",
+  "    ● ✻ plugins-fa (this session)",
   "      idle · Claude Code · opus-5-5",
   "",
   "  ▸ docs",
-  "    ● ✻ docs-9b [11aa22]",
+  "    ● ✻ docs-9b",
   "      permission · 1d · Claude Code · opus-5-5 · high",
   "Antigravity IDE",
   "  ▸ w",
@@ -698,11 +698,11 @@ const AGENT_LINES = [
   "      busy · 5h · Antigravity CLI · gemini-3-pro",
   "tmux build",
   "  ▸ Folder not known",
-  "    ● ✻ nightly-sync [c0ffee]",
+  "    ● ✻ nightly-sync",
   "      idle · 3h · Claude Code (background)",
   "Visual Studio Code",
   "  ▸ e2e",
-  "    ● ✻ E2E testing plugin [b39a20]",
+  "    ● ✻ E2E testing plugin",
   "      idle · 18m · Claude Code · sonnet-5-5-20261001-extended-preview",
   "Windows Terminal",
   "  ▸ w",
@@ -725,12 +725,12 @@ const AGENT_LINES = [
   "    ● • z-ed",
   "      idle · 30s · zed-agent",
   "Remote Control",
-  "    ● ✻ Laptop RC [rc0001]",
+  "    ● ✻ Laptop RC",
   "      idle · Claude Code",
   "Cloud (can receive, can't reply)",
-  "    ● ✻ Guide 3-to-4 player support [77aa01]",
+  "    ● ✻ Guide 3-to-4 player support",
   "      cloud · Claude Code",
-  "    ● ✻ Fix flaky test [77aa02]",
+  "    ● ✻ Fix flaky test",
   "      cloud · Claude Code",
 ]
 
@@ -866,7 +866,7 @@ describe('agents pane', () => {
     const onAgent = await $.tool.call({ tool: 'mcp__ide-agent-tabs__open_agent_messages', agent: 'docs-9b [11aa22]' } as never)
     expect((onAgent as { text?: string }).text).toBe("Agent Tabs Messages pane opened on docs-9b [11aa22]'s messages.")
     const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-    expect(await textIn(ui, 'docs-9b [11aa22] · 2 messages')).toBeDefined()
+    expect(await textIn(ui, 'docs-9b · 2 messages')).toBeDefined()
     await ui.unmount()
   })
 
@@ -938,7 +938,7 @@ describe('agents pane', () => {
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS(30) })
       const lines = await drawnLines(ui)
-      expect(lines).toContain('    ● ✻ E2E testing plugin [b39a20]')
+      expect(lines).toContain('    ● ✻ E2E testing plugin')
       expect(lines).toContain('      idle · 2d · Codex v…')
       expect('idle · 2d · Codex v…'.length).toBe(30 - 4 - 6)
       await ui.unmount()
@@ -954,18 +954,18 @@ describe('agents pane', () => {
         const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
         const { key, props, item } = await hover(ui, 'agent:id:tab-d', nth)
         const lines = await drawnLines(ui)
-        const at = lines.indexOf('  ▎ ● ✻ docs-9b [11aa22]')
+        const at = lines.indexOf('  ▎ ● ✻ docs-9b')
         expect(at).toBeGreaterThan(0)
         expect(lines[at + 1]).toBe('  ▎   permission · 1d · Claude Code · opus-5-5 · high')
         expect(lines.filter(l => l.includes('▎'))).toHaveLength(2)
-        expect(await underlined(ui)).toEqual(['docs-9b [11aa22]', 'permission · 1d · Claude Code · opus-5-5 · high'])
+        expect(await underlined(ui)).toEqual(['docs-9b', 'permission · 1d · Claude Code · opus-5-5 · high'])
         await ui.pointer({ type: 'leave', ...positionOf(props, item, nth), in: key })
         expect(await underlined(ui)).toEqual([])
         expect((await drawnLines(ui)).some(l => l.includes('▎'))).toBe(false)
         await click(ui, 'agent:id:tab-d', nth)
         expect(w.ops('history').at(-1)!.args.session).toBe('tab-d')
-        expect(await textIn(ui, 'docs-9b [11aa22] · 2 messages')).toBeDefined()
-        expect(await textIn(ui, 'Session: tab-d')).toBeDefined()
+        expect(await textIn(ui, 'docs-9b · 2 messages')).toBeDefined()
+        expect(await textIn(ui, 'docs-9b [11aa22] · Session: tab-d')).toBeDefined()
         await click(ui, 'back')
         await ui.unmount()
       }
@@ -982,17 +982,17 @@ describe('agents pane', () => {
       await ui.key({ key: 'down', in: 'agents' })
       expect(await underlined(ui)).toEqual(['▸ w'])
       await ui.key({ key: 'down', in: 'agents' })
-      expect(await underlined(ui)).toEqual(['plugins-fa [6a3948]', ' (this session)', 'idle · Claude Code · opus-5-5'])
+      expect(await underlined(ui)).toEqual(['plugins-fa', ' (this session)', 'idle · Claude Code · opus-5-5'])
       await ui.key({ key: 'down', in: 'agents' })
       await ui.key({ key: 'down', in: 'agents' })
-      expect(await underlined(ui)).toEqual(['docs-9b [11aa22]', 'permission · 1d · Claude Code · opus-5-5 · high'])
-      expect((await drawnLines(ui)).filter(l => l.includes('▎'))).toEqual(['  ▎ ● ✻ docs-9b [11aa22]', '  ▎   permission · 1d · Claude Code · opus-5-5 · high'])
+      expect(await underlined(ui)).toEqual(['docs-9b', 'permission · 1d · Claude Code · opus-5-5 · high'])
+      expect((await drawnLines(ui)).filter(l => l.includes('▎'))).toEqual(['  ▎ ● ✻ docs-9b', '  ▎   permission · 1d · Claude Code · opus-5-5 · high'])
       await ui.key({ key: 'up', in: 'agents' })
       expect(await underlined(ui)).toEqual(['▸ docs'])
       await ui.key({ key: 'down', in: 'agents' })
       await ui.key({ key: 'return', in: 'agents' })
       expect(w.ops('history').at(-1)!.args.session).toBe('tab-d')
-      expect(await textIn(ui, 'docs-9b [11aa22] · 2 messages')).toBeDefined()
+      expect(await textIn(ui, 'docs-9b · 2 messages')).toBeDefined()
       await click(ui, 'back')
       await ui.unmount()
     }
@@ -1005,12 +1005,12 @@ describe('agents pane', () => {
     for (const surface of ['vscode', 'mobile'] as const) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       expect(await ui.find({ type: 'Client' })).toBeUndefined()
-      expect((await ui.find({ type: 'Button', key: 'agent:id:tab-d' }))?.text).toBe('docs-9b [11aa22]')
+      expect((await ui.find({ type: 'Button', key: 'agent:id:tab-d' }))?.text).toBe('docs-9b')
       w.runs.length = 0
       await ui.press({ key: 'folder:4:C:\\a' })
       expect(w.runs).toEqual([['explorer.exe', 'C:\\a']])
       await ui.press({ key: 'agent:id:tab-d' })
-      expect(await ui.find({ type: 'Text', text: 'docs-9b [11aa22] · 2 messages' })).toBeDefined()
+      expect(await ui.find({ type: 'Text', text: 'docs-9b · 2 messages' })).toBeDefined()
       await ui.press({ key: 'msg:m-aaaaaaaaaaaaaaa1' })
       expect(await ui.find({ type: 'Button', key: 'reply' })).toBeDefined()
       await ui.press({ key: 'back' })
@@ -1108,11 +1108,19 @@ describe('agents pane', () => {
       expect(history.session).toBe('tab-d')
       expect(history.names).toContain('docs-9b [11aa22]')
       expect(await drawnLines(ui)).toEqual([
-        '← Back  docs-9b [11aa22] · 2 messages',
-        'Session: tab-d',
+        '← Back  docs-9b · 2 messages',
+        'docs-9b [11aa22] · Session: tab-d',
+        ' ',
         `  ${local(AT(1))}  ↘ w-1a · Please review x.ts…`,
         `  ${local(AT(2))}  ↑ ${NATIVE.replace(/\s*\[[^\]]*\]$/, '')} · Done, both look fine.`,
       ])
+      expect((await ui.find({ in: 'messages', type: 'Text', text: 'docs-9b [11aa22] · Session: tab-d' }))?.props.dimColor).toBe(true)
+      for (const y of [1, 2]) {
+        await ui.pointer({ type: 'move', x: 4, y, in: 'messages' })
+        expect(await underlined(ui)).toEqual([])
+      }
+      await ui.pointer({ type: 'move', x: 4, y: 3, in: 'messages' })
+      expect(await underlined(ui)).toEqual([`${local(AT(1))}  ↘ w-1a · Please review x.ts…`])
       await hover(ui, 'msg:m-aaaaaaaaaaaaaaa2')
       expect((await drawnLines(ui)).filter(l => l.startsWith('▎'))).toEqual([`▎ ${local(AT(2))}  ↑ ${NATIVE.replace(/\s*\[[^\]]*\]$/, '')} · Done, both look fine.`])
       expect(await underlined(ui)).toEqual([`${local(AT(2))}  ↑ ${NATIVE.replace(/\s*\[[^\]]*\]$/, '')} · Done, both look fine.`])

@@ -1172,7 +1172,7 @@ request for the keys only.
 - Each session takes two lines. Line 1, indented four: a state dot `●` (`idle` success, `busy`
   warning, `permission` error, `waking` suggestion, anything else dim), an agent glyph in the agent's
   colour (Claude `✻` `#d97757`, Codex `◆` `#10a37f`, Antigravity `▲` `#8b7cf6`, others `•` `#9aa4b2`),
-  the name, never cut, and ` (this session)` in italics for the calling session. A session with an
+  the name without its trailing `[ref]`, never cut, and ` (this session)` in italics for the calling session. A session with an
   `agentColor` draws its name in that colour (`red` `#e5534b`, `blue` `#539bf5`, `green` `#57ab5a`,
   `yellow` `#c69026`, `purple` `#b083f0`, `orange` `#e0823d`, `pink` `#e275ad`, `cyan` `#39c5cf`).
   Line 2, indented six, dim: `<state> · <started> · <harness> · <model> · <effort>`,
@@ -1181,8 +1181,9 @@ request for the keys only.
   model, cut with `…` to the room the box leaves. Both lines are one item: the pointer anywhere on
   either lights both, with `▎` at column 2 and both lines underlined, and a click on either opens the
   session's messages. No background colour and no inversion. The session id is not in this view.
-- **Messages** of the chosen agent: `← Back` and the agent's name and count, a `Session: <id>` line
-  when the id is known, then everything it
+- **Messages** of the chosen agent: `← Back` and `<name> · <n> messages`, the name without its `[ref]`;
+  a dim line with the full name when it carries a `[ref]` and `Session: <id>` when the id is known,
+  joined by ` · `; a blank line; then everything it
   sent or received through Agent Tabs or SendMessage with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
   `HH:MM  ↘ peer  first line…` for received, in local time. A message line lights like a session, with
   `▎` at column 0, and a click opens its detail.

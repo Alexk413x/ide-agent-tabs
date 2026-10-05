@@ -387,6 +387,7 @@ function matchPeers(peers: readonly NativePeer[], rows: readonly SessionRow[], n
 }
 
 const cut = (value: string, cap: number) => (value.length > cap ? `${value.slice(0, cap - 1)}…` : value)
+export const withoutRef = (name: string) => name.replace(/\s*\[[^\]]*\]$/, '')
 export const shownName = (e: { name: string; self?: boolean }) => (e.self ? `${e.name}${THIS_SESSION}` : e.name)
 const cells = (e: Entry) => [shownName(e), e.state, e.started ?? '—', e.harness, e.model ?? '—', e.effort ?? '—', e.session ?? '—']
 
@@ -850,7 +851,7 @@ export function partyName(p: AgentTabsParty, hosts: readonly AgentTabsPaneHost[]
 }
 
 export function messageLine(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[], width: number): string {
-  const name = partyName(m.peer, hosts).replace(/\s*\[[^\]]*\]$/, '')
+  const name = withoutRef(partyName(m.peer, hosts))
   const head = `${hhmm(m.at)}  ${m.direction === 'sent' ? '↑' : '↘'} ${name} · `
   const first = m.text.split('\n')[0] ?? ''
   const room = Math.max(8, width - head.length)
@@ -1006,7 +1007,7 @@ export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number): 
           parts: [
             { text: '● ', ...(dot !== undefined ? { color: dot } : { dim: true }) },
             { text: `${glyph.glyph} `, color: glyph.color },
-            { text: r.name, underline: true, ...(color !== undefined ? { color } : {}) },
+            { text: withoutRef(r.name), underline: true, ...(color !== undefined ? { color } : {}) },
             ...(r.self ? [{ text: THIS_SESSION, italic: true, underline: true }] : []),
           ],
         })
@@ -1018,12 +1019,17 @@ export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number): 
   return { groups, acts, width }
 }
 
+export function sessionDetails(agent: AgentTabsPick): string {
+  return [agent.name !== withoutRef(agent.name) ? agent.name : undefined, agent.id !== null ? `Session: ${agent.id}` : undefined].filter(v => v !== undefined).join(' · ')
+}
+
 export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
   const acts: Record<string, PaneAct> = { back: { act: 'back' } }
   const count = messages.length === 1 ? '1 message' : `${messages.length} messages`
   const lines: ListLine[] = [
-    { indent: 0, parts: [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: `${pane.agent?.name ?? ''} · ${count}`, bold: true }] },
-    ...(pane.agent?.id ? [{ indent: 0, parts: [{ text: `Session: ${pane.agent.id}`, dim: true }] }] : []),
+    { indent: 0, parts: [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: `${withoutRef(pane.agent?.name ?? '')} · ${count}`, bold: true }] },
+    ...(pane.agent && sessionDetails(pane.agent) !== '' ? [{ indent: 0, parts: [{ text: sessionDetails(pane.agent), dim: true }] }] : []),
+    { indent: 0, parts: [{ text: ' ' }] },
     ...(messages.length === 0 ? [{ indent: 0, parts: [{ text: NO_MESSAGES, dim: true }] }] : []),
     ...messages.map((m, i): ListLine => {
       acts[`m${i}`] = { act: 'message', id: m.id }
@@ -1372,10 +1378,10 @@ export const register: Register = on => {
               <Text color={glyph.color}>{glyph.glyph} </Text>
               {nameColor(r) !== undefined ? (
                 <Text color={nameColor(r)} hover={{ underline: true }}>
-                  {r.name}
+                  {withoutRef(r.name)}
                 </Text>
               ) : (
-                <Button key={`agent:${r.key}`} plain label={r.name} hover={{ underline: true }} onPress={open(r)} />
+                <Button key={`agent:${r.key}`} plain label={withoutRef(r.name)} hover={{ underline: true }} onPress={open(r)} />
               )}
               {r.self && (
                 <Text italic wrap="truncate-end">
@@ -1444,10 +1450,11 @@ export const register: Register = on => {
           <Box flexDirection="row" gap={2}>
             {back}
             <Text bold>
-              {pane.agent.name} · {messages.length === 1 ? '1 message' : `${messages.length} messages`}
+              {withoutRef(pane.agent.name)} · {messages.length === 1 ? '1 message' : `${messages.length} messages`}
             </Text>
           </Box>
-          {pane.agent.id !== null && <Text dimColor>Session: {pane.agent.id}</Text>}
+          {sessionDetails(pane.agent) !== '' && <Text dimColor>{sessionDetails(pane.agent)}</Text>}
+          <Text> </Text>
           {messages.length === 0 && <Text dimColor>{NO_MESSAGES}</Text>}
           {messages.map(m => (
             <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
