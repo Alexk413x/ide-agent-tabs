@@ -1166,7 +1166,9 @@ request for the keys only.
   with ` (<agentType>)` after the harness when the session runs an agent type,
   leaving out every unknown part and its separator, with a leading `claude-` or `gpt-` dropped from the
   model, cut with `…` to the room the box leaves. Either Button opens the session's messages. The
-  session holding the focus gets `backgroundColor: "#264f78"` across both lines. The session id is not
+  session's two lines sit in one keyed Box, and each line holds a `▎` mark at column 2 in a Box drawn
+  `position: "absolute"`: shown for the session holding the focus, else `display: "none"` with
+  `hover: { display: "flex" }`, so the pointer anywhere on either line marks both. No background colour. The session id is not
   in this view.
 - **Messages** of the chosen agent: a `Session: <id>` line when the id is known, then everything it
   sent or received through Agent Tabs or SendMessage with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and

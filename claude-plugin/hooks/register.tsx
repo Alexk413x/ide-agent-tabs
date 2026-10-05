@@ -71,7 +71,7 @@ const AGENT_GLYPHS: Record<string, { glyph: string; color: string }> = {
   agy: { glyph: '▲', color: '#8b7cf6' },
 }
 const OTHER_GLYPH = { glyph: '•', color: '#9aa4b2' }
-const SELECTED_BG = '#264f78'
+const ROW_MARK = '▎'
 const FOLDER_MARK = '▸ '
 const MODEL_VENDOR = /^(claude|gpt)-/
 const NAME_COLORS: Record<string, string> = {
@@ -787,7 +787,9 @@ export type HostPlatform = 'windows' | 'mac' | 'linux'
 
 export function platformOf(os: string | undefined, uname: string | undefined): HostPlatform {
   if (os === 'Windows_NT') return 'windows'
-  return uname?.trim() === 'Darwin' ? 'mac' : 'linux'
+  const kernel = uname?.trim() ?? ''
+  if (/^(MINGW|MSYS|CYGWIN)/.test(kernel)) return 'windows'
+  return kernel === 'Darwin' ? 'mac' : 'linux'
 }
 
 export function folderOpener(platform: HostPlatform, path: string): string[] {
@@ -1199,9 +1201,15 @@ export const register: Register = on => {
         const selected = first === `agent:${r.key}` || first === `info:${r.key}`
         const glyph = AGENT_GLYPHS[r.agent] ?? OTHER_GLYPH
         const dot = DOT_COLORS[r.state]
+        const mark = (
+          <Box position="absolute" top={0} left={2} {...(selected ? {} : { display: 'none' as const, hover: { display: 'flex' as const } })}>
+            <Text>{ROW_MARK}</Text>
+          </Box>
+        )
         return (
-          <Box key={`row-${r.key}`} flexDirection="column" {...(selected ? { backgroundColor: SELECTED_BG } : {})}>
+          <Box key={`row-${r.key}`} flexDirection="column">
             <Box flexDirection="row" paddingLeft={4}>
+              {mark}
               {dot !== undefined ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
               <Text color={glyph.color}>{glyph.glyph} </Text>
               {nameColor(r) !== undefined ? (
@@ -1218,6 +1226,7 @@ export const register: Register = on => {
               )}
             </Box>
             <Box flexDirection="row" paddingLeft={6}>
+              {mark}
               <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), room)} {...focus(`info:${r.key}`)} onPress={open(r)} />
             </Box>
           </Box>

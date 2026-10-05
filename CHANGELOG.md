@@ -19,7 +19,7 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 - Each session takes two lines: a coloured state dot, an agent glyph in the agent's colour (Claude `✻`,
   Codex `◆`, Antigravity `▲`, others `•`) and the name; then, dim, the state, time since start, harness,
   model (without a leading `claude-` or `gpt-`) and effort, leaving out unknown parts. Either line opens
-  the session. The focused session is highlighted across both lines. The session id moves to the
+  the session. A `▎` mark shows on both lines of the focused or hovered session, with no background colour. The session id moves to the
   messages and detail views.
 - A folder heading shows the folder's base name. Hovering it shows the full path. Pressing it opens the
   folder in the file manager: `explorer.exe` on Windows, `open` on macOS, `xdg-open` on Linux, run by
