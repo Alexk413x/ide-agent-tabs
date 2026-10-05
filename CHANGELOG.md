@@ -16,7 +16,9 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
   inverted under the pointer or the focus. Hovering a session marks both its lines with `▎` and
   underlines both; a left click on either line opens its messages. Once a click gives the list the keys,
   the arrow keys or Tab move a focus that looks the same, and Enter opens it. Message rows, folder
-  headings and the Back and Reply chips work the same way. VS Code and mobile keep the Buttons.
+  headings and the Back and Reply chips work the same way. VS Code and mobile keep the Buttons. The list
+  draws one row per line, box edges included, so the pointer lights the line under it; a folder's
+  revealed path stays lit across the gap and for 300 ms after the pointer leaves.
 - An agent opens the pane when the user asks, through the mod's `open_agent_messages` tool, optionally on
   one agent's messages (`agent`: a name from ListAgents).
 - A message line reads `HH:MM  ↑ name · text…`: the peer's name without its `[ref]`, then the first line

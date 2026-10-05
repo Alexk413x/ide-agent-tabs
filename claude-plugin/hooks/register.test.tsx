@@ -1,7 +1,7 @@
 import type { On, SessionSendResult } from 'claude-code'
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 
-import type { ListProps } from './list'
+import { listRows, type ListProps } from './list'
 import { DEFAULT_PANE, definitionColor, folderName, folderOpener, platformOf, upFrom } from './register'
 
 const SERVER = 'plugin:ide-agent-tabs:ide-agent-tabs'
@@ -909,7 +909,10 @@ describe('agents pane', () => {
       const { props } = await list(ui)
       expect(props.groups).toHaveLength(8)
       expect(props.groups.every(g => g.border)).toBe(true)
-      expect((await ui.find({ in: 'agents', type: 'Box', key: 'group-5' }))?.props.borderStyle).toBe('round')
+      const edges = (await ui.findAll({ in: 'agents', type: 'Box' })).filter(b => b.key?.startsWith('edge-')).map(b => b.text)
+      expect(edges).toHaveLength(16)
+      expect(edges[0]).toBe(`╭${'─'.repeat(118)}╮`)
+      expect(edges[1]).toBe(`╰${'─'.repeat(118)}╯`)
       const color = async (text: string) => (await ui.find({ in: 'agents', type: 'Text', text }))?.props.color
       expect(await color('✻ ')).toBe('#d97757')
       expect(await color('◆ ')).toBe('#10a37f')
@@ -1475,6 +1478,120 @@ describe('agent type and colour', () => {
       await click(ui, 'info:id:7e7e0000-1111')
       expect(await textIn(ui, 'plugins-7e · 0 messages')).toBeDefined()
       await click(ui, 'back')
+      await ui.unmount()
+    }
+  })
+})
+
+describe('list client hit test', () => {
+  const LAYOUT: [string, string[]][] = [
+    ['Alpha Terminal', ['C:\\p\\one', 'C:\\p\\two', 'C:\\p\\three']],
+    ['Beta IDE', ['C:\\q\\four', 'C:\\q\\five']],
+    ['Gamma IDE', ['C:\\r\\six', 'C:\\r\\seven', 'C:\\r\\eight']],
+  ]
+  const many = (): Row[] => {
+    let n = 0
+    return [
+      ROWS[0]!,
+      ...LAYOUT.flatMap(([where, folders]) =>
+        folders.flatMap(path =>
+          [0, 1].map(() => {
+            n++
+            return row({ id: `${n.toString(16).padStart(2, '0')}ab0000-${n}`, agent: n % 2 ? 'codex' : 'agy', state: 'idle', path, where, startedAt: ago(n * MIN) })
+          }),
+        ),
+      ),
+    ]
+  }
+
+  async function rowsDrawn(ui: Ui): Promise<string[]> {
+    return (await ui.findAll({ in: 'agents', type: 'Box' })).filter(b => b.key?.startsWith('edge-') || b.key?.startsWith('row-')).map(b => b.text)
+  }
+
+  test('every drawn line lights its own target, and border, blank and heading lines light nothing, on terminal and desktop', async ($, on) => {
+    world(on, { tab: 'tab-c', rows: many(), listing: HEADER })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      const drawn = await rowsDrawn(ui)
+      expect(drawn.filter(t => t.startsWith('╭'))).toHaveLength(4)
+      const boxes = (await ui.findAll({ in: 'agents', type: 'Box' })).filter(b => b.key?.startsWith('edge-') || b.key?.startsWith('row-'))
+      expect(boxes.every(b => b.props.height === 1)).toBe(true)
+      expect(boxes.map(b => b.key)).toEqual(drawn.map((_, y) => (boxes[y]!.key!.startsWith('edge-') ? `edge-${y}` : `row-${y}`)))
+      expect(listRows((await list(ui)).props.groups)).toHaveLength(drawn.length)
+      let sessions = 0
+      let folders = 0
+      for (const [y, text] of drawn.entries()) {
+        await ui.pointer({ type: 'move', x: 1, y: 0, in: 'agents' })
+        expect(await underlined(ui)).toEqual([])
+        const body = text.replace(/^│ /, '')
+        const isLine1 = /^ {4}● /.test(body)
+        const isLine2 = /^ {6}\S/.test(body) && /^ {4}● /.test(drawn[y - 1]!.replace(/^│ /, ''))
+        const isFolder = /^ {2}▸ (?!Folder not known)/.test(body)
+        await ui.pointer({ type: 'move', x: isFolder ? 4 : isLine1 ? 6 : 8, y, in: 'agents' })
+        const lit = await underlined(ui)
+        const marked = (await rowsDrawn(ui)).flatMap((t, i) => (t.includes('▎') ? [i] : []))
+        if (isLine1) {
+          sessions++
+          expect(lit[0]).toBe(body.replace(/^ {4}● \S /, '').replace(/ (\(this session\))?\s*│$/, '').trimEnd())
+          expect(marked).toEqual([y, y + 1])
+        } else if (isLine2) {
+          expect(lit.at(-1)).toBe(body.replace(/\s*│$/, '').trim())
+          expect(marked).toEqual([y - 1, y])
+        } else if (isFolder) {
+          folders++
+          expect(lit).toEqual([body.replace(/\s*│$/, '').trim().split('  ')[0]])
+          expect(marked).toEqual([])
+        } else {
+          expect(lit).toEqual([])
+          expect(marked).toEqual([])
+        }
+      }
+      expect([sessions, folders]).toEqual([17, 9])
+      await ui.unmount()
+    }
+  })
+
+  test("a folder's path stays lit across the gap, and for 300 ms after the pointer leaves unless it comes back", async ($, on) => {
+    world(on, { tab: 'tab-c', rows: many(), listing: HEADER })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      const { props } = await list(ui)
+      const name = itemFor(props, 'folder:C:\\p\\two')
+      const at = positionOf(props, name)
+      const label = '▸ two'
+      await ui.pointer({ type: 'move', ...at, in: 'agents' })
+      const shown = async () => (await drawnLines(ui)).includes(`  ${label}  C:\\p\\two`)
+      expect(await shown()).toBe(true)
+      for (const gap of [label.length, label.length + 1]) {
+        await ui.pointer({ type: 'move', x: at.x + gap, y: at.y, in: 'agents' })
+        expect(await shown()).toBe(true)
+        expect(await underlined(ui)).toEqual([label])
+      }
+      await ui.pointer({ type: 'move', x: at.x + label.length + 2, y: at.y, in: 'agents' })
+      expect(await underlined(ui)).toEqual(['C:\\p\\two'])
+      await ui.pointer({ type: 'move', x: at.x + label.length + 40, y: at.y, in: 'agents' })
+      expect(await shown()).toBe(true)
+
+      await ui.pointer({ type: 'leave', x: 200, y: at.y, in: 'agents' })
+      await ui.advance(250)
+      expect(await shown()).toBe(true)
+      await ui.advance(100)
+      expect(await shown()).toBe(false)
+
+      await ui.pointer({ type: 'move', ...at, in: 'agents' })
+      await ui.pointer({ type: 'leave', x: 200, y: at.y, in: 'agents' })
+      await ui.advance(150)
+      await ui.pointer({ type: 'move', x: at.x + label.length + 2, y: at.y, in: 'agents' })
+      await ui.advance(500)
+      expect(await shown()).toBe(true)
+      expect(await underlined(ui)).toEqual(['C:\\p\\two'])
+
+      await ui.pointer({ type: 'move', x: 1, y: 0, in: 'agents' })
+      expect(await shown()).toBe(false)
       await ui.unmount()
     }
   })
