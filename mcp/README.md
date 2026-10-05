@@ -329,7 +329,7 @@ Claude Code's own tools to Agent Tabs:
 - The mod calls the internal `agent_tabs_mod` tool, which the server offers to Claude Code only, and
   defers `send_message`, `read_messages`, `wait_for_message` and `list_sessions` behind ToolSearch.
 
-- `/agent-tabs` (or `/agent-tabs-messages`) shows or hides the Agent Tabs Messages pane: the agents by
+- `/agent-messages` (or `/agent-messages`) shows or hides the Agent Tabs Messages pane: the agents by
   IDE or terminal and folder, then the messages one sent or received, then one message, with Reply. A
   folder heading opens the folder in the file manager.
 - A delivered message's card has an **Open in Agent Tabs** button, and a band above the prompt shows
@@ -398,7 +398,7 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `launchVia` | `"direct"`: start each agent with its own command. `"ori"`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `"direct"` |
 | `closeAfterHandoff` | `true`: the new session closes the old tab after a handoff. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
 | `allowResume` | `true`: `resume_tab` reopens closed sessions, asking for `confirm` when the resume costs full price. `false`: it refuses. See [Resume](#resume). | `true` |
-| `claudeMod` | `"on"`: Claude Code sessions use the Agent Tabs mod: SendMessage and ListAgents reach every agent, mail arrives in-process, and `/agent-tabs` shows the agents pane. `"off"`: the hooks, wake lines and messaging tools, as in 0.6.0. New Claude Code sessions pick up a change. | `"on"` |
+| `claudeMod` | `"on"`: Claude Code sessions use the Agent Tabs mod: SendMessage and ListAgents reach every agent, mail arrives in-process, and `/agent-messages` shows the agents pane. `"off"`: the hooks, wake lines and messaging tools, as in 0.6.0. New Claude Code sessions pick up a change. | `"on"` |
 | `focusNewTabs` | `"auto"`: an agent's tab opens behind the current one unless the call passes `focus: true`. `"always"`: it comes to the front unless the call passes `focus: false`. `"never"`: behind unless the call passes `focus: true`. See [Focus](#focus). | `"auto"` |
 
 An `ide` or `focus` passed to `open_tab` always wins over these settings. The server ignores a value it doesn't know,

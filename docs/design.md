@@ -1116,7 +1116,7 @@ including each native peer name, goes to `next(e)` unchanged.
 
 - `$.ui.status` shows the unread count and the oldest sender's name, such as `✉ 2 · plugins-82`, and
   clears at 0.
-- `$.ui.toast` announces each arrival: `✉ Agent Tabs message from <sender> · /agent-tabs to view`.
+- `$.ui.toast` announces each arrival: `✉ Agent Tabs message from <sender> · /agent-messages to view`.
 - A `ui.render` hook on `UserMessage` draws the mod's own delivery prompts (origin `plugin` with this
   plugin's name, or `peer`, and text in the delivery frame) as a card: sender and agent, folder, a reply
   hint, and an **Open in Agent Tabs** button that opens the pane on that message's detail, under the
@@ -1133,7 +1133,7 @@ including each native peer name, goes to `next(e)` unchanged.
 
 #### Agents pane
 
-`/agent-tabs` (or `/agent-tabs-messages`) shows or hides one pane, **Agent Tabs Messages**, closed by
+`/agent-messages` (or `/agent-messages`) shows or hides one pane, **Agent Tabs Messages**, closed by
 default. It opens with `focus`, `closeOnEscape`, `holdToasts` and `rows: 18`, so it holds the keyboard as
 a dialog does: the arrow keys and Tab walk its rows, Enter opens one, and a click works where the surface
 reports presses. Toasts wait until it closes. The surface decides where it sits: it docks beside the

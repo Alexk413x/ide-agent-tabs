@@ -52,8 +52,8 @@ const paneHistoryRef = { plugin: 'ide-agent-tabs', key: 'paneHistory' } as const
 const inboxRef = { plugin: 'ide-agent-tabs', key: 'inbox' } as const
 
 const PANE = 'agent-tabs'
-const PANE_COMMANDS = ['agent-tabs', 'agent-tabs-messages']
-const PANE_COMMAND = /^agent-tabs(-messages)?$/
+const PANE_COMMANDS = ['agent-messages']
+const PANE_COMMAND = /^agent-messages$/
 const PANE_TITLE = 'Agent Tabs Messages'
 const PANE_ROWS = 18
 const PANE_OPEN = { id: PANE, title: PANE_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows: PANE_ROWS } as const
@@ -732,7 +732,7 @@ async function poll($: EngineInterface) {
     const from = names.length ? await senders($, me.server, me.mailbox, names) : []
     const sender = from.at(-1)?.name
     $.ui.status(names.length ? `✉ ${names.length}${sender !== undefined ? ` · ${sender}` : ''}` : undefined)
-    if (names.length > inbox.unread) $.ui.toast(`✉ Agent Tabs message${sender !== undefined ? ` from ${sender}` : ''} · /agent-tabs to view`)
+    if (names.length > inbox.unread) $.ui.toast(`✉ Agent Tabs message${sender !== undefined ? ` from ${sender}` : ''} · /agent-messages to view`)
     inbox.unread = names.length
     await $.state.set(inboxRef, names.length ? { count: names.length, senders: from } : null)
   }
@@ -1189,7 +1189,6 @@ export const register: Register = on => {
     const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
     const { value: hosts = [] } = await $.state.get(paneHostsRef)
     const width = Math.max(20, e.props.bodyColumns)
-    const focused = pane.focus[pane.view]
 
     if (pane.view === 'agents' || pane.agent === null) {
       const heading = (
@@ -1213,15 +1212,9 @@ export const register: Register = on => {
       }
       const folderKey = (hi: number, f: AgentTabsPaneFolder) => `folder:${hi}:${f.path}`
       const nameColor = (r: AgentTabsPaneRow) => (r.agentColor !== null ? NAME_COLORS[r.agentColor] : undefined)
-      const keys = [
-        ...all.flatMap(r => [...(nameColor(r) === undefined ? [`agent:${r.key}`] : []), `info:${r.key}`]),
-        ...hosts.flatMap((host, hi) => host.folders.filter(f => f.path !== null).map(f => folderKey(hi, f))),
-      ]
-      const first = focused !== null && keys.includes(focused) ? focused : keys[0]!
       const room = Math.max(8, width - 4 - 6)
       const pick = (r: AgentTabsPaneRow): AgentTabsPick => ({ key: r.key, name: r.name, id: r.id, names: r.names })
       const open = (r: AgentTabsPaneRow) => () => goTo($, { view: 'messages', agent: pick(r), message: null })
-      const focus = (key: string) => (focused !== null && key === first ? { autoFocus: true as const } : {})
       const line = (r: AgentTabsPaneRow) => {
         const glyph = AGENT_GLYPHS[r.agent] ?? OTHER_GLYPH
         const dot = DOT_COLORS[r.state]
@@ -1241,7 +1234,7 @@ export const register: Register = on => {
                   {r.name}
                 </Text>
               ) : (
-                <Button key={`agent:${r.key}`} plain label={r.name} {...focus(`agent:${r.key}`)} onPress={open(r)} />
+                <Button key={`agent:${r.key}`} plain label={r.name} onPress={open(r)} />
               )}
               {r.self && (
                 <Text italic wrap="truncate-end">
@@ -1251,7 +1244,7 @@ export const register: Register = on => {
             </Box>
             <Box flexDirection="row" paddingLeft={6}>
               {mark}
-              <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), room)} {...focus(`info:${r.key}`)} onPress={open(r)} />
+              <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), room)} onPress={open(r)} />
             </Box>
           </Box>
         )
@@ -1273,7 +1266,7 @@ export const register: Register = on => {
         const label = `${FOLDER_MARK}${f.heading}`
         return (
           <Box key={`heading-${key}`} flexDirection="row" paddingLeft={2}>
-            <Button key={key} plain label={label} {...focus(key)} onPress={() => openFolder($, path)} />
+            <Button key={key} plain label={label} onPress={() => openFolder($, path)} />
             <Box position="absolute" top={0} left={label.length + 4} display="none" hover={{ display: 'flex' }}>
               <Button key={`copy-${key}`} plain dimColor label={cut(path, Math.max(8, room - label.length))} onPress={() => copyPath($, path, e.surface)} />
             </Box>
@@ -1304,7 +1297,6 @@ export const register: Register = on => {
     const back = <Button key="back" label="Back" onPress={() => goUp($)} />
 
     if (pane.view === 'messages' || pane.message === null) {
-      const first = messages.some(m => `msg:${m.id}` === focused) ? focused : messages.length ? `msg:${messages[messages.length - 1]!.id}` : 'back'
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" gap={2}>
@@ -1316,13 +1308,12 @@ export const register: Register = on => {
           {pane.agent.id !== null && <Text dimColor>Session: {pane.agent.id}</Text>}
           {messages.length === 0 && <Text dimColor>No messages sent or received through Agent Tabs or SendMessage in the last 7 days.</Text>}
           {messages.map(m => (
-            <Button
-              key={`msg:${m.id}`}
-              plain
-              label={messageLine(m, hosts, width)}
-              {...(`msg:${m.id}` === first ? { autoFocus: true as const } : {})}
-              onPress={() => goTo($, { view: 'detail', message: m.id })}
-            />
+            <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
+              <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
+                <Text>{ROW_MARK}</Text>
+              </Box>
+              <Button key={`msg:${m.id}`} plain label={messageLine(m, hosts, width - 2)} onPress={() => goTo($, { view: 'detail', message: m.id })} />
+            </Box>
           ))}
         </Box>
       )
@@ -1344,7 +1335,7 @@ export const register: Register = on => {
       <Box flexDirection="column">
         <Box flexDirection="row" gap={2}>
           <Button key="back" label="Back" onPress={() => goUp($)} />
-          <Button key="reply" label="Reply" variant="primary" autoFocus onPress={() => fillReply($, line)} />
+          <Button key="reply" label="Reply" onPress={() => fillReply($, line)} />
         </Box>
         {pane.agent.id !== null && <Text dimColor>Session: {pane.agent.id}</Text>}
         <Text>From: {partyName(m.from, hosts)}</Text>
