@@ -198,6 +198,10 @@ test('the hook script reads stdin, prints one JSON line, and exits 0 even on bad
   assert.equal(JSON.parse(garbage.stdout).hookSpecificOutput.additionalContext, REMINDER);
   const noId = run(['claude', 'Stop'], '{}', { IDE_AGENT_TABS_ID: '' });
   assert.deepEqual([noId.status, noId.stdout], [0, '']);
+  const modDriven = run(['claude', 'Stop'], '{}', { IDE_AGENT_TABS_ID: ID, IDE_AGENT_TABS_MOD: ID });
+  assert.deepEqual([modDriven.status, modDriven.stdout], [0, ''], 'the mod drives this tab, so the hook exits at once');
+  const childTab = run(['claude', 'Stop'], '{"stop_hook_active":false}', { IDE_AGENT_TABS_ID: ID, IDE_AGENT_TABS_MOD: 'another-tab' });
+  assert.equal(JSON.parse(childTab.stdout).decision, 'block', 'a tab that inherited another tab marker still runs its hooks');
 });
 
 test('a headless agent started inside a tab cannot change the tab session', async () => {

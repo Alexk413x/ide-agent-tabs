@@ -652,6 +652,7 @@ export const register: Register = on => {
     for (const t of timers) t.cancel()
     timers = []
     const me = await boot($).catch(() => null)
+    await $.env.set('IDE_AGENT_TABS_MOD', me?.isDriver ? me.id : undefined)
     if (me === null) {
       await $.state.set(selfRef, null)
       return started
@@ -671,6 +672,7 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     const { value: me } = await $.state.get(selfRef)
     if (me?.isDriver && e.reason !== 'clear') {
+      await $.env.set('IDE_AGENT_TABS_MOD', undefined)
       await callMod($, me.server, { op: 'presence', driver: false }).catch(() => undefined)
       $.ui.status(undefined)
     }
