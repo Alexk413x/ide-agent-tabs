@@ -1264,10 +1264,10 @@ export const register: Register = on => {
         const key = folderKey(hi, f)
         const label = `${FOLDER_MARK}${f.heading}`
         return (
-          <Box key={`heading-${key}`} flexDirection="column" paddingLeft={2}>
+          <Box key={`heading-${key}`} flexDirection="row" paddingLeft={2}>
             <Button key={key} plain label={label} {...focus(key)} onPress={() => openFolder($, path)} />
-            <Box paddingLeft={2} display="none" hover={{ display: 'flex' }}>
-              <Button key={`copy-${key}`} plain dimColor label={`${COPY_MARK}${cut(path, room)}`} onPress={() => copyPath($, path, e.surface)} />
+            <Box position="absolute" top={0} left={label.length + 4} display="none" hover={{ display: 'flex' }}>
+              <Button key={`copy-${key}`} plain dimColor label={`${COPY_MARK}${cut(path, Math.max(8, room - label.length))}`} onPress={() => copyPath($, path, e.surface)} />
             </Box>
           </Box>
         )
