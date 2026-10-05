@@ -329,8 +329,11 @@ Claude Code's own tools to Agent Tabs:
 - The mod calls the internal `agent_tabs_mod` tool, which the server offers to Claude Code only, and
   defers `send_message`, `read_messages`, `wait_for_message` and `list_sessions` behind ToolSearch.
 
-- `/agent-tabs` shows or hides the agents pane: the agents, then the messages one sent or received,
-  then one message, with Reply.
+- `/agent-tabs` (or `/agent-tabs-messages`) shows or hides the Agent Tabs Messages pane: the agents by
+  IDE or terminal and folder, then the messages one sent or received, then one message, with Reply. A
+  folder heading opens the folder in the file manager.
+- A delivered message's card has an **Open in Agent Tabs** button, and a band above the prompt shows
+  unread mail with an **Open** button.
 - Each send is logged in `~/.ide-agent-tabs/mail/<sender>/sent-log/`, and the mod logs native
   SendMessage traffic; the logs last 7 days, as read mail does.
 - `"claudeMod": "off"` in `config.json` turns the mod off.

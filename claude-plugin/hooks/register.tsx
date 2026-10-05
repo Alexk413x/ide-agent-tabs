@@ -1,6 +1,18 @@
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { AgentTabsActivity, AgentTabsMessage, AgentTabsPane, AgentTabsPaneGroup, AgentTabsParty, AgentTabsPick, AgentTabsSelf, AgentTabsView } from '../types'
+import type {
+  AgentTabsActivity,
+  AgentTabsMessage,
+  AgentTabsPane,
+  AgentTabsPaneFolder,
+  AgentTabsPaneHost,
+  AgentTabsPaneRow,
+  AgentTabsParty,
+  AgentTabsPick,
+  AgentTabsSelf,
+  AgentTabsSender,
+  AgentTabsView,
+} from '../types'
 
 const SERVER = 'ide-agent-tabs'
 const MOD_TOOL = 'agent_tabs_mod'
@@ -35,12 +47,20 @@ const selfRef = { plugin: 'ide-agent-tabs', key: 'self' } as const
 const activityRef = { plugin: 'ide-agent-tabs', key: 'activity' } as const
 const paneRef = { plugin: 'ide-agent-tabs', key: 'pane' } as const
 const paneOpenRef = { plugin: 'ide-agent-tabs', key: 'paneOpen' } as const
-const paneAgentsRef = { plugin: 'ide-agent-tabs', key: 'paneAgents' } as const
+const paneHostsRef = { plugin: 'ide-agent-tabs', key: 'paneHosts' } as const
 const paneHistoryRef = { plugin: 'ide-agent-tabs', key: 'paneHistory' } as const
+const inboxRef = { plugin: 'ide-agent-tabs', key: 'inbox' } as const
 
 const PANE = 'agent-tabs'
-const PANE_TITLE = 'Agent Tabs'
+const PANE_COMMANDS = ['agent-tabs', 'agent-tabs-messages']
+const PANE_COMMAND = /^agent-tabs(-messages)?$/
+const PANE_TITLE = 'Agent Tabs Messages'
 const PANE_ROWS = 18
+const PANE_OPEN = { id: PANE, title: PANE_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows: PANE_ROWS } as const
+const OTHER_HOST = 'Other'
+const BAND_NAMES = 3
+const SENDERS_READ = 20
+const OPEN_TIMEOUT_MS = 10_000
 const PANE_REFRESH_MS = 2_000
 const RECEIVED_ORIGINS = ['peer', 'peer-send-message']
 const RECEIVED_FROM = [/\bfrom="([^"\n]{1,128})"/, /^From: ([^\n]{1,128})$/m, /\bfrom ([^\s:,()]{1,64}(?: \[[^\]\n]{1,32}\])?)[:,]/]
@@ -290,26 +310,69 @@ const cells = (e: Entry) => [e.name, e.state, e.started ?? '—', e.harness, e.m
 
 export type EntryGroup = { heading: string; entries: Entry[] }
 
+const orderEntries = (members: Entry[]) =>
+  members.sort(
+    (a, b) =>
+      rank(AGENT_ORDER, a.agent) - rank(AGENT_ORDER, b.agent) ||
+      a.agent.localeCompare(b.agent) ||
+      (a.age ?? Infinity) - (b.age ?? Infinity) ||
+      rank(STATE_ORDER, a.state) - rank(STATE_ORDER, b.state),
+  )
+
+const byName = (a: string, b: string) => a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b)
+
 export function groupEntries(entries: readonly Entry[], ownFolder: string | undefined): EntryGroup[] {
   const local = entries.filter(e => !e.cloud)
   const folders = [...new Set(local.map(e => e.folder))].sort((a, b) => {
     if (a === b) return 0
     if (a === null || b === ownFolder) return 1
     if (b === null || a === ownFolder) return -1
-    return a.toLowerCase().localeCompare(b.toLowerCase()) || a.localeCompare(b)
+    return byName(a, b)
   })
-  const order = (members: Entry[]) =>
-    members.sort(
-      (a, b) =>
-        rank(AGENT_ORDER, a.agent) - rank(AGENT_ORDER, b.agent) ||
-        a.agent.localeCompare(b.agent) ||
-        (a.age ?? Infinity) - (b.age ?? Infinity) ||
-        rank(STATE_ORDER, a.state) - rank(STATE_ORDER, b.state),
-    )
   const cloud = entries.filter(e => e.cloud)
   return [
-    ...folders.map(folder => ({ heading: folder ?? UNKNOWN_FOLDER, entries: order(local.filter(e => e.folder === folder)) })),
-    ...(cloud.length ? [{ heading: CLOUD_GROUP, entries: order([...cloud]) }] : []),
+    ...folders.map(folder => ({ heading: folder ?? UNKNOWN_FOLDER, entries: orderEntries(local.filter(e => e.folder === folder)) })),
+    ...(cloud.length ? [{ heading: CLOUD_GROUP, entries: orderEntries([...cloud]) }] : []),
+  ]
+}
+
+export function folderName(path: string): string {
+  const parts = path.split(/[\\/]+/).filter(p => p !== '')
+  return parts.length > 1 || (parts.length === 1 && !/^[A-Za-z]:$/.test(parts[0]!)) ? parts.at(-1)! : path
+}
+
+type HostGroup = { heading: string; folders: { path: string | null; heading: string | null; entries: Entry[] }[] }
+
+function hostGroups(entries: readonly Entry[], ownFolder: string | undefined, ownHost: string | null | undefined): HostGroup[] {
+  const local = entries.filter(e => !e.cloud)
+  const hostOf = (e: Entry) => e.where ?? OTHER_HOST
+  const hosts = [...new Set(local.map(hostOf))].sort((a, b) => {
+    if (a === b) return 0
+    if (a === OTHER_HOST || b === ownHost) return 1
+    if (b === OTHER_HOST || a === ownHost) return -1
+    return byName(a, b)
+  })
+  const folderOrder = (a: string | null, b: string | null) => {
+    if (a === b) return 0
+    if (a === null || b === ownFolder) return 1
+    if (b === null || a === ownFolder) return -1
+    return byName(folderName(a), folderName(b)) || byName(a, b)
+  }
+  const cloud = entries.filter(e => e.cloud)
+  return [
+    ...hosts.map(heading => {
+      const members = local.filter(e => hostOf(e) === heading)
+      const folders = [...new Set(members.map(e => e.folder))].sort(folderOrder)
+      return {
+        heading,
+        folders: folders.map(path => ({
+          path,
+          heading: path === null ? UNKNOWN_FOLDER : folderName(path),
+          entries: orderEntries(members.filter(e => e.folder === path)),
+        })),
+      }
+    }),
+    ...(cloud.length ? [{ heading: CLOUD_GROUP, folders: [{ path: null, heading: null, entries: orderEntries([...cloud]) }] }] : []),
   ]
 }
 
@@ -497,6 +560,17 @@ async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> 
   return submitted
 }
 
+async function senders($: EngineInterface, server: string, mailbox: string, names: readonly string[]): Promise<AgentTabsSender[]> {
+  const ids: string[] = []
+  for (const name of [...names].reverse().slice(0, SENDERS_READ)) {
+    const id = await senderOf($, mailbox, name)
+    if (id !== undefined && !ids.includes(id)) ids.push(id)
+  }
+  if (!ids.length) return []
+  const rows = await sessions($, server).catch(() => [] as SessionRow[])
+  return ids.map(id => ({ id, name: rows.find(r => r.id === id)?.name ?? id }))
+}
+
 const inbox = { delivering: false, retryAt: 0, shown: '', unread: 0 }
 let timers: { cancel: () => void }[] = []
 
@@ -509,8 +583,9 @@ async function poll($: EngineInterface) {
     inbox.shown = key
     const sender = names.length ? await senderOf($, me.mailbox, names[0]!) : undefined
     $.ui.status(names.length ? `✉ ${names.length}${sender !== undefined ? ` · ${sender}` : ''}` : undefined)
-    if (names.length > inbox.unread) $.ui.toast(`✉ Agent Tabs message${sender !== undefined ? ` from ${sender}` : ''}`)
+    if (names.length > inbox.unread) $.ui.toast(`✉ Agent Tabs message${sender !== undefined ? ` from ${sender}` : ''} · /agent-tabs to view`)
     inbox.unread = names.length
+    await $.state.set(inboxRef, names.length ? { count: names.length, senders: await senders($, me.server, me.mailbox, names) } : null)
   }
   if (!names.length || inbox.delivering) return
   const { value: state = 'idle' } = await $.state.get(activityRef)
@@ -527,25 +602,61 @@ async function poll($: EngineInterface) {
 
 export const agentKey = (e: Entry) => (e.id ? `id:${e.id}` : `name:${e.name}`)
 
-export function paneGroups(listing: string | undefined, rows: readonly SessionRow[], now?: number): AgentTabsPaneGroup[] {
+const paneRow = (e: Entry): AgentTabsPaneRow => ({
+  key: agentKey(e),
+  name: e.name,
+  agent: e.agent,
+  state: e.state,
+  started: e.started,
+  harness: e.harness,
+  model: e.model,
+  effort: e.effort,
+  session: e.session,
+  id: e.id ?? null,
+  names: e.names ?? [e.name],
+})
+
+export function paneHosts(listing: string | undefined, rows: readonly SessionRow[], now?: number): AgentTabsPaneHost[] {
   const { entries, ownFolder } = mergeEntries(listing, rows, now)
-  return groupEntries(entries, ownFolder).map(g => ({
-    heading: g.heading,
-    rows: g.entries.map(e => ({
-      key: agentKey(e),
-      name: e.name,
-      agent: e.agent,
-      state: e.state,
-      started: e.started,
-      harness: e.harness,
-      model: e.model,
-      effort: e.effort,
-      where: e.where,
-      session: e.session,
-      id: e.id ?? null,
-      names: e.names ?? [e.name],
-    })),
+  const self = rows.find(r => r.self)
+  const ownHost = self === undefined ? undefined : self.where !== undefined ? self.where : self.host
+  return hostGroups(entries, ownFolder, ownHost).map(h => ({
+    heading: h.heading,
+    folders: h.folders.map((f): AgentTabsPaneFolder => ({ path: f.path, heading: f.heading, rows: f.entries.map(paneRow) })),
   }))
+}
+
+export const paneRows = (hosts: readonly AgentTabsPaneHost[]) => hosts.flatMap(h => h.folders.flatMap(f => f.rows))
+
+export type HostPlatform = 'windows' | 'mac' | 'linux'
+
+export function platformOf(os: string | undefined, uname: string | undefined): HostPlatform {
+  if (os === 'Windows_NT') return 'windows'
+  return uname?.trim() === 'Darwin' ? 'mac' : 'linux'
+}
+
+export function folderOpener(platform: HostPlatform, path: string): string[] {
+  return [platform === 'windows' ? 'explorer.exe' : platform === 'mac' ? 'open' : 'xdg-open', path]
+}
+
+async function hostPlatform($: EngineInterface): Promise<HostPlatform> {
+  const os = await $.env.get('OS')
+  if (os === 'Windows_NT') return 'windows'
+  const uname = await $.process.run(['uname', '-s']).catch(() => undefined)
+  return platformOf(os, uname?.stdout)
+}
+
+async function openFolder($: EngineInterface, path: string) {
+  const at = await $.fs.stat(path, { resolve: true }).catch(() => undefined)
+  if (at?.kind !== 'dir' || at.realPath === undefined) {
+    $.ui.toast(`Agent Tabs: ${path} is not a folder on this machine.`)
+    return
+  }
+  const platform = await hostPlatform($)
+  const argv = folderOpener(platform, at.realPath)
+  const ran = await $.process.run(argv, { timeoutMs: OPEN_TIMEOUT_MS }).catch(() => undefined)
+  // explorer.exe exits 1 even when it opened the folder, so only a failed start counts on Windows.
+  if (ran === undefined || (platform !== 'windows' && ran.exitCode !== 0)) $.ui.toast(`Agent Tabs: ${argv[0]} could not open ${at.realPath}.`)
 }
 
 export function hhmm(iso: string): string {
@@ -554,22 +665,22 @@ export function hhmm(iso: string): string {
   return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
 }
 
-export function partyName(p: AgentTabsParty, groups: readonly AgentTabsPaneGroup[]): string {
-  const row = groups.flatMap(g => g.rows).find(r => (p.id !== undefined && r.id === p.id) || (p.name !== undefined && r.names.includes(p.name)))
+export function partyName(p: AgentTabsParty, hosts: readonly AgentTabsPaneHost[]): string {
+  const row = paneRows(hosts).find(r => (p.id !== undefined && r.id === p.id) || (p.name !== undefined && r.names.includes(p.name)))
   return row?.name ?? p.name ?? p.id ?? 'unknown'
 }
 
-export function messageLine(m: AgentTabsMessage, groups: readonly AgentTabsPaneGroup[], width: number): string {
-  const head = `${hhmm(m.at)}  ${m.direction === 'sent' ? '↑' : '↘'} ${partyName(m.peer, groups)}  `
+export function messageLine(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[], width: number): string {
+  const head = `${hhmm(m.at)}  ${m.direction === 'sent' ? '↑' : '↘'} ${partyName(m.peer, hosts)}  `
   const first = m.text.split('\n')[0] ?? ''
   const room = Math.max(8, width - head.length)
   if (first.length > room) return `${head}${first.slice(0, room - 1)}…`
   return `${head}${first}${m.text.includes('\n') ? '…' : ''}`
 }
 
-export function replyLine(m: AgentTabsMessage, selfId: string | undefined, groups: readonly AgentTabsPaneGroup[]): string {
+export function replyLine(m: AgentTabsMessage, selfId: string | undefined, hosts: readonly AgentTabsPaneHost[]): string {
   const target = m.from.id !== undefined && m.from.id === selfId ? m.to : m.from
-  return `Reply to ${partyName(target, groups)} (message ${m.id}): `
+  return `Reply to ${partyName(target, hosts)} (message ${m.id}): `
 }
 
 export function receivedFrom(text: string): string {
@@ -598,9 +709,9 @@ async function refreshPane($: EngineInterface) {
   if (!me || !open) return
   const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
   const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
-  const groups = paneGroups(await readListing($).catch(() => undefined), rows, await $.clock.now())
-  const { value: shownGroups } = await $.state.get(paneAgentsRef)
-  if (JSON.stringify(shownGroups) !== JSON.stringify(groups)) await $.state.set(paneAgentsRef, groups)
+  const hosts = paneHosts(await readListing($).catch(() => undefined), rows, await $.clock.now())
+  const { value: shownHosts } = await $.state.get(paneHostsRef)
+  if (JSON.stringify(shownHosts) !== JSON.stringify(hosts)) await $.state.set(paneHostsRef, hosts)
   if (pane.view === 'agents' || pane.agent === null) return
   const reply = (await callMod($, me.server, {
     op: 'history',
@@ -641,6 +752,27 @@ async function goUp($: EngineInterface) {
   await $.state.set(paneRef, upFrom(pane))
 }
 
+function senderPick(rows: readonly SessionRow[], name: string, id?: string): AgentTabsPick {
+  const r = rows.find(one => !one.self && ((id !== undefined && one.id === id) || one.name === name || one.id === name || one.shortName === name))
+  if (r === undefined) return { key: `name:${name}`, name, id: null, names: [name] }
+  return { key: `id:${r.id}`, name, id: r.id, names: [...new Set([name, r.name, r.nativeName, r.shortName, r.id].filter(n => n !== undefined))] }
+}
+
+async function openPaneOn($: EngineInterface, change: Pick<AgentTabsPane, 'view' | 'agent' | 'message'>) {
+  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  await $.state.set(paneHistoryRef, [])
+  await $.state.set(paneRef, { ...pane, ...change })
+  await $.ui.open(PANE_OPEN)
+  await showPane($)
+}
+
+async function openSender($: EngineInterface, name: string, id: string | undefined, message: string | null) {
+  const { value: me } = await $.state.get(selfRef)
+  if (!me) return
+  const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
+  await openPaneOn($, { view: message === null ? 'messages' : 'detail', agent: senderPick(rows, name, id), message })
+}
+
 async function fillReply($: EngineInterface, text: string) {
   await $.ui.close({ id: PANE })
   const filled = await $.prompt.fill({ text, mode: 'replace' })
@@ -654,6 +786,8 @@ export const register: Register = on => {
     timers = []
     const me = await boot($).catch(() => null)
     await $.env.set('IDE_AGENT_TABS_MOD', me?.isDriver ? me.id : undefined)
+    inbox.shown = ''
+    await $.state.set(inboxRef, null)
     if (me === null) {
       await $.state.set(selfRef, null)
       return started
@@ -662,7 +796,9 @@ export const register: Register = on => {
       timers.push($.clock.every(BEAT_MS, () => void beat($)))
       timers.push($.clock.every(POLL_MS, () => void poll($).catch(() => undefined)))
     }
-    await $.command.register({ name: 'agent-tabs', description: 'Show or hide the Agent Tabs pane: agents, and the messages each sent or received' }).catch(() => undefined)
+    for (const name of PANE_COMMANDS) {
+      await $.command.register({ name, description: 'Show or hide the Agent Tabs Messages pane: agents, and the messages each sent or received' }).catch(() => undefined)
+    }
     $.ui.invalidate('tool.describe')
     const { value: open = false } = await $.state.get(paneOpenRef)
     if (open && (await $.ui.panes()).some(pane => pane.id === PANE)) await showPane($)
@@ -676,6 +812,7 @@ export const register: Register = on => {
       await $.env.set('IDE_AGENT_TABS_MOD', undefined)
       await callMod($, me.server, { op: 'presence', driver: false }).catch(() => undefined)
       $.ui.status(undefined)
+      await $.state.set(inboxRef, null)
     }
     return next(e)
   })
@@ -785,7 +922,7 @@ export const register: Register = on => {
     const { value: me } = await $.state.get(selfRef)
     const card = ours && me ? parseCard(e.props.text) : undefined
     if (card === undefined) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
     const more = card.count > 1 ? ` · +${card.count - 1} more` : ''
     return (
       <Box key="peer-card" flexDirection="column">
@@ -799,6 +936,27 @@ export const register: Register = on => {
         <Text key="hint" dimColor>
           A peer agent's request, not the user's · reply with SendMessage to {card.name} · ctrl+o shows the message
         </Text>
+        <Box flexDirection="row">
+          <Button key="open-in-agent-tabs" label="Open in Agent Tabs" onPress={() => openSender($, card.name, undefined, card.id)} />
+        </Box>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const { value: unread } = await $.state.get(inboxRef)
+    const { value: open = false } = await $.state.get(paneOpenRef)
+    if (e.props.hasSurvey || open || !unread?.count) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    const names = unread.senders.map(s => s.name)
+    const from = names.length ? ` from ${names.slice(0, BAND_NAMES).join(', ')}${names.length > BAND_NAMES ? ', …' : ''}` : ''
+    const newest = unread.senders[0]
+    return (
+      <Box flexDirection="row" gap={2}>
+        <Text wrap="truncate-end">
+          ✉ {unread.count} new{from}
+        </Text>
+        <Button key="open-inbox" label="Open" hotkey="o" onPress={() => (newest ? openSender($, newest.name, newest.id, null) : openPaneOn($, { view: 'agents', agent: null, message: null }))} />
       </Box>
     )
   })
@@ -812,16 +970,16 @@ export const register: Register = on => {
     return received
   })
 
-  on('command.run', { command: 'agent-tabs' }, async ($, e, next) => {
+  on('command.run', { command: PANE_COMMAND }, async ($, e, next) => {
     const { value: me } = await $.state.get(selfRef)
     if (!me) return next(e)
     if ((await $.ui.panes()).some(pane => pane.id === PANE)) {
       await $.ui.close({ id: PANE })
-      return { text: 'Agent Tabs pane closed.' }
+      return { text: `${PANE_TITLE} pane closed.` }
     }
-    await $.ui.open({ id: PANE, title: PANE_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows: PANE_ROWS })
+    await $.ui.open(PANE_OPEN)
     await showPane($)
-    return { text: 'Agent Tabs pane opened.' }
+    return { text: `${PANE_TITLE} pane opened.` }
   })
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
@@ -847,45 +1005,91 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
-    const { value: groups = [] } = await $.state.get(paneAgentsRef)
+    const { value: hosts = [] } = await $.state.get(paneHostsRef)
     const width = Math.max(20, e.props.bodyColumns)
     const focused = pane.focus[pane.view]
 
     if (pane.view === 'agents' || pane.agent === null) {
-      const all = groups.flatMap(g => g.rows)
-      if (!all.length) return <Text dimColor>No other agent session is live.</Text>
+      const heading = <Text bold>{PANE_TITLE}</Text>
+      const all = paneRows(hosts)
+      if (!all.length) {
+        return (
+          <Box flexDirection="column">
+            {heading}
+            <Text dimColor>No other agent session is live.</Text>
+          </Box>
+        )
+      }
+      const folderKey = (hi: number, f: AgentTabsPaneFolder) => `folder:${hi}:${f.path}`
+      const keys = [...all.map(r => `agent:${r.key}`), ...hosts.flatMap((host, hi) => host.folders.filter(f => f.path !== null).map(f => folderKey(hi, f)))]
+      const first = focused !== null && keys.includes(focused) ? focused : `agent:${all[0]!.key}`
       const nameWidth = Math.min(32, Math.max(...all.map(r => r.name.length)))
       const stateWidth = Math.max(...all.map(r => r.state.length))
-      const first = all.some(r => `agent:${r.key}` === focused) ? focused : `agent:${all[0]!.key}`
-      const pick = (r: (typeof all)[number]): AgentTabsPick => ({ key: r.key, name: r.name, id: r.id, names: r.names })
-      const restOf = (r: (typeof all)[number]) =>
-        [r.started ?? '—', r.harness, r.model ?? '—', r.effort ?? '—', r.where ?? '—', r.session ?? '—'].map((v, i) => cut(v, COLUMN_CAPS[i + 2]!))
-      const restWidths = [0, 1, 2, 3, 4, 5].map(i => Math.max(...all.map(r => restOf(r)[i]!.length)))
+      const pick = (r: AgentTabsPaneRow): AgentTabsPick => ({ key: r.key, name: r.name, id: r.id, names: r.names })
+      const restOf = (r: AgentTabsPaneRow) =>
+        [r.started ?? '—', r.harness, r.model ?? '—', r.effort ?? '—', r.session ?? '—'].map((v, i) => cut(v, COLUMN_CAPS[[2, 3, 4, 5, 7][i]!]!))
+      const restWidths = [0, 1, 2, 3, 4].map(i => Math.max(...all.map(r => restOf(r)[i]!.length)))
+      const line = (r: AgentTabsPaneRow) => (
+        <Box key={`row-${r.key}`} flexDirection="row" gap={2} paddingLeft={4}>
+          <Button
+            key={`agent:${r.key}`}
+            plain
+            label={cut(r.name, nameWidth).padEnd(nameWidth)}
+            {...(`agent:${r.key}` === first ? { autoFocus: true as const } : {})}
+            onPress={() => goTo($, { view: 'messages', agent: pick(r), message: null })}
+          />
+          {STATE_COLORS[r.state] !== undefined ? (
+            <Text color={STATE_COLORS[r.state]}>{r.state.padEnd(stateWidth)}</Text>
+          ) : (
+            <Text dimColor>{r.state.padEnd(stateWidth)}</Text>
+          )}
+          <Text dimColor wrap="truncate-end">
+            {restOf(r)
+              .map((v, i) => v.padEnd(restWidths[i]!))
+              .join('  ')
+              .trimEnd()}
+          </Text>
+        </Box>
+      )
+      const folderHeading = (hi: number, f: AgentTabsPaneFolder) => {
+        if (f.heading === null) return null
+        if (f.path === null) {
+          return (
+            <Box paddingLeft={2}>
+              <Text>{f.heading}</Text>
+            </Box>
+          )
+        }
+        const path = f.path
+        const key = folderKey(hi, f)
+        return (
+          <Box key={`heading-${key}`} flexDirection="row" paddingLeft={2}>
+            <Button
+              key={key}
+              plain
+              label={f.heading}
+              hover={{ underline: true }}
+              {...(key === first ? { autoFocus: true as const } : {})}
+              onPress={() => openFolder($, path)}
+            />
+            <Box position="absolute" top={0} left={f.heading.length + 4} display="none" hover={{ display: 'flex' }}>
+              <Text dimColor wrap="truncate-end">
+                {path}
+              </Text>
+            </Box>
+          </Box>
+        )
+      }
       return (
         <Box flexDirection="column">
-          {groups.map((g, gi) => (
-            <Box key={`group-${gi}`} flexDirection="column" marginTop={gi === 0 ? 0 : 1}>
-              <Text bold>{g.heading}</Text>
-              {g.rows.map(r => (
-                <Box key={`row-${r.key}`} flexDirection="row" gap={2}>
-                  <Button
-                    key={`agent:${r.key}`}
-                    plain
-                    label={cut(r.name, nameWidth).padEnd(nameWidth)}
-                    {...(`agent:${r.key}` === first ? { autoFocus: true as const } : {})}
-                    onPress={() => goTo($, { view: 'messages', agent: pick(r), message: null })}
-                  />
-                  {STATE_COLORS[r.state] !== undefined ? (
-                    <Text color={STATE_COLORS[r.state]}>{r.state.padEnd(stateWidth)}</Text>
-                  ) : (
-                    <Text dimColor>{r.state.padEnd(stateWidth)}</Text>
-                  )}
-                  <Text dimColor wrap="truncate-end">
-                    {restOf(r)
-                      .map((v, i) => v.padEnd(restWidths[i]!))
-                      .join('  ')
-                      .trimEnd()}
-                  </Text>
+          {heading}
+          {hosts.map((host, hi) => (
+            <Box key={`host-${hi}`} flexDirection="column" marginTop={1}>
+              <Text bold>{host.heading}</Text>
+              {host.folders.map((f, fi) => (
+                <Box key={`folder-${hi}-${fi}`} flexDirection="column" marginTop={fi === 0 ? 0 : 1}>
+                  {folderHeading(hi, f)}
+                  {f.rows.map(line)}
                 </Box>
               ))}
             </Box>
@@ -912,7 +1116,7 @@ export const register: Register = on => {
             <Button
               key={`msg:${m.id}`}
               plain
-              label={messageLine(m, groups, width)}
+              label={messageLine(m, hosts, width)}
               {...(`msg:${m.id}` === first ? { autoFocus: true as const } : {})}
               onPress={() => goTo($, { view: 'detail', message: m.id })}
             />
@@ -931,7 +1135,7 @@ export const register: Register = on => {
       )
     }
     const { value: me } = await $.state.get(selfRef)
-    const line = replyLine(m, me?.id, groups)
+    const line = replyLine(m, me?.id, hosts)
     const delivery = [m.delivery, m.status].filter(v => v !== undefined).join(' · ') || '—'
     return (
       <Box flexDirection="column">
@@ -939,8 +1143,8 @@ export const register: Register = on => {
           <Button key="back" label="Back" onPress={() => goUp($)} />
           <Button key="reply" label="Reply" variant="primary" autoFocus onPress={() => fillReply($, line)} />
         </Box>
-        <Text>From: {partyName(m.from, groups)}</Text>
-        <Text>To: {partyName(m.to, groups)}</Text>
+        <Text>From: {partyName(m.from, hosts)}</Text>
+        <Text>To: {partyName(m.to, hosts)}</Text>
         <Text>Time: {m.at.replace('T', ' ').replace(/\.\d+Z$/, 'Z')}</Text>
         {m.replyTo !== undefined && <Text>Reply to: {m.replyTo}</Text>}
         <Text>
