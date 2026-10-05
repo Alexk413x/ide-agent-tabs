@@ -3,15 +3,19 @@ package dev.alexk.ideagenttabs
 import com.google.gson.JsonObject
 import java.nio.file.FileSystems
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.FileTime
 import java.nio.file.attribute.PosixFilePermissions
 import java.security.SecureRandom
+import java.time.Instant
 import java.util.HexFormat
 
 // Pure module: no IDE or Netty types, so the registry file tests without a running IDE.
 
 const val PROTOCOL_VERSION = 1
+const val ENDPOINT_BEAT_MS = 60_000L
 const val HOME_PROPERTY = "ide.agent.tabs.home"
 
 fun ideAgentTabsHome(): Path =
@@ -19,7 +23,15 @@ fun ideAgentTabsHome(): Path =
 
 fun newToken(): String = ByteArray(32).also { SecureRandom().nextBytes(it) }.let { HexFormat.of().formatHex(it) }
 
-fun endpointJson(product: String, version: String, pid: Long, url: String, token: String) = JsonObject().apply {
+fun endpointJson(
+    product: String,
+    version: String,
+    pid: Long,
+    url: String,
+    token: String,
+    startedAt: Long,
+    beatMs: Long = ENDPOINT_BEAT_MS,
+) = JsonObject().apply {
     addProperty("protocol", PROTOCOL_VERSION)
     addProperty("ide", "jetbrains")
     addProperty("product", product)
@@ -27,6 +39,8 @@ fun endpointJson(product: String, version: String, pid: Long, url: String, token
     addProperty("pid", pid)
     addProperty("url", url)
     addProperty("token", token)
+    addProperty("startedAt", startedAt)
+    addProperty("beatMs", beatMs)
 }
 
 private val isPosix = "posix" in FileSystems.getDefault().supportedFileAttributeViews()
@@ -55,4 +69,12 @@ fun writeAtomically(target: Path, content: String, private: Boolean = false): Pa
         throw e
     }
     return target
+}
+
+fun beatEndpoint(target: Path, content: String, private: Boolean = true, now: Instant = Instant.now()) {
+    try {
+        Files.setLastModifiedTime(target, FileTime.from(now))
+    } catch (e: NoSuchFileException) {
+        writeAtomically(target, content, private)
+    }
 }

@@ -3,6 +3,7 @@ import path from 'node:path';
 
 export const PROTOCOL_VERSION = 1;
 export const ENDPOINTS_DIR = 'endpoints';
+export const ENDPOINT_BEATS_MISSED = 5;
 
 export interface Endpoint {
   id: string;
@@ -14,6 +15,7 @@ export interface Endpoint {
   url: string;
   token: string;
   startedAt: number;
+  beatMs?: number;
 }
 
 export type ParsedEndpoint =
@@ -59,6 +61,7 @@ export function parseEndpoint(text: string, file: string, startedAt: number): Pa
     return { kind: 'skip', reason: `${name} lacks ide, url, token or pid`, warn: true };
   }
   if (!isLoopbackUrl(url)) return { kind: 'skip', reason: `${name} has a non-loopback url`, warn: true };
+  const beatMs = typeof obj.beatMs === 'number' && Number.isSafeInteger(obj.beatMs) && obj.beatMs > 0 ? { beatMs: obj.beatMs } : {};
   return {
     kind: 'endpoint',
     endpoint: {
@@ -70,7 +73,8 @@ export function parseEndpoint(text: string, file: string, startedAt: number): Pa
       pid,
       url: url.replace(/\/+$/, ''),
       token,
-      startedAt,
+      startedAt: typeof obj.startedAt === 'number' && Number.isFinite(obj.startedAt) && obj.startedAt > 0 ? obj.startedAt : startedAt,
+      ...beatMs,
     },
   };
 }
@@ -89,7 +93,11 @@ export interface Registry {
   warnings: string[];
 }
 
-export async function readRegistry(home: string, alive: (pid: number) => boolean = isProcessAlive): Promise<Registry> {
+export async function readRegistry(
+  home: string,
+  alive: (pid: number) => boolean = isProcessAlive,
+  now = Date.now(),
+): Promise<Registry> {
   const dir = path.join(home, ENDPOINTS_DIR);
   let names: string[];
   try {
@@ -113,7 +121,10 @@ export async function readRegistry(home: string, alive: (pid: number) => boolean
       if (parsed.warn) warnings.push(`Skipping ${parsed.reason}`);
       continue;
     }
-    if (!alive(parsed.endpoint.pid)) {
+    // A pid alone can name a new process once Windows reuses it; an IDE that beats proves it still runs.
+    const { beatMs } = parsed.endpoint;
+    const silent = beatMs !== undefined && now - mtime > beatMs * ENDPOINT_BEATS_MISSED;
+    if (silent || !alive(parsed.endpoint.pid)) {
       await fs.rm(file, { force: true }).catch(() => undefined);
       continue;
     }

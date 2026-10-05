@@ -327,7 +327,7 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 
 | File | Holds |
 |---|---|
-| `endpoints/*.json` | One registry entry per running IDE. The server skips entries with an unknown `protocol` or a URL that isn't on the loopback address, and deletes entries whose process has ended. |
+| `endpoints/*.json` | One registry entry per running IDE. The server skips entries with an unknown `protocol` or a URL that isn't on the loopback address, and deletes entries whose process has ended or whose `beatMs` heartbeat (file modification time) stopped for more than 5 beats. |
 | `agents.json` | Your own agent profiles. The rules match the JetBrains plugin exactly. |
 | `config.json` | `defaultAgent`, `jev` (the Jev settings), `launchVia`, `closeAfterHandoff` and the tab settings below. The JetBrains plugin and the VS Code extension edit the same keys. |
 | `detected.json` | The terminals, on Windows the PowerShell installs, and `ori` (`path`, `version`, and the `agents` Ori lists as installed; `null` without Ori) that this machine has, for the IDE settings. The server writes it at start, on each `list_ides` and from the Claude Code session start hook; don't edit it. |

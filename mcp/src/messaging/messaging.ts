@@ -53,6 +53,7 @@ export const MAX_WAIT_S = 600;
 export const AGY_MAX_WAIT_S = 170;
 const CLEAN_EVERY_MS = 60 * 60 * 1000;
 const RESTART_GRACE_MS = 60_000;
+export const START_RETRY_DELAYS_MS = [1_000, 3_000, 9_000];
 export const REWAKE_EVERY_MS = 15_000;
 export const FOLLOW_UP_MS = MAX_WAIT_S * 1000;
 const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -149,6 +150,7 @@ export function shortNames(sessions: readonly { id: string; agent: string }[]): 
 interface ReadResult {
   notice?: string;
   messages: ReturnType<typeof shown>[];
+  warnings?: string[];
   remaining?: number;
   next?: string;
   unreadable?: number;
@@ -171,6 +173,9 @@ export class Messaging {
   private readonly followUps = new Map<string, ReturnType<typeof setInterval>>();
   private heartbeat?: ReturnType<typeof setInterval>;
   private readonly claims = new Map<string, string[]>();
+  private startError?: string;
+  private stopped = false;
+  registration: Promise<void> = Promise.resolve();
 
   constructor(private readonly deps: MessagingDeps) {
     const tab = deps.env[TAB_ID_ENV];
@@ -248,6 +253,32 @@ export class Messaging {
   stopHeartbeat(): void {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = undefined;
+  }
+
+  async startRegistered(options: { delaysMs?: readonly number[]; log?: (message: string) => void } = {}): Promise<void> {
+    const log = options.log ?? (() => undefined);
+    const attempt = async () => {
+      try {
+        await this.start();
+        this.startError = undefined;
+        return true;
+      } catch (e) {
+        this.startError = e instanceof Error ? e.message : String(e);
+        log(`this session isn't registered: ${this.startError}`);
+        return false;
+      }
+    };
+    if (await attempt()) return;
+    this.registration = (async () => {
+      for (const delay of options.delaysMs ?? START_RETRY_DELAYS_MS) {
+        await (this.deps.sleep ?? realSleep)(delay);
+        if (this.stopped || (await attempt())) return;
+      }
+    })();
+  }
+
+  private get warnings(): { warnings?: string[] } {
+    return this.startError === undefined ? {} : { warnings: [`this session isn't registered: ${this.startError}`] };
   }
 
   async start(): Promise<void> {
@@ -366,6 +397,7 @@ export class Messaging {
   }
 
   stopSync(): void {
+    this.stopped = true;
     this.stopHeartbeat();
     const file = presencePath(this.deps.home, this.sessionId);
     try {
@@ -423,7 +455,7 @@ export class Messaging {
       (a, b) =>
         agentRank(a.agent) - agentRank(b.agent) || a.agent.localeCompare(b.agent) || a.startedAt.localeCompare(b.startedAt) || a.id.localeCompare(b.id),
     );
-    return { sessions: rows };
+    return { sessions: rows, ...this.warnings };
   }
 
   async send(input: SendInput) {
@@ -437,7 +469,10 @@ export class Messaging {
     const live = await liveSessions(this.deps.home, this.alive, now);
     const short = shortNames(live);
     const recipient = live.find((s) => s.id === input.to) ?? live.find((s) => short.get(s.id) === input.to);
-    if (!recipient) throw new MailError(`no live session with id or name ${input.to}; call list_sessions`);
+    if (!recipient) {
+      const [warning] = this.warnings.warnings ?? [];
+      throw new MailError(`no live session with id or name ${input.to}; call list_sessions${warning !== undefined ? `. Warning: ${warning}` : ''}`);
+    }
     const to = recipient.id;
     if (to === this.sessionId) throw new MailError('to is this session; pick another id from list_sessions');
     const id = newMessageId();
@@ -472,7 +507,7 @@ export class Messaging {
     }).catch(() => undefined);
     this.followUp(to);
     void this.clean().catch(() => undefined);
-    return { id: message.id, to, ...wake };
+    return { id: message.id, to, ...wake, ...this.warnings };
   }
 
   private async wake(recipient: Presence, now: number): Promise<{ delivery: 'woken' | 'queued'; note?: string }> {
@@ -647,7 +682,7 @@ export class Messaging {
     }
     await this.resetNudges();
     void this.clean().catch(() => undefined);
-    const result: ReadResult = { ...(messages.length ? { notice: UNTRUSTED_NOTICE } : {}), messages: messages.map(shown) };
+    const result: ReadResult = { ...(messages.length ? { notice: UNTRUSTED_NOTICE } : {}), messages: messages.map(shown), ...this.warnings };
     if (remaining) Object.assign(result, { remaining, next: `${remaining} more unread; call read_messages again` });
     if (unreadable) Object.assign(result, { unreadable, unreadableNote: `${unreadable} mailbox file(s) held no valid message and were set aside` });
     return result;

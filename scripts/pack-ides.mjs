@@ -3,6 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFi
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hashAllIdeSources } from './ide-sources.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'claude-plugin', 'dist', 'ide');
@@ -82,5 +83,5 @@ const vsix = path.join(root, 'vscode', `ide-agent-tabs-${vscodeVersion}.vsix`);
 mkdirSync(out, { recursive: true });
 copyFileSync(zip, path.join(out, 'ide-agent-tabs-jetbrains.zip'));
 copyFileSync(vsix, path.join(out, 'ide-agent-tabs.vsix'));
-writeFileSync(path.join(out, 'versions.json'), `${JSON.stringify({ vscode: vscodeVersion, jetbrains: jetbrainsVersion }, null, 2)}\n`);
+writeFileSync(path.join(out, 'versions.json'), `${JSON.stringify({ vscode: vscodeVersion, jetbrains: jetbrainsVersion, sources: hashAllIdeSources() }, null, 2)}\n`);
 console.log(`Packed VS Code ${vscodeVersion} and JetBrains ${jetbrainsVersion} into ${path.relative(root, out)}`);

@@ -6,6 +6,7 @@ import * as path from 'node:path';
 export const PROTOCOL_VERSION = 1;
 export const HOME_ENV = 'IDE_AGENT_TABS_HOME';
 export const ENDPOINT_BASE = '/ide-agent-tabs';
+export const ENDPOINT_BEAT_MS = 60_000;
 
 export function ideAgentTabsHome(env: NodeJS.ProcessEnv = process.env): string {
   const override = env[HOME_ENV];
@@ -30,6 +31,8 @@ export interface Endpoint {
   pid: number;
   url: string;
   token: string;
+  startedAt: number;
+  beatMs: number;
 }
 
 export function endpointJson(e: Endpoint): string {
@@ -41,6 +44,8 @@ export function endpointJson(e: Endpoint): string {
     pid: e.pid,
     url: e.url,
     token: e.token,
+    startedAt: e.startedAt,
+    beatMs: e.beatMs,
   });
 }
 
@@ -61,4 +66,12 @@ export function writeAtomically(target: string, content: string, secret = false)
     throw e;
   }
   return target;
+}
+
+export function beatEndpoint(file: string, content: string, secret = true, now = new Date()): void {
+  try {
+    fs.utimesSync(file, now, now);
+  } catch {
+    writeAtomically(file, content, secret);
+  }
 }

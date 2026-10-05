@@ -92,11 +92,25 @@ and possible future work. Change the design before you change the protocol.
 ## Checks
 
 Before you commit, run `node scripts/check.mjs` from the repo root. It runs the MCP typecheck and tests,
-confirms `claude-plugin/dist` matches a fresh bundle, checks the plugin version, runs
-`claude plugin validate --strict` and the mod tests, then the JetBrains and VS Code tests. Gradle runs
+confirms `claude-plugin/dist` matches a fresh bundle, checks the plugin version, confirms the bundled IDE
+packages match their sources (see below), runs `claude plugin validate --strict`, the mod tests and the
+script tests, then the JetBrains and VS Code tests. Gradle runs
 without its build cache, so a stale cache entry can't fail or skip a test. The JetBrains tests need JDK 25
 or later, found the way `scripts/pack-ides.mjs` finds it. Pass `--skip-ide` to skip the IDE tests, or
 `--skip-tests` to skip every test.
+
+The step "ide packages current" compares a sha256 of the sources that go into each IDE package
+(`vscode/src`, `package.json` and `resources`; `jetbrains/src/main`, `build.gradle.kts`,
+`gradle.properties` and `settings.gradle.kts`) with the hashes that `node scripts/pack-ides.mjs` records
+in `claude-plugin/dist/ide/versions.json`. It needs no build. When a source changed, it fails with
+"vscode/ changed since the last repack; run node scripts/pack-ides.mjs".
+
+To release, run `node scripts/bump.mjs <version>`. It sets the version in
+`claude-plugin/.claude-plugin/plugin.json`, `mcp/package.json` and `mcp/package-lock.json`, adds a
+`## <version>` stub to `CHANGELOG.md` if none exists, and prints the next steps: build, check, commit and
+tag `ide-agent-tabs--v<version>`. Add `--vscode <version>` or `--jetbrains <version>` to bump the
+extension (`package.json` and its lock) or the plugin (`pluginVersion` in `gradle.properties`). The script
+never commits or tags.
 
 ## License
 
