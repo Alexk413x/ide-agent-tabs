@@ -846,7 +846,8 @@ export function partyName(p: AgentTabsParty, hosts: readonly AgentTabsPaneHost[]
 }
 
 export function messageLine(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[], width: number): string {
-  const head = `${hhmm(m.at)}  ${m.direction === 'sent' ? '↑' : '↘'} ${partyName(m.peer, hosts)}  `
+  const name = partyName(m.peer, hosts).replace(/\s*\[[^\]]*\]$/, '')
+  const head = `${hhmm(m.at)}  ${m.direction === 'sent' ? '↑' : '↘'} ${name} · `
   const first = m.text.split('\n')[0] ?? ''
   const room = Math.max(8, width - head.length)
   if (first.length > room) return `${head}${first.slice(0, room - 1)}…`

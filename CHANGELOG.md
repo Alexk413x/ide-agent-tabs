@@ -14,6 +14,8 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
   and the only hover effect is the `▎` side line.
 - An agent opens the pane when the user asks, through the mod's `open_agent_messages` tool, optionally on
   one agent's messages (`agent`: a name from ListAgents).
+- A message line reads `HH:MM  ↑ name · text…`: the peer's name without its `[ref]`, then the first line
+  of the text, cut to fit.
 - Only a session's name is pressable; its second line is plain text, so hovering inverts just the name.
   Claude Code inverts every pressable element under the pointer, and the mod API can't turn that off.
 - The agents view groups sessions by IDE or terminal (`Antigravity IDE`, `Windows Terminal`, and so on),
