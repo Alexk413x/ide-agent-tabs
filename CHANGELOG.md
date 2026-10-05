@@ -23,7 +23,9 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
   messages and detail views.
 - A folder heading shows the folder's base name. Hovering it shows the full path. Pressing it opens the
   folder in the file manager: `explorer.exe` on Windows, `open` on macOS, `xdg-open` on Linux, run by
-  argv with no shell. A path that doesn't exist or isn't a folder is refused with a toast.
+  argv with no shell. A path that doesn't exist or isn't a folder is refused with a toast. On Windows
+  the folder window opens behind the IDE, because Windows doesn't let a background process take the
+  foreground. Pressing the full path shown on hover copies it to the clipboard.
 - The card of a delivered peer message has an **Open in Agent Tabs** button, which opens the pane on that
   message.
 - While the session has unread Agent Tabs mail, a band above the prompt shows

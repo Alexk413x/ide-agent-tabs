@@ -167,6 +167,11 @@ function world(on: On, options: WorldOptions = {}) {
   const calls: Call[] = []
   const statuses: (string | undefined)[] = []
   const toasts: string[] = []
+  const copies: string[] = []
+  on('ui.copy', (_$, e) => {
+    copies.push(e.text)
+    return { value: { isCopied: true as const } }
+  })
   const submitted: string[] = []
   const native: { to: string; text: string }[] = []
   const counts = { listAgents: 0 }
@@ -295,7 +300,7 @@ function world(on: On, options: WorldOptions = {}) {
     }
   })
   const ops = (op: string) => calls.filter(c => c.args.op === op)
-  return { calls, ops, statuses, toasts, submitted, native, counts, mail, clock, model, panes, envSet, runs }
+  return { calls, ops, statuses, toasts, copies, submitted, native, counts, mail, clock, model, panes, envSet, runs }
 }
 
 async function start($: Engine) {
@@ -724,7 +729,7 @@ type Drawing ={ findAll: (query: { type?: string }) => Promise<{ type: string; t
 
 async function outline(ui: Drawing) {
   return (await ui.findAll({}))
-    .filter(e => (e.type === 'Button' && e.props.dimColor !== true) || (e.type === 'Text' && e.props.bold === true))
+    .filter(e => (e.type === 'Button' && e.props.dimColor !== true && !String(e.props.key ?? '').startsWith('copy-')) || (e.type === 'Text' && e.props.bold === true))
     .map(e => e.text.trim())
 }
 
@@ -857,19 +862,25 @@ describe('agents pane', () => {
       expect(heading?.text).toBe('▸ sub')
       const card = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && b.text === 'C:\\W\\sub')
       expect(card?.props).toEqual({ position: 'absolute', top: 0, left: '▸ sub'.length + 4, display: 'none' })
-      expect(await ui.find({ type: 'Button', text: 'C:\\W\\sub' })).toBeUndefined()
+      expect((await ui.find({ type: 'Button', key: 'copy-folder:4:C:\\W\\sub' }))?.text).toBe('C:\\W\\sub')
 
       const tree = await $.ui.render({ surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       const scope = nodes(tree).find(n => n.props?.key === 'heading-folder:4:C:\\W\\sub')
       const reveal = nodes(scope).find(n => n.props?.position === 'absolute')
       expect(reveal?.hover).toEqual({ display: 'flex' })
-      expect(nodes(reveal).some(n => n.children?.includes('C:\\W\\sub'))).toBe(true)
+      expect(nodes(reveal).some(n => n.type === 'Button' && n.props?.label === 'C:\\W\\sub')).toBe(true)
       expect(nodes(scope).find(n => n.type === 'Button')?.hover).toEqual({ underline: true, bold: true })
 
       w.runs.length = 0
       await ui.press({ key: 'folder:4:C:\\W\\sub' })
       expect(w.runs).toEqual([['explorer.exe', 'C:\\W\\sub']])
       expect(w.toasts).toEqual([])
+
+      w.runs.length = 0
+      await ui.press({ key: 'copy-folder:4:C:\\W\\sub' })
+      expect(w.copies.splice(0)).toEqual(['C:\\W\\sub'])
+      expect(w.runs).toEqual([])
+      expect(w.toasts.splice(0)).toEqual(['Agent Tabs: path copied · C:\\W\\sub'])
 
       w.runs.length = 0
       await ui.press({ key: 'folder:4:C:\\w' })
