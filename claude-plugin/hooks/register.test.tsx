@@ -790,14 +790,26 @@ describe('agents pane', () => {
       const row = (key: string) => nodes(tree).find(n => n.props?.key === `row-id:${key}`)
       const [line1, line2] = (row('tab-d')?.children ?? []) as Node[]
       expect([line1?.props?.paddingLeft, line2?.props?.paddingLeft]).toEqual([4, 6])
-      const marks = (key: string) => (((row(key)?.children?.[0] as Node | undefined)?.children ?? []) as Node[]).slice(0, 2).map(n => [n.children?.join(''), n.props?.color ?? (n.props?.dimColor ? 'dim' : undefined)])
+      const marks = (key: string) => (((row(key)?.children?.[0] as Node | undefined)?.children ?? []) as Node[]).slice(1, 3).map(n => [n.children?.join(''), n.props?.color ?? (n.props?.dimColor ? 'dim' : undefined)])
       expect(marks('tab-d')).toEqual([['● ', 'error'], ['✻ ', '#d97757']])
       expect(marks('c0dec0de-8888')).toEqual([['● ', 'warning'], ['◆ ', '#10a37f']])
       expect(marks('a0a0a0a0-1111')).toEqual([['● ', 'warning'], ['▲ ', '#8b7cf6']])
       expect(marks('9e9e0000-7777')).toEqual([['● ', 'success'], ['• ', '#9aa4b2']])
       expect((await ui.find({ type: 'Text', text: ' (this session)' }))?.props.italic).toBe(true)
-      expect(row('c1a2b3c4-0000')?.props?.backgroundColor).toBe('#264f78')
-      expect(row('tab-d')?.props?.backgroundColor).toBeUndefined()
+      const boxes = (key: string) => nodes(row(key)).filter(n => n.type === 'Box')
+      for (const key of ['c1a2b3c4-0000', 'tab-d']) expect(boxes(key).some(n => n.props?.backgroundColor !== undefined)).toBe(false)
+      const marks2 = (key: string) => boxes(key).filter(n => n.props?.position === 'absolute')
+      const shown = marks2('c1a2b3c4-0000')
+      expect(shown.map(n => [n.props?.left, n.props?.display, n.hover])).toEqual([
+        [2, undefined, undefined],
+        [2, undefined, undefined],
+      ])
+      const hidden = marks2('tab-d')
+      expect(hidden.map(n => [n.props?.left, n.props?.display, n.hover])).toEqual([
+        [2, 'none', { display: 'flex' }],
+        [2, 'none', { display: 'flex' }],
+      ])
+      expect(nodes(hidden[0]).some(n => n.children?.includes('▎'))).toBe(true)
       await ui.unmount()
     }
   })
@@ -1135,6 +1147,8 @@ describe('folder opener', () => {
     expect(platformOf(undefined, 'Darwin\n')).toBe('mac')
     expect(platformOf(undefined, 'Linux\n')).toBe('linux')
     expect(platformOf(undefined, undefined)).toBe('linux')
+    expect(platformOf(undefined, 'MINGW64_NT-10.0-26300\n')).toBe('windows')
+    expect(platformOf(undefined, 'MSYS_NT-10.0\n')).toBe('windows')
   })
 
   test('a folder heading is the base name of the path', () => {
