@@ -4,6 +4,30 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 `mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
 `ide-agent-tabs--v<version>`.
 
+## 0.6.1
+
+Plugin and MCP server 0.6.1. The IDE packages are unchanged.
+
+### Changed
+
+- The Claude Code mod's pane is **Agent Tabs Messages**, in its title and at the top of the agents view.
+  `/agent-tabs-messages` opens it too, beside `/agent-tabs`.
+- The agents view groups sessions by IDE or terminal (`Antigravity IDE`, `Windows Terminal`, and so on),
+  with `Other` for an unknown host and the cloud group last. Under each, the folders open there, then the
+  session lines, indented. A session line drops the IDE or terminal column. The order inside a folder,
+  the coloured states and a blank line before each group stay.
+- A folder heading shows the folder's base name. Hovering it shows the full path. Pressing it opens the
+  folder in the file manager: `explorer.exe` on Windows, `open` on macOS, `xdg-open` on Linux, run by
+  argv with no shell. A path that doesn't exist or isn't a folder is refused with a toast.
+- The card of a delivered peer message has an **Open in Agent Tabs** button, which opens the pane on that
+  message.
+- While the session has unread Agent Tabs mail, a band above the prompt shows
+  `✉ <n> new from <names>` and an **Open** button, which opens the pane on the newest sender's messages.
+  Its hotkey is `o` once the band has the keyboard (ctrl+x tab or a click). The band hides while the
+  pane is open and once nothing is unread.
+- The arrival toast ends with `· /agent-tabs to view`.
+- `ListAgents` output is unchanged.
+
 ## 0.6.0
 
 Plugin and MCP server 0.6.0, with VS Code extension 0.1.27 and JetBrains plugin 0.4.10 bundled. Both IDE

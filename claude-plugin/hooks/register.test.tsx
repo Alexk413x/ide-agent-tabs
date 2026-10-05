@@ -1,7 +1,7 @@
 import type { On, SessionSendResult } from 'claude-code'
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 
-import { DEFAULT_PANE, upFrom } from './register'
+import { DEFAULT_PANE, folderName, folderOpener, platformOf, upFrom } from './register'
 
 const SERVER = 'plugin:ide-agent-tabs:ide-agent-tabs'
 const MAILBOX = 'C:\\Users\\me\\.ide-agent-tabs\\mail\\tab-c\\new'
@@ -138,6 +138,10 @@ type WorldOptions = {
   effort?: string
   claudeMod?: 'on' | 'off'
   history?: unknown[]
+  os?: string
+  uname?: string
+  dirs?: string[]
+  mailFrom?: Record<string, string>
 }
 
 function world(on: On, options: WorldOptions = {}) {
@@ -151,6 +155,18 @@ function world(on: On, options: WorldOptions = {}) {
   const mail = { unread: [...(options.unread ?? [])], held: [] as string[], read: [] as string[] }
   const clock = mock.clock(on, { now: NOW })
   const panes = { open: [] as string[], opened: [] as unknown[], closed: [] as unknown[], commands: [] as string[], filled: [] as string[] }
+  const runs: string[][] = []
+  on('fs.stat', (_$, e) => {
+    const dir = (options.dirs ?? []).find(d => e.path === d || e.path.replace(/\\/g, '/').endsWith(d))
+    if (dir !== undefined) return { value: { kind: 'dir' as const, size: 0, mtimeMs: 1, isLink: false, realPath: dir } }
+    if (e.path.endsWith('.txt')) return { value: { kind: 'file' as const, size: 1, mtimeMs: 1, isLink: false, realPath: e.path } }
+    throw new Error(`ENOENT: ${e.path}`)
+  })
+  on('process.run', (_$, e) => {
+    runs.push([...e.argv])
+    const uname = e.argv[0] === 'uname' ? (options.uname ?? 'Linux\n') : ''
+    return { value: { exitCode: e.argv[0] === 'explorer.exe' ? 1 : 0, stdout: uname, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
   on('command.register', (_$, e) => {
     panes.commands.push(e.name)
     return { value: undefined } as never
@@ -176,7 +192,11 @@ function world(on: On, options: WorldOptions = {}) {
     envSet.push({ name: e.name, ...(e.value === undefined ? {} : { value: e.value }) })
     return { value: undefined }
   })
-  mock.env(on, { ...(options.tab === undefined ? {} : { IDE_AGENT_TABS_ID: options.tab }), ...(options.effort === undefined ? {} : { CLAUDE_EFFORT: options.effort }) })
+  mock.env(on, {
+    ...(options.tab === undefined ? {} : { IDE_AGENT_TABS_ID: options.tab }),
+    ...(options.effort === undefined ? {} : { CLAUDE_EFFORT: options.effort }),
+    ...(options.os === undefined ? {} : { OS: options.os }),
+  })
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', () => ({ sessionId: 'b2f0c4de-0000-4000-8000-000000000000' }) as never)
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
@@ -214,7 +234,10 @@ function world(on: On, options: WorldOptions = {}) {
     return { value: undefined }
   })
   on('fs.list', () => ({ value: mail.unread.map(name => ({ name, kind: 'file' as const, size: 10, mtimeMs: 1, isLink: false })) }))
-  on('fs.read', () => ({ value: JSON.stringify(MESSAGE) }))
+  on('fs.read', (_$, e) => {
+    const from = options.mailFrom?.[e.path.split('\\').at(-1)!]
+    return { value: JSON.stringify(from === undefined ? MESSAGE : { ...MESSAGE, from: { ...MESSAGE.from, id: from } }) }
+  })
   on('mcp.call', (_$, e) => {
     calls.push({ tool: e.tool, args: e.args })
     const ok = (value: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(value) }], isError: false } })
@@ -246,7 +269,7 @@ function world(on: On, options: WorldOptions = {}) {
     }
   })
   const ops = (op: string) => calls.filter(c => c.args.op === op)
-  return { calls, ops, statuses, toasts, submitted, native, counts, mail, clock, model, panes, envSet }
+  return { calls, ops, statuses, toasts, submitted, native, counts, mail, clock, model, panes, envSet, runs }
 }
 
 async function start($: Engine) {
@@ -496,7 +519,7 @@ describe('inbound mail', () => {
     expect(w.ops('ack')).toHaveLength(1)
     expect(w.mail.read).toEqual(['1-m-0123456789abcdef.json'])
     expect(w.statuses[0]).toBe('✉ 1 · codex-1a2b')
-    expect(w.toasts).toEqual(['✉ Agent Tabs message from codex-1a2b'])
+    expect(w.toasts).toEqual(['✉ Agent Tabs message from codex-1a2b · /agent-tabs to view'])
     await w.clock.advance(2_000)
     expect(w.statuses.at(-1)).toBeUndefined()
   })
@@ -604,7 +627,7 @@ describe('peer message card', () => {
   })
 })
 
-const PANE_PROPS = (columns = 120) => ({ title: 'Agent Tabs', isFocused: true, bodyColumns: columns, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} })
+const PANE_PROPS = (columns = 120) => ({ title: 'Agent Tabs Messages', isFocused: true, bodyColumns: columns, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 30 }, view: {} })
 const COMPOSER = { kind: 'composer' } as const
 const PRESENTATION = { isFullscreen: true, columns: 200 }
 const AT = (minute: number) => new Date(Date.UTC(2026, 9, 4, 9, minute)).toISOString()
@@ -614,54 +637,193 @@ const HISTORY = [
   { id: 'm-aaaaaaaaaaaaaaa2', at: AT(2), direction: 'sent', route: 'native', from: { id: 'tab-d', name: 'docs-9b [11aa22]' }, to: { name: NATIVE }, peer: { name: NATIVE }, text: 'Done, both look fine.', delivery: 'delivered' },
 ]
 
-async function openPane($: Engine) {
-  return $.command.run({ command: 'agent-tabs', args: '', origin: COMPOSER, presentation: PRESENTATION })
+const PANE_OPEN = { id: 'agent-tabs', title: 'Agent Tabs Messages', focus: true, closeOnEscape: true, holdToasts: true, rows: 18 }
+
+const OUTLINE = [
+  'Agent Tabs Messages',
+  'IntelliJ IDEA',
+  'docs',
+  'docs-9b [11aa22]',
+  'Antigravity IDE',
+  'w',
+  'agy-a0a0',
+  'Remote Control',
+  'Folder not known',
+  'Laptop RC [rc0001]',
+  'tmux build',
+  'Folder not known',
+  'nightly-sync [c0ffee]',
+  'Visual Studio Code',
+  'e2e',
+  'E2E testing plugin [b39a20]',
+  'Windows Terminal',
+  'w',
+  'claude-01d0',
+  'codex-c0de',
+  'codex-1a2b',
+  'a',
+  'agy-a2a2',
+  'sub',
+  'gemini-9e9e',
+  'Other',
+  'z',
+  'zed-agent-zed1',
+  "Cloud (can receive, can't reply)",
+  'Guide 3-to-4 player support [77…',
+  'Fix flaky test [77aa02]',
+]
+
+type Node = { type?: string; props?: Record<string, unknown>; hover?: unknown; children?: unknown[] }
+
+function nodes(root: unknown): Node[] {
+  if (root === null || typeof root !== 'object') return []
+  const node = root as Node
+  return [node, ...(node.children ?? []).flatMap(nodes)]
+}
+
+type Drawing ={ findAll: (query: { type?: string }) => Promise<{ type: string; text: string; props: Record<string, unknown> }[]> }
+
+async function outline(ui: Drawing) {
+  return (await ui.findAll({}))
+    .filter(e => e.type === 'Button' || (e.type === 'Text' && e.props.dimColor === undefined && e.props.color === undefined))
+    .map(e => e.text.trim())
+}
+
+async function openPane($: Engine, command = 'agent-tabs', presentation = PRESENTATION) {
+  return $.command.run({ command, args: '', origin: COMPOSER, presentation })
 }
 
 describe('agents pane', () => {
   test('/agent-tabs toggles one pane, closed by default, and reads nothing while closed', async ($, on) => {
     const w = world(on, { tab: 'tab-c', history: HISTORY })
     await start($)
-    expect(w.panes.commands).toEqual(['agent-tabs'])
+    expect(w.panes.commands).toEqual(['agent-tabs', 'agent-tabs-messages'])
     expect(w.panes.open).toEqual([])
     const booted = w.counts.listAgents
     await w.clock.advance(10_000)
     expect(w.counts.listAgents).toBe(booted)
     expect(w.ops('history')).toHaveLength(0)
 
-    expect((await openPane($)).text).toBe('Agent Tabs pane opened.')
-    expect(w.panes.opened).toEqual([{ id: 'agent-tabs', title: 'Agent Tabs', focus: true, closeOnEscape: true, holdToasts: true, rows: 18 }])
+    expect((await openPane($)).text).toBe('Agent Tabs Messages pane opened.')
+    expect(w.panes.opened).toEqual([PANE_OPEN])
     expect(w.counts.listAgents).toBe(booted + 1)
     await w.clock.advance(2_000)
     expect(w.counts.listAgents).toBe(booted + 2)
     expect(w.ops('history')).toHaveLength(0)
 
-    expect((await openPane($)).text).toBe('Agent Tabs pane closed.')
+    expect((await openPane($)).text).toBe('Agent Tabs Messages pane closed.')
     expect(w.panes.open).toEqual([])
     await w.clock.advance(10_000)
     expect(w.counts.listAgents).toBe(booted + 2)
+
+    expect((await openPane($, 'agent-tabs-messages')).text).toBe('Agent Tabs Messages pane opened.')
+    expect(w.panes.open).toEqual(['agent-tabs'])
+    expect((await openPane($, 'agent-tabs-messages')).text).toBe('Agent Tabs Messages pane closed.')
+    expect(w.panes.open).toEqual([])
   })
 
-  test('the agents view lists the merged groups with colour-coded states on terminal and desktop', async ($, on) => {
+  test('the agents view groups sessions by IDE or terminal, then folder, with colour-coded states on terminal and desktop', async ($, on) => {
     world(on, { tab: 'tab-c' })
     await start($)
     await openPane($)
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-      const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
-      const headings = ['C:\\w', 'C:\\a', 'C:\\docs', 'C:\\e2e', 'C:\\W\\sub', 'C:\\z', 'Folder not known', "Cloud (can receive, can't reply)"]
-      expect(texts.filter(t => headings.includes(t))).toEqual(headings)
-      const buttons = (await ui.findAll({ type: 'Button' })).map(b => b.text.trim())
-      expect(buttons.slice(0, 4)).toEqual(['claude-01d0', 'codex-c0de', 'codex-1a2b', 'agy-a0a0'])
+      expect(await outline(ui)).toEqual(OUTLINE)
+      expect((await ui.find({ type: 'Text', text: 'Agent Tabs Messages' }))?.props.bold).toBe(true)
+      expect((await ui.find({ type: 'Text', text: 'Windows Terminal' }))?.props.bold).toBe(true)
+      expect((await ui.find({ type: 'Box', key: 'host-0' }))?.props.marginTop).toBe(1)
+      expect((await ui.find({ type: 'Box', key: 'host-5' }))?.props.marginTop).toBe(1)
+      expect((await ui.find({ type: 'Box', key: 'folder-5-0' }))?.props.marginTop).toBe(0)
+      expect((await ui.find({ type: 'Box', key: 'folder-5-1' }))?.props.marginTop).toBe(1)
+      expect((await ui.find({ type: 'Box', key: 'heading-folder:5:C:\\a' }))?.props.paddingLeft).toBe(2)
+      expect((await ui.find({ type: 'Box', key: 'row-id:codex-1a2b' }))?.props.paddingLeft).toBe(4)
       expect(await ui.find({ type: 'Text', text: /^45m {2}Claude Code \(no native name\) / })).toBeDefined()
       expect(await ui.find({ type: 'Text', text: /^— {4}Gemini CLI / })).toBeDefined()
-      expect(buttons).toContain('docs-9b [11aa22]')
-      expect(buttons).not.toContain(NATIVE)
+      expect(await ui.find({ type: 'Text', text: 'Codex via OpenRouter          gpt-5.5                   medium  codex-1a' })).toBeDefined()
+      const rest = (await ui.findAll({ type: 'Text' })).filter(t => t.props.dimColor === true && t.props.wrap === 'truncate-end').map(t => t.text)
+      for (const where of ['Windows Terminal', 'Antigravity IDE', 'IntelliJ IDEA', 'Visual Studio Code', 'tmux build', 'Remote Control']) {
+        expect(rest.some(t => t.includes(where))).toBe(false)
+      }
       expect((await ui.find({ type: 'Text', text: /^permission/ }))?.props.color).toBe('error')
       expect((await ui.find({ type: 'Text', text: /^busy/ }))?.props.color).toBe('warning')
       expect((await ui.find({ type: 'Text', text: /^idle/ }))?.props.color).toBe('success')
       expect((await ui.find({ type: 'Text', text: /^cloud/ }))?.props.dimColor).toBe(true)
-      expect(await ui.find({ type: 'Text', text: 'Codex via OpenRouter          gpt-5.5                   medium  Windows Terminal    codex-1a' })).toBeDefined()
+      await ui.unmount()
+    }
+  })
+
+  test('a folder heading shows its base name, reveals the full path on hover, and opens the folder in Explorer on Windows', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', os: 'Windows_NT', dirs: ['C:\\a', 'C:\\W\\sub'] })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      const heading = await ui.find({ type: 'Button', key: 'folder:5:C:\\W\\sub' })
+      expect(heading?.text).toBe('sub')
+      const card = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && b.text === 'C:\\W\\sub')
+      expect(card?.props).toEqual({ position: 'absolute', top: 0, left: 'sub'.length + 4, display: 'none' })
+      expect(await ui.find({ type: 'Button', text: 'C:\\W\\sub' })).toBeUndefined()
+
+      const tree = await $.ui.render({ surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      const scope = nodes(tree).find(n => n.props?.key === 'heading-folder:5:C:\\W\\sub')
+      const reveal = nodes(scope).find(n => n.props?.position === 'absolute')
+      expect(reveal?.hover).toEqual({ display: 'flex' })
+      expect(nodes(reveal).some(n => n.children?.includes('C:\\W\\sub'))).toBe(true)
+      expect(nodes(scope).find(n => n.type === 'Button')?.hover).toEqual({ underline: true })
+
+      w.runs.length = 0
+      await ui.press({ key: 'folder:5:C:\\W\\sub' })
+      expect(w.runs).toEqual([['explorer.exe', 'C:\\W\\sub']])
+      expect(w.toasts).toEqual([])
+
+      w.runs.length = 0
+      await ui.press({ key: 'folder:5:C:\\w' })
+      expect(w.runs).toEqual([])
+      expect(w.toasts.splice(0)).toEqual(['Agent Tabs: C:\\w is not a folder on this machine.'])
+      await ui.unmount()
+    }
+  })
+
+  for (const [uname, opener] of [
+    ['Darwin\n', 'open'],
+    ['Linux\n', 'xdg-open'],
+  ] as const) {
+    test(`a folder press runs ${opener} on ${uname.trim()} and refuses a file`, async ($, on) => {
+      const rows = [
+        ROWS[0]!,
+        row({ id: 'c0dec0de-8888', agent: 'codex', state: 'busy', path: '/home/me/ide-agent-tabs', where: 'Terminal' }),
+        row({ id: 'c0dec0de-9999', agent: 'codex', state: 'idle', path: '/home/me/notes.txt', where: 'Terminal' }),
+      ]
+      const w = world(on, { tab: 'tab-c', uname, rows, dirs: ['/home/me/ide-agent-tabs'], listing: HEADER })
+      await start($)
+      await openPane($)
+      for (const surface of SURFACES) {
+        const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+        expect((await ui.find({ type: 'Button', key: 'folder:0:/home/me/ide-agent-tabs' }))?.text).toBe('ide-agent-tabs')
+        w.runs.length = 0
+        await ui.press({ key: 'folder:0:/home/me/ide-agent-tabs' })
+        expect(w.runs).toEqual([
+          ['uname', '-s'],
+          [opener, '/home/me/ide-agent-tabs'],
+        ])
+        w.runs.length = 0
+        await ui.press({ key: 'folder:0:/home/me/notes.txt' })
+        expect(w.runs).toEqual([])
+        expect(w.toasts.at(-1)).toBe('Agent Tabs: /home/me/notes.txt is not a folder on this machine.')
+        await ui.unmount()
+      }
+    })
+  }
+
+  test('/agent-tabs in the fullscreen layout opens the pane with nothing that seats it inline, and the docked pane draws the groups', async ($, on) => {
+    const w = world(on, { tab: 'tab-c' })
+    await start($)
+    await openPane($, 'agent-tabs', { isFullscreen: true, columns: 200 })
+    expect(w.panes.opened).toEqual([PANE_OPEN])
+    const viewport = { columns: 200, rows: 50, isFullscreen: true }
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', viewport, props: { ...PANE_PROPS(80), placement: 'dock' as const } })
+      expect(await outline(ui)).toEqual(OUTLINE)
       await ui.unmount()
     }
   })
@@ -776,5 +938,127 @@ describe('classic hook marker', () => {
     expect(w.envSet).toEqual([{ name: 'IDE_AGENT_TABS_MOD', value: 'tab-c' }])
     await $.session.end({ reason: 'exit' } as never)
     expect(w.envSet.at(-1)).toEqual({ name: 'IDE_AGENT_TABS_MOD' })
+  })
+})
+
+describe('opening the pane from a message', () => {
+  const CARD_MESSAGE = { id: 'm-0123456789abcdef', at: AT(3), direction: 'received', route: 'agent-tabs', from: { id: 'codex-1a2b', agent: 'codex', path: 'C:\\w' }, to: { id: 'tab-c' }, peer: { id: 'codex-1a2b' }, text: 'Please review x.ts', status: 'read' }
+  const BAND = { hasSurvey: false, isWorking: true, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} }
+  const FROM = { '1-m-0000000000000001.json': 'codex-1a2b', '2-m-0000000000000002.json': 'a2a2a2a2-6666', '3-m-0000000000000003.json': 'tab-d', '4-m-0000000000000004.json': '9e9e0000-7777' }
+
+  function engineBand(on: On) {
+    on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+      const { Text } = $.ui.resolve(e)
+      return <Text>engine band</Text>
+    })
+  }
+
+  test('the peer card has an Open in Agent Tabs button that opens the pane on that message, on terminal and desktop', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: [CARD_MESSAGE] })
+    await start($)
+    for (const surface of SURFACES) {
+      const card = await $.ui.mount({
+        plugin: 'ide-agent-tabs',
+        surface,
+        component: 'UserMessage',
+        requestId: 'u1',
+        props: { text: FRAMED, origin: { kind: 'plugin', name: 'ide-agent-tabs' }, isExpanded: false },
+      })
+      expect((await card.find({ type: 'Button', key: 'open-in-agent-tabs' }))?.props.label).toBe('Open in Agent Tabs')
+      await card.press({ key: 'open-in-agent-tabs' })
+      expect(w.panes.opened.at(-1)).toEqual(PANE_OPEN)
+      expect(w.panes.open).toEqual(['agent-tabs'])
+      const history = w.ops('history').at(-1)!.args
+      expect(history.session).toBe('codex-1a2b')
+      expect(history.names).toContain('codex-1a2b')
+
+      const pane = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      expect(await pane.find({ type: 'Text', text: 'From: codex-1a2b' })).toBeDefined()
+      expect(await pane.find({ type: 'Text', text: 'Please review x.ts' })).toBeDefined()
+      await pane.press({ key: 'back' })
+      expect(await pane.find({ type: 'Text', text: 'codex-1a2b · 1 message' })).toBeDefined()
+      await pane.unmount()
+      await card.unmount()
+      expect((await openPane($)).text).toBe('Agent Tabs Messages pane closed.')
+    }
+  })
+
+  test('the unread band names senders newest first, opens the newest sender, and hides while the pane is open and once nothing is unread', async ($, on) => {
+    engineBand(on)
+    const w = world(on, { tab: 'tab-c', history: HISTORY, mailFrom: FROM })
+    await start($)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    const bands = await Promise.all(SURFACES.map(surface => $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'AbovePrompt', props: BAND })))
+    for (const band of bands) expect((await band.find({ type: 'Text' }))?.text).toBe('engine band')
+
+    w.mail.unread.push(...Object.keys(FROM))
+    await w.clock.advance(2_000)
+    expect(w.toasts).toEqual(['✉ Agent Tabs message from codex-1a2b · /agent-tabs to view'])
+    for (const band of bands) {
+      expect(await band.find({ type: 'Text', text: '✉ 4 new from gemini-9e9e, docs-9b [11aa22], agy-a2a2, …' })).toBeDefined()
+      const open = await band.find({ type: 'Button', key: 'open-inbox' })
+      expect(open?.props.label).toBe('Open')
+      expect(open?.props.hotkey).toBe('o')
+    }
+
+    await bands[0]!.press({ key: 'open-inbox' })
+    expect(w.panes.opened).toEqual([PANE_OPEN])
+    expect(w.ops('history').at(-1)!.args.session).toBe('9e9e0000-7777')
+    const pane = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'desktop', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    expect(await pane.find({ type: 'Text', text: 'gemini-9e9e · 2 messages' })).toBeDefined()
+    await pane.unmount()
+    for (const band of bands) expect((await band.find({ type: 'Text' }))?.text).toBe('engine band')
+
+    await openPane($)
+    for (const band of bands) expect(await band.find({ type: 'Button', key: 'open-inbox' })).toBeDefined()
+
+    await $.turn.complete({ answer: 'done', durationMs: 5, isAborted: false, turnId: 't1', reason: 'answer' })
+    await w.clock.settle()
+    expect(w.ops('ack')).toHaveLength(1)
+    await w.clock.advance(2_000)
+    for (const band of bands) {
+      expect((await band.find({ type: 'Text' }))?.text).toBe('engine band')
+      await band.unmount()
+    }
+  })
+
+  test('one unread message from one sender reads as one line', async ($, on) => {
+    engineBand(on)
+    const w = world(on, { tab: 'tab-c' })
+    await start($)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    w.mail.unread.push('1-m-0123456789abcdef.json')
+    await w.clock.advance(2_000)
+    for (const surface of SURFACES) {
+      const band = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'AbovePrompt', props: BAND })
+      expect(await band.find({ type: 'Text', text: '✉ 1 new from codex-1a2b' })).toBeDefined()
+      await band.unmount()
+      const survey = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'AbovePrompt', props: { ...BAND, hasSurvey: true } })
+      expect((await survey.find({ type: 'Text' }))?.text).toBe('engine band')
+      await survey.unmount()
+    }
+  })
+})
+
+describe('folder opener', () => {
+  test('argv per platform: explorer.exe on Windows, open on macOS, xdg-open on Linux, the path as one argument', () => {
+    expect(folderOpener('windows', 'C:\\Users\\me\\ide agent tabs')).toEqual(['explorer.exe', 'C:\\Users\\me\\ide agent tabs'])
+    expect(folderOpener('mac', '/Users/me/ide agent tabs')).toEqual(['open', '/Users/me/ide agent tabs'])
+    expect(folderOpener('linux', '/home/me/ide-agent-tabs')).toEqual(['xdg-open', '/home/me/ide-agent-tabs'])
+  })
+
+  test('the platform comes from OS on Windows and uname elsewhere', () => {
+    expect(platformOf('Windows_NT', undefined)).toBe('windows')
+    expect(platformOf(undefined, 'Darwin\n')).toBe('mac')
+    expect(platformOf(undefined, 'Linux\n')).toBe('linux')
+    expect(platformOf(undefined, undefined)).toBe('linux')
+  })
+
+  test('a folder heading is the base name of the path', () => {
+    expect(folderName('C:\\Users\\me\\ide-agent-tabs')).toBe('ide-agent-tabs')
+    expect(folderName('/home/me/ide-agent-tabs/')).toBe('ide-agent-tabs')
+    expect(folderName('\\\\server\\share')).toBe('share')
+    expect(folderName('C:\\')).toBe('C:\\')
+    expect(folderName('/')).toBe('/')
   })
 })

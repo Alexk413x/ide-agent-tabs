@@ -33,13 +33,18 @@ export type AgentTabsPaneRow = {
   harness: string
   model: string | null
   effort: string | null
-  where: string | null
   session: string | null
   id: string | null
   names: string[]
 }
 
-export type AgentTabsPaneGroup = { heading: string; rows: AgentTabsPaneRow[] }
+export type AgentTabsPaneFolder = { path: string | null; heading: string | null; rows: AgentTabsPaneRow[] }
+
+export type AgentTabsPaneHost = { heading: string; folders: AgentTabsPaneFolder[] }
+
+export type AgentTabsSender = { id: string; name: string }
+
+export type AgentTabsInbox = { count: number; senders: AgentTabsSender[] }
 
 export type AgentTabsParty = { id?: string; name?: string; agent?: string; path?: string }
 
@@ -64,7 +69,8 @@ declare module 'claude-code' {
       activity: AgentTabsActivity
       pane: AgentTabsPane
       paneOpen: boolean
-      paneAgents: AgentTabsPaneGroup[]
+      paneHosts: AgentTabsPaneHost[]
+      inbox: AgentTabsInbox | null
       paneHistory: AgentTabsMessage[]
     }
   }

@@ -54,7 +54,7 @@ The file name without `.json` is the IDE's id in the MCP tools.
   again. Stop beating when the IDE or window closes.
 - Delete the file when the IDE or window closes.
 - Readers ignore a file whose `pid` isn't a running process, and may delete it.
-- Readers also ignore a file with `beatMs` whose modification time is more than 5 � `beatMs` old, and may
+- Readers also ignore a file with `beatMs` whose modification time is more than 5 × `beatMs` old, and may
   delete it, because Windows reuses a pid. A file without `beatMs` follows the `pid` rule alone. A file
   without `startedAt` takes its modification time as the start time.
 - A reader that sees a `protocol` value it doesn't know skips that file.
@@ -893,8 +893,8 @@ It makes Claude Code's native `ListAgents` and `SendMessage` reach every Agent T
 delivers a Claude tab's mail in-process instead of through a typed wake line.
 
 The mod writes no presence or mailbox file. Its only file access is `$.fs.list` and `$.fs.read` on its own
-`new/` folder. Everything else goes through the internal `agent_tabs_mod` tool of the plugin's own MCP
-server, so the server's locks, validation, rate limit and dedupe apply. The mod finds the server's name
+`new/` folder, and `$.fs.stat` on a folder heading the person presses in the pane. Everything else goes
+through the internal `agent_tabs_mod` tool of the plugin's own MCP server, so the server's locks, validation, rate limit and dedupe apply. The mod finds the server's name
 with `$.mcp.connect("ide-agent-tabs")`: `plugin:ide-agent-tabs:ide-agent-tabs` for the installed plugin,
 `ide-agent-tabs` under `--plugin-dir`. `$.mcp.call` and `$.tool.call` pass through the permission check,
 so the mod's `tool.check` hook allows `agent_tabs_mod` and `ListAgents` when, and only when, the mod
@@ -1061,23 +1061,47 @@ including each native peer name, goes to `next(e)` unchanged.
 #### UI
 
 - `$.ui.status` shows the unread count and the first sender, such as `✉ 2 · codex-1a2b`, and clears at 0.
-- `$.ui.toast` announces each arrival.
+- `$.ui.toast` announces each arrival: `✉ Agent Tabs message from <sender> · /agent-tabs to view`.
 - A `ui.render` hook on `UserMessage` draws the mod's own delivery prompts (origin `plugin` with this
-  plugin's name, or `peer`, and text in the delivery frame) as a three-line card: sender and agent,
-  folder, and a reply hint. It returns `next(e)` when `isExpanded`, so ctrl+o shows the whole message, and
-  for every other row, including the person's own prompts (`composer`, `bridge`) and other plugins'.
+  plugin's name, or `peer`, and text in the delivery frame) as a card: sender and agent, folder, a reply
+  hint, and an **Open in Agent Tabs** button that opens the pane on that message's detail, under the
+  sender's messages. It returns `next(e)` when `isExpanded`, so ctrl+o shows the whole message, and for
+  every other row, including the person's own prompts (`composer`, `bridge`) and other plugins'.
+- A `ui.render` hook on `AbovePrompt` draws one line while the session has unread mail in `new/`:
+  `✉ <n> new from <name>, <name>, <name>, …` (senders newest first, by row name) and an **Open** button
+  that opens the pane on the newest sender's messages. Its hotkey `o` works once the band holds the
+  keyboard (ctrl+x tab or a click); the API gives a band Button no key that works from the prompt
+  without taking an engine keybinding action. It returns `next(e)` while a survey holds the band, while
+  the pane is open, and when nothing is unread. The poll writes the count and senders to `$.state` only
+  when the unread set changes. Toasts and `$.ui.status` take text only, so the band and the card are the
+  ways to open the pane from a notification.
 
 #### Agents pane
 
-`/agent-tabs` shows or hides one pane, closed by default. It docks beside the transcript in the
-fullscreen layout and opens inline above the prompt otherwise. It opens with `focus`, `closeOnEscape` and
-`holdToasts`, so it holds the keyboard as a dialog does: the arrow keys and Tab walk its rows, Enter
-opens one, and a click works where the surface reports presses. Toasts wait until it closes.
+`/agent-tabs` (or `/agent-tabs-messages`) shows or hides one pane, **Agent Tabs Messages**, closed by
+default. It opens with `focus`, `closeOnEscape`, `holdToasts` and `rows: 18`, so it holds the keyboard as
+a dialog does: the arrow keys and Tab walk its rows, Enter opens one, and a click works where the surface
+reports presses. Toasts wait until it closes. The surface decides where it sits: it docks beside the
+transcript in the fullscreen layout from 110 columns, and opens inline above the prompt otherwise. None
+of these options seats it inline: `rows` is the inline height, which the dock ignores, and `focus` is a
+request for the keys only.
 
-- **Agents:** the `ListAgents` layout, from the same merge code: folder headings, one row per agent with
-  name, state, time since start, harness, model, effort, IDE or terminal and session, cloud sessions last. The state is
-  coloured by theme key: `idle` success, `busy` warning, `permission` error, `waking` suggestion,
-  anything else dim.
+- **Agents:** the heading `Agent Tabs Messages`, then the sessions from the `ListAgents` merge code,
+  grouped by IDE or terminal (the row's `where`, such as `Antigravity IDE` or `Windows Terminal`), with
+  the session's own host first, the others in case-insensitive order, `Other` for an unknown host, and
+  `Cloud (can receive, can't reply)` last. Under each host come its folders, indented two spaces, the
+  session's own folder first, then by base name, then `Folder not known`; then the session lines,
+  indented four. A blank line comes before each host group and before each folder after the first. A
+  line has name, state, time since start, harness, model, effort and session, with no IDE or terminal
+  column. Inside a folder the `ListAgents` order applies. The state is coloured by theme key: `idle`
+  success, `busy` warning, `permission` error, `waking` suggestion, anything else dim.
+- A folder heading is a Button labelled with the folder's base name, in a keyed Box. A Box drawn
+  `position: "absolute"` and `display: "none"` with `hover: { display: "flex" }` beside it shows the full
+  path while the pointer is on the heading. Pressing the heading checks the path with `$.fs.stat` and
+  `resolve`, refuses one that doesn't exist or isn't a folder with a toast, and runs, by argv with no
+  shell, `explorer.exe <path>` on Windows (`OS` is `Windows_NT`), `open <path>` on macOS and
+  `xdg-open <path>` on Linux (`uname -s`), with the resolved path. `explorer.exe` exits 1 even when it
+  opened the folder, so on Windows only a failed start counts as an error.
 - **Messages** of the chosen agent: everything it sent or received through Agent Tabs or SendMessage
   with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
   `HH:MM  ↘ peer  first line…` for received, in local time.
@@ -1132,8 +1156,11 @@ keep working when the model calls them.
 the `ListAgents` list (folder groups, alignment and cuts, order, the Claude join, the cloud group, the
 left-out count and the fallback), model and effort reports, `SendMessage` routing both ways, by short
 name and for every listed name, inbound delivery when idle and when busy,
-release after a failed submit, the permission rule, tool deferral, the card on the terminal and
-desktop surfaces, the pane's three views on both surfaces, its navigation, Reply, `$.state` across a
+release after a failed submit, the permission rule, tool deferral, the card and its **Open in Agent
+Tabs** button on the terminal and desktop surfaces, the unread band appearing, opening the newest sender
+and hiding, the toast text, the pane's host and folder grouping, the folder hover card and press (the
+argv on Windows, macOS and Linux, and the refusals), the fullscreen open with a docked pane, the pane's
+three views on both surfaces, its navigation, Reply, `$.state` across a
 reload, no reads while closed, the native log, and `claudeMod` off. `mcp/test/history.test.ts` covers
 the sent log, `history` order and merge, that `history` marks nothing read, log retention and the
 `claudeMod` setting. `mcp/test/mod.test.ts` covers the server side: the driver rules, the stale-beat
