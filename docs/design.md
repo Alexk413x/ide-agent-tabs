@@ -1151,13 +1151,19 @@ request for the keys only.
   its text, style and the item it belongs to, and an `acts` table from item to action. The module
   tracks the hovered item from `onPointer` (`move`, `enter`, `leave`) and the focused item from `onKey`
   (`up`, `down`, `tab`, shift+`tab`), which reach it once a click gives it the keys. A lit item, hovered
-  or focused, draws `▎` at its lines' mark column and underlines its parts. A left `up`, or `return` or
+  or focused, draws `▎` at its lines' mark column and underlines its parts. The module draws one
+  height-1 Box per row, in the order `listRows` gives, and hit-tests the pointer's `y` against that same
+  list, so each drawn row maps to one entry. It draws the round box edges itself as text rows (`╭─╮`,
+  `│ … │`, `╰─╯`), and a blank row holds a space, because an empty Text takes no height on the terminal
+  and shifted every row below it. A left `up`, or `return` or
   space on the focused item, posts that item's act; the mod's `ui.message` hook on the pane runs it:
   `session`, `folder`, `copy`, `message`, `back` or `reply`. VS Code and mobile get the Buttons below:
   the Elements table types no `Client` there, and the test kit's VS Code table answers one that draws
   nothing, so the mod checks the surface, not the table.
 - A folder heading is `▸ <base name>`, bold, indented two. Hovering or focusing it underlines it and
   shows the full path to its right; the path is its own item, dim, which copies itself when clicked.
+  While the path shows, the whole heading line, gap included, keeps it lit, and after the pointer
+  leaves it stays for 300 ms unless the pointer comes back.
   `Folder not known` is bold text with the same mark. Pressing the heading checks the path with `$.fs.stat` and `resolve`, refuses one that doesn't exist
   or isn't a folder with a toast, and runs, by argv with no shell, `explorer.exe <path>` on Windows
   (`OS` is `Windows_NT`), `open <path>` on macOS and `xdg-open <path>` on Linux (`uname -s`), with the

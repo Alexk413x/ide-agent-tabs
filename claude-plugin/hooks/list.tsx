@@ -12,37 +12,45 @@ export type ListPart = {
 }
 export type ListLine = { item?: string; indent: number; mark?: number; parts: ListPart[] }
 export type ListGroup = { border: boolean; lines: ListLine[] }
-export type ListProps = { groups: ListGroup[]; acts: Record<string, JsonValue> }
-type ListState = { hovered: string | null; focused: string | null }
+export type ListProps = { groups: ListGroup[]; acts: Record<string, JsonValue>; width?: number }
+type ListState = { hovered: string | null; focused: string | null; linger: number }
+
+export type ListRow = { edge: 'top' | 'bottom'; group: number } | { edge?: undefined; group: number; index: number; line: ListLine; offset: number; border: boolean }
 
 const MARK = '▎'
-const IDLE: ListState = { hovered: null, focused: null }
+const IDLE: ListState = { hovered: null, focused: null, linger: 0 }
+const TICK_MS = 50
+export const LINGER_MS = 300
+const LINGER_TICKS = LINGER_MS / TICK_MS
 
 const itemOf = (line: ListLine, part: ListPart) => part.item ?? line.item
 
-export function lineAt(groups: readonly ListGroup[], y: number): { line: ListLine; offset: number } | undefined {
-  let top = 0
-  for (const g of groups) {
-    const edge = g.border ? 1 : 0
-    const inside = y - top - edge
-    if (inside >= 0 && inside < g.lines.length) return { line: g.lines[inside]!, offset: edge * 2 }
-    top += g.lines.length + edge * 2
-  }
-  return undefined
+export function listRows(groups: readonly ListGroup[]): ListRow[] {
+  return groups.flatMap((g, group): ListRow[] => [
+    ...(g.border ? [{ edge: 'top' as const, group }] : []),
+    ...g.lines.map((line, index) => ({ group, index, line, offset: g.border ? 2 : 0, border: g.border })),
+    ...(g.border ? [{ edge: 'bottom' as const, group }] : []),
+  ])
 }
 
+const revealed = (part: ListPart, active: string | null) => part.revealOn === undefined || (active !== null && part.revealOn.includes(active))
+
 export function itemAt(groups: readonly ListGroup[], x: number, y: number, active: string | null): string | null {
-  const at = lineAt(groups, y)
-  if (at === undefined) return null
-  const { line, offset } = at
+  const row = listRows(groups)[y]
+  if (row === undefined || row.edge !== undefined) return null
+  const { line, offset } = row
   let col = offset + line.indent
   for (const part of line.parts) {
-    if (part.revealOn && (active === null || !part.revealOn.includes(active))) continue
+    if (!revealed(part, active)) continue
     if (x >= col && x < col + part.text.length && itemOf(line, part) !== undefined) return itemOf(line, part)!
     col += part.text.length
   }
-  return line.item !== undefined && line.parts.every(p => p.item === undefined) && x >= offset ? line.item : null
+  if (line.item !== undefined && line.parts.every(p => p.item === undefined)) return line.item
+  const opened = line.parts.some(p => p.revealOn !== undefined && revealed(p, active))
+  return opened ? active : null
 }
+
+const reveals = (groups: readonly ListGroup[], item: string) => groups.some(g => g.lines.some(l => l.parts.some(p => p.revealOn?.includes(item))))
 
 const List: ClientModule<ListProps, ListState> = (props, surface) => {
   const { Box, Text } = surface.elements
@@ -51,13 +59,22 @@ const List: ClientModule<ListProps, ListState> = (props, surface) => {
     const act = item === null ? undefined : props.acts[item]
     if (act !== undefined) surface.post(act)
   }
+  if (surface.state === undefined) {
+    surface.setState(IDLE)
+    surface.every(TICK_MS, () => {
+      const state = surface.state ?? IDLE
+      if (state.linger === 0) return
+      surface.setState(state.linger === 1 ? { ...state, linger: 0, hovered: null } : { ...state, linger: state.linger - 1 })
+    })
+  }
   surface.onPointer(e => {
     const state = surface.state ?? IDLE
     if (e.type === 'leave') {
-      if (state.hovered !== null) surface.setState({ ...state, hovered: null })
+      if (state.hovered === null) return
+      surface.setState(reveals(props.groups, state.hovered) ? { ...state, linger: LINGER_TICKS } : { ...state, hovered: null, linger: 0 })
     } else if (e.type === 'move' || e.type === 'enter') {
       const hovered = itemAt(props.groups, e.x, e.y, state.hovered ?? state.focused)
-      if (hovered !== state.hovered) surface.setState({ ...state, hovered })
+      if (hovered !== state.hovered || state.linger !== 0) surface.setState({ ...state, hovered, linger: 0 })
     } else if (e.type === 'up' && e.button === 'left') {
       post(itemAt(props.groups, e.x, e.y, state.hovered ?? state.focused))
     }
@@ -77,47 +94,47 @@ const List: ClientModule<ListProps, ListState> = (props, surface) => {
 
   const state = surface.state ?? IDLE
   const lit = (item: string | undefined): boolean => item !== undefined && (item === state.hovered || item === state.focused)
-  const drawLine = (line: ListLine, y: string) => {
+  const width = props.width ?? surface.columns
+  const inner = Math.max(0, width - 4)
+  const drawRow = (row: ListRow, y: number) => {
+    if (row.edge !== undefined) {
+      const [left, right] = row.edge === 'top' ? ['╭', '╮'] : ['╰', '╯']
+      return (
+        <Box key={`edge-${y}`} flexDirection="row" height={1}>
+          <Text>{`${left}${'─'.repeat(Math.max(0, width - 2))}${right}`}</Text>
+        </Box>
+      )
+    }
+    const { line } = row
     const marked = line.mark !== undefined && lit(line.item)
     const lead = ' '.repeat(line.indent)
     const prefix = marked ? `${lead.slice(0, line.mark)}${MARK}${lead.slice(line.mark! + 1)}` : lead
+    const parts = line.parts.filter(part => !part.revealOn || part.revealOn.some(lit))
+    const used = prefix.length + parts.reduce((n, p) => n + p.text.length, 0)
     return (
-      <Box key={`line-${y}`} flexDirection="row">
-        <Text>{prefix}</Text>
-        {line.parts.flatMap((part, i) => {
-          const on = lit(itemOf(line, part))
-          if (part.revealOn && !part.revealOn.some(lit)) return []
-          return [
+      <Box key={`row-${y}`} flexDirection="row" height={1} overflow="hidden">
+        {row.border && <Text>{'│ '}</Text>}
+        <Box key={`line-${row.group}-${row.index}`} flexDirection="row">
+          <Text>{prefix}</Text>
+          {parts.map((part, i) => (
             <Text
               key={`part-${y}-${i}`}
               {...(part.color !== undefined ? { color: part.color } : {})}
               {...(part.dim ? { dimColor: true } : {})}
               {...(part.bold ? { bold: true } : {})}
               {...(part.italic ? { italic: true } : {})}
-              {...(on && part.underline ? { underline: true } : {})}
+              {...(lit(itemOf(line, part)) && part.underline ? { underline: true } : {})}
             >
               {part.text}
-            </Text>,
-          ]
-        })}
+            </Text>
+          ))}
+        </Box>
+        {/* Never an empty Text: the terminal gives one no height, and every row below would drift up. */}
+        <Text>{row.border ? `${' '.repeat(Math.max(0, inner - used))} │` : ' '}</Text>
       </Box>
     )
   }
-  return (
-    <Box flexDirection="column">
-      {props.groups.map((g, gi) =>
-        g.border ? (
-          <Box key={`group-${gi}`} flexDirection="column" borderStyle="round" paddingX={1}>
-            {g.lines.map((line, li) => drawLine(line, `${gi}-${li}`))}
-          </Box>
-        ) : (
-          <Box key={`group-${gi}`} flexDirection="column">
-            {g.lines.map((line, li) => drawLine(line, `${gi}-${li}`))}
-          </Box>
-        ),
-      )}
-    </Box>
-  )
+  return <Box flexDirection="column">{listRows(props.groups).map(drawRow)}</Box>
 }
 
 export default List

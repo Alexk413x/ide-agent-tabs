@@ -1015,7 +1015,7 @@ export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number): 
     })
     return { border: true, lines }
   })
-  return { groups, acts }
+  return { groups, acts, width }
 }
 
 export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
@@ -1030,7 +1030,7 @@ export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMe
       return { item: `m${i}`, indent: 2, mark: 0, parts: [{ text: messageLine(m, hosts, width - 2), underline: true }] }
     }),
   ]
-  return { groups: [{ border: false, lines }], acts }
+  return { groups: [{ border: false, lines }], acts, width }
 }
 
 export const detailChips = (): ListProps => ({
