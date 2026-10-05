@@ -867,7 +867,8 @@ describe('agents pane', () => {
       const scope = nodes(tree).find(n => n.props?.key === 'heading-folder:4:C:\\W\\sub')
       const reveal = nodes(scope).find(n => n.type === 'Box' && n.props?.display === 'none')
       expect(reveal?.hover).toEqual({ display: 'flex' })
-      expect(reveal?.props?.position).toBeUndefined()
+      expect(reveal?.props?.position).toBe('absolute')
+      expect(reveal?.props?.left).toBe('▸ sub'.length + 4)
       expect(nodes(scope).find(n => n.type === 'Button')?.hover).toBeUndefined()
 
       w.runs.length = 0

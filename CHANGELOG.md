@@ -25,7 +25,7 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 - A folder heading shows the folder's base name. Pressing it opens the folder in the file manager:
   `explorer.exe` on Windows, `open` on macOS, `xdg-open` on Linux, run by argv with no shell. On Windows
   the folder window opens behind the IDE, because Windows doesn't let a background process take the
-  foreground. Hovering the heading shows the full path on the line below; pressing that line copies the
+  foreground. Hovering the heading shows the full path to its right; pressing the path copies the
   path to the clipboard.
 - Actions in the pane report on a line at its bottom for 6 seconds, because the pane holds toasts while
   it's open.
