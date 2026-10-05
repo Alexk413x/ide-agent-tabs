@@ -24,8 +24,9 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
   the second line. The server answers a new `counts` op for the pane and reads only log and mailbox
   files it hasn't parsed yet. Nothing is counted while the pane is closed.
 - A session's messages screen leads with `← Back`, then its title, status line, folder and IDE or
-  terminal, and full name and session id, indented under it. The pane has its own `✕` close chip at
-  the right of the title or Back line. An empty view's text is centred.
+  terminal, and full name and session id, indented under it. An empty view's text is centred.
+- While the agents list loads, the pane says "Rounding up your agents…". A long message's detail shows
+  "Fetching the rest of this message…" until its full text arrives.
 - A blank line comes before each session in the agents view.
 - The pane shows session names without their trailing `[ref]` (`plugins-82`). A session's messages
   screen puts the full name and `Session: <id>` on a dim line under its title. ListAgents,
