@@ -221,7 +221,7 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
   refuses every resume. The record of each ended session, in `~/.ide-agent-tabs/history/`, keeps no
   transcript text beyond a 120-character preview of the last answer.
 - Use the Claude Code mod (in-process messaging): With `on`, Claude Code sessions message other agents
-  with SendMessage and ListAgents, get their messages in-process, and have the `/agent-tabs` pane.
+  with SendMessage and ListAgents, get their messages in-process, and have the `/agent-messages` pane.
   `off` turns the mod off; Claude Code then uses the hooks, wake lines and messaging tools. Claude Code
   sessions that start after the change pick it up. Suggest `off` only when the user reports a problem
   with the mod.

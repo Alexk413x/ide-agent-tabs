@@ -10,8 +10,8 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
 
 ### Changed
 
-- The Claude Code mod's pane is **Agent Tabs Messages**, in its title and at the top of the agents view.
-  `/agent-tabs-messages` opens it too, beside `/agent-tabs`.
+  `/agent-messages` opens and closes it; it replaces `/agent-tabs`. Nothing in the pane is pre-selected,
+  and the only hover effect is the `▎` side line.
 - The agents view groups sessions by IDE or terminal (`Antigravity IDE`, `Windows Terminal`, and so on),
   each in a rounded box with its name as the first line, with `Other` for an unknown host, then
   `Remote Control` and the cloud group last. Under each come the folders open there, by base name
@@ -35,7 +35,7 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
   `✉ <n> new from <names>` and an **Open** button, which opens the pane on the newest sender's messages.
   Its hotkey is `o` once the band has the keyboard (ctrl+x tab or a click). The band hides while the
   pane is open and once nothing is unread.
-- The arrival toast ends with `· /agent-tabs to view`, and the toast and status line name the sender as
+- The arrival toast ends with `· /agent-messages to view`, and the toast and status line name the sender as
   `list_sessions` does.
 - `ListAgents` in a Claude Code session uses the pane's layout, one line per session: IDE or terminal
   headings, folder base names indented two, session lines indented four with no `WHERE` column, then
@@ -171,7 +171,7 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
   - The status line shows the unread count and the first sender, a toast announces each arrival, and the
     transcript draws each delivered message as a compact card.
   - The Agent Tabs messaging tools move behind ToolSearch in Claude Code.
-  - `/agent-tabs` shows or hides the agents pane: the merged agent list with coloured states, the
+  - `/agent-messages` shows or hides the agents pane: the merged agent list with coloured states, the
     messages the chosen agent sent or received, oldest first, and one message's detail with Reply, which
     fills the prompt. Arrow keys, Enter, Back and Esc navigate; it reads nothing while closed.
   - Each send writes an owner-only entry to `mail/<sender>/sent-log/`, and the mod logs native

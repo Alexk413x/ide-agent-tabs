@@ -562,7 +562,7 @@ describe('inbound mail', () => {
     expect(w.ops('ack')).toHaveLength(1)
     expect(w.mail.read).toEqual(['1-m-0123456789abcdef.json'])
     expect(w.statuses[0]).toBe('✉ 1 · w-1a')
-    expect(w.toasts).toEqual(['✉ Agent Tabs message from w-1a · /agent-tabs to view'])
+    expect(w.toasts).toEqual(['✉ Agent Tabs message from w-1a · /agent-messages to view'])
     await w.clock.advance(2_000)
     expect(w.statuses.at(-1)).toBeUndefined()
   })
@@ -733,15 +733,15 @@ async function outline(ui: Drawing) {
     .map(e => e.text.trim())
 }
 
-async function openPane($: Engine, command = 'agent-tabs', presentation = PRESENTATION) {
+async function openPane($: Engine, command = 'agent-messages', presentation = PRESENTATION) {
   return $.command.run({ command, args: '', origin: COMPOSER, presentation })
 }
 
 describe('agents pane', () => {
-  test('/agent-tabs toggles one pane, closed by default, and reads nothing while closed', async ($, on) => {
+  test('/agent-messages toggles one pane, closed by default, and reads nothing while closed', async ($, on) => {
     const w = world(on, { tab: 'tab-c', history: HISTORY })
     await start($)
-    expect(w.panes.commands).toEqual(['agent-tabs', 'agent-tabs-messages'])
+    expect(w.panes.commands).toEqual(['agent-messages'])
     expect(w.panes.open).toEqual([])
     const booted = w.counts.listAgents
     await w.clock.advance(10_000)
@@ -760,9 +760,9 @@ describe('agents pane', () => {
     await w.clock.advance(10_000)
     expect(w.counts.listAgents).toBe(booted + 2)
 
-    expect((await openPane($, 'agent-tabs-messages')).text).toBe('Agent Tabs Messages pane opened.')
+    expect((await openPane($, 'agent-messages')).text).toBe('Agent Tabs Messages pane opened.')
     expect(w.panes.open).toEqual(['agent-tabs'])
-    expect((await openPane($, 'agent-tabs-messages')).text).toBe('Agent Tabs Messages pane closed.')
+    expect((await openPane($, 'agent-messages')).text).toBe('Agent Tabs Messages pane closed.')
     expect(w.panes.open).toEqual([])
   })
 
@@ -922,10 +922,10 @@ describe('agents pane', () => {
     })
   }
 
-  test('/agent-tabs in the fullscreen layout opens the pane with nothing that seats it inline, and the docked pane draws the groups', async ($, on) => {
+  test('/agent-messages in the fullscreen layout opens the pane with nothing that seats it inline, and the docked pane draws the groups', async ($, on) => {
     const w = world(on, { tab: 'tab-c' })
     await start($)
-    await openPane($, 'agent-tabs', { isFullscreen: true, columns: 200 })
+    await openPane($, 'agent-messages', { isFullscreen: true, columns: 200 })
     expect(w.panes.opened).toEqual([PANE_OPEN])
     const viewport = { columns: 200, rows: 50, isFullscreen: true }
     for (const surface of SURFACES) {
@@ -1100,7 +1100,7 @@ describe('opening the pane from a message', () => {
 
     w.mail.unread.push(...Object.keys(FROM))
     await w.clock.advance(2_000)
-    expect(w.toasts).toEqual(['✉ Agent Tabs message from w-1a · /agent-tabs to view'])
+    expect(w.toasts).toEqual(['✉ Agent Tabs message from w-1a · /agent-messages to view'])
     for (const band of bands) {
       expect(await band.find({ type: 'Text', text: '✉ 4 new from sub-9e, docs-9b [11aa22], a-a2, …' })).toBeDefined()
       const open = await band.find({ type: 'Button', key: 'open-inbox' })
