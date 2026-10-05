@@ -24,6 +24,7 @@ import {
   type Message,
 } from './mailbox.js';
 import { readCodexConfig } from './codexConfig.js';
+import { recordEnded, transcriptDirs, type TranscriptDirs } from './closed.js';
 import { runHook } from './hook.js';
 import { history, logId, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
@@ -76,6 +77,7 @@ export interface MessagingDeps {
   sleep?: (ms: number) => Promise<void>;
   rewakeEveryMs?: number;
   heartbeatMs?: number;
+  transcripts?: TranscriptDirs;
 }
 
 export interface SendInput {
@@ -104,6 +106,7 @@ export interface ModPresenceInput {
   state?: ModState;
   model?: string;
   effort?: string;
+  owner?: string;
 }
 
 export interface WaitInput {
@@ -202,6 +205,17 @@ export class Messaging {
 
   private get alive() {
     return this.deps.isAlive ?? isProcessAlive;
+  }
+
+  private readonly ended = (p: PresenceFile, at: number) => recordEnded(this.deps.home, p, at, this.deps.transcripts ?? transcriptDirs(this.deps.env));
+
+  live(): Promise<Presence[]> {
+    return liveSessions(this.deps.home, this.alive, this.now(), this.ended);
+  }
+
+  async recordEnd(): Promise<void> {
+    const own = await readPresence(this.deps.home, this.sessionId);
+    if (own?.pid === this.deps.pid) await this.ended(own, this.now());
   }
 
   private presence(current: PresenceFile | undefined, host = current?.host): PresenceFile {
@@ -411,13 +425,13 @@ export class Messaging {
     const now = this.now();
     if (now - this.lastClean < CLEAN_EVERY_MS) return;
     this.lastClean = now;
-    const live = await liveSessions(this.deps.home, this.alive, now);
+    const live = await liveSessions(this.deps.home, this.alive, now, this.ended);
     await cleanMail(this.deps.home, new Set(live.map((s) => s.id)), now);
   }
 
   async listSessions() {
     const now = this.now();
-    const sessions = await liveSessions(this.deps.home, this.alive, now);
+    const sessions = await liveSessions(this.deps.home, this.alive, now, this.ended);
     const labels = new Map<string, string | undefined>();
     for (const host of new Set(sessions.flatMap((s) => (s.host !== undefined ? [s.host] : [])))) {
       labels.set(host, await this.deps.hosts.describeHost?.(host).catch(() => undefined));
@@ -466,7 +480,7 @@ export class Messaging {
     if (text.length > MAX_TEXT_CHARS) throw new MailError(`text exceeds ${MAX_TEXT_CHARS} characters`);
     if (replyTo !== undefined) checkMessageId(replyTo, 'replyTo');
     const now = this.now();
-    const live = await liveSessions(this.deps.home, this.alive, now);
+    const live = await liveSessions(this.deps.home, this.alive, now, this.ended);
     const short = shortNames(live);
     const recipient = live.find((s) => s.id === input.to) ?? live.find((s) => short.get(s.id) === input.to);
     if (!recipient) {
@@ -568,7 +582,7 @@ export class Messaging {
     const pending = (await peekUnread(this.deps.home, peer)).some((m) => m.from.id === this.sessionId);
     if (!pending) return false;
     const now = this.now();
-    const recipient = (await liveSessions(this.deps.home, this.alive, now)).find((s) => s.id === peer);
+    const recipient = (await liveSessions(this.deps.home, this.alive, now, this.ended)).find((s) => s.id === peer);
     if (!recipient) return false;
     await this.wake(recipient, now);
     return true;
@@ -635,6 +649,7 @@ export class Messaging {
     }
     if (input.model !== undefined && !isModel(input.model)) throw new MailError('model must be one printable line of at most 128 characters');
     if (input.effort !== undefined && !isEffort(input.effort)) throw new MailError('effort must be at most 32 letters, digits, dots, dashes or underscores');
+    if (input.owner !== undefined && !isSessionId(input.owner)) throw new MailError(`not a session id: ${input.owner}`);
     const now = this.now();
     const claim = input.driver === true && this.isTab;
     await this.updateOwn((p) => {
@@ -649,6 +664,7 @@ export class Messaging {
         ...(input.nativeName !== undefined && input.driver !== false ? { nativeName: input.nativeName } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        ...(input.owner !== undefined ? { owner: input.owner } : {}),
       };
     });
     const own = await readPresence(this.deps.home, this.sessionId);

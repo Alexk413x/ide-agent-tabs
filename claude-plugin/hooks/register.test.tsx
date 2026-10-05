@@ -257,7 +257,7 @@ describe('presence and state', () => {
   test('a tab session claims the driver under its native name and reports turn and permission states', async ($, on) => {
     const w = world(on, { tab: 'tab-c' })
     await start($)
-    expect(w.ops('presence')[0]!.args).toEqual({ op: 'presence', driver: true, state: 'idle', nativeName: NATIVE, model: 'claude-opus-5-5' })
+    expect(w.ops('presence')[0]!.args).toEqual({ op: 'presence', driver: true, state: 'idle', nativeName: NATIVE, model: 'claude-opus-5-5', session: 'b2f0c4de-0000-4000-8000-000000000000' })
 
     await $.turn.start({ text: 'go', turnId: 't1' })
     await $.classic.PermissionRequest({ tool_name: 'Bash', tool_input: { command: 'ls' } } as never)
@@ -282,7 +282,7 @@ describe('presence and state', () => {
   test('a session outside a tab bridges but claims nothing, reads no name and polls no mailbox', async ($, on) => {
     const w = world(on, { unread: ['1-m-0123456789abcdef.json'] })
     await start($)
-    expect(w.ops('presence').map(c => c.args)).toEqual([{ op: 'presence', model: 'claude-opus-5-5' }])
+    expect(w.ops('presence').map(c => c.args)).toEqual([{ op: 'presence', model: 'claude-opus-5-5', session: 'b2f0c4de-0000-4000-8000-000000000000' }])
     expect(w.counts.listAgents).toBe(0)
     await $.turn.start({ text: 'go', turnId: 't1' })
     await w.clock.advance(10_000)
@@ -314,7 +314,7 @@ describe('model and effort', () => {
   test('presence carries the model and CLAUDE_EFFORT at start, then only what changes', async ($, on) => {
     const w = world(on, { tab: 'c1a2b3c4-0000', effort: 'high' })
     await start($)
-    expect(w.ops('presence')[0]!.args).toEqual({ op: 'presence', driver: true, state: 'idle', nativeName: NATIVE, model: 'claude-opus-5-5', effort: 'high' })
+    expect(w.ops('presence')[0]!.args).toEqual({ op: 'presence', driver: true, state: 'idle', nativeName: NATIVE, model: 'claude-opus-5-5', effort: 'high', session: 'b2f0c4de-0000-4000-8000-000000000000' })
     await $.turn.start({ text: 'go', turnId: 't1' })
     w.model.current = 'claude-sonnet-5-5'
     await $.turn.start({ text: 'again', turnId: 't2' })
@@ -333,7 +333,7 @@ describe('model and effort', () => {
     const w = world(on, { tab: 'c1a2b3c4-0000' })
     w.model.current = ''
     await start($)
-    expect(w.ops('presence')[0]!.args).toEqual({ op: 'presence', driver: true, state: 'idle', nativeName: NATIVE })
+    expect(w.ops('presence')[0]!.args).toEqual({ op: 'presence', driver: true, state: 'idle', nativeName: NATIVE, session: 'b2f0c4de-0000-4000-8000-000000000000' })
   })
 })
 

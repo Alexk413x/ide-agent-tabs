@@ -80,6 +80,13 @@ class AgentTabsConfigurable : BoundConfigurable("Agent Tabs") {
                     .comment("After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off.")
             }
             row {
+                checkBox("Allow resuming closed sessions")
+                    .bindSelected({ Agents.settings.shared().allowResume }, { value ->
+                        if (value != Agents.settings.shared().allowResume) saved(Agents.settings.setAllowResume(value))
+                    })
+                    .comment("Agents can reopen a Claude Code, Codex or Antigravity CLI session that ended in the last 7 days. A resume past the prompt cache re-reads the whole history at full price, so the agent asks you first. Off refuses every resume.")
+            }
+            row {
                 checkBox("Use the Claude Code mod (in-process messaging)")
                     .bindSelected({ Agents.settings.shared().claudeMod }, { value ->
                         if (value != Agents.settings.shared().claudeMod) saved(Agents.settings.setClaudeMod(value))

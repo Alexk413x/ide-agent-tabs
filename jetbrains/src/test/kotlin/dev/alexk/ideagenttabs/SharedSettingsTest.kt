@@ -173,6 +173,24 @@ class SharedSettingsTest {
     }
 
     @Test
+    fun `allowResume defaults to true, reads a boolean and drops other values`() {
+        assertTrue(settings.shared().allowResume)
+        write(CONFIG_FILE, """{"allowResume": false}""")
+        assertFalse(settings.shared().allowResume)
+        write(CONFIG_FILE, """{"allowResume": "false"}""")
+        assertTrue(settings.shared().allowResume)
+    }
+
+    @Test
+    fun `allowResume writes false only when unchecked and removes the key when checked`() {
+        Files.writeString(config, """{"defaultAgent": "codex"}""")
+        assertTrue(settings.setAllowResume(false))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex", "allowResume": false}"""), saved())
+        assertTrue(settings.setAllowResume(true))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex"}"""), saved())
+    }
+
+    @Test
     fun `closeAfterHandoff leaves a broken config alone`() {
         Files.writeString(config, "{broken")
         assertFalse(settings.setCloseAfterHandoff(false))

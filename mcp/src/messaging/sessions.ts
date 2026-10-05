@@ -170,6 +170,7 @@ export async function liveSessions(
   home: string,
   alive: (pid: number) => boolean = isProcessAlive,
   now = Date.now(),
+  ended?: (p: PresenceFile, at: number) => Promise<unknown>,
 ): Promise<Presence[]> {
   const dir = path.join(home, SESSIONS_DIR);
   let names: string[];
@@ -192,7 +193,10 @@ export async function liveSessions(
       continue;
     }
     const dead = presence?.pid !== undefined;
-    if (stat && (dead || now - stat.mtimeMs > STUB_MAX_AGE_MS)) await fs.rm(file, { force: true }).catch(() => undefined);
+    if (stat && (dead || now - stat.mtimeMs > STUB_MAX_AGE_MS)) {
+      if (presence && ended) await ended(presence, Math.min(now, stat.mtimeMs)).catch(() => undefined);
+      await fs.rm(file, { force: true }).catch(() => undefined);
+    }
   }
   return sessions;
 }

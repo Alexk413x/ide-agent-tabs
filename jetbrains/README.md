@@ -124,6 +124,7 @@ Open **Settings > Tools > Agent Tabs**.
 | Default agent | The agent that **New Agent Tab** opens. Saved in `~/.ide-agent-tabs/config.json`. |
 | Launch through OpenRouter (Ori) | `direct` or `ori`. With `ori`, supported agents start as `ori <agent>`, which bills model usage through OpenRouter, and the menus and tab names carry "via OpenRouter". An agent that Ori can't launch starts directly. Shown only when Ori (`ori`) is installed. Saved as `launchVia`. |
 | Close the old tab after a handoff | After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off. Saved as `closeAfterHandoff`, written only when off. |
+| Allow resuming closed sessions | Agents can reopen a Claude Code, Codex or Antigravity CLI session that ended in the last 7 days with `resume_tab`. A resume past the prompt cache re-reads the whole history at full price, so the agent asks you first. Off refuses every resume. Saved as `allowResume`, written only when off. |
 | Use the Claude Code mod (in-process messaging) | Claude Code sessions message other agents with SendMessage and ListAgents and get their messages in-process. Off uses the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0. Claude Code sessions that start after the change pick it up. Saved as `claudeMod`, written only when off. |
 | Open on startup | When to open the default agent as a project opens. See [Open on startup](#open-on-startup). |
 

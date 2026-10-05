@@ -450,6 +450,7 @@ async function boot($: EngineInterface): Promise<AgentTabsSelf | null> {
     op: 'presence',
     ...(inTab ? { driver: true, state: 'idle', nativeName: name ?? fallback } : {}),
     ...info,
+    ...(SESSION_ID.test(fallback) ? { session: fallback } : {}),
   })) as PresenceReply
   Object.assign(reported, info)
   const me: AgentTabsSelf = { server, id: reply.id, name: name ?? fallback, isDriver: reply.driver, mailbox: reply.driver ? reply.mailbox : null }

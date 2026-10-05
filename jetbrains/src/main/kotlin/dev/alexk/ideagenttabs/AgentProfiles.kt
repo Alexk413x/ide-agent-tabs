@@ -327,12 +327,16 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
 
     fun setClaudeMod(on: Boolean): Boolean = saveShared("claudeMod", if (on) AUTO else CLAUDE_MOD_OFF)
 
-    fun setCloseAfterHandoff(value: Boolean): Boolean = try {
+    fun setCloseAfterHandoff(value: Boolean): Boolean = saveFlag("closeAfterHandoff", value, default = true)
+
+    fun setAllowResume(value: Boolean): Boolean = saveFlag("allowResume", value, default = true)
+
+    private fun saveFlag(key: String, value: Boolean, default: Boolean): Boolean = try {
         val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null
-        writeAtomically(configFile, withSharedFlag(existing, "closeAfterHandoff", value, default = true))
+        writeAtomically(configFile, withSharedFlag(existing, key, value, default))
         true
     } catch (e: Exception) {
-        warn("Could not save closeAfterHandoff to $configFile: ${e.message}")
+        warn("Could not save $key to $configFile: ${e.message}")
         false
     }
 

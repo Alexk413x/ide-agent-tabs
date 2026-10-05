@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.26",
+  "version": "0.1.27",
   "publisher": "alexk413x",
   "license": "LicenseRef-Proprietary",
   "repository": {
@@ -141,6 +141,13 @@
             "markdownDescription": "Close the old tab after a handoff. After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off.",
             "order": 4
           },
+          "ideAgentTabs.allowResume": {
+            "type": "boolean",
+            "scope": "machine",
+            "default": true,
+            "markdownDescription": "Allow resuming closed sessions. Agents can reopen a Claude Code, Codex or Antigravity CLI session that ended in the last 7 days with `resume_tab`. A resume past the prompt cache re-reads the whole history at full price, so the agent asks you first. Off refuses every resume.",
+            "order": 5
+          },
           "ideAgentTabs.claudeMod": {
             "type": "string",
             "scope": "machine",
@@ -158,7 +165,7 @@
               "Claude Code sessions use the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0."
             ],
             "markdownDescription": "Use the Claude Code mod (in-process messaging). Takes effect in Claude Code sessions that start after the change.",
-            "order": 5
+            "order": 6
           }
         },
         "order": 1

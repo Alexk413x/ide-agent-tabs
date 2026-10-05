@@ -421,6 +421,8 @@ registry and calls the HTTP API.
 | `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus`. Returns `via: "ori"` for a tab started through Ori. |
 | `close_tab` | Closes a tab by `id`. With no `id`, closes the caller's own tab through `IDE_AGENT_TABS_ID`. Refuses the old tab of a handoff until the handoff is confirmed (see [Handoff](#handoff)). |
 | `handoff` | Hands the caller's work to a new tab (see [Handoff](#handoff)). |
+| `closed_sessions` | Lists the sessions that ended in the last 7 days, newest first, grouped by folder (see [Resume](#resume)). |
+| `resume_tab` | Reopens a closed session with the agent's resume option, behind a cost guard (see [Resume](#resume)). |
 
 `open_tab` routing, first match wins:
 
@@ -467,15 +469,17 @@ its own, such as a peer test or delegated work, passes no `focus`. With `auto`, 
 `never` decide alone and ignore it. The New Agent Tab button and the open-on-startup tab don't use the setting; they always take focus. What
 `focus: false` does depends on the host; see [Focus](#focus).
 
-Two more settings in `config.json` don't depend on where a tab opens:
+Three more settings in `config.json` don't depend on where a tab opens:
 
 | Setting | Key | Values | Default |
 |---|---|---|---|
 | Launch through OpenRouter (Ori) | `launchVia` | `direct`: start each agent with its own command. `ori`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `direct` |
 | Close the old tab after a handoff | `closeAfterHandoff` | `true`: the new session closes the old tab. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
+| Allow resuming closed sessions | `allowResume` | `true`: `resume_tab` reopens closed sessions. `false`: it refuses every call. See [Resume](#resume). | `true` |
 
-VS Code shows these two in the **Agent Tabs** section, as `ideAgentTabs.launchVia` and
-`ideAgentTabs.closeAfterHandoff`. JetBrains shows `launchVia` next to **Default agent**. Both IDEs
+VS Code shows these three in the **Agent Tabs** section, as `ideAgentTabs.launchVia`,
+`ideAgentTabs.closeAfterHandoff` and `ideAgentTabs.allowResume`. JetBrains shows them on the Agent Tabs
+page, `launchVia` next to **Default agent**, and writes `allowResume` only when it is off. Both IDEs
 show `launchVia` only when `detected.json` has an `ori` entry. The server treats a value it doesn't know
 as the default, as for the tab settings.
 
@@ -1179,6 +1183,49 @@ refuses to close that tab as part of the handoff.
 
 The `handoff` skill holds the steps for both sessions.
 
+## Resume
+
+A session that ends leaves a record that `resume_tab` can reopen.
+
+- **Ended.** The server notices an end in three places: its own shutdown (stdin closed or a signal; it
+  writes the record before it removes its presence file, within 2 seconds), `close_tab`, and the
+  presence clean-up in `liveSessions`, which removes the file of a dead server. A clean-up dates the end
+  to the presence file's last heartbeat. A record whose id belongs to a live session is left out of
+  `closed_sessions`, so a server restart in a running session shows nothing.
+- **Id.** The agent's resumable id: `owner` for Claude Code (the hook `session_id`, or `$.session.id()`
+  from the Claude mod, sent as `session` with the mod's `presence` op) and Antigravity CLI (the hook
+  `conversationId`), and `threadId` for Codex. No id, no record.
+- **Record.** `~/.ide-agent-tabs/history/<id>.json`, mode 0600 in a 0700 folder, deleted by modification
+  time after 7 days, as the mailbox clean-up does. It holds agent, label, native name, folder, product,
+  host, model, effort, harness, `via`, `startedAt`, `endedAt`, `tokens`, `cache` and `preview`. The
+  server reads the last 2 MB of the transcript for the size and the preview and stores no other
+  transcript text.
+- **Size.** Claude Code: `input_tokens + cache_creation_input_tokens + cache_read_input_tokens` of the
+  last main-chain assistant turn. `cache` is `1h` when the newest turn that wrote the cache wrote
+  `ephemeral_1h_input_tokens`, else `5m`. Codex: the last `token_count` event's
+  `last_token_usage.input_tokens`, from the rollout file under `~/.codex/sessions/` (`CODEX_HOME`).
+  Others: `null`.
+
+`resume_tab` opens a tab through `open_tab` with the resume arguments after the profile's own:
+`--resume <id>` for Claude Code, `resume <id>` for Codex and Codex (local), `--conversation <id>` for
+Antigravity CLI. Each comes from the CLI's own `--help`. Other agents get an error that suggests
+`handoff`. The tab opens in the record's folder; in its host when that IDE run or terminal is still
+there, else in a running IDE of the same product, else by the usual route; and with the record's model
+when that matches `MODEL_PATTERN`. An `ide`, `model` or `focus` argument wins.
+
+The cost guard compares the record with the request:
+
+| Check | Cheap when |
+|---|---|
+| Age | At most 5 minutes since `endedAt`, or 60 minutes when `cache` is `1h` |
+| Model | No `model` argument, or the record's model |
+| Size | At most 50,000 tokens; an unknown size only within 5 minutes |
+
+A cheap resume opens at once, and its `cost` says `likely cached: about 10% of normal input cost`. Any
+other resume returns `resumed: false`, `needsConfirm: true`, the size, the age, the reasons and a
+message that the full history is re-read at full input price and that `handoff` is the cheaper fresh
+start. `confirm: true` opens it. The `new-tab` skill passes `confirm` only after the user agrees.
+
 ## Delegation
 
 Tabs are for interactive sessions. Delegation is for one-shot work: an agent hands a task, review or
@@ -1262,7 +1309,7 @@ Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before eac
   Plugins > ⚙ > Manage Plugin Repositories**, then install **Agent Tabs** from the **Marketplace** tab
   and restart the IDE;
 - reports which agent CLIs are installed, and writes the default agent to `~/.ide-agent-tabs/config.json`;
-- shows the tab settings, `launchVia` and `closeAfterHandoff` (see [Settings](#settings)) and writes the
+- shows the tab settings, `launchVia`, `closeAfterHandoff` and `allowResume` (see [Settings](#settings)) and writes the
   ones the user changes, including the preferred terminal, to `~/.ide-agent-tabs/config.json`;
 - registers the MCP server with the other agent CLIs the user picks (Codex, Antigravity CLI, Copilot CLI,
   Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose) with `sync-ides.mjs --register <agent>…`;

@@ -75,6 +75,11 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 - **Handoff.** The `handoff` tool and skill move a session's work to a new tab with a written brief, then
   close the old tab once both sessions confirm. The `closeAfterHandoff` setting, on by default, controls
   the close. See [Handoff](mcp/README.md#handoff).
+- **Resume.** `closed_sessions` lists the sessions that ended in the last 7 days, and `resume_tab`
+  reopens a Claude Code, Codex or Antigravity CLI session with the agent's resume option. A resume past
+  the prompt cache re-reads the whole history at full price, so it needs the user's confirmation. The
+  **Allow resuming closed sessions** setting (`allowResume`), on by default, turns it off. See
+  [Resume](mcp/README.md#resume).
 
 ## Agents
 

@@ -23,6 +23,7 @@ const SHARED_SETTING_NAMES: Record<keyof SharedSettings, string> = {
   terminalWindow: 'terminalWindow',
   launchVia: 'launchVia',
   closeAfterHandoff: 'closeAfterHandoff',
+  allowResume: 'allowResume',
   focusNewTabs: 'focusNewTabs',
   claudeMod: 'claudeMod',
 };
