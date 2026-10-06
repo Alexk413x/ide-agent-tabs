@@ -177,6 +177,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return true;
     },
     list: () => [...tabs.values()].map(({ id, agent, project, path: dir }) => ({ id, agent, project, path: dir })),
+    reveal: async target => {
+      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(target));
+      return true;
+    },
   };
 
   const status = vscode.window.createStatusBarItem('ideAgentTabs.newTab', vscode.StatusBarAlignment.Right, 1);

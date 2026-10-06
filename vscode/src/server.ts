@@ -2,7 +2,8 @@ import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { AgentLaunch, AgentProfile, AgentSettings, planLaunch } from './profiles';
 import { ENDPOINT_BASE } from './registry';
-import { BadRequest, checkAdmission, OpenRequest, parseCloseId, parseEmpty, parseInput, parseOpenRequest } from './request';
+import * as fs from 'node:fs';
+import { BadRequest, checkAdmission, checkRevealTarget, OpenRequest, parseCloseId, parseEmpty, parseInput, parseOpenRequest, parseRevealPath, RevealDeps } from './request';
 
 export const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
@@ -26,9 +27,10 @@ export interface Host {
   close(id: string): boolean;
   input(id: string, text: string): boolean;
   list(): TabInfo[];
+  reveal(path: string): Promise<boolean>;
 }
 
-const ROUTES = new Set(['info', 'agents', 'open', 'close', 'list', 'input']);
+const ROUTES = new Set(['info', 'agents', 'open', 'close', 'list', 'input', 'reveal']);
 
 type Reply = { status: number; body: Record<string, unknown> };
 
@@ -94,6 +96,35 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
   }
 }
 
+export const systemReveal: RevealDeps = {
+  realpath: target => {
+    try {
+      return fs.realpathSync.native(target);
+    } catch {
+      return undefined;
+    }
+  },
+  isDirectory: target => {
+    try {
+      return fs.statSync(target).isDirectory();
+    } catch {
+      return false;
+    }
+  },
+  platform: process.platform,
+};
+
+export async function handleReveal(body: string, host: Host, deps: RevealDeps = systemReveal): Promise<Reply> {
+  try {
+    const known = [...host.info().projects.map(p => p.path), ...host.list().map(t => t.path)];
+    const target = checkRevealTarget(parseRevealPath(body), known, deps);
+    return (await host.reveal(target)) ? ok({ path: target }) : fail(500, `could not open ${target}`);
+  } catch (e) {
+    if (e instanceof BadRequest) return fail(400, e.message);
+    return fail(500, String(e));
+  }
+}
+
 function respond(res: http.ServerResponse, reply: Reply): void {
   const bytes = Buffer.from(JSON.stringify(reply.body), 'utf8');
   res.writeHead(reply.status, {
@@ -136,7 +167,10 @@ export function createApiServer(token: string, host: Host, settings: AgentSettin
       chunks.push(chunk);
     });
     req.on('end', () => {
-      if (!tooLarge) respond(res, handle(name, Buffer.concat(chunks).toString('utf8'), host, settings));
+      if (tooLarge) return;
+      const body = Buffer.concat(chunks).toString('utf8');
+      if (name === 'reveal') void handleReveal(body, host).then(reply => respond(res, reply));
+      else respond(res, handle(name, body, host, settings));
     });
   });
 }

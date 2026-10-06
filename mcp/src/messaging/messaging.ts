@@ -699,6 +699,15 @@ export class Messaging {
     return { message: { ...message, text: '' }, text: textPiece(message.text, start), offset: start, total: message.text.length };
   }
 
+  async sessionFolders(): Promise<string[]> {
+    const live = await liveSessions(this.deps.home, this.alive, this.now(), this.ended);
+    return [...new Set(live.map((s) => s.path))];
+  }
+
+  async hostId(): Promise<string | undefined> {
+    return (await readPresence(this.deps.home, this.sessionId).catch(() => undefined))?.host;
+  }
+
   async modCounts(whos: readonly Who[]) {
     const valid = whos.map((who) => ({
       ...(who.id !== undefined && isSessionId(who.id) ? { id: who.id } : {}),

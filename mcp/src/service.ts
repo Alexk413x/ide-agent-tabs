@@ -17,6 +17,7 @@ import { recordEnded, transcriptDirs, type TranscriptDirs } from './messaging/cl
 import { isSessionId, readPresence, updatePresence, withState, type PresenceFile, type Via } from './messaging/sessions.js';
 import { isProcessAlive, readRegistry, type Endpoint } from './registry.js';
 import { validateOpen, type OpenInput, type OpenRequest } from './request.js';
+import { checkRevealTarget, systemReveal, type RevealDeps } from './reveal.js';
 import { chooseIde, chooseTerminal, type IdeCandidate, type Project } from './routing.js';
 import { ORI_AGENTS, planLaunch, type LaunchPlan } from './launchPlan.js';
 import { launchSpec } from './spec.js';
@@ -37,6 +38,7 @@ export interface ServiceDeps {
   selfCloseDelayMs?: number;
   shellProbe?: (runShells: boolean) => ShellProbe;
   transcripts?: TranscriptDirs;
+  reveal?: RevealDeps;
 }
 
 export class ToolError extends Error {}
@@ -386,6 +388,32 @@ export class Service {
       errors.push(...terminal.errors);
     }
     return { tabs, ...(errors.length ? { errors } : {}) };
+  }
+
+  async reveal(
+    target: string,
+    preferred: string | undefined,
+    sessionFolders: readonly string[],
+  ): Promise<{ ok: true; ide: string; product: string; path: string } | { ok: false; reason: string }> {
+    const { endpoints } = await this.registry();
+    const { infos } = await this.infos(endpoints);
+    let real: string;
+    try {
+      real = await checkRevealTarget(target, [...sessionFolders, ...infos.flatMap((i) => i.projects.map((p) => p.path))], this.deps.reveal ?? systemReveal(this.deps.platform));
+    } catch (e) {
+      return { ok: false, reason: errorText(e) };
+    }
+    const order = [...endpoints.filter((e) => e.id === preferred), ...endpoints.filter((e) => e.id !== preferred)];
+    const errors: string[] = [];
+    for (const endpoint of order) {
+      try {
+        await this.callIde(endpoint, 'reveal', { path: real });
+        return { ok: true, ide: endpoint.id, product: endpoint.product, path: real };
+      } catch (e) {
+        errors.push(errorText(e));
+      }
+    }
+    return { ok: false, reason: errors.length ? errors.join('; ') : 'no IDE is running' };
   }
 
   async closeTab(id?: string) {

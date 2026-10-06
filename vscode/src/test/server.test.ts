@@ -6,8 +6,8 @@ import * as path from 'node:path';
 import { after, before, test } from 'node:test';
 import { AgentLaunch, AgentProfile, AgentSettings } from '../profiles';
 import { newToken } from '../registry';
-import { OpenRequest } from '../request';
-import { apiUrl, createApiServer, Host, listen, route, TabInfo } from '../server';
+import { checkRevealTarget, OpenRequest, RevealDeps } from '../request';
+import { apiUrl, createApiServer, Host, listen, route, systemReveal, TabInfo } from '../server';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-server-'));
 const home = path.join(dir, 'home');
@@ -19,6 +19,8 @@ const opened: { request: OpenRequest; profile: AgentProfile; launch: AgentLaunch
 const tabs = new Map<string, TabInfo>();
 const typed: { id: string; text: string }[] = [];
 let folderOpen = true;
+const revealed: string[] = [];
+let revealWorks = true;
 
 const host: Host = {
   info: () => ({ ide: 'vscode', product: 'Test Code', version: '1.100.0', pid: 7, projects: [{ name: 'repo', path: dir, focused: true }] }),
@@ -37,6 +39,10 @@ const host: Host = {
     return true;
   },
   list: () => [...tabs.values()],
+  reveal: async target => {
+    revealed.push(target);
+    return revealWorks;
+  },
 };
 
 const server = createApiServer(token, host, settings);
@@ -70,6 +76,7 @@ test('routes sit under the API base only', () => {
   assert.equal(route('/ide-agent-tabs/open'), 'open');
   assert.equal(route('/ide-agent-tabs/list?x=1'), 'list');
   assert.equal(route('/ide-agent-tabs/input'), 'input');
+  assert.equal(route('/ide-agent-tabs/reveal'), 'reveal');
   assert.equal(route('/ide-agent-tabs/nope'), undefined);
   assert.equal(route('/other/open'), undefined);
   assert.equal(route('/ide-agent-tabs'), undefined);
@@ -225,4 +232,52 @@ test('admission rules apply over HTTP', async () => {
   const unknown = await call('nope', {});
   assert.equal(unknown.status, 404);
   assert.equal(unknown.json.ok, false);
+});
+
+test('reveal shows a known folder through the host and refuses anything else', async () => {
+  revealed.length = 0;
+  const file = path.join(dir, 'note.txt');
+  fs.writeFileSync(file, 'x');
+  const okReply = await call('reveal', { path: dir });
+  assert.equal(okReply.status, 200);
+  assert.deepEqual(okReply.json, { ok: true, path: fs.realpathSync.native(dir) });
+  assert.deepEqual(revealed, [fs.realpathSync.native(dir)]);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-outside-'));
+  for (const [body, error] of [
+    [{}, 'path is required'],
+    [{ path: 'relative/dir' }, 'path must be absolute: relative/dir'],
+    [{ path: path.join(dir, 'missing') }, `not a folder on this machine: ${path.join(dir, 'missing')}`],
+    [{ path: file }, `not a folder on this machine: ${file}`],
+    [{ path: outside }, `refused: ${outside} is not a folder of this window or its agent tabs`],
+    [{ path: `${dir}\n` }, 'path must have no control characters'],
+  ] as const) {
+    const refused = await call('reveal', body);
+    assert.equal(refused.status, 400, JSON.stringify(body));
+    assert.equal(refused.json.error, error);
+  }
+  assert.equal(revealed.length, 1, 'a refused path never reaches the host');
+  revealWorks = false;
+  const failed = await call('reveal', { path: dir });
+  assert.equal(failed.status, 500);
+  revealWorks = true;
+});
+
+test('reveal resolves links first, refuses one that lands outside the known folders, and refuses macOS bundles', () => {
+  const real = new Map<string, string>([
+    ['/work/repo', '/work/repo'],
+    ['/work/link', '/elsewhere/secret'],
+    ['/Applications/Foo.app/Contents', '/Applications/Foo.app/Contents'],
+    ['/work/repo/', '/work/repo'],
+  ]);
+  const deps = (platform: NodeJS.Platform): RevealDeps => ({ realpath: p => real.get(p), isDirectory: () => true, platform });
+  assert.equal(checkRevealTarget('/work/repo', ['/work/repo/'], deps('linux')), '/work/repo');
+  assert.throws(() => checkRevealTarget('/work/link', ['/work/repo'], deps('linux')), /refused: \/work\/link is not a folder/);
+  assert.throws(() => checkRevealTarget('/Applications/Foo.app/Contents', ['/Applications/Foo.app/Contents'], deps('darwin')), /inside a macOS bundle/);
+  assert.equal(checkRevealTarget('/Applications/Foo.app/Contents', ['/Applications/Foo.app/Contents'], deps('linux')), '/Applications/Foo.app/Contents');
+  assert.throws(() => checkRevealTarget('/work/repo', [], deps('linux')), /not a folder of this window/);
+  if (process.platform !== 'win32') {
+    const linked = path.join(dir, 'away');
+    fs.symlinkSync(fs.mkdtempSync(path.join(os.tmpdir(), 'iat-away-')), linked);
+    assert.throws(() => checkRevealTarget(linked, [dir], systemReveal), /is not a folder of this window/);
+  }
 });

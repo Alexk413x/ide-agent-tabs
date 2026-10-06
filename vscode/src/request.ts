@@ -120,6 +120,39 @@ export function parseCloseId(body: string): string {
   return id;
 }
 
+export const BUNDLE_SEGMENT = /\.(app|bundle|framework|pkg|plugin|prefPane)$/i;
+
+export interface RevealDeps {
+  realpath(target: string): string | undefined;
+  isDirectory(target: string): boolean;
+  platform: NodeJS.Platform;
+}
+
+export function parseRevealPath(body: string): string {
+  const target = optString(parseObject(body), 'path');
+  if (target === undefined || isBlank(target)) throw new BadRequest('path is required');
+  if (/\p{Cc}/u.test(target)) throw new BadRequest('path must have no control characters');
+  if (!path.isAbsolute(target)) throw new BadRequest(`path must be absolute: ${target}`);
+  return target;
+}
+
+// Only a folder this window already shows (a workspace folder or an agent tab's folder) is revealed, and
+// never a macOS bundle: the OS opens a bundle by launching it.
+export function checkRevealTarget(target: string, known: readonly string[], deps: RevealDeps): string {
+  const real = deps.realpath(target);
+  if (real === undefined || !deps.isDirectory(real)) throw new BadRequest(`not a folder on this machine: ${target}`);
+  if (deps.platform === 'darwin' && real.split(/[\\/]/).some(segment => BUNDLE_SEGMENT.test(segment))) {
+    throw new BadRequest(`refused: ${target} is inside a macOS bundle`);
+  }
+  const key = (p: string) => {
+    const trimmed = p.replace(/[\\/]+$/, '') || p;
+    return deps.platform === 'win32' || deps.platform === 'darwin' ? trimmed.toLowerCase() : trimmed;
+  };
+  const allowed = new Set(known.flatMap(k => (deps.realpath(k) === undefined ? [] : [key(deps.realpath(k)!)])));
+  if (!allowed.has(key(real))) throw new BadRequest(`refused: ${target} is not a folder of this window or its agent tabs`);
+  return real;
+}
+
 export interface InputRequest {
   id: string;
   text: string;
