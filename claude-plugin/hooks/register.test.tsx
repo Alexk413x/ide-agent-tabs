@@ -159,6 +159,7 @@ type WorldOptions = {
   mailOf?: (who: { session?: string; names: string[] }) => unknown[]
   older?: number
   historyError?: string
+  revealOk?: boolean
   batch?: number
   pieceChars?: number
   failPieces?: number[]
@@ -329,6 +330,8 @@ function world(on: On, options: WorldOptions = {}) {
         pieces.push(offset)
         return ok({ message: { ...found, text: '' }, text: found.text.slice(offset, offset + (options.pieceChars ?? 50_000)), offset, total: found.text.length })
       }
+      case 'reveal':
+        return options.revealOk ? ok({ ok: true, ide: 'vscode-2', product: 'Antigravity', path: e.args.path }) : ok({ ok: false, reason: 'no IDE is running' })
       case 'counts':
         return ok({
           counts: (e.args.agents as { session?: string; names: string[] }[]).map(a => (options.mailOf ? options.mailOf(a).length : a.session === 'tab-d' ? (options.history ?? []).length : 0)),
@@ -1960,6 +1963,45 @@ describe('counts and the messages view', () => {
     expect(w.ops('history').length).toBeGreaterThan(0)
     await click(ui, 'back')
     expect(await textIn(ui, /^Couldn't read docs-9b's messages: /)).toBeDefined()
+    await ui.unmount()
+  })
+})
+
+describe('opening a folder', () => {
+  test('an IDE reveals the folder first; explorer.exe runs only when no IDE can, and a macOS bundle is never opened', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', os: 'Windows_NT', dirs: ['C:\\a'], revealOk: true })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await click(ui, 'folder:4:C:\\a')
+    expect(w.ops('reveal').map(c => c.args.path)).toEqual(['C:\\a'])
+    expect(w.runs).toEqual([])
+    expect(await textIn(ui, 'Opened C:\\a in File Explorer.')).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('with no IDE to reveal it, the folder opens with explorer.exe and the notice says it may be behind', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', os: 'Windows_NT', dirs: ['C:\\a'] })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await click(ui, 'folder:4:C:\\a')
+    expect(w.ops('reveal')).toHaveLength(1)
+    expect(w.runs).toEqual([['explorer.exe', 'C:\\a']])
+    expect(await textIn(ui, 'Opened C:\\a in File Explorer (it may be behind this window).')).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('on macOS a folder inside a bundle is refused before any IDE or open runs', async ($, on) => {
+    const rows = [ROWS[0]!, row({ id: 'c0dec0de-8888', agent: 'codex', state: 'busy', path: '/Applications/Foo.app/Contents', where: 'Terminal' })]
+    const w = world(on, { tab: 'tab-c', uname: 'Darwin', rows, dirs: ['/Applications/Foo.app/Contents'], listing: HEADER, revealOk: true })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await click(ui, 'folder:1:/Applications/Foo.app/Contents')
+    expect(w.ops('reveal')).toHaveLength(0)
+    expect(w.runs).toEqual([['uname', '-s']])
+    expect(await textIn(ui, '/Applications/Foo.app/Contents is inside a macOS bundle, which opening would launch.')).toBeDefined()
     await ui.unmount()
   })
 })

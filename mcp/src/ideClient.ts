@@ -4,7 +4,7 @@ import { PACKAGE_VERSION } from './version.js';
 export const USER_AGENT = `ide-agent-tabs-mcp/${PACKAGE_VERSION}`;
 export const IDE_TIMEOUT_MS = 15_000;
 
-export type Route = 'info' | 'agents' | 'open' | 'close' | 'list' | 'input';
+export type Route = 'info' | 'agents' | 'open' | 'close' | 'list' | 'input' | 'reveal';
 
 export class IdeError extends Error {
   constructor(

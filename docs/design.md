@@ -78,6 +78,7 @@ The server refuses non-loopback addresses and any request with an `Origin` or `R
 | `close` | `id` | `id` |
 | `list` | `{}` | `tabs`: `id`, `agent`, `project`, `path` for each open tab this IDE opened |
 | `input` | `id`, `text` | `id` |
+| `reveal` | `path` | `path`, as resolved |
 
 `open` fields:
 
@@ -102,6 +103,14 @@ The server refuses non-loopback addresses and any request with an `Origin` or `R
 The tab opens in the open project or folder that contains `path`, or in the last focused window if none
 does.
 
+`reveal` shows a folder in the OS file manager from the IDE's own process, so Windows lets the window
+come to the front. It takes only an absolute path whose real path (every link resolved) is an existing
+folder equal to one of the IDE's open projects or the folder of an agent tab it opened, and on macOS
+none of whose segments ends in `.app`, `.bundle`, `.framework`, `.pkg`, `.plugin` or `.prefPane`,
+since the OS opens a bundle by launching it; anything else is a 400. VS Code runs `revealFileInOS` on
+it, which opens the parent folder with the folder selected; it doesn't use `env.openExternal`, which
+can launch what it is given. JetBrains runs `RevealFileAction.openDirectory` on the EDT.
+
 `input` types `text` into the tab's terminal and presses Enter, as if the user typed it. `text` is one
 line of up to 500 characters with no control characters. The MCP server uses it only to wake an idle
 session for a new message.
@@ -112,7 +121,7 @@ session for a new message.
 | 400 | Bad body, relative path, missing folder, missing `id`, unknown `agent`, a bad `model` or `via`, a `model` for a profile without `modelFlag`, `via: "ori"` that Ori can't launch, or `input` `text` that is empty, over 500 characters or holds a control character. |
 | 401 | Missing or wrong token. |
 | 403 | Non-loopback address, or an `Origin` or `Referer` header. |
-| 404 | `close`, `input`: no open tab with that id. |
+| 404 | `close`, `input`: no open tab with that id. An IDE build without `reveal` answers 404 for it. |
 | 405 | Not a `POST`. |
 | 409 | `open`: no project or folder is open. |
 | 413 | The body is over 16 MB (VS Code extension). |
@@ -1167,7 +1176,11 @@ request for the keys only.
   While the path shows, the whole heading line, gap included, keeps it lit, and after the pointer
   leaves it stays for 300 ms unless the pointer comes back.
   `Folder not known` is bold text with the same mark. Pressing the heading checks the path with `$.fs.stat` and `resolve`, refuses one that doesn't exist
-  or isn't a folder with a toast, and runs, by argv with no shell, `explorer.exe <path>` on Windows
+  or isn't a folder, and on macOS one inside a bundle, with a notice. It then asks the server's
+  `reveal` op, which applies the same rules as the IDE's `reveal` route against the folders of live
+  sessions and the IDEs' open projects, and asks this session's IDE first, then every other running
+  one. When an IDE shows it, the notice says `Opened <path> in File Explorer.` (Finder, the file
+  manager). Only when none can does the mod run, by argv with no shell, `explorer.exe <path>` on Windows
   (`OS` is `Windows_NT`), `open <path>` on macOS and `xdg-open <path>` on Linux (`uname -s`), with the
   resolved path. `explorer.exe` exits 1 even when it opened the folder, so on Windows only a failed
   start counts as an error.

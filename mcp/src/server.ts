@@ -19,7 +19,7 @@ export const SERVER_NAME = 'ide-agent-tabs';
 export const SERVER_VERSION = PACKAGE_VERSION;
 export const HOOK_TOOL = 'agent_tabs_hook';
 export const MOD_TOOL = 'agent_tabs_mod';
-export const MOD_OPS = ['presence', 'send', 'take', 'ack', 'release', 'sessions', 'log', 'history', 'message', 'counts', 'settings'] as const;
+export const MOD_OPS = ['presence', 'send', 'take', 'ack', 'release', 'sessions', 'log', 'history', 'message', 'counts', 'reveal', 'settings'] as const;
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 type Reply = (extra: Extra, work: () => Promise<unknown>) => Promise<CallToolResult>;
@@ -201,6 +201,7 @@ interface ModInput {
   names?: string[] | undefined;
   agents?: { session?: string | undefined; names: string[] }[] | undefined;
   before?: string | undefined;
+  path?: string | undefined;
   offset?: number | undefined;
   driver?: boolean | undefined;
   nativeName?: string | undefined;
@@ -254,6 +255,8 @@ async function modOp(messaging: Messaging, service: Service, input: ModInput): P
       return messaging.modHistory({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] }, input.before);
     case 'message':
       return messaging.modMessage({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] }, need(input.id, 'id'), input.offset ?? 0);
+    case 'reveal':
+      return service.reveal(need(input.path, 'path'), await messaging.hostId(), await messaging.sessionFolders());
     case 'counts':
       return messaging.modCounts((input.agents ?? []).map((a) => ({ ...(a.session !== undefined ? { id: a.session } : {}), names: a.names })));
     case 'settings':
@@ -286,7 +289,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
       description:
         "Internal: the Agent Tabs mod inside Claude Code calls this to report the session's state, bridge SendMessage and ListAgents, and deliver its mail. Don't call it.",
       inputSchema: {
-        op: z.enum(MOD_OPS).describe('presence, send, take, ack, release, sessions, log, history, message, counts or settings.'),
+        op: z.enum(MOD_OPS).describe('presence, send, take, ack, release, sessions, log, history, message, counts, reveal or settings.'),
         direction: z.enum(['sent', 'received']).optional().describe('log: sent from or received by this session.'),
         peer: z.string().max(128).optional().describe("log: the other session's name."),
         id: z.string().max(64).optional().describe('log: the message id, when it has one. message: the message to return whole.'),
@@ -294,6 +297,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
         delivery: z.string().max(200).optional().describe('log: what became of a sent message.'),
         session: z.string().max(128).optional().describe("history: the session id. presence: Claude Code's own session id."),
         names: z.array(z.string().max(128)).max(8).optional().describe('history: the names the session goes by.'),
+        path: z.string().max(4096).optional().describe('reveal: the folder for an IDE to open in the file manager.'),
         before: z.string().max(64).optional().describe('history: a message id or ISO time; returns the batch just older than it.'),
         offset: z.number().int().min(0).optional().describe('message: where in the text the piece starts.'),
         agents: z

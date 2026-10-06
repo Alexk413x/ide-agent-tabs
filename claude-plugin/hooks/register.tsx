@@ -855,6 +855,9 @@ async function notify($: EngineInterface, text: string) {
   })
 }
 
+export const FILE_MANAGERS: Record<HostPlatform, string> = { windows: 'File Explorer', mac: 'Finder', linux: 'the file manager' }
+const BUNDLE_SEGMENT = /\.(app|bundle|framework|pkg|plugin|prefPane)$/i
+
 async function openFolder($: EngineInterface, path: string) {
   const at = await $.fs.stat(path, { resolve: true }).catch(() => undefined)
   if (at?.kind !== 'dir' || at.realPath === undefined) {
@@ -862,6 +865,16 @@ async function openFolder($: EngineInterface, path: string) {
     return
   }
   const platform = await hostPlatform($)
+  if (platform === 'mac' && at.realPath.split('/').some(segment => BUNDLE_SEGMENT.test(segment))) {
+    await notify($, `${path} is inside a macOS bundle, which opening would launch.`)
+    return
+  }
+  const { value: me } = await $.state.get(selfRef)
+  const revealed = me ? ((await callModTimed($, me.server, { op: 'reveal', path: at.realPath }).catch(() => undefined)) as { ok?: boolean; product?: string } | undefined) : undefined
+  if (revealed?.ok === true) {
+    await notify($, `Opened ${at.realPath} in ${FILE_MANAGERS[platform]}.`)
+    return
+  }
   const argv = folderOpener(platform, at.realPath)
   const ran = await $.process.run(argv, { timeoutMs: OPEN_TIMEOUT_MS }).catch(() => undefined)
   // explorer.exe exits 1 even when it opened the folder, so only a failed start counts on Windows.

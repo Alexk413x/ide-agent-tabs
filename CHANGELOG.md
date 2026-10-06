@@ -6,7 +6,8 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 
 ## 0.6.1
 
-Plugin and MCP server 0.6.1. The IDE packages are unchanged.
+Plugin and MCP server 0.6.1, with VS Code extension 0.1.28 and JetBrains plugin 0.4.11 bundled. Both IDE
+packages add a `reveal` route.
 
 ### Changed
 
@@ -81,6 +82,13 @@ Plugin and MCP server 0.6.1. The IDE packages are unchanged.
   draws the session's name in that colour, and line 2 shows `Claude Code (<type>)`.
 
 ### Fixed
+
+- A folder heading in the pane opened File Explorer behind the IDE, so each click looked like nothing
+  and left another window open. The mod now asks the IDE that hosts the session, else any running IDE,
+  to show the folder through the new `reveal` route (VS Code `revealFileInOS`, JetBrains
+  `RevealFileAction.openDirectory`), which comes to the front. Every layer reveals only an existing
+  folder of a live session or an open project, by real path, and never a macOS bundle. `explorer.exe`,
+  `open` or `xdg-open` runs only when no IDE can.
 
 - A session with a long history showed its message count in the agents view but `0 messages` on its
   screen. Its `history` reply was over Claude Code's MCP output limit, which swaps the result for an
