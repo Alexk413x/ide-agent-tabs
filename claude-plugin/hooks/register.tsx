@@ -89,6 +89,9 @@ const LOADING_MESSAGE = 'Fetching the rest of this message…'
 const LOAD_FAILED = "Couldn't load the rest of this message."
 const RETRY_LABEL = 'Retry'
 const COPY_LABEL = 'Copy the whole message'
+const DETAIL_INDENT = 3
+const DETAIL_GAP = 2
+const MARKDOWN_CHARS = 10_000
 // A pane draws at most 100,000 characters of text, so a longer message is drawn up to this and copied whole.
 const DRAW_CHARS = 90_000
 const MOD_REPLY_MS = 10_000
@@ -1271,6 +1274,45 @@ export const copyChip = (): ListProps => ({
   acts: { 'copy-message': { act: 'copy-message' } },
 })
 
+export type DetailRow = { label: string; value: string; party?: true; id?: string }
+
+export function partySession(p: AgentTabsParty, hosts: readonly AgentTabsPaneHost[]): string | undefined {
+  const id = p.id ?? paneRows(hosts).find(r => p.name !== undefined && r.names.includes(p.name))?.id ?? undefined
+  return id === undefined || id === null ? undefined : id.slice(0, 8)
+}
+
+export function detailRows(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[]): DetailRow[] {
+  const delivery = [m.delivery, m.status].filter(v => v !== undefined).join(' · ') || '—'
+  const party = (label: string, p: AgentTabsParty): DetailRow => {
+    const id = partySession(p, hosts)
+    return { label, value: partyName(p, hosts), party: true, ...(id !== undefined ? { id } : {}) }
+  }
+  return [
+    party('From', m.from),
+    party('To', m.to),
+    { label: 'Time', value: m.at.replace('T', ' ').replace(/\.\d+Z$/, 'Z') },
+    ...(m.replyTo !== undefined ? [{ label: 'Reply to', value: m.replyTo }] : []),
+    { label: 'Delivery', value: `${delivery} · ${m.route === 'native' ? 'SendMessage' : 'Agent Tabs'}` },
+  ]
+}
+
+// The Markdown element takes at most 10,000 characters, so a longer text is drawn as several blocks,
+// split at a blank line where one falls in the last half of a block, else at a newline, else anywhere.
+export function markdownBlocks(text: string, max = MARKDOWN_CHARS): string[] {
+  const blocks: string[] = []
+  let rest = text.replace(/[^\t\n\P{Cc}]/gu, '')
+  while (rest.length > max) {
+    const head = rest.slice(0, max)
+    const paragraph = head.lastIndexOf('\n\n')
+    const line = head.lastIndexOf('\n')
+    const at = paragraph >= max / 2 ? paragraph + 2 : line >= max / 2 ? line + 1 : max
+    blocks.push(rest.slice(0, at))
+    rest = rest.slice(at)
+  }
+  if (rest !== '' || blocks.length === 0) blocks.push(rest)
+  return blocks
+}
+
 export const drawnNote = (total: number) => `Showing the first ${DRAW_CHARS.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} characters.`
 
 export function detailChips(width: number): ListProps {
@@ -1772,7 +1814,10 @@ export const register: Register = on => {
     const clipped = known.length > DRAW_CHARS
     const body = clipped ? `${known.slice(0, DRAW_CHARS)}…` : known.length < length ? `${known}…` : known
     const line = replyLine(m, me?.id, hosts)
-    const delivery = [m.delivery, m.status].filter(v => v !== undefined).join(' · ') || '—'
+    const rows = detailRows(m, hosts)
+    const labelWidth = Math.max(...rows.map(r => r.label.length))
+    const valueRoom = Math.max(8, width - DETAIL_INDENT - labelWidth - DETAIL_GAP)
+    const Markdown = 'Markdown' in table ? table.Markdown : undefined
     return (
       <Box flexDirection="column">
         {chips ?? (
@@ -1783,16 +1828,17 @@ export const register: Register = on => {
             </Box>
           </Box>
         )}
-        {pane.agent.id !== null && <Text dimColor>Session: {pane.agent.id}</Text>}
-        <Text>From: {partyName(m.from, hosts)}</Text>
-        <Text>To: {partyName(m.to, hosts)}</Text>
-        <Text>Time: {m.at.replace('T', ' ').replace(/\.\d+Z$/, 'Z')}</Text>
-        {m.replyTo !== undefined && <Text>Reply to: {m.replyTo}</Text>}
-        <Text>
-          Delivery: {delivery} · {m.route === 'native' ? 'SendMessage' : 'Agent Tabs'}
-        </Text>
-        <Box marginTop={1}>
-          <Text wrap="wrap">{body}</Text>
+        <Box key="detail-head" flexDirection="column" marginTop={1} paddingLeft={DETAIL_INDENT}>
+          {rows.map(r => (
+            <Box key={`detail-${r.label}`} flexDirection="row" gap={DETAIL_GAP}>
+              <Text dimColor>{r.label.padStart(labelWidth)}</Text>
+              {r.party ? <Text wrap="truncate-end">{cut(r.value, Math.max(8, valueRoom - (r.id ? r.id.length + DETAIL_GAP : 0)))}</Text> : <Text dimColor wrap="truncate-end">{cut(r.value, valueRoom)}</Text>}
+              {r.id !== undefined && <Text dimColor>{r.id}</Text>}
+            </Box>
+          ))}
+        </Box>
+        <Box key="detail-body" flexDirection="column" marginTop={1} paddingX={2} paddingY={1}>
+          {Markdown ? markdownBlocks(body).map((block, i) => <Markdown key={`body-${i}`} text={block} />) : <Text wrap="wrap">{body}</Text>}
         </Box>
         {clipped && stage === 'done' && (
           <Box flexDirection="column" marginTop={1}>

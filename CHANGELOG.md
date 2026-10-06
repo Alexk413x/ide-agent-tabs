@@ -31,6 +31,9 @@ packages add a `reveal` route.
   characters (the `message` op's `offset` and `total`), each shown as it arrives. A failed or silent
   piece (10 seconds) shows "Couldn't load the rest of this message." and a Retry chip. A text over the
   pane's 100,000-character drawing limit is drawn in part, with a chip that copies it whole.
+- A message's detail puts a blank line under Back and Reply, then its From, To, Time, Reply to and
+  Delivery in two aligned columns, indented, with grey labels and values, white party names and each
+  party's session id in grey, and the text below in padded space, drawn as Markdown.
 - The messages list loads in batches: `Show older messages (<n>)` at its end fetches the next one
   (`history` takes `before` and returns `older`). The messages and detail views no longer call
   ListAgents on each refresh.

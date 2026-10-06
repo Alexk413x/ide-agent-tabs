@@ -2,7 +2,7 @@ import type { On, SessionSendResult } from 'claude-code'
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 
 import { listRows, type ListProps } from './list'
-import { DEFAULT_PANE, definitionColor, folderName, folderOpener, platformOf, upFrom } from './register'
+import { DEFAULT_PANE, definitionColor, folderName, markdownBlocks, folderOpener, platformOf, upFrom } from './register'
 
 const SERVER = 'plugin:ide-agent-tabs:ide-agent-tabs'
 const MAILBOX = 'C:\\Users\\me\\.ide-agent-tabs\\mail\\tab-c\\new'
@@ -884,8 +884,11 @@ async function click(ui: Ui, ref: string, nth = ref.startsWith('info:') ? 1 : 0)
 }
 
 async function textIn(ui: Ui, text: string | RegExp): Promise<Found | undefined> {
-  const outside = await ui.find({ type: 'Text', text })
+  const outside = (await ui.find({ type: 'Text', text })) ?? (await ui.find({ type: 'Markdown', text }))
   if (outside) return outside
+  const blocks = await ui.findAll({ type: 'Markdown' })
+  const body = blocks.map(b => b.text).join('')
+  if (blocks.length > 1 && (typeof text === 'string' ? body === text : text.test(body))) return { ...blocks[0]!, text: body }
   for (const key of CLIENTS) {
     if (!(await ui.find({ type: 'Client', key }))) continue
     const inside = await ui.find({ in: key, type: 'Text', text })
@@ -904,6 +907,21 @@ async function hasItem(ui: Ui, ref: string): Promise<boolean> {
 }
 
 const titleLine = (_width: number) => 'Agent Tabs Messages'
+
+const DETAIL_LABELS = ['From', 'To', 'Time', 'Reply to', 'Delivery', 'Session']
+
+async function detailCells(ui: Ui): Promise<{ label: string; value: string; labelProps: Record<string, unknown>; valueProps: Record<string, unknown> }[]> {
+  const texts = await ui.findAll({ type: 'Text' })
+  return texts.flatMap((t, i) =>
+    t.props.dimColor === true && DETAIL_LABELS.includes(t.text.trim()) && texts[i + 1] !== undefined
+      ? [{ label: t.text, value: texts[i + 1]!.text, labelProps: t.props, valueProps: texts[i + 1]!.props }]
+      : [],
+  )
+}
+
+async function detailValue(ui: Ui, label: string): Promise<string | undefined> {
+  return (await detailCells(ui)).find(c => c.label.trim() === label)?.value
+}
 
 async function drawnLines(ui: Ui): Promise<string[]> {
   const { key } = await list(ui)
@@ -1287,10 +1305,10 @@ describe('agents pane', () => {
 
       await click(ui, 'msg:m-aaaaaaaaaaaaaaa1')
       expect(await drawnLines(ui)).toEqual([' ← Back  ↩ Reply'])
-      expect(await textIn(ui, 'From: w-1a')).toBeDefined()
-      expect(await textIn(ui, 'To: docs-9b [11aa22]')).toBeDefined()
-      expect(await textIn(ui, 'Time: 2026-10-04 09:01:00Z')).toBeDefined()
-      expect(await textIn(ui, 'Delivery: read · Agent Tabs')).toBeDefined()
+      expect(await detailValue(ui, 'From')).toBe('w-1a')
+      expect(await detailValue(ui, 'To')).toBe('docs-9b [11aa22]')
+      expect(await detailValue(ui, 'Time')).toBe('2026-10-04 09:01:00Z')
+      expect(await detailValue(ui, 'Delivery')).toBe('read · Agent Tabs')
       expect(await textIn(ui, 'Please review x.ts\nand y.ts')).toBeDefined()
       await hover(ui, 'reply')
       expect(await underlined(ui)).toEqual(['↩ Reply'])
@@ -1335,7 +1353,7 @@ describe('agents pane', () => {
     await ui.unmount()
     await start($)
     const again = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-    expect(await textIn(again, 'Delivery: delivered · SendMessage')).toBeDefined()
+    expect(await detailValue(again, 'Delivery')).toBe('delivered · SendMessage')
     const before = w.ops('history').length
     await w.clock.advance(2_000)
     expect(w.ops('history').length).toBeGreaterThan(before)
@@ -1419,7 +1437,7 @@ describe('opening the pane from a message', () => {
       expect(history.names).toContain('codex-1a2b')
 
       const pane = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-      expect(await textIn(pane, 'From: w-1a')).toBeDefined()
+      expect(await detailValue(pane, 'From')).toBe('w-1a')
       expect(await textIn(pane, 'Please review x.ts')).toBeDefined()
       await click(pane, 'back')
       expect(await textIn(pane, 'w-1a · 1 message')).toBeDefined()
@@ -2004,4 +2022,124 @@ describe('opening a folder', () => {
     expect(await textIn(ui, '/Applications/Foo.app/Contents is inside a macOS bundle, which opening would launch.')).toBeDefined()
     await ui.unmount()
   })
+})
+
+describe('detail view look', () => {
+  const md = '# Plan\n\n- read **x.ts**\n- see [docs](https://example.com)'
+  const msgOf = (text: string, extra: Record<string, unknown> = {}) => ({
+    id: 'm-00000000000000d1',
+    at: AT(5),
+    direction: 'received',
+    route: 'agent-tabs',
+    from: { id: 'codex-1a2b', agent: 'codex', path: 'C:\\w' },
+    to: { id: 'tab-d' },
+    peer: { id: 'codex-1a2b' },
+    text,
+    status: 'read',
+    ...extra,
+  })
+
+  async function openDetail($: Engine, on: On, message: ReturnType<typeof msgOf>, surface: 'terminal' | 'desktop' | 'vscode' | 'mobile') {
+    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!, ROWS[6]!], listing: HEADER, mailOf: who => (who.session === 'tab-d' ? [message] : []) })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    if (surface === 'terminal' || surface === 'desktop') {
+      await click(ui as typeof ui & Ui, 'agent:id:tab-d')
+      await click(ui as typeof ui & Ui, `msg:${message.id}`)
+    } else {
+      await ui.press({ key: 'agent:id:tab-d' })
+      await ui.press({ key: `msg:${message.id}` })
+    }
+    return ui as typeof ui & Ui
+  }
+
+  for (const surface of SURFACES) {
+    test(`the header has right-aligned grey labels, white names with grey session ids, and grey values, on ${surface}`, async ($, on) => {
+      const ui = await openDetail($, on, msgOf('hi', { replyTo: 'm-00000000000000c0' }), surface)
+      const cells = await detailCells(ui)
+      expect(cells.map(c => [c.label, c.value])).toEqual([
+        ['    From', 'w-1a'],
+        ['      To', 'claude-tabd'],
+        ['    Time', '2026-10-04 09:05:00Z'],
+        ['Reply to', 'm-00000000000000c0'],
+        ['Delivery', 'read · Agent Tabs'],
+      ])
+      expect(cells.every(c => c.labelProps.dimColor === true)).toBe(true)
+      expect(cells.slice(0, 2).map(c => [c.valueProps.dimColor, c.valueProps.bold])).toEqual([
+        [undefined, undefined],
+        [undefined, undefined],
+      ])
+      expect(cells.slice(2).every(c => c.valueProps.dimColor === true)).toBe(true)
+      const ids = (await ui.findAll({ type: 'Text' })).filter(t => t.props.dimColor === true && /^[0-9a-z-]{1,8}$/.test(t.text)).map(t => t.text)
+      expect(ids).toEqual(['codex-1a', 'tab-d'.slice(0, 8)])
+      expect(await detailValue(ui, 'Session')).toBeUndefined()
+      expect((await ui.find({ type: 'Box', key: 'detail-head' }))?.props).toEqual({ key: 'detail-head', flexDirection: 'column', marginTop: 1, paddingLeft: 3 })
+      expect((await ui.find({ type: 'Box', key: 'detail-From' }))?.props.gap).toBe(2)
+      expect((await ui.find({ type: 'Box', key: 'detail-body' }))?.props).toEqual({ key: 'detail-body', flexDirection: 'column', marginTop: 1, paddingX: 2, paddingY: 1 })
+      await ui.unmount()
+    })
+
+    test(`the message body is drawn as Markdown, in blocks of at most 10,000 characters, on ${surface}`, async ($, on) => {
+      const ui = await openDetail($, on, msgOf(md), surface)
+      const blocks = await ui.findAll({ type: 'Markdown' })
+      expect(blocks.map(b => b.text)).toEqual([md])
+      await ui.unmount()
+    })
+  }
+
+  test('a Reply to row shows only when the message answers another', async ($, on) => {
+    const ui = await openDetail($, on, msgOf('hi'), 'terminal')
+    expect((await detailCells(ui)).map(c => c.label.trim())).toEqual(['From', 'To', 'Time', 'Delivery'])
+    expect((await detailCells(ui))[0]!.label).toBe('    From')
+    await ui.unmount()
+  })
+
+  test('a long value is cut with … to the room and its label is never wrapped', async ($, on) => {
+    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: HEADER, mailOf: who => (who.session === 'tab-d' ? [msgOf('hi', { replyTo: `m-${'f'.repeat(60)}` })] : []) })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS(40) })
+    await click(ui, 'agent:id:tab-d')
+    await click(ui, 'msg:m-00000000000000d1')
+    const reply = (await detailCells(ui)).find(c => c.label.trim() === 'Reply to')!
+    expect(reply.value.endsWith('…')).toBe(true)
+    expect(reply.value.length).toBe(40 - 3 - 'Reply to'.length - 2)
+    expect(reply.label).toBe('Reply to')
+    await ui.unmount()
+  })
+
+  for (const surface of ['vscode', 'mobile'] as const) {
+    test(`the ${surface} table draws the same header and Markdown body without a Client`, async ($, on) => {
+      const ui = await openDetail($, on, msgOf(md), surface)
+      expect(await ui.find({ type: 'Client' })).toBeUndefined()
+      expect((await detailCells(ui)).map(c => c.label.trim())).toEqual(['From', 'To', 'Time', 'Delivery'])
+      expect((await ui.findAll({ type: 'Markdown' })).map(b => b.text)).toEqual([md])
+      expect(await ui.find({ type: 'Button', key: 'reply' })).toBeDefined()
+      await ui.unmount()
+    })
+  }
+
+  test('a blank line sits below the Back and Reply row, and above the body', async ($, on) => {
+    const ui = await openDetail($, on, msgOf('hi'), 'terminal')
+    expect(await drawnLines(ui)).toEqual([' ← Back  ↩ Reply'])
+    expect((await ui.find({ type: 'Box', key: 'detail-head' }))?.props.marginTop).toBe(1)
+    expect((await ui.find({ type: 'Box', key: 'detail-body' }))?.props.marginTop).toBe(1)
+    const { props } = await list(ui)
+    expect(listRows(props.groups)).toHaveLength(1)
+    await ui.pointer({ type: 'move', ...positionOf(props, 'reply'), in: 'chips' })
+    expect(await underlined(ui)).toEqual(['↩ Reply'])
+    await ui.unmount()
+  })
+})
+
+test('markdownBlocks splits at a blank line, else a newline, else anywhere, and keeps every character', () => {
+  const para = `${'a'.repeat(7_000)}\n\n${'b'.repeat(7_000)}`
+  expect(markdownBlocks(para)).toEqual([`${'a'.repeat(7_000)}\n\n`, 'b'.repeat(7_000)])
+  const lines = `${'c'.repeat(6_000)}\n${'d'.repeat(6_000)}`
+  expect(markdownBlocks(lines)).toEqual([`${'c'.repeat(6_000)}\n`, 'd'.repeat(6_000)])
+  const flat = 'e'.repeat(25_000)
+  expect(markdownBlocks(flat).map(b => b.length)).toEqual([10_000, 10_000, 5_000])
+  expect(markdownBlocks('')).toEqual([''])
+  expect(markdownBlocks('ok\u0007\tgo\n')).toEqual(['ok\tgo\n'])
 })

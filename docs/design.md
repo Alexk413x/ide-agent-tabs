@@ -1209,7 +1209,16 @@ request for the keys only.
   with a blank line and `Show older messages (<n>)`, which fetches the batch before the oldest shown
   and adds it above. Each refresh merges the newest batch with the older ones already shown. The
   pane's scroll belongs to the engine, so the mod can't hold its place when the list grows.
-- **Detail:** the `← Back` and `↩ Reply` chips at indent 1, which underline when lit, then the session id, from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
+- **Detail:** the `← Back` and `↩ Reply` chips at indent 1, which underline when lit; a blank line; then,
+  at indent 3, two aligned columns: the labels `From`, `To`, `Time`, `Reply to` (only when set) and
+  `Delivery`, grey and right-aligned to the widest, two cells, then the value cut with `…` to the
+  room. The two party names are in the normal foreground, each followed two cells on by the first 8
+  characters of that party's session id in grey; every other value is grey. A blank line, then the
+  text in a Box with `paddingX: 2` and `paddingY: 1`. The Elements tables type no border colour that
+  matches the background, so the frame is padding alone. The text is drawn as `Markdown`, which every
+  surface's table carries, in blocks of at most 10,000 characters (its limit), split at a blank line or
+  a newline where one falls in a block's second half; a link outside `https:`, `http:` and `file:` is
+  drawn as text by the engine. **Reply**
   closes the pane and fills the prompt with `Reply to <name> (message <id>): `, which never submits; a
   dialog-held pane would refuse the fill.
 - The detail shows the message's preview at once, then fetches its text with `message`, one piece at a
