@@ -1230,6 +1230,15 @@ request for the keys only.
   the first 90,000 of <n> characters.` and a `Copy the whole message` chip.
 - An empty view's dim text (`No other agent session is live.`, `No messages sent or received …`) is
   centred in the pane width, wrapped by words to centred lines when it is wider.
+- A loading line (`Rounding up your agents…`, `Reading messages…`, `Fetching the rest of this message…`)
+  follows one blank row, dim and italic, centred with a braille spinner before it (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`).
+  The spinner and its space are measured with the text, so the line keeps its place and width on
+  every frame. `list.tsx` steps the frame every 100 ms with `surface.every`, started when its props
+  hold a spinning part and cancelled when they no longer do or the Client unmounts, so no frame
+  reaches the mod or the host. The detail view draws its loading line in a small `list.tsx` Client
+  of its own. VS Code and mobile draw the same line without a spinner, its `…` static. An error line
+  (`Couldn't load the rest of this message.` with Retry) is centred the same way, dim, not italic,
+  with no spinner. Blank and loading rows have no target.
 
 Back and Esc go up one level. Esc reaches the mod as `ui.close` with origin `person`; above the agents
 view the mod answers without `next`, so the pane stays open and goes up instead. The view, the chosen

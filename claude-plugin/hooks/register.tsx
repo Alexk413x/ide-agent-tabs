@@ -1012,7 +1012,12 @@ async function loadMessage($: EngineInterface, id: string, offset: number) {
       }
       const text = sofar + piece.text
       await $.state.set(paneMessageRef, { id, text, total: piece.total, error: null })
-      if (text.length >= piece.total || piece.text.length === 0) return
+      if (text.length >= piece.total) return
+      if (piece.text.length === 0) {
+        await $.state.set(paneMessageRef, { id, text, total: piece.total, error: 'the reply held no more text' })
+        await notify($, `Couldn't load message ${id}: the reply held no more text`)
+        return
+      }
       at = text.length
     }
   } finally {
@@ -1140,6 +1145,18 @@ export function centered(text: string, width: number): { indent: number; text: s
 
 const centeredLines = (text: string, width: number): ListLine[] => centered(text, width).map(c => ({ indent: c.indent, parts: [{ text: c.text, dim: true }] }))
 
+const SPINNER_FIRST = '⠋'
+
+// The spinner glyph and its space are measured with the text, so the line stays centred on every frame.
+export function loadingLines(text: string, width: number): ListLine[] {
+  return [
+    { indent: 0, parts: [{ text: ' ' }] },
+    ...centered(`${SPINNER_FIRST} ${text}`, width).map((c, i): ListLine => ({ indent: c.indent, parts: [{ text: c.text, dim: true, italic: true, ...(i === 0 ? { spin: true as const } : {}) }] })),
+  ]
+}
+
+export const loadingList = (text: string, width: number): ListProps => ({ groups: [{ border: false, lines: loadingLines(text, width) }], acts: {}, width })
+
 
 const partsWidth = (indent: number, parts: readonly ListPart[]) => indent + parts.reduce((n, p) => n + p.text.length, 0)
 
@@ -1158,7 +1175,7 @@ export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number, n
     ],
   }
   const rows = paneRows(hosts)
-  if (!rows.length) return { groups: [header, { border: false, lines: centeredLines(loading ? LOADING_SESSIONS : NO_SESSIONS, width) }], acts, width }
+  if (!rows.length) return { groups: [header, { border: false, lines: loading ? loadingLines(LOADING_SESSIONS, width) : centeredLines(NO_SESSIONS, width) }], acts, width }
   const counted = countWidth(rows)
   let n = 0
   const groups: ListGroup[] = hosts.map(host => {
@@ -1254,7 +1271,7 @@ export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMe
       : []),
     ...(details !== '' ? [{ indent: HEADER_INDENT, parts: [{ text: cut(details, room), dim: true }] }] : []),
     { indent: 0, parts: [{ text: ' ' }] },
-    ...(messages.length === 0 ? centeredLines(total === null ? READING : NO_MESSAGES, width) : []),
+    ...(messages.length === 0 ? (total === null ? loadingLines(READING, width).slice(1) : centeredLines(NO_MESSAGES, width)) : []),
     ...messages.map((m, i): ListLine => {
       acts[`m${i}`] = { act: 'message', id: m.id }
       return { item: `m${i}`, indent: 2, mark: 0, parts: [{ text: messageLine(m, hosts, width - 2), underline: true }] }
@@ -1264,9 +1281,19 @@ export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMe
   return { groups: [{ border: false, lines }], acts, width }
 }
 
-export const retryChip = (): ListProps => ({
-  groups: [{ border: false, lines: [{ indent: 1, parts: [{ text: RETRY_LABEL, underline: true, item: 'retry' }] }] }],
+export const retryChip = (width: number): ListProps => ({
+  groups: [
+    {
+      border: false,
+      lines: [
+        { indent: 0, parts: [{ text: ' ' }] },
+        ...centeredLines(LOAD_FAILED, width),
+        { indent: Math.max(0, Math.floor((width - RETRY_LABEL.length) / 2)), parts: [{ text: RETRY_LABEL, underline: true, item: 'retry' }] },
+      ],
+    },
+  ],
   acts: { retry: { act: 'retry' } },
+  width,
 })
 
 export const copyChip = (): ListProps => ({
@@ -1613,12 +1640,23 @@ export const register: Register = on => {
     const hosts = loadedHosts ?? []
     const loading = loadedHosts === undefined
     const width = Math.max(20, e.props.bodyColumns)
-    const empty = (text: string) =>
-      centered(text, width).map((c, i) => (
-        <Text key={`empty-${i}`} dimColor>
-          {`${' '.repeat(c.indent)}${c.text}`}
-        </Text>
-      ))
+    const empty = (text: string, italic = false) =>
+      centered(text, width).map((c, i) =>
+        italic ? (
+          <Text key={`empty-${i}`} dimColor italic>
+            {`${' '.repeat(c.indent)}${c.text}`}
+          </Text>
+        ) : (
+          <Text key={`empty-${i}`} dimColor>
+            {`${' '.repeat(c.indent)}${c.text}`}
+          </Text>
+        ),
+      )
+    const waiting = (text: string) => (
+      <Box key="loading" flexDirection="column" marginTop={1}>
+        {empty(text, true)}
+      </Box>
+    )
 
     if (pane.view === 'agents' || pane.agent === null) {
       if (Client) return <Client key="agents" module="./list.tsx" width="100%" props={agentsList(hosts, width, pane.notice ?? null, loading)} />
@@ -1639,7 +1677,7 @@ export const register: Register = on => {
         return (
           <Box flexDirection="column">
             {heading}
-            {empty(loading ? LOADING_SESSIONS : NO_SESSIONS)}
+            {loading ? waiting(LOADING_SESSIONS) : empty(NO_SESSIONS)}
           </Box>
         )
       }
@@ -1773,7 +1811,7 @@ export const register: Register = on => {
             )}
           </Box>
           <Text> </Text>
-          {messages.length === 0 && empty(total === null ? READING : NO_MESSAGES)}
+          {messages.length === 0 && (total === null ? empty(READING, true) : empty(NO_MESSAGES))}
           {messages.map(m => (
             <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
               <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
@@ -1846,19 +1884,18 @@ export const register: Register = on => {
             {Client ? <Client key="copy" module="./list.tsx" props={copyChip()} /> : <Button key="copy-message" label={COPY_LABEL} onPress={() => copyMessage($, e.surface)} />}
           </Box>
         )}
-        {stage === 'loading' && (
-          <Box marginTop={1}>
-            <Text dimColor italic>
-              {LOADING_MESSAGE}
-            </Text>
-          </Box>
-        )}
-        {stage === 'failed' && (
-          <Box flexDirection="column" marginTop={1}>
-            <Text dimColor>{LOAD_FAILED}</Text>
-            {Client ? <Client key="retry" module="./list.tsx" props={retryChip()} /> : <Button key="retry" label={RETRY_LABEL} onPress={() => retryMessage($)} />}
-          </Box>
-        )}
+        {stage === 'loading' && (Client ? <Client key="loading" module="./list.tsx" width="100%" props={loadingList(LOADING_MESSAGE, width)} /> : waiting(LOADING_MESSAGE))}
+        {stage === 'failed' &&
+          (Client ? (
+            <Client key="retry" module="./list.tsx" width="100%" props={retryChip(width)} />
+          ) : (
+            <Box flexDirection="column" marginTop={1}>
+              {empty(LOAD_FAILED)}
+              <Box flexDirection="row" justifyContent="center">
+                <Button key="retry" label={RETRY_LABEL} onPress={() => retryMessage($)} />
+              </Box>
+            </Box>
+          ))}
       </Box>
     )
   })

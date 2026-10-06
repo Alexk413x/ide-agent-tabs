@@ -31,6 +31,9 @@ packages add a `reveal` route.
   characters (the `message` op's `offset` and `total`), each shown as it arrives. A failed or silent
   piece (10 seconds) shows "Couldn't load the rest of this message." and a Retry chip. A text over the
   pane's 100,000-character drawing limit is drawn in part, with a chip that copies it whole.
+- Every loading line in the pane follows a blank row, centred, dim and italic, with a braille spinner
+  that the pane's Client module animates every 100 ms; VS Code and mobile show it without the spinner.
+  The detail's load error and Retry are centred too.
 - A message's detail puts a blank line under Back and Reply, then its From, To, Time, Reply to and
   Delivery in two aligned columns, indented, with grey labels and values, white party names and each
   party's session id in grey, and the text below in padded space, drawn as Markdown.
