@@ -52,6 +52,7 @@ const paneHostsRef = { plugin: 'ide-agent-tabs', key: 'paneHosts' } as const
 const paneHistoryRef = { plugin: 'ide-agent-tabs', key: 'paneHistory' } as const
 const paneTotalRef = { plugin: 'ide-agent-tabs', key: 'paneTotal' } as const
 const paneMessageRef = { plugin: 'ide-agent-tabs', key: 'paneMessage' } as const
+const paneOlderRef = { plugin: 'ide-agent-tabs', key: 'paneOlder' } as const
 const inboxRef = { plugin: 'ide-agent-tabs', key: 'inbox' } as const
 
 const PANE = 'agent-tabs'
@@ -85,6 +86,13 @@ const NO_MESSAGES = 'No messages sent or received through Agent Tabs or SendMess
 const NO_SESSIONS = 'No other agent session is live.'
 const LOADING_SESSIONS = 'Rounding up your agents…'
 const LOADING_MESSAGE = 'Fetching the rest of this message…'
+const LOAD_FAILED = "Couldn't load the rest of this message."
+const RETRY_LABEL = 'Retry'
+const COPY_LABEL = 'Copy the whole message'
+// A pane draws at most 100,000 characters of text, so a longer message is drawn up to this and copied whole.
+const DRAW_CHARS = 90_000
+const MOD_REPLY_MS = 10_000
+const OVER_LIMIT = /exceeds maximum allowed tokens/
 const HEADER_INDENT = 4
 const FOLDER_MARK = '▸ '
 const MODEL_VENDOR = /^(claude|gpt)-/
@@ -536,7 +544,26 @@ async function callMod($: EngineInterface, server: string, args: Record<string, 
   const result = await $.mcp.call(server, MOD_TOOL, args)
   const text = textOf(result.content)
   if (result.isError) throw new Error(text || `${MOD_TOOL} ${String(args.op)} failed`)
-  return text === '' ? {} : JSON.parse(text)
+  if (text === '') return {}
+  // Claude Code swaps a result over its MCP output limit for an error text, with isError false.
+  if (OVER_LIMIT.test(text.slice(0, 300))) throw new Error(`the ${String(args.op)} reply was over Claude Code's MCP output limit`)
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`the ${String(args.op)} reply wasn't JSON: ${text.split('\n')[0]!.slice(0, 120)}`)
+  }
+}
+
+async function callModTimed($: EngineInterface, server: string, args: Record<string, unknown>): Promise<unknown> {
+  let timer: { cancel: () => void } | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = $.clock.after(MOD_REPLY_MS, () => reject(new Error(`no ${String(args.op)} reply within ${MOD_REPLY_MS / 1000} s`)))
+  })
+  try {
+    return await Promise.race([callMod($, server, args), late])
+  } finally {
+    timer?.cancel()
+  }
 }
 
 async function serverName($: EngineInterface): Promise<string | undefined> {
@@ -897,39 +924,121 @@ async function refreshPane($: EngineInterface) {
   const { value: open = false } = await $.state.get(paneOpenRef)
   if (!me || !open) return
   const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const { value: known = [] } = await $.state.get(paneHostsRef)
+  if (pane.view === 'agents' || pane.agent === null || known.length === 0) await refreshHosts($, me)
+  if (pane.view === 'agents' || pane.agent === null) return
+  const who = whoOf(pane.agent)
+  let reply: { total?: number; older?: number; messages?: AgentTabsMessage[] } | undefined
+  try {
+    reply = (await callModTimed($, me.server, { op: 'history', ...who })) as typeof reply
+  } catch (error) {
+    await notify($, `Couldn't read ${withoutRef(pane.agent.name)}'s messages: ${reason(error)}`)
+  }
+  if (reply?.messages !== undefined) {
+    const { value: shown = [] } = await $.state.get(paneHistoryRef)
+    const first = reply.messages[0]
+    const fresh = new Set(reply.messages.map(m => m.id))
+    const kept = first === undefined ? [] : shown.filter(m => !fresh.has(m.id) && (m.at < first.at || (m.at === first.at && m.id < first.id)))
+    const merged = [...kept, ...reply.messages]
+    if (JSON.stringify(shown) !== JSON.stringify(merged)) await $.state.set(paneHistoryRef, merged)
+    const total = reply.total ?? merged.length
+    const { value: shownTotal } = await $.state.get(paneTotalRef)
+    if (shownTotal !== total) await $.state.set(paneTotalRef, total)
+    const older = Math.max(0, (reply.older ?? 0) - kept.length)
+    const { value: shownOlder } = await $.state.get(paneOlderRef)
+    if (shownOlder !== older) await $.state.set(paneOlderRef, older)
+  }
+  if (pane.view !== 'detail' || pane.message === null) return
+  const { value: full } = await $.state.get(paneMessageRef)
+  if (full?.id !== pane.message) await loadMessage($, pane.message, 0)
+}
+
+const reason = (error: unknown) => (error instanceof Error ? error.message.split('\n')[0]! : String(error))
+
+const whoOf = (agent: AgentTabsPick) => ({ ...(agent.id !== null ? { session: agent.id } : {}), names: agent.names.slice(0, 8) })
+
+async function refreshHosts($: EngineInterface, me: AgentTabsSelf) {
   const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
   const listed = paneHosts(await readListing($).catch(() => undefined), rows, await $.clock.now())
   const agents = paneRows(listed).map(r => ({ ...(r.id !== null ? { session: r.id } : {}), names: r.names.slice(0, 8) }))
-  const counted = agents.length ? ((await callMod($, me.server, { op: 'counts', agents }).catch(() => undefined)) as { counts?: (number | null)[] } | undefined) : undefined
+  const counted = agents.length ? ((await callModTimed($, me.server, { op: 'counts', agents }).catch(() => undefined)) as { counts?: (number | null)[] } | undefined) : undefined
   let at = 0
   const hosts = listed.map(h => ({ ...h, folders: h.folders.map(f => ({ ...f, rows: f.rows.map(r => ({ ...r, messages: counted?.counts?.[at++] ?? null })) })) }))
   const { value: shownHosts } = await $.state.get(paneHostsRef)
   if (JSON.stringify(shownHosts) !== JSON.stringify(hosts)) await $.state.set(paneHostsRef, hosts)
-  if (pane.view === 'agents' || pane.agent === null) return
-  const who = { ...(pane.agent.id !== null ? { session: pane.agent.id } : {}), names: pane.agent.names.slice(0, 8) }
-  let reply: { total?: number; messages?: AgentTabsMessage[] } | undefined
+}
+
+const loading = new Set<string>()
+
+async function loadMessage($: EngineInterface, id: string, offset: number) {
+  const { value: me } = await $.state.get(selfRef)
+  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  if (!me || pane.agent === null || loading.has(id)) return
+  loading.add(id)
   try {
-    reply = (await callMod($, me.server, { op: 'history', ...who })) as typeof reply
+    let at = offset
+    for (;;) {
+      const { value: before } = await $.state.get(paneMessageRef)
+      const sofar = before?.id === id ? before.text.slice(0, at) : ''
+      let piece: { message?: AgentTabsMessage | null; text?: string; offset?: number; total?: number } | undefined
+      try {
+        piece = (await callModTimed($, me.server, { op: 'message', ...whoOf(pane.agent), id, offset: at })) as typeof piece
+      } catch (error) {
+        await $.state.set(paneMessageRef, { id, text: sofar, total: before?.id === id ? before.total : at, error: reason(error) })
+        await notify($, `Couldn't load message ${id}: ${reason(error)}`)
+        return
+      }
+      if (!piece?.message || typeof piece.text !== 'string' || typeof piece.total !== 'number') {
+        const why = piece?.message === null ? 'it is no longer in the 7-day log' : 'the reply had no text'
+        await $.state.set(paneMessageRef, { id, text: sofar, total: before?.id === id ? before.total : at, error: why })
+        await notify($, `Couldn't load message ${id}: ${why}`)
+        return
+      }
+      const text = sofar + piece.text
+      await $.state.set(paneMessageRef, { id, text, total: piece.total, error: null })
+      if (text.length >= piece.total || piece.text.length === 0) return
+      at = text.length
+    }
+  } finally {
+    loading.delete(id)
+  }
+}
+
+async function retryMessage($: EngineInterface) {
+  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const { value: full } = await $.state.get(paneMessageRef)
+  if (pane.message === null) return
+  const from = full?.id === pane.message ? full.text.length : 0
+  if (full?.id === pane.message) await $.state.set(paneMessageRef, { ...full, error: null })
+  await loadMessage($, pane.message, from)
+}
+
+async function copyMessage($: EngineInterface, surface: RenderSurface) {
+  const { value: full } = await $.state.get(paneMessageRef)
+  if (!full) return
+  const copied = await $.ui.copy({ text: full.text, surface }).catch(() => undefined)
+  await notify($, copied?.isCopied ? `Copied the message, ${full.text.length.toLocaleString('en-US')} characters.` : "Couldn't copy the message.")
+}
+
+async function loadOlder($: EngineInterface) {
+  const { value: me } = await $.state.get(selfRef)
+  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const { value: shown = [] } = await $.state.get(paneHistoryRef)
+  if (!me || pane.agent === null || !shown.length) return
+  try {
+    const reply = (await callModTimed($, me.server, { op: 'history', ...whoOf(pane.agent), before: shown[0]!.id })) as { older?: number; messages?: AgentTabsMessage[] }
+    const have = new Set(shown.map(m => m.id))
+    await $.state.set(paneHistoryRef, [...(reply.messages ?? []).filter(m => !have.has(m.id)), ...shown])
+    await $.state.set(paneOlderRef, reply.older ?? 0)
   } catch (error) {
-    await notify($, `Couldn't read ${withoutRef(pane.agent.name)}'s messages: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`)
+    await notify($, `Couldn't read older messages: ${reason(error)}`)
   }
-  if (reply?.messages !== undefined) {
-    const { value: shownHistory } = await $.state.get(paneHistoryRef)
-    if (JSON.stringify(shownHistory) !== JSON.stringify(reply.messages)) await $.state.set(paneHistoryRef, reply.messages)
-    const total = reply.total ?? reply.messages.length
-    const { value: shownTotal } = await $.state.get(paneTotalRef)
-    if (shownTotal !== total) await $.state.set(paneTotalRef, total)
-  }
-  if (pane.view !== 'detail' || pane.message === null) return
-  const { value: shownMessage } = await $.state.get(paneMessageRef)
-  if (shownMessage?.id === pane.message) return
-  const whole = (await callMod($, me.server, { op: 'message', ...who, id: pane.message }).catch(() => undefined)) as { message?: AgentTabsMessage | null } | undefined
-  if (whole?.message) await $.state.set(paneMessageRef, whole.message)
 }
 
 async function clearHistory($: EngineInterface) {
   await $.state.set(paneHistoryRef, [])
   await $.state.set(paneTotalRef, null)
+  await $.state.set(paneOlderRef, null)
   await $.state.set(paneMessageRef, null)
 }
 
@@ -950,7 +1059,7 @@ async function hidePane($: EngineInterface) {
 async function goTo($: EngineInterface, change: Partial<AgentTabsPane>) {
   const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
   const next = { ...pane, ...change }
-  if (next.agent?.key !== pane.agent?.key) await clearHistory($)
+  if (next.agent?.key !== pane.agent?.key || (pane.view === 'agents' && next.view === 'messages')) await clearHistory($)
   else if (next.message !== pane.message) await $.state.set(paneMessageRef, null)
   await $.state.set(paneRef, next)
   await refreshPane($).catch(() => undefined)
@@ -997,6 +1106,9 @@ export type PaneAct =
   | { act: 'message'; id: string }
   | { act: 'back' }
   | { act: 'reply' }
+  | { act: 'older' }
+  | { act: 'retry' }
+  | { act: 'copy-message' }
 
 const isAct = (data: unknown): data is PaneAct => typeof data === 'object' && data !== null && typeof (data as { act?: unknown }).act === 'string'
 
@@ -1105,10 +1217,10 @@ export function sessionPlace(agent: AgentTabsPick | null, hosts: readonly AgentT
 
 export const countLabel = (n: number) => (n === 1 ? '1 message' : `${n} messages`)
 
-export const olderLine = (total: number, shown: number) => `${total - shown} older ${total - shown === 1 ? 'message' : 'messages'} not shown`
+export const olderLabel = (older: number) => `Show older messages (${older})`
 
-export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], total: number | null, hosts: readonly AgentTabsPaneHost[], width: number): ListProps {
-  const acts: Record<string, PaneAct> = { back: { act: 'back' } }
+export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], total: number | null, hosts: readonly AgentTabsPaneHost[], width: number, older: number | null = null): ListProps {
+  const acts: Record<string, PaneAct> = { back: { act: 'back' }, older: { act: 'older' } }
   const where = sessionPlace(pane.agent, hosts)
   const dot = where ? DOT_COLORS[where.row.state] : undefined
   const room = Math.max(8, width - HEADER_INDENT)
@@ -1127,14 +1239,26 @@ export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMe
     ...(details !== '' ? [{ indent: HEADER_INDENT, parts: [{ text: cut(details, room), dim: true }] }] : []),
     { indent: 0, parts: [{ text: ' ' }] },
     ...(messages.length === 0 ? centeredLines(total === null ? READING : NO_MESSAGES, width) : []),
-    ...(total !== null && total > messages.length ? [{ indent: 2, parts: [{ text: olderLine(total, messages.length), dim: true }] }] : []),
     ...messages.map((m, i): ListLine => {
       acts[`m${i}`] = { act: 'message', id: m.id }
       return { item: `m${i}`, indent: 2, mark: 0, parts: [{ text: messageLine(m, hosts, width - 2), underline: true }] }
     }),
+    ...(older ? [{ indent: 0, parts: [{ text: ' ' }] }, { item: 'older', indent: 2, mark: 0, parts: [{ text: olderLabel(older), dim: true, underline: true }] }] : []),
   ]
   return { groups: [{ border: false, lines }], acts, width }
 }
+
+export const retryChip = (): ListProps => ({
+  groups: [{ border: false, lines: [{ indent: 1, parts: [{ text: RETRY_LABEL, underline: true, item: 'retry' }] }] }],
+  acts: { retry: { act: 'retry' } },
+})
+
+export const copyChip = (): ListProps => ({
+  groups: [{ border: false, lines: [{ indent: 1, parts: [{ text: COPY_LABEL, underline: true, item: 'copy-message' }] }] }],
+  acts: { 'copy-message': { act: 'copy-message' } },
+})
+
+export const drawnNote = (total: number) => `Showing the first ${DRAW_CHARS.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} characters.`
 
 export function detailChips(width: number): ListProps {
   const chips: ListPart[] = [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: REPLY_LABEL, underline: true, item: 'reply' }]
@@ -1406,6 +1530,9 @@ export const register: Register = on => {
     if (act.act === 'folder') await openFolder($, act.path)
     else if (act.act === 'copy') await copyPath($, act.path, e.surface)
     else if (act.act === 'back') await goUp($)
+    else if (act.act === 'older') await loadOlder($)
+    else if (act.act === 'retry') await retryMessage($)
+    else if (act.act === 'copy-message') await copyMessage($, e.surface)
     else if (act.act === 'message') await goTo($, { view: 'detail', message: act.id })
     else if (act.act === 'session') {
       const { value: hosts = [] } = await $.state.get(paneHostsRef)
@@ -1554,10 +1681,11 @@ export const register: Register = on => {
 
     const { value: messages = [] } = await $.state.get(paneHistoryRef)
     const { value: total = null } = await $.state.get(paneTotalRef)
+    const { value: older = null } = await $.state.get(paneOlderRef)
     const back = <Button key="back" label="Back" onPress={() => goUp($)} />
 
     if (pane.view === 'messages' || pane.message === null) {
-      if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, total, hosts, width)} />
+      if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, total, hosts, width, older)} />
       const where = sessionPlace(pane.agent, hosts)
       const dot = where ? DOT_COLORS[where.row.state] : undefined
       return (
@@ -1591,7 +1719,6 @@ export const register: Register = on => {
           </Box>
           <Text> </Text>
           {messages.length === 0 && empty(total === null ? READING : NO_MESSAGES)}
-          {total !== null && total > messages.length && <Text dimColor>{`  ${olderLine(total, messages.length)}`}</Text>}
           {messages.map(m => (
             <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
               <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
@@ -1600,6 +1727,11 @@ export const register: Register = on => {
               <Button key={`msg:${m.id}`} plain label={messageLine(m, hosts, width - 2)} onPress={() => goTo($, { view: 'detail', message: m.id })} />
             </Box>
           ))}
+          {older ? (
+            <Box flexDirection="column" marginTop={1} paddingLeft={2}>
+              <Button key="older" plain dimColor label={olderLabel(older)} onPress={() => loadOlder($)} />
+            </Box>
+          ) : null}
         </Box>
       )
     }
@@ -1620,6 +1752,12 @@ export const register: Register = on => {
     }
     const { value: me } = await $.state.get(selfRef)
     const { value: whole = null } = await $.state.get(paneMessageRef)
+    const full = whole?.id === m.id ? whole : null
+    const length = full?.total ?? m.textLength ?? m.text.length
+    const known = full !== null && full.text.length > m.text.length ? full.text : m.text
+    const stage = full?.error ? 'failed' : known.length < length ? 'loading' : 'done'
+    const clipped = known.length > DRAW_CHARS
+    const body = clipped ? `${known.slice(0, DRAW_CHARS)}…` : known.length < length ? `${known}…` : known
     const line = replyLine(m, me?.id, hosts)
     const delivery = [m.delivery, m.status].filter(v => v !== undefined).join(' · ') || '—'
     return (
@@ -1641,13 +1779,25 @@ export const register: Register = on => {
           Delivery: {delivery} · {m.route === 'native' ? 'SendMessage' : 'Agent Tabs'}
         </Text>
         <Box marginTop={1}>
-          <Text wrap="wrap">{whole?.id === m.id ? whole.text : (m.textLength ?? m.text.length) > m.text.length ? `${m.text}…` : m.text}</Text>
+          <Text wrap="wrap">{body}</Text>
         </Box>
-        {whole?.id !== m.id && (m.textLength ?? m.text.length) > m.text.length && (
+        {clipped && stage === 'done' && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>{drawnNote(length)}</Text>
+            {Client ? <Client key="copy" module="./list.tsx" props={copyChip()} /> : <Button key="copy-message" label={COPY_LABEL} onPress={() => copyMessage($, e.surface)} />}
+          </Box>
+        )}
+        {stage === 'loading' && (
           <Box marginTop={1}>
             <Text dimColor italic>
               {LOADING_MESSAGE}
             </Text>
+          </Box>
+        )}
+        {stage === 'failed' && (
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>{LOAD_FAILED}</Text>
+            {Client ? <Client key="retry" module="./list.tsx" props={retryChip()} /> : <Button key="retry" label={RETRY_LABEL} onPress={() => retryMessage($)} />}
           </Box>
         )}
       </Box>

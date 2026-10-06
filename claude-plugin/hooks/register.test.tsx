@@ -159,6 +159,10 @@ type WorldOptions = {
   mailOf?: (who: { session?: string; names: string[] }) => unknown[]
   older?: number
   historyError?: string
+  batch?: number
+  pieceChars?: number
+  failPieces?: number[]
+  hangPieces?: number[]
   holdMessage?: boolean
   os?: string
   uname?: string
@@ -185,6 +189,7 @@ function world(on: On, options: WorldOptions = {}) {
   const clock = mock.clock(on, { now: NOW })
   const panes = { open: [] as string[], opened: [] as unknown[], closed: [] as unknown[], commands: [] as string[], filled: [] as string[] }
   const runs: string[][] = []
+  const pieces: number[] = []
   on('fs.stat', (_$, e) => {
     const dir = (options.dirs ?? []).find(d => e.path === d || e.path.replace(/\\/g, '/').endsWith(d))
     if (dir !== undefined) return { value: { kind: 'dir' as const, size: 0, mtimeMs: 1, isLink: false, realPath: dir } }
@@ -274,7 +279,7 @@ function world(on: On, options: WorldOptions = {}) {
     const from = options.mailFrom?.[e.path.split('\\').at(-1)!]
     return { value: JSON.stringify(from === undefined ? MESSAGE : { ...MESSAGE, from: { ...MESSAGE.from, id: from } }) }
   })
-  on('mcp.call', (_$, e) => {
+  on('mcp.call', async (_$, e) => {
     calls.push({ tool: e.tool, args: e.args })
     const ok = (value: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(value) }], isError: false } })
     const fail = (text: string) => ({ value: { content: [{ type: 'text', text }], isError: true } })
@@ -300,14 +305,29 @@ function world(on: On, options: WorldOptions = {}) {
         return ok({ id: 'm-2222222222222222' })
       case 'history': {
         if (options.historyError !== undefined) return { value: { content: [{ type: 'text', text: options.historyError }], isError: false } }
-        const list = options.mailOf ? options.mailOf({ ...(e.args.session !== undefined ? { session: e.args.session as string } : {}), names: e.args.names as string[] }) : (options.history ?? [])
-        const shown = list.slice(options.older ?? 0)
-        return ok({ total: list.length, messages: shown.map(m => ({ ...(m as object), text: String((m as { text: string }).text).slice(0, 200), textLength: String((m as { text: string }).text).length })) })
+        const list = (options.mailOf ? options.mailOf({ ...(e.args.session !== undefined ? { session: e.args.session as string } : {}), names: e.args.names as string[] }) : (options.history ?? [])) as { id: string; text: string }[]
+        const cut = e.args.before === undefined ? list.length : list.findIndex(m => m.id === e.args.before)
+        const pool = list.slice(0, cut === -1 ? list.length : cut)
+        const batch = options.batch ?? (options.older !== undefined ? list.length - options.older : pool.length)
+        const shown = pool.slice(Math.max(0, pool.length - batch))
+        return ok({ total: list.length, older: pool.length - shown.length, messages: shown.map(m => ({ ...m, text: m.text.slice(0, 200), textLength: m.text.length })) })
       }
       case 'message': {
+        const offset = (e.args.offset as number | undefined) ?? 0
         if (options.holdMessage) return fail('held')
-        const list = options.mailOf ? options.mailOf({ ...(e.args.session !== undefined ? { session: e.args.session as string } : {}), names: e.args.names as string[] }) : (options.history ?? [])
-        return ok({ message: list.find(m => (m as { id: string }).id === e.args.id) ?? null })
+        if (options.hangPieces?.includes(offset)) {
+          return new Promise<never>(() => undefined)
+        }
+        const failing = options.failPieces?.indexOf(offset) ?? -1
+        if (failing !== -1) {
+          options.failPieces!.splice(failing, 1)
+          return { value: { content: [{ type: 'text', text: 'Error: result (300,000 characters across 1 line) exceeds maximum allowed tokens.' }], isError: false } }
+        }
+        const list = (options.mailOf ? options.mailOf({ ...(e.args.session !== undefined ? { session: e.args.session as string } : {}), names: e.args.names as string[] }) : (options.history ?? [])) as { id: string; text: string }[]
+        const found = list.find(m => m.id === e.args.id)
+        if (!found) return ok({ message: null })
+        pieces.push(offset)
+        return ok({ message: { ...found, text: '' }, text: found.text.slice(offset, offset + (options.pieceChars ?? 50_000)), offset, total: found.text.length })
       }
       case 'counts':
         return ok({
@@ -318,7 +338,7 @@ function world(on: On, options: WorldOptions = {}) {
     }
   })
   const ops = (op: string) => calls.filter(c => c.args.op === op)
-  return { calls, ops, statuses, toasts, copies, submitted, native, counts, mail, clock, model, panes, envSet, runs }
+  return { calls, ops, statuses, toasts, copies, submitted, native, counts, mail, clock, model, panes, envSet, runs, pieces }
 }
 
 async function start($: Engine) {
@@ -831,9 +851,22 @@ function positionOf(p: ListProps, item: string, nth = 0): { x: number; y: number
   throw new Error(`item ${item} is not drawn`)
 }
 
+async function listFor(ui: Ui, ref: string): Promise<{ key: string; props: ListProps; item: string }> {
+  for (const key of [...CLIENTS, 'copy', 'retry']) {
+    const c = await ui.find({ type: 'Client', key })
+    if (!c) continue
+    const props = c.props.props as ListProps
+    try {
+      return { key, props, item: itemFor(props, ref) }
+    } catch {
+      continue
+    }
+  }
+  throw new Error(`no client draws ${ref}`)
+}
+
 async function hover(ui: Ui, ref: string, nth = 0) {
-  const { key, props } = await list(ui)
-  const item = itemFor(props, ref)
+  const { key, props, item } = await listFor(ui, ref)
   const reveal = props.groups.flatMap(g => g.lines.flatMap(l => l.parts)).find(part => part.item === item)?.revealOn?.find(other => other !== item)
   if (reveal !== undefined) await ui.pointer({ type: 'move', ...positionOf(props, reveal), in: key })
   await ui.pointer({ type: 'move', ...positionOf(props, item, nth), in: key })
@@ -1792,7 +1825,7 @@ describe('counts and the messages view', () => {
       await click(ui, 'agent:id:tab-d')
       expect(await textIn(ui, 'docs-9b · 3 messages')).toBeDefined()
       const lines = await drawnLines(ui)
-      expect(lines).toContain('  1 older message not shown')
+      expect(lines.at(-1)).toBe('  Show older messages (1)')
       expect(lines.filter(l => /^ {2}\d\d:\d\d {2}/.test(l))).toHaveLength(2)
       await click(ui, `msg:${history[1]!.id}`)
       expect(await textIn(ui, long)).toBeDefined()
@@ -1803,10 +1836,10 @@ describe('counts and the messages view', () => {
     }
   })
 
-  test('a long message shows its preview and a loading line until the full text arrives', async ($, on) => {
+  test('a long message shows its preview and the loading line while a piece is out, then the error and Retry when no reply comes in 10 s', async ($, on) => {
     const long = 'y'.repeat(500)
     const history = [msg(1, 'a', long)]
-    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: LISTING_OF, mailOf: who => (who.session === 'tab-d' ? history : []), holdMessage: true })
+    const w = world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: LISTING_OF, mailOf: who => (who.session === 'tab-d' ? history : []), hangPieces: [0] })
     await start($)
     await openPane($)
     const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
@@ -1814,7 +1847,105 @@ describe('counts and the messages view', () => {
     await click(ui, `msg:${history[0]!.id}`)
     expect(await textIn(ui, `${long.slice(0, 200)}…`)).toBeDefined()
     expect(await textIn(ui, 'Fetching the rest of this message…')).toBeDefined()
+    await w.clock.advance(9_000)
+    expect(await textIn(ui, 'Fetching the rest of this message…')).toBeDefined()
+    await w.clock.advance(1_500)
+    expect(await textIn(ui, 'Fetching the rest of this message…')).toBeUndefined()
+    expect(await textIn(ui, "Couldn't load the rest of this message.")).toBeDefined()
+    expect(await ui.find({ type: 'Client', key: 'retry' })).toBeDefined()
+    await click(ui, 'back')
+    await click(ui, 'back')
+    expect(await textIn(ui, /^Couldn't load message m-0+1: no message reply within 10 s$/)).toBeDefined()
     await ui.unmount()
+  })
+
+  test('a 300,000-character message loads in pieces, each shown as it arrives', async ($, on) => {
+    const huge = Array.from({ length: 300_000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join('')
+    const history = [msg(1, 'a', huge)]
+    const w = world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: LISTING_OF, mailOf: who => (who.session === 'tab-d' ? history : []) })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      w.pieces.length = 0
+      await click(ui, 'agent:id:tab-d')
+      await click(ui, `msg:${history[0]!.id}`)
+      expect(w.pieces).toEqual([0, 50_000, 100_000, 150_000, 200_000, 250_000])
+      expect(await textIn(ui, `${huge.slice(0, 90_000)}…`)).toBeDefined()
+      expect(await textIn(ui, 'Fetching the rest of this message…')).toBeUndefined()
+      expect(await textIn(ui, 'Showing the first 90,000 of 300,000 characters.')).toBeDefined()
+      await click(ui, 'copy-message')
+      expect(w.copies.splice(0)).toEqual([huge])
+      await click(ui, 'back')
+      await click(ui, 'back')
+      await ui.unmount()
+    }
+  })
+
+  for (const surface of SURFACES) {
+  test(`a failed piece shows the error and Retry, and Retry fetches on from the last good offset, on ${surface}`, async ($, on) => {
+    const huge = Array.from({ length: 120_000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join('')
+    const history = [msg(1, 'a', huge)]
+    const w = world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: LISTING_OF, mailOf: who => (who.session === 'tab-d' ? history : []), failPieces: [50_000] })
+    await start($)
+    await openPane($)
+    {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      w.pieces.length = 0
+      await click(ui, 'agent:id:tab-d')
+      await click(ui, `msg:${history[0]!.id}`)
+      expect(w.pieces).toEqual([0])
+      expect(await textIn(ui, `${huge.slice(0, 50_000)}…`)).toBeDefined()
+      expect(await textIn(ui, "Couldn't load the rest of this message.")).toBeDefined()
+      const { key, props } = { key: 'retry', props: (await ui.find({ type: 'Client', key: 'retry' }))!.props.props as ListProps }
+      await ui.pointer({ type: 'move', ...positionOf(props, 'retry'), in: key })
+      expect((await ui.findAll({ in: key, type: 'Text' })).filter(t => t.props.underline === true).map(t => t.text)).toEqual(['Retry'])
+      await ui.pointer({ type: 'up', ...positionOf(props, 'retry'), button: 'left', in: key })
+      expect(w.pieces).toEqual([0, 50_000, 100_000])
+      expect(await textIn(ui, `${huge.slice(0, 90_000)}…`)).toBeDefined()
+      expect(await textIn(ui, 'Showing the first 90,000 of 120,000 characters.')).toBeDefined()
+      expect(await ui.find({ type: 'Client', key: 'retry' })).toBeUndefined()
+      await click(ui, 'back')
+      await click(ui, 'back')
+      expect(await textIn(ui, /^Couldn't load message m-0+1: the message reply was over Claude Code's MCP output limit$/)).toBeDefined()
+      await ui.unmount()
+    }
+  })
+  }
+
+  test('three batches of history load through Show older messages, and the title keeps the full total', async ($, on) => {
+    const history = Array.from({ length: 25 }, (_, i) => msg(i + 1, `p${i}`))
+    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: LISTING_OF, mailOf: who => (who.session === 'tab-d' ? history : []), batch: 10 })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      expect((await drawnLines(ui)).some(l => /^ {4}25 ✻ docs-9b/.test(l))).toBe(true)
+      await click(ui, 'agent:id:tab-d')
+      const rows = async () => (await drawnLines(ui)).filter(l => /^ {2}\d\d:\d\d {2}/.test(l))
+      for (const [count, left] of [
+        [10, 15],
+        [20, 5],
+      ] as const) {
+        expect(await textIn(ui, 'docs-9b · 25 messages')).toBeDefined()
+        expect(await rows()).toHaveLength(count)
+        expect((await drawnLines(ui)).at(-1)!.replace('▎', ' ')).toBe(`  Show older messages (${left})`)
+        await click(ui, 'older')
+      }
+      expect(await rows()).toHaveLength(25)
+      expect((await drawnLines(ui)).some(l => l.includes('Show older messages'))).toBe(false)
+      expect((await rows())[0]).toContain('p0 ·')
+      expect((await rows()).at(-1)).toContain('p24 ·')
+      const { key, props } = await list(ui)
+      for (const [y] of listRows(props.groups).entries()) {
+        await ui.pointer({ type: 'move', x: 4, y, in: key })
+        const lit = await underlined(ui)
+        const line = (await drawnLines(ui))[y]!
+        expect(lit).toEqual(/^ {2}\d\d:\d\d {2}/.test(line) || line.startsWith('▎') ? [line.replace(/^▎ ?|^ {2}/, '').trim()] : line.trim() === '← Back' ? ['← Back'] : [])
+      }
+      await click(ui, 'back')
+      await ui.unmount()
+    }
   })
 
   test('a failed history read says so in the pane instead of showing an empty list', async ($, on) => {

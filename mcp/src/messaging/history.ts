@@ -11,6 +11,22 @@ export const HISTORY_MAX = 500;
 // history reply stays well under it: message texts cut to a preview, and only the newest that fit.
 export const HISTORY_REPLY_CHARS = 60_000;
 export const PREVIEW_CHARS = 200;
+export const PIECE_CHARS = 50_000;
+
+export function textPiece(text: string, offset: number, budget = PIECE_CHARS): string {
+  let n = Math.min(budget, Math.max(0, text.length - offset));
+  while (n > 1 && JSON.stringify(text.slice(offset, offset + n)).length > budget) n = Math.floor(n / 2);
+  const last = text.charCodeAt(offset + n - 1);
+  if (n > 1 && offset + n < text.length && last >= 0xd800 && last <= 0xdbff) n--;
+  return text.slice(offset, offset + n);
+}
+
+export function olderThan(items: readonly HistoryItem[], before: string | undefined): readonly HistoryItem[] {
+  if (before === undefined) return items;
+  const at = items.findIndex((m) => m.id === before);
+  if (at !== -1) return items.slice(0, at);
+  return items.filter((m) => m.at < before);
+}
 const NATIVE_SAME_MS = 120_000;
 const MAILBOX_STATES = [
   ['new', 'unread'],

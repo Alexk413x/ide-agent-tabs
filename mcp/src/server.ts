@@ -200,6 +200,8 @@ interface ModInput {
   session?: string | undefined;
   names?: string[] | undefined;
   agents?: { session?: string | undefined; names: string[] }[] | undefined;
+  before?: string | undefined;
+  offset?: number | undefined;
   driver?: boolean | undefined;
   nativeName?: string | undefined;
   state?: (typeof MOD_STATES)[number] | undefined;
@@ -249,9 +251,9 @@ async function modOp(messaging: Messaging, service: Service, input: ModInput): P
         ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
       });
     case 'history':
-      return messaging.modHistory({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] });
+      return messaging.modHistory({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] }, input.before);
     case 'message':
-      return messaging.modMessage({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] }, need(input.id, 'id'));
+      return messaging.modMessage({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] }, need(input.id, 'id'), input.offset ?? 0);
     case 'counts':
       return messaging.modCounts((input.agents ?? []).map((a) => ({ ...(a.session !== undefined ? { id: a.session } : {}), names: a.names })));
     case 'settings':
@@ -292,6 +294,8 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
         delivery: z.string().max(200).optional().describe('log: what became of a sent message.'),
         session: z.string().max(128).optional().describe("history: the session id. presence: Claude Code's own session id."),
         names: z.array(z.string().max(128)).max(8).optional().describe('history: the names the session goes by.'),
+        before: z.string().max(64).optional().describe('history: a message id or ISO time; returns the batch just older than it.'),
+        offset: z.number().int().min(0).optional().describe('message: where in the text the piece starts.'),
         agents: z
           .array(z.object({ session: z.string().max(128).optional(), names: z.array(z.string().max(128)).max(8) }))
           .max(500)
