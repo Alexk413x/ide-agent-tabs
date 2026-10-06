@@ -9,16 +9,20 @@ export type ListPart = {
   underline?: boolean
   item?: string
   revealOn?: string[]
+  spin?: true
 }
 export type ListLine = { item?: string; indent: number; mark?: number; parts: ListPart[] }
 export type ListGroup = { border: boolean; lines: ListLine[] }
 export type ListProps = { groups: ListGroup[]; acts: Record<string, JsonValue>; width?: number }
-type ListState = { hovered: string | null; focused: string | null; linger: number }
+type ListState = { hovered: string | null; focused: string | null; linger: number; frame: number }
 
 export type ListRow = { edge: 'top' | 'bottom'; group: number } | { edge?: undefined; group: number; index: number; line: ListLine; offset: number; border: boolean }
 
 const MARK = '▎'
-const IDLE: ListState = { hovered: null, focused: null, linger: 0 }
+const IDLE: ListState = { hovered: null, focused: null, linger: 0, frame: 0 }
+export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+export const SPIN_MS = 100
+const spinners = new WeakMap<object, () => void>()
 const TICK_MS = 50
 export const LINGER_MS = 300
 const LINGER_TICKS = LINGER_MS / TICK_MS
@@ -66,6 +70,20 @@ const List: ClientModule<ListProps, ListState> = (props, surface) => {
       if (state.linger === 0) return
       surface.setState(state.linger === 1 ? { ...state, linger: 0, hovered: null } : { ...state, linger: state.linger - 1 })
     })
+  }
+  const spinning = props.groups.some(g => g.lines.some(l => l.parts.some(p => p.spin)))
+  const stop = spinners.get(surface)
+  if (spinning && stop === undefined) {
+    spinners.set(
+      surface,
+      surface.every(SPIN_MS, () => {
+        const state = surface.state ?? IDLE
+        surface.setState({ ...state, frame: (state.frame + 1) % SPINNER.length })
+      }),
+    )
+  } else if (!spinning && stop !== undefined) {
+    stop()
+    spinners.delete(surface)
   }
   surface.onPointer(e => {
     const state = surface.state ?? IDLE
@@ -125,7 +143,7 @@ const List: ClientModule<ListProps, ListState> = (props, surface) => {
               {...(part.italic ? { italic: true } : {})}
               {...(lit(itemOf(line, part)) && part.underline ? { underline: true } : {})}
             >
-              {part.text}
+              {part.spin ? `${SPINNER[state.frame % SPINNER.length]}${part.text.slice(1)}` : part.text}
             </Text>
           ))}
         </Box>

@@ -1,7 +1,7 @@
 import type { On, SessionSendResult } from 'claude-code'
 import { describe, expect, mock, test, type Engine } from 'claude-code/testing'
 
-import { listRows, type ListProps } from './list'
+import { listRows, SPINNER, type ListProps } from './list'
 import { DEFAULT_PANE, definitionColor, folderName, markdownBlocks, folderOpener, platformOf, upFrom } from './register'
 
 const SERVER = 'plugin:ide-agent-tabs:ide-agent-tabs'
@@ -191,6 +191,7 @@ function world(on: On, options: WorldOptions = {}) {
   const panes = { open: [] as string[], opened: [] as unknown[], closed: [] as unknown[], commands: [] as string[], filled: [] as string[] }
   const runs: string[][] = []
   const pieces: number[] = []
+  const hung: (() => void)[] = []
   on('fs.stat', (_$, e) => {
     const dir = (options.dirs ?? []).find(d => e.path === d || e.path.replace(/\\/g, '/').endsWith(d))
     if (dir !== undefined) return { value: { kind: 'dir' as const, size: 0, mtimeMs: 1, isLink: false, realPath: dir } }
@@ -317,7 +318,7 @@ function world(on: On, options: WorldOptions = {}) {
         const offset = (e.args.offset as number | undefined) ?? 0
         if (options.holdMessage) return fail('held')
         if (options.hangPieces?.includes(offset)) {
-          return new Promise<never>(() => undefined)
+          return new Promise<never>((_, reject) => hung.push(() => reject(new Error('released'))))
         }
         const failing = options.failPieces?.indexOf(offset) ?? -1
         if (failing !== -1) {
@@ -341,7 +342,8 @@ function world(on: On, options: WorldOptions = {}) {
     }
   })
   const ops = (op: string) => calls.filter(c => c.args.op === op)
-  return { calls, ops, statuses, toasts, copies, submitted, native, counts, mail, clock, model, panes, envSet, runs, pieces }
+  const release = () => hung.splice(0).forEach(r => r())
+  return { calls, ops, statuses, toasts, copies, submitted, native, counts, mail, clock, model, panes, envSet, runs, pieces, release }
 }
 
 async function start($: Engine) {
@@ -889,7 +891,7 @@ async function textIn(ui: Ui, text: string | RegExp): Promise<Found | undefined>
   const blocks = await ui.findAll({ type: 'Markdown' })
   const body = blocks.map(b => b.text).join('')
   if (blocks.length > 1 && (typeof text === 'string' ? body === text : text.test(body))) return { ...blocks[0]!, text: body }
-  for (const key of CLIENTS) {
+  for (const key of [...CLIENTS, 'loading', 'retry', 'copy']) {
     if (!(await ui.find({ type: 'Client', key }))) continue
     const inside = await ui.find({ in: key, type: 'Text', text })
     if (inside) return inside
@@ -1867,12 +1869,12 @@ describe('counts and the messages view', () => {
     await click(ui, 'agent:id:tab-d')
     await click(ui, `msg:${history[0]!.id}`)
     expect(await textIn(ui, `${long.slice(0, 200)}…`)).toBeDefined()
-    expect(await textIn(ui, 'Fetching the rest of this message…')).toBeDefined()
+    expect(await textIn(ui, /Fetching the rest of this message…$/)).toBeDefined()
     await w.clock.advance(9_000)
-    expect(await textIn(ui, 'Fetching the rest of this message…')).toBeDefined()
+    expect(await textIn(ui, /Fetching the rest of this message…$/)).toBeDefined()
     await w.clock.advance(1_500)
-    expect(await textIn(ui, 'Fetching the rest of this message…')).toBeUndefined()
-    expect(await textIn(ui, "Couldn't load the rest of this message.")).toBeDefined()
+    expect(await textIn(ui, /Fetching the rest of this message…$/)).toBeUndefined()
+    expect(await textIn(ui, /Couldn't load the rest of this message\.$/)).toBeDefined()
     expect(await ui.find({ type: 'Client', key: 'retry' })).toBeDefined()
     await click(ui, 'back')
     await click(ui, 'back')
@@ -1893,7 +1895,7 @@ describe('counts and the messages view', () => {
       await click(ui, `msg:${history[0]!.id}`)
       expect(w.pieces).toEqual([0, 50_000, 100_000, 150_000, 200_000, 250_000])
       expect(await textIn(ui, `${huge.slice(0, 90_000)}…`)).toBeDefined()
-      expect(await textIn(ui, 'Fetching the rest of this message…')).toBeUndefined()
+      expect(await textIn(ui, /Fetching the rest of this message…$/)).toBeUndefined()
       expect(await textIn(ui, 'Showing the first 90,000 of 300,000 characters.')).toBeDefined()
       await click(ui, 'copy-message')
       expect(w.copies.splice(0)).toEqual([huge])
@@ -1917,7 +1919,7 @@ describe('counts and the messages view', () => {
       await click(ui, `msg:${history[0]!.id}`)
       expect(w.pieces).toEqual([0])
       expect(await textIn(ui, `${huge.slice(0, 50_000)}…`)).toBeDefined()
-      expect(await textIn(ui, "Couldn't load the rest of this message.")).toBeDefined()
+      expect(await textIn(ui, /Couldn't load the rest of this message\.$/)).toBeDefined()
       const { key, props } = { key: 'retry', props: (await ui.find({ type: 'Client', key: 'retry' }))!.props.props as ListProps }
       await ui.pointer({ type: 'move', ...positionOf(props, 'retry'), in: key })
       expect((await ui.findAll({ in: key, type: 'Text' })).filter(t => t.props.underline === true).map(t => t.text)).toEqual(['Retry'])
@@ -1976,7 +1978,7 @@ describe('counts and the messages view', () => {
     const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
     await click(ui, 'agent:id:tab-d')
     expect(await textIn(ui, 'docs-9b · …')).toBeDefined()
-    expect((await drawnLines(ui)).map(l => l.trim())).toContain('Reading messages…')
+    expect((await drawnLines(ui)).map(l => l.trim())).toContain('⠋ Reading messages…')
     expect((await drawnLines(ui)).map(l => l.trim())).not.toContain('No messages sent or received through Agent Tabs or SendMessage in the last 7 days.')
     expect(w.ops('history').length).toBeGreaterThan(0)
     await click(ui, 'back')
@@ -2142,4 +2144,132 @@ test('markdownBlocks splits at a blank line, else a newline, else anywhere, and 
   expect(markdownBlocks(flat).map(b => b.length)).toEqual([10_000, 10_000, 5_000])
   expect(markdownBlocks('')).toEqual([''])
   expect(markdownBlocks('ok\u0007\tgo\n')).toEqual(['ok\tgo\n'])
+})
+
+describe('loading lines', () => {
+  const long = 'q'.repeat(500)
+  const message = {
+    id: 'm-00000000000000e1',
+    at: AT(6),
+    direction: 'received',
+    route: 'agent-tabs',
+    from: { id: 'codex-1a2b', agent: 'codex', path: 'C:\\w' },
+    to: { id: 'tab-d' },
+    peer: { id: 'codex-1a2b' },
+    text: long,
+    status: 'read',
+  }
+  const centredIn = (line: string, columns: number) => Math.abs(line.length - line.trimStart().length - (columns - line.trim().length) / 2) < 1
+
+  async function loadingDetail($: Engine, on: On, surface: (typeof SURFACES)[number] | 'vscode' | 'mobile', columns = 120) {
+    const w = world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: HEADER, mailOf: who => (who.session === 'tab-d' ? [message] : []), hangPieces: [0] })
+    await start($)
+    await openPane($)
+    const ui = (await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS(columns) })) as Awaited<ReturnType<Engine['ui']['mount']>> & Ui
+    let pending: Promise<unknown> = Promise.resolve()
+    if (surface === 'terminal' || surface === 'desktop') {
+      await click(ui, 'agent:id:tab-d')
+      await click(ui, `msg:${message.id}`)
+    } else {
+      await ui.press({ key: 'agent:id:tab-d' })
+      pending = ui.press({ key: `msg:${message.id}` })
+      for (let i = 0; i < 50 && !(await ui.find({ type: 'Box', key: 'loading' })); i++) await w.clock.advance(1)
+    }
+    const done = async () => {
+      w.release()
+      await pending
+    }
+    return { ui, done }
+  }
+
+  const tick = (ui: unknown, ms: number) => (ui as { advance: (ms: number) => Promise<void> }).advance(ms)
+
+  const loadingRows = async (ui: Ui) => (await ui.findAll({ in: 'loading', type: 'Box' })).filter(b => b.key?.startsWith('line-')).map(b => b.text)
+
+  for (const surface of SURFACES) {
+    for (const columns of [120, 40]) {
+      test(`the detail's loading line is a blank row, then a centred, italic, dim spinner and text at ${columns} columns, on ${surface}`, async ($, on) => {
+        const { ui, done } = await loadingDetail($, on, surface, columns)
+        const rows = await loadingRows(ui)
+        expect(rows[0]).toBe(' ')
+        expect(rows[1]!.trim()).toBe('⠋ Fetching the rest of this message…')
+        expect(centredIn(rows[1]!, columns)).toBe(true)
+        const text = await ui.find({ in: 'loading', type: 'Text', text: '⠋ Fetching the rest of this message…' })
+        expect([text?.props.italic, text?.props.dimColor]).toEqual([true, true])
+        const { props } = (await ui.find({ type: 'Client', key: 'loading' }))!.props as { props: ListProps }
+        for (const [y] of listRows(props.groups).entries()) {
+          await ui.pointer({ type: 'move', x: Math.floor(columns / 2), y, in: 'loading' })
+          expect((await ui.findAll({ in: 'loading', type: 'Text' })).some(t => t.props.underline === true)).toBe(false)
+        }
+        await done()
+        await ui.unmount()
+      })
+    }
+  }
+
+  test('the spinner steps a frame every 100 ms on the frame clock, and keeps the line the same width', async ($, on) => {
+    const { ui, done } = await loadingDetail($, on, 'terminal')
+    const seen: string[] = []
+    for (let i = 0; i < 11; i++) {
+      seen.push((await loadingRows(ui))[1]!)
+      await tick(ui, 100)
+    }
+    expect(seen.map(l => l.trim()[0])).toEqual(['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏', '⠋'])
+    expect(new Set(seen.map(l => l.length)).size).toBe(1)
+    await tick(ui, 50)
+    expect((await loadingRows(ui))[1]!.trim()[0]).toBe('⠙')
+    await ui.unmount()
+  })
+
+  test("the messages view's spinner stops when its history arrives, and nothing redraws after", async ($, on) => {
+    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: HEADER, history: HISTORY, historyError: 'Error: result (1 line) exceeds maximum allowed tokens.' })
+    await start($)
+    await openPane($)
+    const ui = (await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })) as Awaited<ReturnType<Engine['ui']['mount']>> & Ui
+    await click(ui, 'agent:id:tab-d')
+    const spinnerLine = async () => (await drawnLines(ui)).find(l => l.includes('Reading messages…'))
+    expect((await spinnerLine())!.trim()).toBe('⠋ Reading messages…')
+    await tick(ui, 200)
+    expect((await spinnerLine())!.trim()).toBe('⠹ Reading messages…')
+    const before = (await drawnLines(ui)).indexOf((await spinnerLine())!)
+    expect((await drawnLines(ui))[before - 1]).toBe(' ')
+    await ui.unmount()
+  })
+
+  test('when the text arrives the loading Client is gone, and with it its timer', async ($, on) => {
+    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: HEADER, mailOf: who => (who.session === 'tab-d' ? [message] : []), failPieces: [0] })
+    await start($)
+    await openPane($)
+    const ui = (await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })) as Awaited<ReturnType<Engine['ui']['mount']>> & Ui
+    await click(ui, 'agent:id:tab-d')
+    await click(ui, `msg:${message.id}`)
+    expect(await ui.find({ type: 'Client', key: 'loading' })).toBeUndefined()
+    const retryRows = (await ui.findAll({ in: 'retry', type: 'Box' })).filter(b => b.key?.startsWith('line-')).map(b => b.text)
+    expect(retryRows[0]).toBe(' ')
+    expect(retryRows[1]!.trim()).toBe("Couldn't load the rest of this message.")
+    expect(centredIn(retryRows[1]!, 120)).toBe(true)
+    expect(centredIn(retryRows[2]!, 120)).toBe(true)
+    expect(retryRows.some(r => SPINNER.some(f => r.includes(f)))).toBe(false)
+    expect((await ui.find({ in: 'retry', type: 'Text', text: "Couldn't load the rest of this message." }))?.props.italic).toBeUndefined()
+    await click(ui, 'retry')
+    expect(await ui.find({ type: 'Client', key: 'loading' })).toBeUndefined()
+    expect(await ui.find({ type: 'Client', key: 'retry' })).toBeUndefined()
+    expect(await textIn(ui, long)).toBeDefined()
+    await ui.unmount()
+  })
+
+  for (const surface of ['vscode', 'mobile'] as const) {
+    test(`with no Client the ${surface} loading line is static, centred, italic and dim`, async ($, on) => {
+      const { ui, done } = await loadingDetail($, on, surface)
+      expect(await ui.find({ type: 'Client' })).toBeUndefined()
+      const text = (await ui.findAll({ type: 'Text' })).find(t => t.text.trim() === 'Fetching the rest of this message…')
+      expect(text).toBeDefined()
+      expect([text!.props.italic, text!.props.dimColor]).toEqual([true, true])
+      expect(centredIn(text!.text, 120)).toBe(true)
+      expect(SPINNER.some(f => text!.text.includes(f))).toBe(false)
+      expect((await ui.find({ type: 'Box', key: 'loading' }))?.props.marginTop).toBe(1)
+      await done()
+      await ui.unmount()
+    })
+  }
 })
