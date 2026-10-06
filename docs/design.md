@@ -918,8 +918,8 @@ itself raised the call. The model's own calls to those tools keep the engine's d
 | `ack`, `release` | `claim` | `ack` moves the claimed messages to `cur/`; `release` returns them to `new/`. |
 | `sessions` | none | The `list_sessions` rows. |
 | `log` | `direction` (`sent` or `received`), `peer`, `text`, optional `id`, `at`, `delivery` | Records a native SendMessage message of this session in its `sent-log/` or `received-log/`. |
-| `history` | `session` and/or `names` | `total`, the number of messages the session sent or received, and `messages`: the newest of them, oldest first, with each `text` cut to 200 characters and its full `textLength`, as many as fit in about 59,000 characters (see [Agents pane](#agents-pane)). Claude Code replaces an MCP result over its output limit, about 25,000 tokens, with an error text, so a full history of long messages never reached the pane. |
-| `message` | `session` and/or `names`, `id` | `message`: that one message of the same history, whole, or `null`. |
+| `history` | `session` and/or `names`, optional `before` (a message id or ISO time) | `total`, the number of messages the session sent or received; `messages`, the newest batch older than `before` (all, without it), oldest first, with each `text` cut to 200 characters and its full `textLength`, as many as fit in about 59,000 characters; and `older`, how many older ones that batch left out (see [Agents pane](#agents-pane)). Claude Code replaces an MCP result over its output limit, about 25,000 tokens, with an error text, so no reply may come near it. |
+| `message` | `session` and/or `names`, `id`, optional `offset` | `message`: that message of the same history without its text, or `null`; `text`, the piece from `offset`, at most 50,000 characters of JSON, never splitting a surrogate pair; `offset`; and `total`, the text's length. |
 | `counts` | `agents`: up to 500 of `{ session?, names }`, as `history` takes one | `counts`: for each, the number of messages `history` would list, or `null` for one with neither a valid session nor a name. |
 | `settings` | none | `claudeMod` from `config.json`. |
 
@@ -1189,14 +1189,23 @@ request for the keys only.
 - **Messages** of the chosen agent: `← Back` at indent 1, a blank line, then at indent
   4 the bold `<name> · <n> messages` (the name without its `[ref]`), the state dot and the dim details as
   on the session's line 2, `<folder> · <IDE or terminal>`, and a dim line with the full name when it
-  carries a `[ref]` and `Session: <id>` when the id is known, joined by ` · `; a blank line; then, when
-  the history holds more than fit in one reply, a dim `<n> older messages not shown`; then everything it
+  carries a `[ref]` and `Session: <id>` when the id is known, joined by ` · `; a blank line; then everything it
   sent or received through Agent Tabs or SendMessage with any peer, oldest first, one line each: `HH:MM  ↑ peer  first line…` for sent and
   `HH:MM  ↘ peer  first line…` for received, in local time. A message line lights like a session, with
-  `▎` at column 0, and a click opens its detail.
+  `▎` at column 0, and a click opens its detail. When `history` left older messages out, the list ends
+  with a blank line and `Show older messages (<n>)`, which fetches the batch before the oldest shown
+  and adds it above. Each refresh merges the newest batch with the older ones already shown. The
+  pane's scroll belongs to the engine, so the mod can't hold its place when the list grows.
 - **Detail:** the `← Back` and `↩ Reply` chips at indent 1, which underline when lit, then the session id, from, to, time, `replyTo`, delivery and status, the route, and the whole text. **Reply**
   closes the pane and fills the prompt with `Reply to <name> (message <id>): `, which never submits; a
   dialog-held pane would refuse the fill.
+- The detail shows the message's preview at once, then fetches its text with `message`, one piece at a
+  time from offset 0, and shows each as it arrives under `Fetching the rest of this message…`. A piece
+  that fails (an error, an error text in place of JSON, the output-limit text, or no reply in 10
+  seconds) stops the fetch: the detail says `Couldn't load the rest of this message.` with a `Retry`
+  chip that fetches on from the last good offset, and the pane's notice line names the cause. A pane
+  draws at most 100,000 characters of text, so a longer message is drawn up to 90,000, with `Showing
+  the first 90,000 of <n> characters.` and a `Copy the whole message` chip.
 - An empty view's dim text (`No other agent session is live.`, `No messages sent or received …`) is
   centred in the pane width, wrapped by words to centred lines when it is wider.
 
@@ -1205,8 +1214,10 @@ view the mod answers without `next`, so the pane stays open and goes up instead.
 agent and message, and the focused row of each view live in `$.state`, so a reload keeps them, and a
 pane still open after a reload resumes its refresh.
 
-While the pane is open, the mod refreshes every 2 seconds: one `ListAgents` call, the `sessions` op and one
-`counts` op for every row shown, plus the `history` op in the messages and detail views. The server keeps
+While the pane is open, the mod refreshes every 2 seconds: in the agents view one `ListAgents` call, the
+`sessions` op and one `counts` op for every row shown; in the messages and detail views the `history` op
+only, with the hosts from the agents view (read once when there are none yet). Every op the pane waits
+on gives up after 10 seconds. The server keeps
 each log and mailbox file it has parsed by its path, since a file is written once under its name and a
 status change moves it to another folder, so a refresh lists the folders and reads only new files. It writes `$.state` only when the data changed, so
 the pane redraws only then. While it is closed, nothing renders and nothing is read. The mod's own

@@ -53,6 +53,8 @@ export type AgentTabsInbox = { count: number; senders: AgentTabsSender[] }
 
 export type AgentTabsParty = { id?: string; name?: string; agent?: string; path?: string }
 
+export type AgentTabsFullText = { id: string; text: string; total: number; error: string | null }
+
 export type AgentTabsMessage = {
   id: string
   at: string
@@ -79,7 +81,8 @@ declare module 'claude-code' {
       inbox: AgentTabsInbox | null
       paneHistory: AgentTabsMessage[]
       paneTotal: number | null
-      paneMessage: AgentTabsMessage | null
+      paneMessage: AgentTabsFullText | null
+      paneOlder: number | null
     }
   }
 }

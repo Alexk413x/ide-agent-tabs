@@ -26,7 +26,7 @@ import {
 import { readCodexConfig } from './codexConfig.js';
 import { recordEnded, transcriptDirs, type TranscriptDirs } from './closed.js';
 import { runHook } from './hook.js';
-import { history, historyCounts, logId, MailIndex, previews, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
+import { history, historyCounts, logId, MailIndex, olderThan, previews, textPiece, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
   agentFromClient,
@@ -685,14 +685,18 @@ export class Messaging {
     return history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names }, this.mailIndex);
   }
 
-  async modHistory(who: Who) {
+  async modHistory(who: Who, before?: string) {
     const items = await this.historyOf(who);
-    return { total: items.length, messages: previews(items) };
+    const pool = olderThan(items, before);
+    const messages = previews(pool);
+    return { total: items.length, older: pool.length - messages.length, messages };
   }
 
-  async modMessage(who: Who, id: string) {
+  async modMessage(who: Who, id: string, offset = 0) {
     const message = (await this.historyOf(who)).find((m) => m.id === id);
-    return { message: message ?? null };
+    if (message === undefined) return { message: null };
+    const start = Math.max(0, Math.min(Math.floor(offset), message.text.length));
+    return { message: { ...message, text: '' }, text: textPiece(message.text, start), offset: start, total: message.text.length };
   }
 
   async modCounts(whos: readonly Who[]) {
