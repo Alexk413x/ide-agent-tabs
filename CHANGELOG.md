@@ -4,6 +4,28 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 `mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
 `ide-agent-tabs--v<version>`.
 
+## 0.6.2
+
+Plugin and MCP server 0.6.2. The IDE packages don't change.
+
+### Added
+
+- `ide` in `open_tab`, `handoff` and `resume_tab` takes an IDE name, case-insensitive: a product name
+  such as `Android Studio`, or a key such as `vscode`, `cursor`, `idea`, `pycharm` or `android-studio`.
+  A running copy of that IDE takes the tab: the one with a project that contains `path`, else the most
+  recently started one. Otherwise the server starts an installed copy with `path` as its folder, waits
+  for it to register, and opens the tab there. Endpoint and terminal ids work as before.
+- The started IDE gets the server's environment without the calling agent session's variables, such as
+  `NO_COLOR`, `CLAUDE*`, `VSCODE_*` and `IDE_AGENT_TABS_ID`, so its terminal tabs don't inherit them.
+- When the named IDE isn't installed, can't start, or doesn't register in time, the tab opens in the
+  caller's IDE, else the caller's terminal, else the usual route, and `note` says why.
+- `open_tab` waits up to 40 s for a starting IDE and sends progress notifications. If the IDE is still
+  loading, it returns `pending: true` with a `note`, and the server opens the tab when the IDE loads.
+  `handoff` and `resume_tab` wait the full time, and a handoff closes nothing unless its tab opened.
+- `ideStartTimeoutSec` in `config.json` sets how long to wait for a started IDE. The default is 180.
+- `list_ides` returns `installed`: the IDEs found on disk that aren't running.
+- The `new-tab` skill passes the IDE name the user says.
+
 ## 0.6.1
 
 Plugin and MCP server 0.6.1, with VS Code extension 0.1.28 and JetBrains plugin 0.4.11 bundled. Both IDE

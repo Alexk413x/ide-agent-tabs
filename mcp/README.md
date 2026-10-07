@@ -13,10 +13,10 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 
 | Tool | Input | Returns |
 |---|---|---|
-| `list_ides` | none | Running IDEs (`id`, `product`, `version`, `projects` with `focused`), the terminals this machine supports with their capabilities, and `shells`: the PowerShell installs a Windows terminal tab can use |
+| `list_ides` | none | Running IDEs (`id`, `product`, `version`, `projects` with `focused`), `installed`: the IDEs found on disk that aren't running (`name` to pass as `ide`, `product`, `kind`: `vscode` or `jetbrains`, `version` when known), the terminals this machine supports with their capabilities, and `shells`: the PowerShell installs a Windows terminal tab can use |
 | `list_agents` | none | Profiles (`name`, `label`, `command`, `installed`, `model`: `true` when the profile takes a model, and `ori: true` when Ori can launch it), the `default` agent, `launchVia`, and any warnings about your config files |
 | `list_tabs` | `ide` (optional) | Open tabs across all IDEs and terminals, or in one |
-| `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux |
+| `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide` (an id from `list_ides` or an IDE name), `model`, `via`, `focus` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux, or when the tab opened somewhere other than the named IDE. While a named IDE is still starting: `pending: true`, the `product` and a `note`, with no `id`. See [IDE names](#ide-names). |
 | `close_tab` | `id` (optional) | The closed tab. With no `id`, it closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
 | `list_sessions` | none | Live agent sessions in a fixed agent order: `name` and `shortName` (what Claude Code's `SendMessage` takes, in its native style: a Claude session's native name, else `<folder>-<id hex>`, such as `the-index-34`), `legacyName` (the older form, such as `codex-f99f`, which `send_message` still takes), `id`, `session` (the first 8 characters of `id`), `agent`, `harness` (the agent CLI, with ` via OpenRouter` for an Ori launch), `model` and `effort` (`null` when unknown), `route` (`native` or `agent-tabs`), `state`, `tab`, `where` (the IDE product or terminal app, from the live endpoint or the label stored when the tab opened; `null` when neither is known, never a raw host id), `host` (IDE and project, or terminal), `ide` (the host's id), `path` and `folder`, `nativeName` for a Claude session that has one, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
 | `send_message` | `to` (an `id`, `name` or `legacyName`), `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
@@ -108,7 +108,8 @@ the new tab. The New Agent Tab button in an IDE always brings its tab to the fro
 
 ### How `open_tab` picks a place
 
-1. If you pass `ide`, the tab opens there.
+1. If you pass `ide`, the tab opens there. An IDE name starts that IDE when it isn't running; see
+   [IDE names](#ide-names).
 2. With `"tabRouting": "caller"` in `config.json`, the tab opens where the caller runs: in the caller's
    own IDE, even when another IDE has the project open, or in a new tab of the caller's terminal window
    when the caller runs in an Agent Tabs terminal tab. A caller outside an Agent Tabs tab goes on to step 3.
@@ -124,6 +125,26 @@ the new tab. The New Agent Tab button in an IDE always brings its tab to the fro
 
 The server skips an IDE that doesn't answer `info`, so an IDE stuck behind a modal dialog doesn't block the
 route.
+
+### IDE names
+
+`ide` in `open_tab`, `handoff` and `resume_tab` also takes an IDE name, case-insensitive: a product name
+such as `"Android Studio"`, or a key: `vscode`, `code-insiders`, `cursor`, `windsurf`, `vscodium`,
+`antigravity`, `kiro`, `positron`, `trae`, `android-studio` (or `studio`), `idea` (or `intellij`),
+`pycharm`, `webstorm`, `goland`, `rider`, `clion`, `rustrover`, `phpstorm`, `rubymine`, `datagrip`,
+`dataspell`.
+
+1. A running copy takes the tab: the one with a project that contains `path`, else the most recently
+   started one.
+2. Otherwise the server starts an installed copy with `path` as its folder, waits for it to register, and
+   opens the tab there. `list_ides` shows the installed IDEs under `installed`.
+3. If the IDE isn't installed, can't start, or doesn't register within `ideStartTimeoutSec`, the tab
+   opens in the caller's IDE, else the caller's terminal, else the usual route. The `note` says why. An
+   IDE that never registers usually lacks the Agent Tabs extension or plugin; run `/ide-agent-tabs:setup`.
+
+`open_tab` waits up to 40 s. If the IDE is still loading, it returns `pending: true` and a `note`, and
+the server opens the tab when the IDE loads. `handoff` and `resume_tab` wait the full
+`ideStartTimeoutSec`, and a handoff closes nothing unless its new tab opened.
 
 ### Jev tools
 
@@ -399,6 +420,7 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `closeAfterHandoff` | `true`: the new session closes the old tab after a handoff. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
 | `allowResume` | `true`: `resume_tab` reopens closed sessions, asking for `confirm` when the resume costs full price. `false`: it refuses. See [Resume](#resume). | `true` |
 | `claudeMod` | `"on"`: Claude Code sessions use the Agent Tabs mod: SendMessage and ListAgents reach every agent, mail arrives in-process, and `/agent-messages` shows the agents pane. `"off"`: the hooks, wake lines and messaging tools, as in 0.6.0. New Claude Code sessions pick up a change. | `"on"` |
+| `ideStartTimeoutSec` | Seconds to wait for an IDE started by name to register before the tab opens in the fallback. Above 0, at most 3600. See [IDE names](#ide-names). | `180` |
 | `focusNewTabs` | `"auto"`: an agent's tab opens behind the current one unless the call passes `focus: true`. `"always"`: it comes to the front unless the call passes `focus: false`. `"never"`: behind unless the call passes `focus: true`. See [Focus](#focus). | `"auto"` |
 
 An `ide` or `focus` passed to `open_tab` always wins over these settings. The server ignores a value it doesn't know,

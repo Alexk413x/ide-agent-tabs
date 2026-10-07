@@ -424,7 +424,7 @@ registry and calls the HTTP API.
 
 | Tool | Does |
 |---|---|
-| `list_ides` | Lists running IDEs with their projects, from the registry and each IDE's `info`. |
+| `list_ides` | Lists running IDEs with their projects, from the registry and each IDE's `info`, and under `installed` the IDEs found on disk that aren't running (`name`, `product`, `kind`, `version`). |
 | `list_agents` | Lists profiles, which are installed, which take a model (`model`), which Ori can launch (`ori`), and the `launchVia` setting. |
 | `list_tabs` | Lists tabs across all IDEs, or in one. |
 | `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus`. Returns `via: "ori"` for a tab started through Ori. |
@@ -435,7 +435,7 @@ registry and calls the HTTP API.
 
 `open_tab` routing, first match wins:
 
-1. The IDE or terminal named by `ide`, using its id from `list_ides`.
+1. The IDE or terminal named by `ide`, using its id from `list_ides`, or an IDE name (see below).
 2. With `"tabRouting": "caller"`, where the caller runs: the caller's own IDE, even when another IDE has
    the project open, or a new tab in the caller's terminal window when the caller runs in an Agent Tabs
    terminal tab. A caller outside an Agent Tabs tab goes on to rule 3.
@@ -448,6 +448,37 @@ registry and calls the HTTP API.
    then tmux on macOS; Ghostty, kitty, WezTerm, then tmux on Linux.
 
 The reply includes a `reason` that says which rule chose the target.
+
+`ide` also takes an IDE name, case-insensitive: a product name such as `Android Studio` or `IntelliJ IDEA`,
+or a short key: `vscode` (or `code`), `code-insiders`, `cursor`, `windsurf`, `vscodium` (or `codium`),
+`antigravity`, `kiro`, `positron`, `trae`, `android-studio` (or `studio`), `idea` (or `intellij`),
+`pycharm`, `webstorm`, `goland`, `rider`, `clion`, `rustrover`, `phpstorm`, `rubymine`, `datagrip` or
+`dataspell`. `open_tab`, `handoff` and `resume_tab` resolve a name in this order:
+
+1. A running copy of that IDE: the one with an open project that contains `path`, else the most recently
+   started one.
+2. An installed copy, found on disk the way `list_ides` lists it under `installed`. The server starts it
+   with `path` as the folder to open, polls the endpoint registry every 500 ms until a new endpoint of
+   that product answers `info` with an open project, and opens the tab there. A VS Code-family editor
+   starts through its command-line tool; a JetBrains IDE through the launcher its `product-info.json`
+   names for the OS, or `open -na <App>.app --args <path>` on macOS. The folder is one argument, never
+   passed through a shell. The IDE gets the server's environment without the calling agent session's
+   variables (`NO_COLOR`, `FORCE_COLOR`, `CLAUDE*`, `ANTHROPIC_*`, `CODEX_*`, `GEMINI_CLI*`,
+   `COPILOT_*`, `IDE_AGENT_TABS_*` other than `IDE_AGENT_TABS_HOME`, `JEDITERM_SOURCE*`,
+   `TERMINAL_EMULATOR`, `TERM_PROGRAM*`, `VSCODE_*`, `ELECTRON_RUN_AS_NODE`, `MCP_*`), because an IDE
+   passes its environment to every terminal tab it opens.
+3. A fallback: the caller's own IDE when the caller runs in an Agent Tabs tab of an IDE, else the caller's
+   terminal, else rules 2 to 6 above. The fallback applies when the IDE isn't installed, fails to
+   start, or doesn't register within `ideStartTimeoutSec` (180 s by default), for example because the
+   Agent Tabs extension or plugin isn't installed in it. The result's `reason` and `note` say why.
+
+A name that matches no catalog entry, running IDE or terminal is an error. `open_tab` waits at most
+40 s, because Codex's default MCP tool timeout is 60 s, and sends MCP progress notifications while it
+waits when the request carries a `progressToken`. When the IDE is still loading, `open_tab` returns
+`pending: true` with the `product` and a `note` and no tab id. The server keeps waiting and opens the
+tab itself once the IDE loads, or applies the fallback when the time runs out. `handoff` and
+`resume_tab` need the tab id, so they wait the whole `ideStartTimeoutSec`. A handoff closes nothing
+unless its new tab opened. Two calls that name the same starting IDE share one launch.
 
 ### Settings
 
@@ -478,15 +509,16 @@ its own, such as a peer test or delegated work, passes no `focus`. With `auto`, 
 `never` decide alone and ignore it. The New Agent Tab button and the open-on-startup tab don't use the setting; they always take focus. What
 `focus: false` does depends on the host; see [Focus](#focus).
 
-Three more settings in `config.json` don't depend on where a tab opens:
+Four more settings in `config.json` don't depend on where a tab opens:
 
 | Setting | Key | Values | Default |
 |---|---|---|---|
 | Launch through OpenRouter (Ori) | `launchVia` | `direct`: start each agent with its own command. `ori`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `direct` |
 | Close the old tab after a handoff | `closeAfterHandoff` | `true`: the new session closes the old tab. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
 | Allow resuming closed sessions | `allowResume` | `true`: `resume_tab` reopens closed sessions. `false`: it refuses every call. See [Resume](#resume). | `true` |
+| Wait for a started IDE | `ideStartTimeoutSec` | Seconds to wait for an IDE that `open_tab`, `handoff` or `resume_tab` started by name to register, above 0 and at most 3600. After that the tab opens in the fallback. Only `config.json` sets it. | `180` |
 
-VS Code shows these three in the **Agent Tabs** section, as `ideAgentTabs.launchVia`,
+VS Code shows the first three in the **Agent Tabs** section, as `ideAgentTabs.launchVia`,
 `ideAgentTabs.closeAfterHandoff` and `ideAgentTabs.allowResume`. JetBrains shows them on the Agent Tabs
 page, `launchVia` next to **Default agent**, and writes `allowResume` only when it is off. Both IDEs
 show `launchVia` only when `detected.json` has an `ori` entry. The server treats a value it doesn't know
