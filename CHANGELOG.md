@@ -96,6 +96,11 @@ packages add a `reveal` route.
   folder of a live session or an open project, by real path, and never a macOS bundle. `explorer.exe`,
   `open` or `xdg-open` runs only when no IDE can.
 
+- A session with 180 or more messages stayed on "Reading messages…": its first `history` reply was
+  58,651 characters, which Claude Code's MCP output limit (counted in tokens) refused, and the pane
+  only reported the failure on its notice line. A reply now holds at most 50 messages and about
+  29,000 characters, a message piece at most 30,000, a failed read shows an error with Retry in place
+  of the loading line, and the 2-second refresh never starts a second fetch while one is out.
 - A session with a long history showed its message count in the agents view but `0 messages` on its
   screen. Its `history` reply was over Claude Code's MCP output limit, which swaps the result for an
   error text, so the pane parsed nothing. `history` now returns the total and text previews of the

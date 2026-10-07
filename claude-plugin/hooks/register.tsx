@@ -53,6 +53,7 @@ const paneHistoryRef = { plugin: 'ide-agent-tabs', key: 'paneHistory' } as const
 const paneTotalRef = { plugin: 'ide-agent-tabs', key: 'paneTotal' } as const
 const paneMessageRef = { plugin: 'ide-agent-tabs', key: 'paneMessage' } as const
 const paneOlderRef = { plugin: 'ide-agent-tabs', key: 'paneOlder' } as const
+const paneHistoryErrorRef = { plugin: 'ide-agent-tabs', key: 'paneHistoryError' } as const
 const inboxRef = { plugin: 'ide-agent-tabs', key: 'inbox' } as const
 
 const PANE = 'agent-tabs'
@@ -87,6 +88,7 @@ const NO_SESSIONS = 'No other agent session is live.'
 const LOADING_SESSIONS = 'Rounding up your agents…'
 const LOADING_MESSAGE = 'Fetching the rest of this message…'
 const LOAD_FAILED = "Couldn't load the rest of this message."
+const READ_FAILED = "Couldn't read the messages."
 const RETRY_LABEL = 'Retry'
 const COPY_LABEL = 'Copy the whole message'
 const DETAIL_INDENT = 3
@@ -944,11 +946,20 @@ async function refreshPane($: EngineInterface) {
   if (pane.view === 'agents' || pane.agent === null || known.length === 0) await refreshHosts($, me)
   if (pane.view === 'agents' || pane.agent === null) return
   const who = whoOf(pane.agent)
+  const key = pane.agent.key
+  if (reading.has(key)) return
+  reading.add(key)
   let reply: { total?: number; older?: number; messages?: AgentTabsMessage[] } | undefined
   try {
     reply = (await callModTimed($, me.server, { op: 'history', ...who })) as typeof reply
+    const { value: shownError } = await $.state.get(paneHistoryErrorRef)
+    if (shownError) await $.state.set(paneHistoryErrorRef, null)
   } catch (error) {
+    const { value: total } = await $.state.get(paneTotalRef)
+    if (total === null || total === undefined) await $.state.set(paneHistoryErrorRef, reason(error))
     await notify($, `Couldn't read ${withoutRef(pane.agent.name)}'s messages: ${reason(error)}`)
+  } finally {
+    reading.delete(key)
   }
   if (reply?.messages !== undefined) {
     const { value: shown = [] } = await $.state.get(paneHistoryRef)
@@ -968,6 +979,8 @@ async function refreshPane($: EngineInterface) {
   const { value: full } = await $.state.get(paneMessageRef)
   if (full?.id !== pane.message) await loadMessage($, pane.message, 0)
 }
+
+const reading = new Set<string>()
 
 const reason = (error: unknown) => (error instanceof Error ? error.message.split('\n')[0]! : String(error))
 
@@ -1041,6 +1054,11 @@ async function copyMessage($: EngineInterface, surface: RenderSurface) {
   await notify($, copied?.isCopied ? `Copied the message, ${full.text.length.toLocaleString('en-US')} characters.` : "Couldn't copy the message.")
 }
 
+async function retryHistory($: EngineInterface) {
+  await $.state.set(paneHistoryErrorRef, null)
+  await refreshPane($).catch(() => undefined)
+}
+
 async function loadOlder($: EngineInterface) {
   const { value: me } = await $.state.get(selfRef)
   const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
@@ -1057,6 +1075,7 @@ async function loadOlder($: EngineInterface) {
 }
 
 async function clearHistory($: EngineInterface) {
+  await $.state.set(paneHistoryErrorRef, null)
   await $.state.set(paneHistoryRef, [])
   await $.state.set(paneTotalRef, null)
   await $.state.set(paneOlderRef, null)
@@ -1130,6 +1149,7 @@ export type PaneAct =
   | { act: 'older' }
   | { act: 'retry' }
   | { act: 'copy-message' }
+  | { act: 'retry-history' }
 
 const isAct = (data: unknown): data is PaneAct => typeof data === 'object' && data !== null && typeof (data as { act?: unknown }).act === 'string'
 
@@ -1252,8 +1272,16 @@ export const countLabel = (n: number) => (n === 1 ? '1 message' : `${n} messages
 
 export const olderLabel = (older: number) => `Show older messages (${older})`
 
-export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMessage[], total: number | null, hosts: readonly AgentTabsPaneHost[], width: number, older: number | null = null): ListProps {
-  const acts: Record<string, PaneAct> = { back: { act: 'back' }, older: { act: 'older' } }
+export function messagesList(
+  pane: AgentTabsPane,
+  messages: readonly AgentTabsMessage[],
+  total: number | null,
+  hosts: readonly AgentTabsPaneHost[],
+  width: number,
+  older: number | null = null,
+  failed: string | null = null,
+): ListProps {
+  const acts: Record<string, PaneAct> = { back: { act: 'back' }, older: { act: 'older' }, 'retry-history': { act: 'retry-history' } }
   const where = sessionPlace(pane.agent, hosts)
   const dot = where ? DOT_COLORS[where.row.state] : undefined
   const room = Math.max(8, width - HEADER_INDENT)
@@ -1271,7 +1299,13 @@ export function messagesList(pane: AgentTabsPane, messages: readonly AgentTabsMe
       : []),
     ...(details !== '' ? [{ indent: HEADER_INDENT, parts: [{ text: cut(details, room), dim: true }] }] : []),
     { indent: 0, parts: [{ text: ' ' }] },
-    ...(messages.length === 0 ? (total === null ? loadingLines(READING, width).slice(1) : centeredLines(NO_MESSAGES, width)) : []),
+    ...(messages.length === 0
+      ? total !== null
+        ? centeredLines(NO_MESSAGES, width)
+        : failed !== null
+          ? [...centeredLines(READ_FAILED, width), { indent: Math.max(0, Math.floor((width - RETRY_LABEL.length) / 2)), parts: [{ text: RETRY_LABEL, underline: true, item: 'retry-history' }] }]
+          : loadingLines(READING, width).slice(1)
+      : []),
     ...messages.map((m, i): ListLine => {
       acts[`m${i}`] = { act: 'message', id: m.id }
       return { item: `m${i}`, indent: 2, mark: 0, parts: [{ text: messageLine(m, hosts, width - 2), underline: true }] }
@@ -1615,6 +1649,7 @@ export const register: Register = on => {
     else if (act.act === 'older') await loadOlder($)
     else if (act.act === 'retry') await retryMessage($)
     else if (act.act === 'copy-message') await copyMessage($, e.surface)
+    else if (act.act === 'retry-history') await retryHistory($)
     else if (act.act === 'message') await goTo($, { view: 'detail', message: act.id })
     else if (act.act === 'session') {
       const { value: hosts = [] } = await $.state.get(paneHostsRef)
@@ -1775,10 +1810,11 @@ export const register: Register = on => {
     const { value: messages = [] } = await $.state.get(paneHistoryRef)
     const { value: total = null } = await $.state.get(paneTotalRef)
     const { value: older = null } = await $.state.get(paneOlderRef)
+    const { value: failed = null } = await $.state.get(paneHistoryErrorRef)
     const back = <Button key="back" label="Back" onPress={() => goUp($)} />
 
     if (pane.view === 'messages' || pane.message === null) {
-      if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, total, hosts, width, older)} />
+      if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, total, hosts, width, older, failed)} />
       const where = sessionPlace(pane.agent, hosts)
       const dot = where ? DOT_COLORS[where.row.state] : undefined
       return (
@@ -1811,7 +1847,19 @@ export const register: Register = on => {
             )}
           </Box>
           <Text> </Text>
-          {messages.length === 0 && (total === null ? empty(READING, true) : empty(NO_MESSAGES))}
+          {messages.length === 0 &&
+            (total !== null ? (
+              empty(NO_MESSAGES)
+            ) : failed !== null ? (
+              <Box flexDirection="column">
+                {empty(READ_FAILED)}
+                <Box flexDirection="row" justifyContent="center">
+                  <Button key="retry-history" label={RETRY_LABEL} onPress={() => retryHistory($)} />
+                </Box>
+              </Box>
+            ) : (
+              empty(READING, true)
+            ))}
           {messages.map(m => (
             <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
               <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>

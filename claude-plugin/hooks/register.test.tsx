@@ -159,6 +159,8 @@ type WorldOptions = {
   mailOf?: (who: { session?: string; names: string[] }) => unknown[]
   older?: number
   historyError?: string
+  historyErrors?: number
+  hangHistory?: boolean
   revealOk?: boolean
   batch?: number
   pieceChars?: number
@@ -306,7 +308,14 @@ function world(on: On, options: WorldOptions = {}) {
       case 'log':
         return ok({ id: 'm-2222222222222222' })
       case 'history': {
-        if (options.historyError !== undefined) return { value: { content: [{ type: 'text', text: options.historyError }], isError: false } }
+        if (options.historyError !== undefined && (options.historyErrors === undefined || options.historyErrors-- > 0)) {
+          return { value: { content: [{ type: 'text', text: options.historyError }], isError: false } }
+        }
+        if (options.hangHistory) {
+          options.hangHistory = false
+          const answer = await new Promise<void>(resolve => hung.push(resolve))
+          void answer
+        }
         const list = (options.mailOf ? options.mailOf({ ...(e.args.session !== undefined ? { session: e.args.session as string } : {}), names: e.args.names as string[] }) : (options.history ?? [])) as { id: string; text: string }[]
         const cut = e.args.before === undefined ? list.length : list.findIndex(m => m.id === e.args.before)
         const pool = list.slice(0, cut === -1 ? list.length : cut)
@@ -320,6 +329,7 @@ function world(on: On, options: WorldOptions = {}) {
         if (options.hangPieces?.includes(offset)) {
           return new Promise<never>((_, reject) => hung.push(() => reject(new Error('released'))))
         }
+
         const failing = options.failPieces?.indexOf(offset) ?? -1
         if (failing !== -1) {
           options.failPieces!.splice(failing, 1)
@@ -1978,11 +1988,49 @@ describe('counts and the messages view', () => {
     const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
     await click(ui, 'agent:id:tab-d')
     expect(await textIn(ui, 'docs-9b · …')).toBeDefined()
-    expect((await drawnLines(ui)).map(l => l.trim())).toContain('⠋ Reading messages…')
-    expect((await drawnLines(ui)).map(l => l.trim())).not.toContain('No messages sent or received through Agent Tabs or SendMessage in the last 7 days.')
+    const lines = (await drawnLines(ui)).map(l => l.trim())
+    expect(lines).toContain("Couldn't read the messages.")
+    expect(lines).toContain('Retry')
+    expect(lines.some(l => l.includes('Reading messages…'))).toBe(false)
+    expect(lines).not.toContain('No messages sent or received through Agent Tabs or SendMessage in the last 7 days.')
     expect(w.ops('history').length).toBeGreaterThan(0)
     await click(ui, 'back')
-    expect(await textIn(ui, /^Couldn't read docs-9b's messages: /)).toBeDefined()
+    expect(await textIn(ui, /^Couldn't read docs-9b's messages: the history reply was over Claude Code's MCP output limit$/)).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('Retry after a failed history read fetches it again and shows the list', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: HISTORY, historyError: 'Error: result (58,651 characters across 1 line) exceeds maximum allowed tokens.', historyErrors: 1 })
+    await start($)
+    await openPane($)
+    for (const surface of SURFACES) {
+      const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+      await click(ui, 'agent:id:tab-d')
+      if (surface === 'terminal') {
+        expect((await drawnLines(ui)).map(l => l.trim())).toContain("Couldn't read the messages.")
+        await click(ui, 'retry-history')
+        expect(w.ops('history').length).toBe(2)
+      }
+      expect(await textIn(ui, 'docs-9b · 2 messages')).toBeDefined()
+      expect((await drawnLines(ui)).filter(l => /^ {2}\d\d:\d\d {2}/.test(l))).toHaveLength(2)
+      await click(ui, 'back')
+      await ui.unmount()
+    }
+  })
+
+  test('a slow history is not fetched again by the 2 s refresh while it is out, and its list shows when it answers', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', history: HISTORY, hangHistory: true })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await click(ui, 'agent:id:tab-d')
+    expect((await drawnLines(ui)).some(l => l.includes('Reading messages…'))).toBe(true)
+    await w.clock.advance(6_000)
+    expect(w.ops('history')).toHaveLength(1)
+    w.release()
+    await w.clock.advance(2_000)
+    expect(await textIn(ui, 'docs-9b · 2 messages')).toBeDefined()
+    expect((await drawnLines(ui)).some(l => l.includes('Reading messages…'))).toBe(false)
     await ui.unmount()
   })
 })
@@ -2222,7 +2270,7 @@ describe('loading lines', () => {
   })
 
   test("the messages view's spinner stops when its history arrives, and nothing redraws after", async ($, on) => {
-    world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: HEADER, history: HISTORY, historyError: 'Error: result (1 line) exceeds maximum allowed tokens.' })
+    const w = world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!], listing: HEADER, history: HISTORY, hangHistory: true })
     await start($)
     await openPane($)
     const ui = (await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })) as Awaited<ReturnType<Engine['ui']['mount']>> & Ui
@@ -2233,6 +2281,12 @@ describe('loading lines', () => {
     expect((await spinnerLine())!.trim()).toBe('⠹ Reading messages…')
     const before = (await drawnLines(ui)).indexOf((await spinnerLine())!)
     expect((await drawnLines(ui))[before - 1]).toBe(' ')
+    w.release()
+    await w.clock.advance(2_000)
+    expect(await spinnerLine()).toBeUndefined()
+    const after = await drawnLines(ui)
+    await tick(ui, 500)
+    expect(await drawnLines(ui)).toEqual(after)
     await ui.unmount()
   })
 
