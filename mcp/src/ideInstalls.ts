@@ -166,7 +166,8 @@ function scan(root: Root, ctx: DiscoveryContext, found: IdeInstall[]): void {
   walk(root.dir, root.depth);
 }
 
-const buildOrder = (a: IdeInstall, b: IdeInstall) => compareVersions(b.version ?? '0', a.version ?? '0');
+const sortable = (i: IdeInstall) => (i.version ?? '0').replace(/^[A-Za-z]+-/, '');
+const buildOrder = (a: IdeInstall, b: IdeInstall) => compareVersions(sortable(b), sortable(a));
 
 export function discoverIdes(ctx: DiscoveryContext): IdeInstall[] {
   const editors = findEditorClis(ctx, ctx.fs.exists).flatMap(({ cli, path: file }) => {

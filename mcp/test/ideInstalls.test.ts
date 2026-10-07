@@ -104,6 +104,9 @@ test('Linux: Toolbox apps, /opt and snaps, newest build first, and the launcher 
     'webstorm|jetbrains|2026.1|/home/a/.local/share/JetBrains/Toolbox/apps/WebStorm/ch-0/261.1/bin/webstorm',
     'android-studio|jetbrains|2026.1|/opt/android-studio/bin/studio.sh',
   ]);
+  const studio = (v: string) => JSON.stringify({ name: 'Android Studio', buildNumber: v, launch: [{ os: 'Linux', launcherPath: 'bin/studio.sh' }] });
+  const builds = discoverIdes(ctx('linux', { '/opt/as-old/product-info.json': studio('AI-251.26094.121'), '/opt/as-old/bin/studio.sh': '', '/opt/as-new/product-info.json': studio('AI-262.10968.63'), '/opt/as-new/bin/studio.sh': '' }));
+  assert.deepEqual(builds.map((i) => i.version), ['AI-262.10968.63', 'AI-251.26094.121'], 'a build number sorts without its product prefix');
 });
 
 test('product-info.json parsing skips junk and picks the launcher for the OS and architecture', () => {
