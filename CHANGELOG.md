@@ -27,7 +27,7 @@ packages add a `reveal` route.
 - A session's messages screen leads with `← Back`, then its title, status line, folder and IDE or
   terminal, and full name and session id, indented under it. An empty view's text is centred.
 - While the agents list loads, the pane says "Rounding up your agents…". A long message's detail shows
-  "Fetching the rest of this message…" while the mod fetches its text in pieces of at most 50,000
+  "Fetching the rest of this message…" while the mod fetches its text in pieces of at most 30,000
   characters (the `message` op's `offset` and `total`), each shown as it arrives. A failed or silent
   piece (10 seconds) shows "Couldn't load the rest of this message." and a Retry chip. A text over the
   pane's 100,000-character drawing limit is drawn in part, with a chip that copies it whole.
