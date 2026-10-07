@@ -214,3 +214,15 @@ test('merge keeps built-in order and appends new profiles in file order', () => 
   assert.deepEqual(merged.map((x) => x.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'z', 'a']);
   assert.equal(merged[4]!.label, 'G');
 });
+
+test('ideStartTimeoutSec comes from config, 180 s by default, and refuses what is not a positive number of seconds', () => {
+  assert.equal(resolveSettings(undefined, undefined).ideStartTimeoutSec, 180);
+  const set = resolveSettings(undefined, JSON.stringify({ ideStartTimeoutSec: 90 }));
+  assert.equal(set.ideStartTimeoutSec, 90);
+  assert.deepEqual(set.warnings, []);
+  for (const value of [0, -5, '60', 7200]) {
+    const bad = resolveSettings(undefined, JSON.stringify({ ideStartTimeoutSec: value }));
+    assert.equal(bad.ideStartTimeoutSec, 180);
+    assert.match(bad.warnings.join(' '), /ideStartTimeoutSec .*seconds/);
+  }
+});

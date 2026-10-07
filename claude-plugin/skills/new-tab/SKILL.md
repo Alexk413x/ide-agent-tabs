@@ -27,8 +27,14 @@ Arguments: `$ARGUMENTS`
 ## Open
 
 Call `open_tab` with `path`, and `agent` and `prompt` when given. Pass `ide` only when the user names an
-IDE or terminal; get its id from `list_ides`. Pass `args` or `env` only when the user asks for extra
-agent flags or variables.
+IDE or terminal. For an IDE, pass the name the user said, such as `Android Studio`, `vscode` or
+`pycharm`; the server finds it, starts it when it isn't running, and opens the tab there. For a
+terminal, or one of several windows of the same IDE, pass its id from `list_ides`. Pass `args` or `env`
+only when the user asks for extra agent flags or variables.
+
+If the result has `pending: true`, the IDE is still starting: tell the user the tab opens there once it
+loads, and don't call `open_tab` again for it. If the result has a `note`, pass it on, for example when
+the named IDE isn't installed and the tab opened in this IDE or terminal instead.
 
 Pass `focus: true` when the user asked for the tab, so it comes to the front. Leave `focus` out when you
 open a tab on your own, such as for a test, a peer session or delegated work. Without `focus`, the

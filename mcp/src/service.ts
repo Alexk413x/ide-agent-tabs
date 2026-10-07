@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { detect, readDetection, writeDetection, type Detection } from './detection.js';
 import { readTextIfExists, removeStaleFiles } from './files.js';
+import { findIdeEntry, productMatchesName, type IdeEntry } from './ideCatalog.js';
 import { IdeError, type IdeCall, type Route } from './ideClient.js';
+import { discoverIdes, ideLaunchCommand, launchEnvironment, spawnIde, systemDiscoveryFs, type IdeInstall } from './ideInstalls.js';
 import { isCmdShim, isInstalled } from './installed.js';
 import {
   AGENTS_FILE,
@@ -18,7 +21,7 @@ import { isSessionId, readPresence, updatePresence, withState, type PresenceFile
 import { isProcessAlive, readRegistry, type Endpoint } from './registry.js';
 import { validateOpen, type OpenInput, type OpenRequest } from './request.js';
 import { checkRevealTarget, fileManagerCommand, systemReveal, type RevealDeps } from './reveal.js';
-import { chooseIde, chooseTerminal, type IdeCandidate, type Project } from './routing.js';
+import { chooseIde, chooseTerminal, projectDepth, type IdeCandidate, type Project } from './routing.js';
 import { ORI_AGENTS, planLaunch, type LaunchPlan } from './launchPlan.js';
 import { launchSpec } from './spec.js';
 import { TabStore } from './tabStore.js';
@@ -39,7 +42,30 @@ export interface ServiceDeps {
   shellProbe?: (runShells: boolean) => ShellProbe;
   transcripts?: TranscriptDirs;
   reveal?: RevealDeps;
+  ides?: IdeLauncher;
+  ideWait?: { pollMs?: number; syncMs?: number; progressMs?: number };
+  log?: (message: string) => void;
 }
+
+export interface IdeLauncher {
+  discover(): IdeInstall[];
+  launch(install: IdeInstall, folder: string): Promise<void>;
+}
+
+export interface OpenTabOptions {
+  wait?: 'full' | 'background';
+  onProgress?: (elapsedMs: number, totalMs: number, message: string) => void;
+}
+
+interface Started {
+  endpoint?: Endpoint;
+  why?: string;
+}
+
+export const systemIdes = (platform: NodeJS.Platform, env: NodeJS.ProcessEnv): IdeLauncher => ({
+  discover: () => discoverIdes({ platform, env, userHome: os.homedir(), arch: process.arch, fs: systemDiscoveryFs }),
+  launch: (install, folder) => spawnIde(ideLaunchCommand(install, folder, platform, env.ComSpec ?? env.COMSPEC), launchEnvironment(env)),
+});
 
 export class ToolError extends Error {}
 
@@ -52,6 +78,9 @@ interface IdeInfo {
 
 const SPEC_MAX_AGE_MS = 60 * 60 * 1000;
 export const FRESH_TAB_START_MS = 10_000;
+export const IDE_POLL_MS = 500;
+export const IDE_SYNC_WAIT_MS = 40_000;
+const IDE_PROGRESS_MS = 5_000;
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -67,6 +96,8 @@ function projectsOf(reply: Record<string, unknown>): Project[] {
 export class Service {
   private readonly store: TabStore;
   private readonly ctx: TerminalContext;
+  private readonly starting = new Map<string, Promise<Started>>();
+  private readonly background = new Set<Promise<unknown>>();
 
   constructor(private readonly deps: ServiceDeps) {
     this.store = new TabStore(deps.home);
@@ -149,6 +180,11 @@ export class Service {
       Promise.all(drivers.map((d) => d.currentCapabilities?.(this.ctx).catch(() => d.capabilities) ?? d.capabilities)),
       this.refreshDetection(drivers).catch(() => undefined),
     ]);
+    const running = infos.map((i) => i.product);
+    const listed = new Set<string>();
+    const installed = this.discover()
+      .filter((i) => !running.some((product) => productMatchesName(product, i.key)) && !listed.has(i.key) && listed.add(i.key))
+      .map((i) => ({ name: i.key, product: i.product, kind: i.kind, ...(i.version !== undefined ? { version: i.version } : {}) }));
     return {
       ides: infos.map((i) => ({
         id: i.endpoint.id,
@@ -163,6 +199,7 @@ export class Service {
         capabilities: capabilities[i],
         preferred: settings.preferredTerminal === d.name,
       })),
+      installed,
       shells: detection?.shells ?? [],
       ...(errors.length ? { errors } : {}),
       ...(warnings.length ? { warnings } : {}),
@@ -187,7 +224,23 @@ export class Service {
     };
   }
 
-  async openTab(input: OpenInput) {
+  private ides(): IdeLauncher {
+    return this.deps.ides ?? systemIdes(this.deps.platform, this.deps.env);
+  }
+
+  private discover(): IdeInstall[] {
+    try {
+      return this.ides().discover();
+    } catch {
+      return [];
+    }
+  }
+
+  async settled(): Promise<void> {
+    while (this.background.size) await Promise.allSettled([...this.background]);
+  }
+
+  async openTab(input: OpenInput, options: OpenTabOptions = {}) {
     let request: OpenRequest;
     try {
       request = validateOpen(input);
@@ -205,11 +258,13 @@ export class Service {
         return this.openInTerminal(driver, request, 'named by ide');
       }
       const endpoint = endpoints.find((e) => e.id === request.ide);
-      if (!endpoint) {
-        throw new ToolError(`no running IDE or terminal with id ${request.ide}; call list_ides for the ids`);
-      }
-      return this.openInIde(endpoint, request, 'named by ide');
+      if (endpoint) return this.openInIde(endpoint, request, 'named by ide');
+      return this.openNamed(request.ide, request, endpoints, settings, options);
     }
+    return this.route(request, endpoints, settings);
+  }
+
+  private async route(request: OpenRequest, endpoints: Endpoint[], settings: AgentSettings) {
     const own = this.deps.env[TAB_ID_ENV];
     const callerHost = own ? await this.findHost(own).catch(() => undefined) : undefined;
     const callerTerminal = this.deps.drivers.find((d) => d.name === callerHost);
@@ -229,6 +284,141 @@ export class Service {
       throw new ToolError(`${terminal.error}.${detail}`);
     }
     return this.openInTerminal(this.deps.drivers.find((d) => d.name === terminal.name)!, request, terminal.reason);
+  }
+
+  private async openNamed(name: string, request: OpenRequest, endpoints: Endpoint[], settings: AgentSettings, options: OpenTabOptions) {
+    const entry = findIdeEntry(name);
+    const matching = endpoints.filter((e) => productMatchesName(e.product, name));
+    if (matching.length) {
+      const { infos } = await this.infos(matching);
+      const ranked = infos
+        .map((i) => ({ i, depth: Math.max(-1, ...i.projects.map((p) => projectDepth(p.path, request.path, this.isWindows) ?? -1)) }))
+        .sort((a, b) => b.depth - a.depth || b.i.endpoint.startedAt - a.i.endpoint.startedAt);
+      const best = ranked[0];
+      const endpoint = best?.i.endpoint ?? [...matching].sort((a, b) => b.startedAt - a.startedAt)[0]!;
+      const label = entry?.name ?? endpoint.product;
+      const reason = best && best.depth >= 0 ? `${label} is running; an open project contains the path` : `${label} is running; most recently started`;
+      return this.openInIde(endpoint, request, reason);
+    }
+    if (!entry) {
+      throw new ToolError(
+        `no running IDE or terminal with id ${name}, and no IDE by that name; call list_ides for the ids, or pass an IDE name such as vscode, idea or android-studio`,
+      );
+    }
+    const install = this.discover().find((i) => i.key === entry.key);
+    if (!install) return this.fallback(request, `${entry.name} isn't installed`);
+    const budgetMs = settings.ideStartTimeoutSec * 1000;
+    const started = this.startIde(entry, install, request.path, new Set(endpoints.map((e) => e.id)), budgetMs);
+    const finish = async (s: Started) => {
+      if (!s.endpoint) return this.fallback(request, s.why!);
+      try {
+        return await this.openInIde(s.endpoint, request, `started ${entry.name}`);
+      } catch (e) {
+        return this.fallback(request, `${entry.name} started but couldn't open the tab: ${errorText(e)}`);
+      }
+    };
+    const message = `Waiting for ${entry.name} to load`;
+    if (options.wait !== 'background') return finish(await this.waitFor(started, budgetMs, budgetMs, message, options.onProgress) ?? (await started));
+    const syncMs = Math.min(this.deps.ideWait?.syncMs ?? IDE_SYNC_WAIT_MS, budgetMs);
+    const early = await this.waitFor(started, syncMs, budgetMs, message, options.onProgress);
+    if (early) return finish(early);
+    const later = started.then(finish).then(
+      (r) => this.log(`opened tab ${String(r.id)} in ${String(r.product)} after starting ${entry.name}`),
+      (e) => this.log(`couldn't open the tab after starting ${entry.name}: ${errorText(e)}`),
+    );
+    this.background.add(later);
+    void later.finally(() => this.background.delete(later));
+    return {
+      pending: true,
+      ide: entry.key,
+      product: entry.name,
+      agent: request.agent ?? settings.defaultAgent.name,
+      path: request.path,
+      reason: `started ${entry.name}; it is still loading`,
+      note:
+        `${entry.name} is starting. The agent tab opens there once it loads, up to ${settings.ideStartTimeoutSec} s after the launch. ` +
+        "If it doesn't load by then, the tab opens in the caller's IDE or terminal instead.",
+    };
+  }
+
+  private log(message: string): void {
+    this.deps.log?.(message);
+  }
+
+  private startIde(entry: IdeEntry, install: IdeInstall, folder: string, before: Set<string>, budgetMs: number): Promise<Started> {
+    const running = this.starting.get(entry.key);
+    if (running) return running;
+    const pollMs = this.deps.ideWait?.pollMs ?? IDE_POLL_MS;
+    const seconds = Math.round(budgetMs / 100) / 10;
+    const piece = entry.kind === 'jetbrains' ? 'plugin' : 'extension';
+    const start = (async (): Promise<Started> => {
+      const deadline = Date.now() + budgetMs;
+      try {
+        await this.ides().launch(install, folder);
+      } catch (e) {
+        return { why: `${entry.name} couldn't start: ${errorText(e)}` };
+      }
+      let registered = false;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, Math.min(pollMs, Math.max(0, deadline - Date.now()))));
+        const fresh = (await this.registry()).endpoints.filter((e) => !before.has(e.id) && entry.product.test(e.product));
+        for (const endpoint of fresh) {
+          try {
+            const reply = await this.callIde(endpoint, 'info');
+            registered = true;
+            if (projectsOf(reply).length) return { endpoint };
+          } catch {
+            continue;
+          }
+        }
+      }
+      return {
+        why: registered
+          ? `${entry.name} started but opened no project within ${seconds} s`
+          : `${entry.name} started but didn't register within ${seconds} s; if the Agent Tabs ${piece} isn't installed in it, run /ide-agent-tabs:setup`,
+      };
+    })().finally(() => this.starting.delete(entry.key));
+    this.starting.set(entry.key, start);
+    return start;
+  }
+
+  private async waitFor(
+    started: Promise<Started>,
+    limitMs: number,
+    totalMs: number,
+    message: string,
+    onProgress: OpenTabOptions['onProgress'],
+  ): Promise<Started | undefined> {
+    const begin = Date.now();
+    let timer: NodeJS.Timeout | undefined;
+    const ticker = onProgress ? setInterval(() => onProgress(Date.now() - begin, totalMs, message), this.deps.ideWait?.progressMs ?? IDE_PROGRESS_MS) : undefined;
+    try {
+      onProgress?.(0, totalMs, message);
+      return await Promise.race([started, new Promise<undefined>((r) => (timer = setTimeout(() => r(undefined), limitMs)))]);
+    } finally {
+      clearTimeout(timer);
+      clearInterval(ticker);
+    }
+  }
+
+  private async fallback(request: OpenRequest, why: string): Promise<Record<string, unknown> & { reason: string; product: string }> {
+    const [{ endpoints }, settings] = await Promise.all([this.registry(), this.settings()]);
+    const own = this.deps.env[TAB_ID_ENV];
+    const host = own ? await this.findHost(own).catch(() => undefined) : undefined;
+    const endpoint = endpoints.find((e) => e.id === host);
+    const driver = this.deps.drivers.find((d) => d.name === host);
+    let opened: Record<string, unknown> & { reason: string; product: string; note?: string };
+    if (endpoint) {
+      opened = await this.openInIde(endpoint, request, `${why}; the caller's IDE`);
+    } else if (driver && (await driver.available(this.ctx).catch(() => false))) {
+      const near = (await this.store.read()).find((t) => t.id === own);
+      opened = await this.openInTerminal(driver, request, `${why}; the caller's terminal`, near);
+    } else {
+      const routed = await this.route(request, endpoints, settings);
+      opened = { ...routed, reason: `${why}; ${routed.reason}` };
+    }
+    const note = `${why}, so the tab opened in ${opened.product} instead.`;
+    return { ...opened, note: opened.note === undefined ? note : `${note} ${opened.note}` };
   }
 
   private async openInIde(endpoint: Endpoint, request: OpenRequest, reason: string) {
