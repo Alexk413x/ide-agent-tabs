@@ -11,6 +11,9 @@ export const STARTUP_ENV = 'JEDITERM_SOURCE';
 export const TAB_ID_ENV = `${PLUGIN_ENV_PREFIX}ID`;
 export const AGENT_ENV = `${PLUGIN_ENV_PREFIX}AGENT`;
 export const ALLOW_RESUME_KEY = 'allowResume';
+export const IDE_START_TIMEOUT_KEY = 'ideStartTimeoutSec';
+export const DEFAULT_IDE_START_TIMEOUT_SEC = 180;
+export const MAX_IDE_START_TIMEOUT_SEC = 3600;
 
 const PROFILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -231,6 +234,7 @@ export interface TerminalSettings {
   focusNewTabs: FocusNewTabs;
   claudeMod: ClaudeMod;
   allowResume: boolean;
+  ideStartTimeoutSec: number;
 }
 
 export function resolveFocus(setting: FocusNewTabs, requested: boolean | undefined): boolean {
@@ -243,6 +247,14 @@ function flag(config: Record<string, unknown>, key: string, fallback: boolean, w
   if (value === undefined || value === null) return fallback;
   if (typeof value === 'boolean') return value;
   warnings.push(`Ignoring ${key} in ${CONFIG_FILE}: it must be true or false`);
+  return fallback;
+}
+
+function seconds(config: Record<string, unknown>, key: string, fallback: number, max: number, warnings: string[]): number {
+  const value = field(config, key);
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= max) return value;
+  warnings.push(`Ignoring ${key} in ${CONFIG_FILE}: it must be a number of seconds above 0 and at most ${max}`);
   return fallback;
 }
 
@@ -261,6 +273,7 @@ export function readTerminalSettings(config: Record<string, unknown>, warnings: 
   const focusNewTabs = choice(config, 'focusNewTabs', ['auto', 'always', 'never'] as const, warnings);
   const claudeMod = choice(config, 'claudeMod', ['on', 'off'] as const, warnings);
   const allowResume = flag(config, ALLOW_RESUME_KEY, true, warnings);
+  const ideStartTimeoutSec = seconds(config, IDE_START_TIMEOUT_KEY, DEFAULT_IDE_START_TIMEOUT_SEC, MAX_IDE_START_TIMEOUT_SEC, warnings);
   let preferredTerminal: string | undefined;
   const terminal = field(config, 'terminal');
   if (typeof terminal === 'string') preferredTerminal = !isBlank(terminal) && terminal !== AUTO ? terminal : undefined;
@@ -273,7 +286,7 @@ export function readTerminalSettings(config: Record<string, unknown>, warnings: 
   } else if (shellValue !== undefined && shellValue !== null) {
     warnings.push(`Ignoring shell in ${CONFIG_FILE}: it must be "auto" or the absolute path of a shell executable`);
   }
-  return { tabRouting, terminalWindow, launchVia, focusNewTabs, claudeMod, allowResume, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
+  return { tabRouting, terminalWindow, launchVia, focusNewTabs, claudeMod, allowResume, ideStartTimeoutSec, ...(preferredTerminal ? { preferredTerminal } : {}), ...(shell ? { shell } : {}) };
 }
 
 export interface AgentSettings extends TerminalSettings {
@@ -298,7 +311,7 @@ export function resolveSettings(
     }
   }
   let configured: string | undefined;
-  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last', launchVia: 'direct', focusNewTabs: 'auto', claudeMod: 'on', allowResume: true };
+  let terminal: TerminalSettings = { tabRouting: 'project', terminalWindow: 'last', launchVia: 'direct', focusNewTabs: 'auto', claudeMod: 'on', allowResume: true, ideStartTimeoutSec: DEFAULT_IDE_START_TIMEOUT_SEC };
   let jev = JEV_OFF;
   if (configText !== undefined) {
     let readable = true;

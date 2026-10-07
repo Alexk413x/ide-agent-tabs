@@ -12,7 +12,7 @@ import { MESSAGING_INSTRUCTIONS, TAB_INSTRUCTIONS } from './messaging/notice.js'
 import { agentFromClient } from './messaging/sessions.js';
 import { MAX_ENTRIES, MAX_PROMPT_CHARS } from './profiles.js';
 import { CACHE_MS, LONG_CACHE_MS, MAX_CHEAP_TOKENS, type Resumes } from './resume.js';
-import type { Service } from './service.js';
+import type { OpenTabOptions, Service } from './service.js';
 import { PACKAGE_VERSION } from './version.js';
 
 export const SERVER_NAME = 'ide-agent-tabs';
@@ -33,7 +33,18 @@ async function answer(work: () => Promise<unknown>): Promise<CallToolResult> {
 }
 
 const IDE_ID =
-  'An id from list_ides: an IDE such as jetbrains-12345, or a terminal: windows-terminal, ghostty, iterm2, kitty, wezterm or tmux.';
+  'An id from list_ides: an IDE such as jetbrains-12345, or a terminal: windows-terminal, ghostty, iterm2, kitty, wezterm or tmux. ' +
+  'Or an IDE name, case-insensitive: a product name or a short key such as vscode, cursor, windsurf, antigravity, idea, pycharm or android-studio (installed in list_ides). ' +
+  "A named IDE that isn't running is started with path as its folder, and the tab opens there once it loads; if it isn't installed or doesn't load in time, the tab opens in the caller's IDE or terminal and note says why.";
+
+function progress(extra: Extra): OpenTabOptions['onProgress'] {
+  const token = extra._meta?.progressToken;
+  if (token === undefined) return undefined;
+  return (elapsedMs, totalMs, message) =>
+    void extra
+      .sendNotification({ method: 'notifications/progress', params: { progressToken: token, progress: Math.round(elapsedMs / 1000), total: Math.round(totalMs / 1000), message } })
+      .catch(() => undefined);
+}
 
 const SESSION_ID = 'A session id from list_sessions.';
 const MESSAGE_ID = 'A message id, such as m-0123456789abcdef.';
@@ -58,7 +69,7 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging,
       title: 'List IDEs and terminals',
       description:
         'List the running IDEs that can host agent tabs and the terminal apps open_tab can use. ' +
-        'Returns ides (id, ide, product, version, and the open projects with the focused one marked), terminals (id, name, capabilities, preferred), shells (the PowerShell installs a Windows terminal tab can use), and errors for IDEs that did not answer. ' +
+        'Returns ides (id, ide, product, version, and the open projects with the focused one marked), installed (IDEs found on disk that are not running: name, product, kind vscode or jetbrains, version when known), terminals (id, name, capabilities, preferred), shells (the PowerShell installs a Windows terminal tab can use), and errors for IDEs that did not answer. ' +
         'Call it for an id to pass as ide to open_tab or list_tabs. It does not list agent tabs; list_tabs does.',
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -101,7 +112,9 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging,
         "It does not return the agent's output: to get an answer, run that CLI headless, or ask in prompt for a reply through send_message. " +
         "Without ide, the tab opens in the IDE whose open project best contains path, else the caller's own IDE, else the most recently started IDE, else the configured terminal. " +
         "When config.json sets tabRouting to caller, the caller's own IDE, or the caller's terminal window, comes first. " +
-        'Returns the tab id, the ide id and product, the agent and the reason for the route, plus a note to pass on when the user must act, such as attaching to tmux.',
+        'Pass the IDE the user named as ide, such as "Android Studio" or vscode: a running copy takes the tab, else an installed one is started. ' +
+        'Returns the tab id, the ide id and product, the agent and the reason for the route, plus a note to pass on to the user, such as attaching to tmux or why the tab opened somewhere other than the named IDE. ' +
+        'When a started IDE is still loading after about 40 s, it returns pending: true with no tab id and a note: tell the user the tab opens there once the IDE loads, or in their current IDE or terminal if it never does; don\'t call open_tab again for it.',
       inputSchema: {
         path: z.string().describe('Absolute path of an existing folder. The session starts there.'),
         agent: z.string().optional().describe('Profile name from list_agents. Defaults to the configured default agent.'),
@@ -134,7 +147,7 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging,
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    (input, extra) => reply(extra, () => service.openTab(input)),
+    (input, extra) => reply(extra, () => service.openTab(input, { wait: 'background', onProgress: progress(extra) })),
   );
 
   server.registerTool(

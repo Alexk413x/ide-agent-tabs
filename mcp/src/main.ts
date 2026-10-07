@@ -29,6 +29,7 @@ const service = new Service({
   env: process.env,
   callIde: ideCaller(),
   drivers: TERMINAL_DRIVERS,
+  log: (message) => console.error(`ide-agent-tabs: ${message}`),
 });
 const { jev, off } = await startJev(service, { home, env: process.env, platform: process.platform });
 const [command, ...args] = process.argv.slice(2);
