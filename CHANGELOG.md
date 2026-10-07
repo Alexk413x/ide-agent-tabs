@@ -95,6 +95,10 @@ packages add a `reveal` route.
   `RevealFileAction.openDirectory`), which comes to the front. Every layer reveals only an existing
   folder of a live session or an open project, by real path, and never a macOS bundle. `explorer.exe`,
   `open` or `xdg-open` runs only when no IDE can.
+- Each folder click that fell back to `explorer.exe` left an invisible File Explorer window and its
+  process behind, because `$.process.run` starts its child hidden and Explorer keeps that state. The
+  MCP server now starts the file manager itself, visible, when no IDE can reveal the folder. On
+  Windows the mod no longer runs `explorer.exe`.
 
 - A session with 180 or more messages stayed on "Reading messages…": its first `history` reply was
   58,651 characters, which Claude Code's MCP output limit (counted in tokens) refused, and the pane

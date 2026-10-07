@@ -840,8 +840,8 @@ export function platformOf(os: string | undefined, uname: string | undefined): H
   return kernel === 'Darwin' ? 'mac' : 'linux'
 }
 
-export function folderOpener(platform: HostPlatform, path: string): string[] {
-  return [platform === 'windows' ? 'explorer.exe' : platform === 'mac' ? 'open' : 'xdg-open', path]
+export function folderOpener(platform: 'mac' | 'linux', path: string): string[] {
+  return [platform === 'mac' ? 'open' : 'xdg-open', path]
 }
 
 async function hostPlatform($: EngineInterface): Promise<HostPlatform> {
@@ -875,16 +875,22 @@ async function openFolder($: EngineInterface, path: string) {
     return
   }
   const { value: me } = await $.state.get(selfRef)
-  const revealed = me ? ((await callModTimed($, me.server, { op: 'reveal', path: at.realPath }).catch(() => undefined)) as { ok?: boolean; product?: string } | undefined) : undefined
+  const revealed = me ? ((await callModTimed($, me.server, { op: 'reveal', path: at.realPath }).catch(() => undefined)) as { ok?: boolean; ide?: string; reason?: string } | undefined) : undefined
   if (revealed?.ok === true) {
-    await notify($, `Opened ${at.realPath} in ${FILE_MANAGERS[platform]}.`)
+    const behind = platform === 'windows' && revealed.ide === 'system' ? ' (it may be behind this window)' : ''
+    await notify($, `Opened ${at.realPath} in ${FILE_MANAGERS[platform]}${behind}.`)
+    return
+  }
+  // $.process.run starts its child hidden, and Explorer keeps that state, so the folder window would
+  // be invisible. On Windows only the server, which starts Explorer visible, opens a folder.
+  if (platform === 'windows') {
+    await notify($, `Could not open ${at.realPath}: ${revealed?.reason ?? 'the Agent Tabs server did not answer'}.`)
     return
   }
   const argv = folderOpener(platform, at.realPath)
   const ran = await $.process.run(argv, { timeoutMs: OPEN_TIMEOUT_MS }).catch(() => undefined)
-  // explorer.exe exits 1 even when it opened the folder, so only a failed start counts on Windows.
-  if (ran === undefined || (platform !== 'windows' && ran.exitCode !== 0)) await notify($, `${argv[0]} could not open ${at.realPath}.`)
-  else await notify($, platform === 'windows' ? `Opened ${at.realPath} in File Explorer (it may be behind this window).` : `Opened ${at.realPath}.`)
+  if (ran === undefined || ran.exitCode !== 0) await notify($, `${argv[0]} could not open ${at.realPath}.`)
+  else await notify($, `Opened ${at.realPath}.`)
 }
 
 async function copyPath($: EngineInterface, path: string, surface: RenderSurface) {
