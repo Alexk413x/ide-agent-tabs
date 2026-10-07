@@ -4,6 +4,113 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 `mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
 `ide-agent-tabs--v<version>`.
 
+## 0.6.1
+
+Plugin and MCP server 0.6.1, with VS Code extension 0.1.28 and JetBrains plugin 0.4.11 bundled. Both IDE
+packages add a `reveal` route.
+
+### Changed
+
+- The Claude Code mod's pane is **Agent Tabs Messages**, in its title and at the top of the agents view.
+  `/agent-messages` opens and closes it; it replaces `/agent-tabs`. Nothing in the pane is pre-selected.
+- On the terminal and desktop, the pane's rows are drawn by a `Client` module, so nothing in it is
+  inverted under the pointer or the focus. Hovering a session marks both its lines with `▎` and
+  underlines both; a left click on either line opens its messages. Once a click gives the list the keys,
+  the arrow keys or Tab move a focus that looks the same, and Enter opens it. Message rows, folder
+  headings and the Back and Reply chips work the same way. VS Code and mobile keep the Buttons. The list
+  draws one row per line, box edges included, so the pointer lights the line under it; a folder's
+  revealed path stays lit across the gap and for 300 ms after the pointer leaves.
+- Each session's first line starts with its message count in the 7-day log, bold and padded so the
+  names align (`3 ✻ plugins-82`), the same messages its screen lists; the state dot moves to the start of
+  the second line. The server answers a new `counts` op for the pane and reads only log and mailbox
+  files it hasn't parsed yet. Nothing is counted while the pane is closed.
+- A session's messages screen leads with `← Back`, then its title, status line, folder and IDE or
+  terminal, and full name and session id, indented under it. An empty view's text is centred.
+- While the agents list loads, the pane says "Rounding up your agents…". A long message's detail shows
+  "Fetching the rest of this message…" while the mod fetches its text in pieces of at most 30,000
+  characters (the `message` op's `offset` and `total`), each shown as it arrives. A failed or silent
+  piece (10 seconds) shows "Couldn't load the rest of this message." and a Retry chip. A text over the
+  pane's 100,000-character drawing limit is drawn in part, with a chip that copies it whole.
+- Every loading line in the pane follows a blank row, centred, dim and italic, with a braille spinner
+  that the pane's Client module animates every 100 ms; VS Code and mobile show it without the spinner.
+  The detail's load error and Retry are centred too.
+- A message's detail puts a blank line under Back and Reply, then its From, To, Time, Reply to and
+  Delivery in two aligned columns, indented, with grey labels and values, white party names and each
+  party's session id in grey, and the text below in padded space, drawn as Markdown.
+- The messages list loads in batches: `Show older messages (<n>)` at its end fetches the next one
+  (`history` takes `before` and returns `older`). The messages and detail views no longer call
+  ListAgents on each refresh.
+- A blank line comes before each session in the agents view.
+- The pane shows session names without their trailing `[ref]` (`plugins-82`). A session's messages
+  screen puts the full name and `Session: <id>` on a dim line under its title. ListAgents,
+  `list_sessions` and SendMessage keep the full names.
+- An agent opens the pane when the user asks, through the mod's `open_agent_messages` tool, optionally on
+  one agent's messages (`agent`: a name from ListAgents).
+- A message line reads `HH:MM  ↑ name · text…`: the peer's name without its `[ref]`, then the first line
+  of the text, cut to fit.
+- The agents view groups sessions by IDE or terminal (`Antigravity IDE`, `Windows Terminal`, and so on),
+  each in a rounded box with its name as the first line, with `Other` for an unknown host, then
+  `Remote Control` and the cloud group last. Under each come the folders open there, by base name
+  (`▸ ide-agent-tabs`), with a blank line between them.
+- Each session takes two lines: a coloured state dot, an agent glyph in the agent's colour (Claude `✻`,
+  Codex `◆`, Antigravity `▲`, others `•`) and the name; then, dim, the state, time since start, harness,
+  model (without a leading `claude-` or `gpt-`) and effort, leaving out unknown parts. Either line opens
+  the session. Nothing is selected when the pane opens. The session id moves to the messages and
+  detail views.
+- A folder heading shows the folder's base name. Pressing it opens the folder in the file manager:
+  `explorer.exe` on Windows, `open` on macOS, `xdg-open` on Linux, run by argv with no shell. On Windows
+  the folder window opens behind the IDE, because Windows doesn't let a background process take the
+  foreground. Hovering the heading shows the full path to its right; pressing the path copies the
+  path to the clipboard.
+- Actions in the pane report on a line under its title for 6 seconds, because the pane holds toasts while
+  it's open.
+- The card of a delivered peer message has an **Open in Agent Tabs** button, which opens the pane on that
+  message.
+- While the session has unread Agent Tabs mail, a band above the prompt shows
+  `✉ <n> new from <names>` and an **Open** button, which opens the pane on the newest sender's messages.
+  Its hotkey is `o` once the band has the keyboard (ctrl+x tab or a click). The band hides while the
+  pane is open and once nothing is unread.
+- The arrival toast ends with `· /agent-messages to view`, and the toast and status line name the sender as
+  `list_sessions` does.
+- `ListAgents` in a Claude Code session uses the pane's layout, one line per session: IDE or terminal
+  headings, folder base names indented two, session lines indented four with no `WHERE` column, then
+  `Remote Control` and cloud. The native `This session is …` line stays first. `list_sessions` keeps
+  the full paths.
+- The pane and `ListAgents` list the calling session too, marked `(this session)`.
+- Every session has a name in Claude Code's native style, such as `plugins-82`: a Claude session's
+  native name, else the folder's base name, lowercased, and 2 hex characters of the session id, longer
+  only when two listed names would collide. `list_sessions` gives it as `name` and `shortName`, and the
+  older `codex-c66c` style as `legacyName`. `send_message`, the mod's `send` op and SendMessage through
+  the mod take the name, the legacy name or the full id.
+
+- A Claude session started as an agent type (`--agent` or the `agent` setting) records the type and
+  its definition's `color` in presence. `list_sessions` shows `agentType` and `agentColor`, the pane
+  draws the session's name in that colour, and line 2 shows `Claude Code (<type>)`.
+
+### Fixed
+
+- A folder heading in the pane opened File Explorer behind the IDE, so each click looked like nothing
+  and left another window open. The mod now asks the IDE that hosts the session, else any running IDE,
+  to show the folder through the new `reveal` route (VS Code `revealFileInOS`, JetBrains
+  `RevealFileAction.openDirectory`), which comes to the front. Every layer reveals only an existing
+  folder of a live session or an open project, by real path, and never a macOS bundle. `explorer.exe`,
+  `open` or `xdg-open` runs only when no IDE can.
+
+- A session with 180 or more messages stayed on "Reading messages…": its first `history` reply was
+  58,651 characters, which Claude Code's MCP output limit (counted in tokens) refused, and the pane
+  only reported the failure on its notice line. A reply now holds at most 50 messages and about
+  29,000 characters, a message piece at most 30,000, a failed read shows an error with Retry in place
+  of the loading line, and the 2-second refresh never starts a second fetch while one is out.
+- A session with a long history showed its message count in the agents view but `0 messages` on its
+  screen. Its `history` reply was over Claude Code's MCP output limit, which swaps the result for an
+  error text, so the pane parsed nothing. `history` now returns the total and text previews of the
+  newest messages that fit, the screen shows the total, the detail reads the whole message with a new
+  `message` op, and a failed read says so in the pane.
+- A Claude tab on 0.5.3, which reports no native name, no longer shows twice. The mod joins it to the
+  native peer whose name, without its suffix, matches the tab's folder and whose start time agrees
+  within 2 minutes plus the native listing's precision, when exactly one peer and one tab fit. The
+  joined line shows the native name with the tab's host, folder and session data.
+
 ## 0.6.0
 
 Plugin and MCP server 0.6.0, with VS Code extension 0.1.27 and JetBrains plugin 0.4.10 bundled. Both IDE
@@ -116,7 +223,7 @@ packages add the `agy` profile and icon, the profiles and icons of seven more ag
   - The status line shows the unread count and the first sender, a toast announces each arrival, and the
     transcript draws each delivered message as a compact card.
   - The Agent Tabs messaging tools move behind ToolSearch in Claude Code.
-  - `/agent-tabs` shows or hides the agents pane: the merged agent list with coloured states, the
+  - `/agent-messages` shows or hides the agents pane: the merged agent list with coloured states, the
     messages the chosen agent sent or received, oldest first, and one message's detail with Reply, which
     fills the prompt. Arrow keys, Enter, Back and Esc navigate; it reads nothing while closed.
   - Each send writes an owner-only entry to `mail/<sender>/sent-log/`, and the mod logs native

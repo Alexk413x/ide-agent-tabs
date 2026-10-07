@@ -19,7 +19,7 @@ export const SERVER_NAME = 'ide-agent-tabs';
 export const SERVER_VERSION = PACKAGE_VERSION;
 export const HOOK_TOOL = 'agent_tabs_hook';
 export const MOD_TOOL = 'agent_tabs_mod';
-export const MOD_OPS = ['presence', 'send', 'take', 'ack', 'release', 'sessions', 'log', 'history', 'settings'] as const;
+export const MOD_OPS = ['presence', 'send', 'take', 'ack', 'release', 'sessions', 'log', 'history', 'message', 'counts', 'reveal', 'settings'] as const;
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 type Reply = (extra: Extra, work: () => Promise<unknown>) => Promise<CallToolResult>;
@@ -199,11 +199,17 @@ interface ModInput {
   delivery?: string | undefined;
   session?: string | undefined;
   names?: string[] | undefined;
+  agents?: { session?: string | undefined; names: string[] }[] | undefined;
+  before?: string | undefined;
+  path?: string | undefined;
+  offset?: number | undefined;
   driver?: boolean | undefined;
   nativeName?: string | undefined;
   state?: (typeof MOD_STATES)[number] | undefined;
   model?: string | undefined;
   effort?: string | undefined;
+  agentType?: string | undefined;
+  agentColor?: string | undefined;
   to?: string | undefined;
   text?: string | undefined;
   replyTo?: string | undefined;
@@ -223,6 +229,8 @@ async function modOp(messaging: Messaging, service: Service, input: ModInput): P
         ...(input.state !== undefined ? { state: input.state } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        ...(input.agentType !== undefined ? { agentType: input.agentType } : {}),
+        ...(input.agentColor !== undefined ? { agentColor: input.agentColor } : {}),
         ...(input.session !== undefined ? { owner: input.session } : {}),
       });
     case 'send':
@@ -244,7 +252,13 @@ async function modOp(messaging: Messaging, service: Service, input: ModInput): P
         ...(input.delivery !== undefined ? { delivery: input.delivery } : {}),
       });
     case 'history':
-      return messaging.modHistory({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] });
+      return messaging.modHistory({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] }, input.before);
+    case 'message':
+      return messaging.modMessage({ ...(input.session !== undefined ? { id: input.session } : {}), names: input.names ?? [] }, need(input.id, 'id'), input.offset ?? 0);
+    case 'reveal':
+      return service.reveal(need(input.path, 'path'), await messaging.hostId(), await messaging.sessionFolders());
+    case 'counts':
+      return messaging.modCounts((input.agents ?? []).map((a) => ({ ...(a.session !== undefined ? { id: a.session } : {}), names: a.names })));
     case 'settings':
       return { claudeMod: (await service.settings()).claudeMod };
   }
@@ -275,19 +289,29 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
       description:
         "Internal: the Agent Tabs mod inside Claude Code calls this to report the session's state, bridge SendMessage and ListAgents, and deliver its mail. Don't call it.",
       inputSchema: {
-        op: z.enum(MOD_OPS).describe('presence, send, take, ack, release, sessions, log, history or settings.'),
+        op: z.enum(MOD_OPS).describe('presence, send, take, ack, release, sessions, log, history, message, counts, reveal or settings.'),
         direction: z.enum(['sent', 'received']).optional().describe('log: sent from or received by this session.'),
         peer: z.string().max(128).optional().describe("log: the other session's name."),
-        id: z.string().max(64).optional().describe('log: the message id, when it has one.'),
+        id: z.string().max(64).optional().describe('log: the message id, when it has one. message: the message to return whole.'),
         at: z.number().optional().describe('log: when, in milliseconds since the epoch.'),
         delivery: z.string().max(200).optional().describe('log: what became of a sent message.'),
         session: z.string().max(128).optional().describe("history: the session id. presence: Claude Code's own session id."),
         names: z.array(z.string().max(128)).max(8).optional().describe('history: the names the session goes by.'),
+        path: z.string().max(4096).optional().describe('reveal: the folder for an IDE to open in the file manager.'),
+        before: z.string().max(64).optional().describe('history: a message id or ISO time; returns the batch just older than it.'),
+        offset: z.number().int().min(0).optional().describe('message: where in the text the piece starts.'),
+        agents: z
+          .array(z.object({ session: z.string().max(128).optional(), names: z.array(z.string().max(128)).max(8) }))
+          .max(500)
+          .optional()
+          .describe('counts: the sessions to count history messages for, each as history takes one.'),
         driver: z.boolean().optional().describe('presence: true claims in-process delivery for this tab; false hands it back to the hooks.'),
         nativeName: z.string().max(128).optional().describe("presence: the session's name in Claude Code's ListAgents."),
         state: z.enum(MOD_STATES).optional().describe('presence: idle, busy or permission.'),
         model: z.string().max(128).optional().describe("presence: the session's model."),
         effort: z.string().max(32).optional().describe("presence: the session's effort level."),
+        agentType: z.string().max(128).optional().describe('presence: the agent definition the session runs as, when not the default.'),
+        agentColor: z.string().max(16).optional().describe("presence: that agent definition's color."),
         to: z.string().optional().describe(`send: ${SESSION_ID}`),
         text: z.string().max(MAX_TEXT_CHARS).optional().describe('send: the message.'),
         replyTo: z.string().optional().describe(`send: ${MESSAGE_ID}`),
@@ -311,7 +335,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
     {
       title: 'List agent sessions',
       description:
-        'List the live agent sessions on this machine that can exchange messages, in a fixed agent order: name (the name Claude Code\'s SendMessage takes: a Claude session\'s native name, else shortName), shortName (<agent>-<first id characters>, which send_message also takes), id, session (the first 8 characters of id), agent, harness (the agent CLI, with " via OpenRouter" when started through Ori), model and effort (null when unknown), route (native for a Claude session that SendMessage reaches directly, else agent-tabs), state (idle, busy, permission, waking or unknown), tab (its tab id, or null), where (the IDE or terminal app), host (the IDE and project or the terminal of its tab), ide (that host\'s id), path and folder (its working folder), nativeName (a Claude session\'s native name), via (ori or direct, when known), handedOffTo for a session that handed its work to another, and self for this session. The result has a warnings list when this session failed to register, which leaves it out of every list. ' +
+        'List the live agent sessions on this machine that can exchange messages, in a fixed agent order: name (the name Claude Code\'s SendMessage takes, in Claude Code\'s native style: a Claude session\'s native name, else <folder>-<2 or more id hex characters>), shortName (the same name, which send_message also takes), legacyName (the older <agent>-<first id characters> name, which send_message still takes), id, session (the first 8 characters of id), agent, harness (the agent CLI, with " via OpenRouter" when started through Ori), model and effort (null when unknown), agentType and agentColor (the agent definition a Claude session runs as and its color, null for the default), route (native for a Claude session that SendMessage reaches directly, else agent-tabs), state (idle, busy, permission, waking or unknown), tab (its tab id, or null), where (the IDE or terminal app), host (the IDE and project or the terminal of its tab), ide (that host\'s id), path and folder (its working folder), nativeName (a Claude session\'s native name), via (ori or direct, when known), handedOffTo for a session that handed its work to another, and self for this session. The result has a warnings list when this session failed to register, which leaves it out of every list. ' +
         "Call it before send_message for the recipient's id; don't guess ids. To start a new session instead, call open_tab.",
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -328,7 +352,7 @@ function registerMessaging(server: McpServer, messaging: Messaging, service: Ser
         'To start a new session on a task, call open_tab with a prompt instead. ' +
         `Returns the message id and delivery: woken or queued. Limits: ${MAX_TEXT_CHARS.toLocaleString('en-US')} characters, 20 messages a minute, 50 unread messages per mailbox.`,
       inputSchema: {
-        to: z.string().describe(`${SESSION_ID} Its shortName from list_sessions also works.`),
+        to: z.string().describe(`${SESSION_ID} Its name from list_sessions, or its older legacyName, also works.`),
         text: z.string().min(1).max(MAX_TEXT_CHARS).describe('The message.'),
         replyTo: z.string().optional().describe(`${MESSAGE_ID} Set it when this answers that message.`),
       },

@@ -18,8 +18,8 @@ The server speaks MCP over stdio. It reads the registry and calls each IDE's HTT
 | `list_tabs` | `ide` (optional) | Open tabs across all IDEs and terminals, or in one |
 | `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux |
 | `close_tab` | `id` (optional) | The closed tab. With no `id`, it closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
-| `list_sessions` | none | Live agent sessions in a fixed agent order: `name` (what Claude Code's `SendMessage` takes: a Claude session's native name, else `shortName`), `shortName` (such as `codex-f99f`, which `send_message` also takes), `id`, `session` (the first 8 characters of `id`), `agent`, `harness` (the agent CLI, with ` via OpenRouter` for an Ori launch), `model` and `effort` (`null` when unknown), `route` (`native` or `agent-tabs`), `state`, `tab`, `where` (the IDE product or terminal app, from the live endpoint or the label stored when the tab opened; `null` when neither is known, never a raw host id), `host` (IDE and project, or terminal), `ide` (the host's id), `path` and `folder`, `nativeName` for a Claude session that has one, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
-| `send_message` | `to` (an `id` or `shortName`), `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
+| `list_sessions` | none | Live agent sessions in a fixed agent order: `name` and `shortName` (what Claude Code's `SendMessage` takes, in its native style: a Claude session's native name, else `<folder>-<id hex>`, such as `the-index-34`), `legacyName` (the older form, such as `codex-f99f`, which `send_message` still takes), `id`, `session` (the first 8 characters of `id`), `agent`, `harness` (the agent CLI, with ` via OpenRouter` for an Ori launch), `model` and `effort` (`null` when unknown), `route` (`native` or `agent-tabs`), `state`, `tab`, `where` (the IDE product or terminal app, from the live endpoint or the label stored when the tab opened; `null` when neither is known, never a raw host id), `host` (IDE and project, or terminal), `ide` (the host's id), `path` and `folder`, `nativeName` for a Claude session that has one, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
+| `send_message` | `to` (an `id`, `name` or `legacyName`), `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
 | `read_messages` | none | The caller's unread messages, marked read, under a `notice` that they come from other agents |
 | `wait_for_message` | optional `timeout` (seconds, default 60, at most 600, or 170 in an Antigravity CLI session), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
 | `handoff` | `path`, and `brief` or `goal`, `done`, `next`, `files`, `openQuestions`, and optional `agent`, `model`, `via`, `ide`, `focus` | The handoff `id`, the `brief` path, the `newTab` id, and `next`: the steps the caller follows to wait for the takeover and stop |
@@ -318,8 +318,8 @@ to answer a message that needs no answer.
 In a Claude Code build with function hooks, the plugin's mod (`claude-plugin/hooks/register.tsx`) bridges
 Claude Code's own tools to Agent Tabs:
 
-- `ListAgents` also lists every other Agent Tabs session, with its agent, state, tab, host, folder and
-  `via`.
+- `ListAgents` also lists every other Agent Tabs session and this one, grouped by IDE or terminal and
+  folder, with its native-style name, state, start, harness, model, effort and session.
 - `SendMessage` to an Agent Tabs session's name goes to its mailbox. A native Claude peer's name goes
   the native way.
 - In a tab, the mod delivers incoming mail as a framed peer prompt when the session is idle, and shows
@@ -329,8 +329,11 @@ Claude Code's own tools to Agent Tabs:
 - The mod calls the internal `agent_tabs_mod` tool, which the server offers to Claude Code only, and
   defers `send_message`, `read_messages`, `wait_for_message` and `list_sessions` behind ToolSearch.
 
-- `/agent-tabs` shows or hides the agents pane: the agents, then the messages one sent or received,
-  then one message, with Reply.
+- `/agent-messages` (or `/agent-messages`) shows or hides the Agent Tabs Messages pane: the agents by
+  IDE or terminal and folder, then the messages one sent or received, then one message, with Reply. A
+  folder heading opens the folder in the file manager.
+- A delivered message's card has an **Open in Agent Tabs** button, and a band above the prompt shows
+  unread mail with an **Open** button.
 - Each send is logged in `~/.ide-agent-tabs/mail/<sender>/sent-log/`, and the mod logs native
   SendMessage traffic; the logs last 7 days, as read mail does.
 - `"claudeMod": "off"` in `config.json` turns the mod off.
@@ -395,7 +398,7 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `launchVia` | `"direct"`: start each agent with its own command. `"ori"`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `"direct"` |
 | `closeAfterHandoff` | `true`: the new session closes the old tab after a handoff. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
 | `allowResume` | `true`: `resume_tab` reopens closed sessions, asking for `confirm` when the resume costs full price. `false`: it refuses. See [Resume](#resume). | `true` |
-| `claudeMod` | `"on"`: Claude Code sessions use the Agent Tabs mod: SendMessage and ListAgents reach every agent, mail arrives in-process, and `/agent-tabs` shows the agents pane. `"off"`: the hooks, wake lines and messaging tools, as in 0.6.0. New Claude Code sessions pick up a change. | `"on"` |
+| `claudeMod` | `"on"`: Claude Code sessions use the Agent Tabs mod: SendMessage and ListAgents reach every agent, mail arrives in-process, and `/agent-messages` shows the agents pane. `"off"`: the hooks, wake lines and messaging tools, as in 0.6.0. New Claude Code sessions pick up a change. | `"on"` |
 | `focusNewTabs` | `"auto"`: an agent's tab opens behind the current one unless the call passes `focus: true`. `"always"`: it comes to the front unless the call passes `focus: false`. `"never"`: behind unless the call passes `focus: true`. See [Focus](#focus). | `"auto"` |
 
 An `ide` or `focus` passed to `open_tab` always wins over these settings. The server ignores a value it doesn't know,

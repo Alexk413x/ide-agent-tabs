@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { RECEIVED_LOG, SENT_LOG } from '../src/messaging/history.js';
+import { HISTORY_REPLY_CHARS, PIECE_CHARS, PREVIEW_CHARS, RECEIVED_LOG, SENT_LOG, textPiece, writeLog } from '../src/messaging/history.js';
 import { cleanMail, KEEP_MS, mailboxDir } from '../src/messaging/mailbox.js';
 import { Messaging, type Hosts } from '../src/messaging/messaging.js';
 import { resolveSettings } from '../src/profiles.js';
@@ -152,5 +152,134 @@ test('claudeMod comes from config.json: on by default, off when set, a warning o
   } finally {
     await client.close();
     messaging.stopSync();
+  }
+});
+
+test('counts match the history each session shows, and a refresh reads only the files it has not seen', async () => {
+  const home = tempDir('iat-hist-');
+  const a = session(home, 'tab-a', 'codex', 1);
+  const b = session(home, 'tab-b', 'claude', 2);
+  await a.start();
+  await b.start();
+  try {
+    await b.modPresence({ driver: true, nativeName: 'plugins-fa [6a3948]', state: 'busy' });
+    await a.send({ to: 'tab-b', text: 'one' });
+    await b.send({ to: 'tab-a', text: 'two' });
+    await b.modLog({ direction: 'sent', peer: 'docs-9b [11aa22]', text: 'native', delivery: 'delivered' });
+    const whos = [{ id: 'tab-a', names: [] }, { id: 'tab-b', names: ['plugins-fa [6a3948]'] }, { names: ['docs-9b [11aa22]'] }, { names: [] }];
+    const { counts } = await b.modCounts(whos);
+    const shown = await Promise.all(whos.slice(0, 3).map(async (who) => (await b.modHistory(who)).total));
+    assert.deepEqual(counts, [...shown, null]);
+    assert.deepEqual(counts, [2, 3, 1, null]);
+
+    const sentLog = path.join(mailboxDir(home, 'tab-a'), SENT_LOG);
+    const [first] = files(sentLog);
+    writeFileSync(path.join(sentLog, first!), 'not json any more');
+    assert.deepEqual((await b.modCounts(whos)).counts, [2, 3, 1, null], 'a file already read is not read again');
+    await a.send({ to: 'tab-b', text: 'three' });
+    assert.deepEqual((await b.modCounts(whos)).counts, [3, 4, 1, null], 'a new file is read');
+  } finally {
+    a.stopFollowUps();
+    b.stopFollowUps();
+    a.stopSync();
+    b.stopSync();
+  }
+});
+
+test('a long history fits one MCP reply: its full total, text previews of the newest messages, and each message whole on request', async () => {
+  const home = tempDir('iat-hist-');
+  let clock = Date.now() - 60 * 60_000;
+  const a = session(home, 'tab-a', 'codex', 1, () => clock);
+  const b = session(home, 'tab-b', 'claude', 2, () => clock);
+  await a.start();
+  await b.start();
+  try {
+    for (let i = 0; i < 200; i++) {
+      clock += 1_000;
+      await b.modLog({ direction: i % 2 ? 'sent' : 'received', peer: 'docs-9b [11aa22]', text: `${i} ${'y'.repeat(3_000)}`, at: clock });
+    }
+    const who = { id: 'tab-b', names: [] };
+    const reply = await b.modHistory(who);
+    assert.ok(JSON.stringify(reply).length < HISTORY_REPLY_CHARS, 'the reply stays under the MCP output limit');
+    assert.equal(reply.total, 200);
+    assert.deepEqual((await b.modCounts([who])).counts, [200], 'the count is the total the reply reports');
+    assert.ok(reply.messages.length > 0 && reply.messages.length < 200);
+    assert.equal(reply.messages.at(-1)!.text.split(' ')[0], '199', 'the newest messages are the ones kept');
+    assert.ok(reply.messages.every((m) => m.text.length === PREVIEW_CHARS && m.textLength > PREVIEW_CHARS));
+    const whole = await b.modMessage(who, reply.messages[0]!.id);
+    assert.equal(whole.text?.length, reply.messages[0]!.textLength);
+    assert.deepEqual([whole.offset, whole.total, whole.message?.text], [0, reply.messages[0]!.textLength, ''], 'the record carries no text of its own');
+    assert.deepEqual(await b.modMessage(who, 'm-0000000000000000'), { message: null });
+  } finally {
+    a.stopFollowUps();
+    b.stopFollowUps();
+    a.stopSync();
+    b.stopSync();
+  }
+});
+
+test('a 300,000-character message comes back in pieces that each stay under the MCP output limit', async () => {
+  const home = tempDir('iat-hist-');
+  const b = session(home, 'tab-b', 'claude', 2);
+  await b.start();
+  try {
+    const text = Array.from({ length: 300_000 }, (_, i) => (i % 97 === 0 ? '"' : i % 89 === 0 ? String.fromCharCode(10) : String.fromCharCode(97 + (i % 26)))).join('');
+    await writeLog(home, 'tab-b', SENT_LOG, { id: 'm-00000000000000aa', at: new Date().toISOString(), route: 'native', from: { id: 'tab-b' }, to: { name: 'docs-9b [11aa22]' }, text });
+    const who = { id: 'tab-b', names: [] };
+    let offset = 0;
+    let joined = '';
+    let pieces = 0;
+    while (offset < text.length) {
+      const reply = await b.modMessage(who, 'm-00000000000000aa', offset);
+      assert.ok(JSON.stringify(reply).length < HISTORY_REPLY_CHARS, `piece ${pieces} fits`);
+      assert.equal(reply.offset, offset);
+      assert.equal(reply.total, 300_000);
+      joined += reply.text!;
+      offset += reply.text!.length;
+      pieces++;
+    }
+    assert.equal(joined, text);
+    assert.ok(pieces >= 6);
+  } finally {
+    b.stopSync();
+  }
+});
+
+test('a piece never splits a surrogate pair and shrinks until its JSON fits', () => {
+  const emoji = '😀'.repeat(10);
+  const piece = textPiece(emoji, 0, 9);
+  assert.equal(piece.length % 2, 0);
+  assert.ok(JSON.stringify(textPiece('"'.repeat(100), 0, 50)).length <= 50);
+  assert.equal(textPiece('abc', 3), '');
+  assert.equal(PIECE_CHARS, 30_000);
+});
+
+test('history pages older batches by a before cursor, and the totals add up', async () => {
+  const home = tempDir('iat-hist-');
+  let clock = Date.now() - 60 * 60_000;
+  const b = session(home, 'tab-b', 'claude', 2, () => clock);
+  await b.start();
+  try {
+    for (let i = 0; i < 300; i++) {
+      clock += 1_000;
+      await b.modLog({ direction: 'sent', peer: 'docs-9b [11aa22]', text: `${i} ${'z'.repeat(600)}`, at: clock });
+    }
+    const who = { id: 'tab-b', names: [] };
+    const seen: string[] = [];
+    let before: string | undefined;
+    let batches = 0;
+    for (;;) {
+      const reply = await b.modHistory(who, before);
+      assert.equal(reply.total, 300);
+      seen.unshift(...reply.messages.map((m) => m.text.split(' ')[0]!));
+      batches++;
+      assert.equal(reply.older, 300 - seen.length);
+      if (reply.older === 0) break;
+      before = reply.messages[0]!.id;
+    }
+    assert.ok(batches >= 3);
+    assert.deepEqual(seen, Array.from({ length: 300 }, (_, i) => String(i)));
+  } finally {
+    b.stopSync();
   }
 });

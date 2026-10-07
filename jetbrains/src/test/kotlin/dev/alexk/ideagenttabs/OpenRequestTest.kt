@@ -32,6 +32,49 @@ class OpenRequestTest {
     }
 
     @Test
+    fun `reveal parses an absolute path and refuses a bad body`() {
+        assertEquals(dir, parseRevealPath(body(dir.toString())))
+        for ((bad, message) in listOf(
+            "{}" to "path is required",
+            body("relative/dir") to "path must be absolute: relative/dir",
+            "not json" to "body is not JSON",
+        )) {
+            val error = assertThrows(bad, IllegalArgumentException::class.java) { parseRevealPath(bad) }
+            assertEquals(message, error.message)
+        }
+    }
+
+    @Test
+    fun `reveal allows a known project folder and refuses a file, a missing path and an unknown folder`() {
+        val real = dir.toRealPath()
+        assertEquals(real, checkRevealTarget(dir, listOf(dir)))
+        val file = Files.createFile(dir.resolve("note.txt"))
+        val missing = dir.resolve("missing")
+        val outside = Files.createTempDirectory("cst-outside")
+        assertEquals("not a folder on this machine: $file", assertThrows(IllegalArgumentException::class.java) { checkRevealTarget(file, listOf(dir)) }.message)
+        assertEquals("not a folder on this machine: $missing", assertThrows(IllegalArgumentException::class.java) { checkRevealTarget(missing, listOf(dir)) }.message)
+        assertEquals(
+            "refused: $outside is not a folder of this IDE's projects or agent tabs",
+            assertThrows(IllegalArgumentException::class.java) { checkRevealTarget(outside, listOf(dir)) }.message,
+        )
+    }
+
+    @Test
+    fun `reveal resolves links first and refuses macOS bundles`() {
+        val links = mapOf(Path.of("/work/link") to Path.of("/elsewhere/secret"), Path.of("/work/repo") to Path.of("/work/repo"))
+        val bundle = Path.of("/Applications/Foo.app/Contents")
+        val resolve = { p: Path -> links[p] ?: p }
+        assertThrows(IllegalArgumentException::class.java) {
+            checkRevealTarget(Path.of("/work/link"), listOf(Path.of("/work/repo")), mac = false, realPath = resolve, isDirectory = { true })
+        }
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            checkRevealTarget(bundle, listOf(bundle), mac = true, realPath = resolve, isDirectory = { true })
+        }
+        assertEquals("refused: $bundle is inside a macOS bundle", error.message)
+        assertEquals(bundle, checkRevealTarget(bundle, listOf(bundle), mac = false, realPath = resolve, isDirectory = { true }))
+    }
+
+    @Test
     fun `rejects bad bodies`() {
         for (bad in listOf("", "not json", "[]", """{"prompt":"x"}""", """{"path":1}""", """{"path":"${dir.toString().replace("\\", "\\\\")}","prompt":{}}""")) {
             assertThrows(bad, IllegalArgumentException::class.java) { OpenRequest.parse(bad) }

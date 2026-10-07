@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { promises as fs, readFileSync, rmSync } from 'node:fs';
 import { AGENT_ENV, BUILTIN_PROFILES, TAB_ID_ENV } from '../profiles.js';
 import { isProcessAlive } from '../registry.js';
@@ -26,13 +26,16 @@ import {
 import { readCodexConfig } from './codexConfig.js';
 import { recordEnded, transcriptDirs, type TranscriptDirs } from './closed.js';
 import { runHook } from './hook.js';
-import { history, logId, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
+import { history, historyCounts, logId, MailIndex, olderThan, previews, textPiece, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
   agentFromClient,
   effectiveState,
   HEARTBEAT_MS,
   IDLE_SETTLE_MS,
+  AGENT_COLORS,
+  isAgentColor,
+  isAgentType,
   isEffort,
   isModDriven,
   isModel,
@@ -106,6 +109,8 @@ export interface ModPresenceInput {
   state?: ModState;
   model?: string;
   effort?: string;
+  agentType?: string;
+  agentColor?: string;
   owner?: string;
 }
 
@@ -123,6 +128,8 @@ const mayBeTab = (id: string) => !id.startsWith('s-') && !id.startsWith(CODEX_ID
 const NATIVE_NAME = /^[^\x00-\x1f\x7f]{1,128}$/;
 const ID_PREFIXES = ['s-', CODEX_ID_PREFIX];
 const SHORT_ID_CHARS = 4;
+const NAME_SLUG_CHARS = 24;
+const NAME_SUFFIX_CHARS = 2;
 export const SESSION_PREFIX_CHARS = 8;
 const agentRank = (agent: string) => {
   const i = AGENT_ORDER.indexOf(agent);
@@ -135,6 +142,34 @@ export const harnessOf = (agent: string, via?: string) =>
 function idCore(id: string): string {
   const prefix = ID_PREFIXES.find((p) => id.startsWith(p) && id.length > p.length);
   return (prefix !== undefined ? id.slice(prefix.length) : id).replace(/[^A-Za-z0-9]/g, '');
+}
+
+export function folderSlug(folder: string): string {
+  const base = folder.split(/[\\/]+/).filter((p) => p !== '').at(-1) ?? '';
+  const slug = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, NAME_SLUG_CHARS).replace(/^-+|-+$/g, '');
+  return slug === '' ? 'session' : slug;
+}
+
+const suffixPool = (id: string) => `${idCore(id).toLowerCase().replace(/[^0-9a-f]/g, '')}${createHash('sha256').update(id).digest('hex')}`;
+
+export function sessionNames(sessions: readonly { id: string; agent: string; path: string; nativeName?: string }[]): Map<string, string> {
+  const names = new Map<string, string>();
+  const taken = new Set<string>();
+  for (const s of sessions) {
+    if (s.agent === 'claude' && s.nativeName !== undefined) {
+      names.set(s.id, s.nativeName);
+      taken.add(s.nativeName);
+    }
+  }
+  const made = sessions.filter((s) => !names.has(s.id)).map((s) => ({ id: s.id, slug: folderSlug(s.path), pool: suffixPool(s.id) }));
+  for (const m of made) {
+    const rivals = made.filter((o) => o !== m && o.slug === m.slug);
+    const name = (n: number) => `${m.slug}-${m.pool.slice(0, n)}`;
+    let n = NAME_SUFFIX_CHARS;
+    while (n < m.pool.length && (taken.has(name(n)) || rivals.some((r) => r.pool.slice(0, n) === m.pool.slice(0, n)))) n++;
+    names.set(m.id, name(n));
+  }
+  return names;
 }
 
 export function shortNames(sessions: readonly { id: string; agent: string }[]): Map<string, string> {
@@ -170,6 +205,7 @@ export class Messaging {
   private agent: string;
   private readonly startedAt: string;
   private lastClean = 0;
+  private readonly mailIndex = new MailIndex();
   private threadId?: string;
   private ownHost?: Promise<string | undefined>;
   private identified: Promise<void> = Promise.resolve();
@@ -436,13 +472,15 @@ export class Messaging {
     for (const host of new Set(sessions.flatMap((s) => (s.host !== undefined ? [s.host] : [])))) {
       labels.set(host, await this.deps.hosts.describeHost?.(host).catch(() => undefined));
     }
-    const short = shortNames(sessions);
+    const legacy = shortNames(sessions);
+    const named = sessionNames(sessions);
     const rows = sessions.map((s) => {
       const native = s.agent === 'claude' && s.nativeName !== undefined && isModDriven(s, now);
       const product = (s.host !== undefined ? labels.get(s.host) : undefined) ?? s.product;
       return {
-        name: native ? s.nativeName! : short.get(s.id)!,
-        shortName: short.get(s.id)!,
+        name: named.get(s.id)!,
+        shortName: named.get(s.id)!,
+        legacyName: legacy.get(s.id)!,
         id: s.id,
         session: s.id.slice(0, SESSION_PREFIX_CHARS),
         agent: s.agent,
@@ -453,6 +491,8 @@ export class Messaging {
         harness: harnessOf(s.agent, s.via),
         model: s.model ?? null,
         effort: s.effort ?? null,
+        agentType: s.agentType ?? null,
+        agentColor: s.agentColor ?? null,
         where: product ?? null,
         tab: mayBeTab(s.id) ? s.id : null,
         host: product === undefined ? null : s.project !== undefined ? `${product} (${s.project})` : product,
@@ -475,14 +515,16 @@ export class Messaging {
   async send(input: SendInput) {
     const { text, replyTo } = input;
     if (input.to === this.sessionId) throw new MailError('to is this session; pick another id from list_sessions');
-    if (!isSessionId(input.to)) throw new MailError(`not a session id: ${input.to}`);
     if (text.trim() === '') throw new MailError('text is empty');
     if (text.length > MAX_TEXT_CHARS) throw new MailError(`text exceeds ${MAX_TEXT_CHARS} characters`);
     if (replyTo !== undefined) checkMessageId(replyTo, 'replyTo');
     const now = this.now();
     const live = await liveSessions(this.deps.home, this.alive, now, this.ended);
-    const short = shortNames(live);
-    const recipient = live.find((s) => s.id === input.to) ?? live.find((s) => short.get(s.id) === input.to);
+    const named = sessionNames(live);
+    const legacy = shortNames(live);
+    const recipient =
+      live.find((s) => s.id === input.to) ?? live.find((s) => named.get(s.id) === input.to) ?? live.find((s) => legacy.get(s.id) === input.to);
+    if (!recipient && !isSessionId(input.to)) throw new MailError(`not a session id: ${input.to}`);
     if (!recipient) {
       const [warning] = this.warnings.warnings ?? [];
       throw new MailError(`no live session with id or name ${input.to}; call list_sessions${warning !== undefined ? `. Warning: ${warning}` : ''}`);
@@ -636,11 +678,43 @@ export class Messaging {
     return { id };
   }
 
-  async modHistory(who: Who) {
+  private historyOf(who: Who) {
     if (who.id !== undefined && !isSessionId(who.id)) throw new MailError(`not a session id: ${who.id}`);
     const names = who.names.filter((n) => NATIVE_NAME.test(n)).slice(0, 8);
     if (who.id === undefined && names.length === 0) throw new MailError('history needs session or names');
-    return { messages: await history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names }) };
+    return history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names }, this.mailIndex);
+  }
+
+  async modHistory(who: Who, before?: string) {
+    const items = await this.historyOf(who);
+    const pool = olderThan(items, before);
+    const messages = previews(pool);
+    return { total: items.length, older: pool.length - messages.length, messages };
+  }
+
+  async modMessage(who: Who, id: string, offset = 0) {
+    const message = (await this.historyOf(who)).find((m) => m.id === id);
+    if (message === undefined) return { message: null };
+    const start = Math.max(0, Math.min(Math.floor(offset), message.text.length));
+    return { message: { ...message, text: '' }, text: textPiece(message.text, start), offset: start, total: message.text.length };
+  }
+
+  async sessionFolders(): Promise<string[]> {
+    const live = await liveSessions(this.deps.home, this.alive, this.now(), this.ended);
+    return [...new Set(live.map((s) => s.path))];
+  }
+
+  async hostId(): Promise<string | undefined> {
+    return (await readPresence(this.deps.home, this.sessionId).catch(() => undefined))?.host;
+  }
+
+  async modCounts(whos: readonly Who[]) {
+    const valid = whos.map((who) => ({
+      ...(who.id !== undefined && isSessionId(who.id) ? { id: who.id } : {}),
+      names: who.names.filter((n) => NATIVE_NAME.test(n)).slice(0, 8),
+    }));
+    const counts = await historyCounts(this.deps.home, valid, this.mailIndex);
+    return { counts: counts.map((n, i) => (valid[i]!.id === undefined && valid[i]!.names.length === 0 ? null : n)) };
   }
 
   async modPresence(input: ModPresenceInput) {
@@ -649,6 +723,8 @@ export class Messaging {
     }
     if (input.model !== undefined && !isModel(input.model)) throw new MailError('model must be one printable line of at most 128 characters');
     if (input.effort !== undefined && !isEffort(input.effort)) throw new MailError('effort must be at most 32 letters, digits, dots, dashes or underscores');
+    if (input.agentType !== undefined && !isAgentType(input.agentType)) throw new MailError('agentType must be at most 128 letters, digits, dots, colons, dashes or underscores');
+    if (input.agentColor !== undefined && !isAgentColor(input.agentColor)) throw new MailError(`agentColor must be one of ${AGENT_COLORS.join(', ')}`);
     if (input.owner !== undefined && !isSessionId(input.owner)) throw new MailError(`not a session id: ${input.owner}`);
     const now = this.now();
     const claim = input.driver === true && this.isTab;
@@ -666,6 +742,8 @@ export class Messaging {
         ...(input.nativeName !== undefined && input.driver !== false ? { nativeName: input.nativeName } : {}),
         ...(input.model !== undefined ? { model: input.model } : {}),
         ...(input.effort !== undefined ? { effort: input.effort } : {}),
+        ...(input.agentType !== undefined ? { agentType: input.agentType } : {}),
+        ...(input.agentColor !== undefined && isAgentColor(input.agentColor) ? { agentColor: input.agentColor } : {}),
         ...(input.owner !== undefined ? { owner: input.owner } : {}),
       };
     });
