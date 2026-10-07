@@ -84,6 +84,47 @@ fun parseInput(body: String): InputRequest {
     return InputRequest(id, text)
 }
 
+val BUNDLE_SEGMENT = Regex("\\.(app|bundle|framework|pkg|plugin|prefPane)$", RegexOption.IGNORE_CASE)
+
+fun parseRevealPath(body: String): Path {
+    val raw = parseObject(body).string("path")
+    if (raw.isNullOrBlank()) throw IllegalArgumentException("path is required")
+    if (raw.any { Character.getType(it) == Character.CONTROL.toInt() }) throw IllegalArgumentException("path must have no control characters")
+    val path = try {
+        Path.of(raw)
+    } catch (e: java.nio.file.InvalidPathException) {
+        throw IllegalArgumentException("not a path: $raw")
+    }
+    if (!path.isAbsolute) throw IllegalArgumentException("path must be absolute: $raw")
+    return path
+}
+
+private fun realPathOf(path: Path): Path? = try {
+    path.toRealPath()
+} catch (e: Exception) {
+    null
+}
+
+// Only a folder this IDE already shows (an open project or an agent tab's folder) is revealed, and never a
+// macOS bundle: the OS opens a bundle by launching it.
+fun checkRevealTarget(
+    path: Path,
+    known: List<Path>,
+    mac: Boolean = System.getProperty("os.name").orEmpty().lowercase().startsWith("mac"),
+    realPath: (Path) -> Path? = ::realPathOf,
+    isDirectory: (Path) -> Boolean = { Files.isDirectory(it) },
+): Path {
+    val real = realPath(path)
+    if (real == null || !isDirectory(real)) throw IllegalArgumentException("not a folder on this machine: $path")
+    if (mac && real.any { BUNDLE_SEGMENT.containsMatchIn(it.toString()) }) {
+        throw IllegalArgumentException("refused: $path is inside a macOS bundle")
+    }
+    if (known.mapNotNull(realPath).none { it == real }) {
+        throw IllegalArgumentException("refused: $path is not a folder of this IDE's projects or agent tabs")
+    }
+    return real
+}
+
 fun parseEmpty(body: String) {
     if (body.isNotBlank()) parseObject(body)
 }

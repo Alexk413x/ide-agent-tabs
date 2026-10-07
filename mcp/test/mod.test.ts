@@ -7,7 +7,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CLAIM_TIMEOUT_MS, deliver, mailboxDir, MAX_READ_CHARS, MAX_TEXT_CHARS, newMessageId, peekUnread, type Message } from '../src/messaging/mailbox.js';
 import { runHook } from '../src/messaging/hook.js';
 import { parseCodexConfig } from '../src/messaging/codexConfig.js';
-import { Messaging, MOD_DELIVERY_NOTE, shortNames, type Hosts } from '../src/messaging/messaging.js';
+import { folderSlug, Messaging, MOD_DELIVERY_NOTE, sessionNames, shortNames, type Hosts } from '../src/messaging/messaging.js';
 import { isModDriven, MOD_STALE_MS, readPresence, updatePresence } from '../src/messaging/sessions.js';
 import { createServer, MOD_TOOL } from '../src/server.js';
 import { Service } from '../src/service.js';
@@ -181,17 +181,17 @@ test('list_sessions rows carry name, route, tab, host and via, in the agent orde
     [claudeRow!.name, claudeRow!.id, claudeRow!.route, claudeRow!.tab, claudeRow!.host, claudeRow!.ide, claudeRow!.via, claudeRow!.state],
     ['plugins-fa [6a3948]', 'tab-c', 'native', 'tab-c', 'IntelliJ IDEA (Plugins)', 'jetbrains-1', 'direct', 'idle'],
   );
-  assert.deepEqual([codexRow!.name, codexRow!.route, codexRow!.host, codexRow!.via], ['codex-tabx', 'agent-tabs', 'Windows Terminal', 'ori']);
+  assert.deepEqual([codexRow!.name, codexRow!.route, codexRow!.host, codexRow!.via], ['tab-x-ab', 'agent-tabs', 'Windows Terminal', 'ori']);
   assert.deepEqual(
     [codexRow!.shortName, codexRow!.session, codexRow!.harness, codexRow!.where, codexRow!.folder, codexRow!.model, codexRow!.effort],
-    ['codex-tabx', 'tab-x', 'Codex via OpenRouter', 'Windows Terminal', '/w/tab-x', null, null],
+    ['tab-x-ab', 'tab-x', 'Codex via OpenRouter', 'Windows Terminal', '/w/tab-x', null, null],
   );
-  assert.deepEqual([claudeRow!.shortName, claudeRow!.harness, claudeRow!.where, claudeRow!.model, claudeRow!.effort], ['claude-tabc', 'Claude Code', 'IntelliJ IDEA', 'opus', 'high']);
+  assert.deepEqual([claudeRow!.shortName, claudeRow!.legacyName, claudeRow!.harness, claudeRow!.where, claudeRow!.model, claudeRow!.effort], ['plugins-fa [6a3948]', 'claude-tabc', 'Claude Code', 'IntelliJ IDEA', 'opus', 'high']);
   assert.equal(sessions.find((s) => s.agent === 'gemini')!.self, true);
 
   await updatePresence(home, 'tab-c', (p) => (p ? { ...p, modBeat: Date.now() - MOD_STALE_MS - 1 } : p));
   const stale = (await made[0]!.listSessions()).sessions[0]!;
-  assert.deepEqual([stale.name, stale.route], ['claude-tabc', 'agent-tabs'], 'a stopped mod is reached through Agent Tabs again');
+  assert.deepEqual([stale.name, stale.route], ['plugins-fa [6a3948]', 'agent-tabs'], 'a stopped mod is reached through Agent Tabs again');
   assert.equal(stale.nativeName, 'plugins-fa [6a3948]', 'the native name stays so a listing can merge the row');
   for (const m of made) m.stopSync();
 });
@@ -235,7 +235,7 @@ test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', 
     assert.deepEqual((await claude.call({ op: 'ack', claim: taken.json.claim })).json, { claim: taken.json.claim, read: 1 });
     assert.match((await claude.call({ op: 'release', claim: 'c-0000' })).text, /no open claim/);
     const rows = (await claude.call({ op: 'sessions' })).json.sessions;
-    assert.deepEqual(rows.map((r: { name: string }) => r.name), ['plugins-fa [6a3948]', 'codex-tabx']);
+    assert.deepEqual(rows.map((r: { name: string }) => r.name), ['plugins-fa [6a3948]', 'tab-x-ab']);
   } finally {
     codex.messaging.stopFollowUps();
     claude.messaging.stopFollowUps();
@@ -380,4 +380,52 @@ test('where shows the stored IDE product when the endpoint is gone, refreshes it
     m.stopFollowUps();
     m.stopSync();
   }
+});
+
+test('names follow the native style: the folder slug and two id hex characters, longer only on a collision', () => {
+  assert.equal(folderSlug('C:\\Users\\me\\Projects\\Plugins'), 'plugins');
+  assert.equal(folderSlug('/home/me/The Index (old)/'), 'the-index--old');
+  assert.equal(folderSlug('/home/me/a-very-long-folder-name-that-goes-on'), 'a-very-long-folder-name');
+  assert.equal(folderSlug('/'), 'session');
+  const names = sessionNames([
+    { id: 'tab-1', agent: 'claude', path: '/p/plugins', nativeName: 'plugins-82' },
+    { id: 's-82aa00000000', agent: 'codex', path: '/q/Plugins' },
+    { id: 'codex-c66c0000-dead', agent: 'codex', path: '/p/the-index' },
+    { id: 'c6d70000-1111', agent: 'agy', path: '/p/the-index' },
+    { id: '45f20000-2222', agent: 'claude', path: '/p/rpn' },
+  ]);
+  assert.deepEqual([...names.values()], ['plugins-82', 'plugins-82a', 'the-index-c66', 'the-index-c6d', 'rpn-45']);
+  const again = sessionNames([{ id: '45f20000-2222', agent: 'claude', path: '/p/rpn' }]);
+  assert.equal(again.get('45f20000-2222'), 'rpn-45', 'a name depends only on the id and folder when nothing collides');
+});
+
+test('send_message takes the native-style name, the legacy short name and the full id', async () => {
+  const home = tempDir('iat-mod-');
+  const sender = session(home, 'tab-s', 'claude', 1);
+  const codex = session(home, 'f99f0a1b-2222-4333-8444-555566667777', 'codex', 2);
+  await sender.start();
+  await codex.start();
+  const row = (await sender.listSessions()).sessions.find((s) => s.agent === 'codex')!;
+  assert.deepEqual([row.name, row.shortName, row.legacyName], ['f99f0a1b-2222-4333-8444-f9', 'f99f0a1b-2222-4333-8444-f9', 'codex-f99f']);
+  for (const to of [row.name, row.legacyName, row.id]) assert.equal((await sender.send({ to, text: `to ${to}` })).to, row.id);
+  for (const m of [sender, codex]) {
+    m.stopFollowUps();
+    m.stopSync();
+  }
+});
+
+test('the mod records the agent type and its color, lists them, and refuses a color outside the palette', async () => {
+  const home = tempDir('iat-mod-');
+  const claude = session(home, 'tab-c', 'claude', 1);
+  await claude.start();
+  await claude.modPresence({ driver: true, agentType: 'reviewer', agentColor: 'purple' });
+  const row = (await claude.listSessions()).sessions[0]!;
+  assert.deepEqual([row.agentType, row.agentColor], ['reviewer', 'purple']);
+  await assert.rejects(claude.modPresence({ agentColor: 'chartreuse' }), /agentColor must be one of red, blue/);
+  await assert.rejects(claude.modPresence({ agentType: 'two words' }), /agentType must be/);
+  const plain = session(home, 'tab-d', 'codex', 2);
+  await plain.start();
+  const other = (await claude.listSessions()).sessions.find((s) => s.id === 'tab-d')!;
+  assert.deepEqual([other.agentType, other.agentColor], [null, null]);
+  for (const m of [claude, plain]) m.stopSync();
 });

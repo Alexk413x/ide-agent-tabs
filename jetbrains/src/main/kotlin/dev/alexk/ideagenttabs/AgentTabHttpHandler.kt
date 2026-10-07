@@ -10,6 +10,7 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.wm.IdeFocusManager
+import com.intellij.ide.actions.RevealFileAction
 import com.intellij.util.concurrency.AppExecutorUtil
 import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelFutureListener
@@ -29,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 const val ENDPOINT_BASE = "/ide-agent-tabs"
 const val START_TIMEOUT_SECONDS = 10L
 
-private val ROUTES = setOf("info", "agents", "open", "close", "list", "input")
+private val ROUTES = setOf("info", "agents", "open", "close", "list", "input", "reveal")
 
 private class Reply(val status: Int, val body: JsonObject)
 
@@ -58,6 +59,7 @@ class AgentTabHttpHandler : HttpRequestHandler() {
                 }
                 "close" -> parseCloseId(body).let { onEdt(context) { close(it) } }
                 "input" -> parseInput(body).let { onEdt(context) { input(it) } }
+                "reveal" -> parseRevealPath(body).let { onEdt(context) { reveal(it) } }
                 "agents" -> {
                     parseEmpty(body)
                     AppExecutorUtil.getAppExecutorService().execute { respond(context, attempt(::agents)) }
@@ -107,6 +109,18 @@ class AgentTabHttpHandler : HttpRequestHandler() {
             addProperty("path", request.path.toString())
             addProperty("via", launch.via.value)
         })
+    }
+
+    private fun reveal(path: Path): Reply {
+        val known = openProjects().mapNotNull { it.basePath?.let(Path::of) } +
+            AgentTabRegistry.getInstance().live().map { Path.of(it.path) }
+        val real = try {
+            checkRevealTarget(path, known)
+        } catch (e: IllegalArgumentException) {
+            return Reply(400, error(e.message ?: "bad request"))
+        }
+        RevealFileAction.openDirectory(real)
+        return Reply(200, ok().apply { addProperty("path", real.toString()) })
     }
 
     private fun close(id: String): Reply {
