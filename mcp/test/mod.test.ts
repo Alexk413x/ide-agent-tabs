@@ -392,11 +392,11 @@ test('names follow the native style: the folder slug and two id hex characters, 
     { id: 's-82aa00000000', agent: 'codex', path: '/q/Plugins' },
     { id: 'codex-c66c0000-dead', agent: 'codex', path: '/p/the-index' },
     { id: 'c6d70000-1111', agent: 'agy', path: '/p/the-index' },
-    { id: '45f20000-2222', agent: 'claude', path: '/p/rpn' },
+    { id: '45f20000-2222', agent: 'claude', path: '/p/calc' },
   ]);
-  assert.deepEqual([...names.values()], ['plugins-82', 'plugins-82a', 'the-index-c66', 'the-index-c6d', 'rpn-45']);
-  const again = sessionNames([{ id: '45f20000-2222', agent: 'claude', path: '/p/rpn' }]);
-  assert.equal(again.get('45f20000-2222'), 'rpn-45', 'a name depends only on the id and folder when nothing collides');
+  assert.deepEqual([...names.values()], ['plugins-82', 'plugins-82a', 'the-index-c66', 'the-index-c6d', 'calc-45']);
+  const again = sessionNames([{ id: '45f20000-2222', agent: 'claude', path: '/p/calc' }]);
+  assert.equal(again.get('45f20000-2222'), 'calc-45', 'a name depends only on the id and folder when nothing collides');
 });
 
 test('send_message takes the native-style name, the legacy short name and the full id', async () => {

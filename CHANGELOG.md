@@ -11,6 +11,14 @@ packages add a `reveal` route.
 
 ### Changed
 
+- Agent Tabs is public, under the no-resale licence in `LICENSE`: Apache 2.0 terms plus no-resale and
+  prohibited-use conditions. It installs from the `alexk413x` marketplace
+  (`claude plugin marketplace add Alexk413x/marketplace`, then
+  `claude plugin install ide-agent-tabs@alexk413x`), from this repository's `release` branch, which a
+  workflow builds from `main` with the plugin folder at its root. The repository has no marketplace
+  file of its own. `/ide-agent-tabs:update` tells an install from the old `ide-agent-tabs` marketplace
+  how to move.
+
 - The Claude Code mod's pane is **Agent Tabs Messages**, in its title and at the top of the agents view.
   `/agent-messages` opens and closes it; it replaces `/agent-tabs`. Nothing in the pane is pre-selected.
 - On the terminal and desktop, the pane's rows are drawn by a `Client` module, so nothing in it is

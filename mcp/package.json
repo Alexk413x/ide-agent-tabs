@@ -3,7 +3,7 @@
   "version": "0.6.1",
   "private": true,
   "description": "MCP server that opens, lists and closes agent tabs in IDEs and terminals.",
-  "license": "UNLICENSED",
+  "license": "LicenseRef-No-Resale-1.0",
   "type": "module",
   "engines": {
     "node": ">=20"

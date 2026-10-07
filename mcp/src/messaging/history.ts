@@ -7,10 +7,8 @@ import { isSessionId } from './sessions.js';
 export const SENT_LOG = 'sent-log';
 export const RECEIVED_LOG = 'received-log';
 export const HISTORY_MAX = 500;
-// Claude Code replaces an MCP result over its output limit (about 25,000 tokens) with an error, so the mod's
-// history reply stays well under it: message texts cut to a preview, and only the newest that fit.
-// The limit counts tokens, and JSON of ids, times and hex tokenizes at about 2.3 characters each: a
-// 58,651-character history reply was refused, so a reply stays near half that.
+// Claude Code replaces an MCP result over its output limit (about 25,000 tokens) with an error. JSON of ids,
+// times and hex tokenizes at about 2.3 characters per token, so a history reply stays near 30,000 characters.
 export const HISTORY_REPLY_CHARS = 30_000;
 export const HISTORY_BATCH = 50;
 export const PREVIEW_CHARS = 200;

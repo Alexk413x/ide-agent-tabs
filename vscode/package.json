@@ -5,7 +5,7 @@
   "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and other agent CLIs in editor tabs, from a button or from another agent.",
   "version": "0.1.28",
   "publisher": "alexk413x",
-  "license": "LicenseRef-Proprietary",
+  "license": "LicenseRef-No-Resale-1.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/Alexk413x/ide-agent-tabs.git",

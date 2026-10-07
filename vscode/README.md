@@ -13,12 +13,9 @@ Install the Agent Tabs Claude Code plugin, then run its setup skill. The Claude 
 extension, installs it in the editors you pick, and updates it when the plugin updates:
 
 ```sh
-claude plugin marketplace add Alexk413x/ide-agent-tabs
-claude plugin install ide-agent-tabs@ide-agent-tabs
+claude plugin marketplace add Alexk413x/marketplace
+claude plugin install ide-agent-tabs@alexk413x
 ```
-
-The repository is private, so installing needs read access to it: sign in to GitHub with an account
-that has access, for example with `gh auth login`.
 
 In a Claude Code session, run `/ide-agent-tabs:setup`.
 
@@ -191,4 +188,6 @@ can close its own tab.
 
 ## License
 
-Proprietary. See the LICENSE file that ships with this extension.
+Free to use, including at work, and free to fork and share. You may not sell it, a fork
+of it, or paid setup or hosting of it, and you may not use it for fraud or scams. See
+the LICENSE file that ships with this extension for the full terms.

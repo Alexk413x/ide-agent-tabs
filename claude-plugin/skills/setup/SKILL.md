@@ -314,7 +314,7 @@ skip this step.
    - Set `TYPESAFE_API_KEY` in the environment that agent CLIs start from.
    - Store the key in the operating system's credential store under service `typesafe`, account
      `api_key`. On Windows, that's the generic credential `typesafe` with user name `api_key`. Python's
-     `keyring` writes this entry, so a key that cartographer already uses works here too.
+     `keyring` writes this entry, so a key stored with it works here too.
 5. Tell the user to restart open agent sessions, so the server lists the Jev tools.
 
 ## 10. Check it works
