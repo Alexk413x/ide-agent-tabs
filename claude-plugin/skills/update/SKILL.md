@@ -13,12 +13,21 @@ Arguments: `$ARGUMENTS`
 
 ## 1. Check versions
 
-1. Run `claude plugin marketplace update ide-agent-tabs`. Read the newest version from `version` in
-   `~/.claude/plugins/marketplaces/ide-agent-tabs/claude-plugin/.claude-plugin/plugin.json`, and the
-   installed version from `claude plugin list --json` (the `ide-agent-tabs@ide-agent-tabs` entry).
-   `claude plugin list` shows only the installed version. If the marketplace file is missing, read it
-   with `gh api repos/Alexk413x/ide-agent-tabs/contents/claude-plugin/.claude-plugin/plugin.json`.
-   Report both versions.
+1. Run `claude plugin list --json`. If it has an `ide-agent-tabs@ide-agent-tabs` entry, the plugin came
+   from the old `ide-agent-tabs` marketplace, which no longer gets updates. Stop and give the user
+   these commands to move to the `alexk413x` marketplace, then to run `/reload-plugins`:
+
+   ```sh
+   claude plugin marketplace add Alexk413x/marketplace
+   claude plugin install ide-agent-tabs@alexk413x
+   claude plugin uninstall ide-agent-tabs@ide-agent-tabs
+   claude plugin marketplace remove ide-agent-tabs
+   ```
+
+   Otherwise run `claude plugin marketplace update alexk413x`. Read the newest version from `version`
+   in `https://raw.githubusercontent.com/Alexk413x/ide-agent-tabs/release/.claude-plugin/plugin.json`,
+   and the installed version from the `ide-agent-tabs@alexk413x` entry. `claude plugin list` shows
+   only the installed version. Report both versions.
 2. Run:
 
    ```sh
@@ -35,7 +44,7 @@ Stop here with `--check`.
 If a newer version is available, run:
 
 ```sh
-claude plugin update ide-agent-tabs@ide-agent-tabs --json
+claude plugin update ide-agent-tabs@alexk413x --json
 ```
 
 Check the result line for the new version. Then stop, and tell the user to run `/reload-plugins` and then `/ide-agent-tabs:update` again. The

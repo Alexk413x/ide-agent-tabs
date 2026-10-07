@@ -6,15 +6,12 @@ that runs on the same computer.
 
 ## Install
 
-The repository is a Claude Code plugin marketplace. Add it and install the plugin:
+Agent Tabs installs from the `alexk413x` plugin marketplace. Add it and install the plugin:
 
 ```sh
-claude plugin marketplace add Alexk413x/ide-agent-tabs
-claude plugin install ide-agent-tabs@ide-agent-tabs
+claude plugin marketplace add Alexk413x/marketplace
+claude plugin install ide-agent-tabs@alexk413x
 ```
-
-The repository is private, so installing needs read access to it: sign in to GitHub with an account
-that has access, for example with `gh auth login`.
 
 Then, in a Claude Code session, run `/ide-agent-tabs:setup`. The setup skill finds your IDEs, installs
 the extension in VS Code and editors built on it, and gives you two one-time steps for each JetBrains
@@ -60,7 +57,7 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 | JetBrains plugin | [`jetbrains/`](jetbrains/) | Adds the **New Agent Tab** button and a local HTTP API to IntelliJ IDEA, Android Studio and other JetBrains IDEs. |
 | VS Code extension | [`vscode/`](vscode/) | Adds the same button and API to VS Code and editors built on it. |
 | MCP server | [`mcp/`](mcp/) | Gives an agent tools to list IDEs, to open, list and close tabs, to message other sessions, and to hand its work to a new tab. |
-| Claude Code plugin | [`claude-plugin/`](claude-plugin/) | Bundles the MCP server, the skills and the IDE extensions. The marketplace file is in `.claude-plugin/`. |
+| Claude Code plugin | [`claude-plugin/`](claude-plugin/) | Bundles the MCP server, the skills and the IDE extensions. |
 
 ## Models, Ori and handoff
 
@@ -119,5 +116,7 @@ never commits or tags.
 
 ## License
 
-Proprietary. See [LICENSE](LICENSE). The bundled third-party licenses are in
+Free to use, including at work, and free to fork and share. You may not sell it, a fork
+of it, or paid setup or hosting of it, and you may not use it for fraud or scams. See
+[LICENSE](LICENSE) for the full terms. The bundled third-party licenses are in
 `claude-plugin/dist/THIRD_PARTY_NOTICES.txt`.

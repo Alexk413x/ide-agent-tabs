@@ -1544,9 +1544,9 @@ describe('folder opener', () => {
 
 describe('joining a Claude tab with no native name', () => {
   const listingOf = (...peers: string[]) => `${HEADER}\n\nPeer sessions (${peers.length}):\n${peers.join('\n')}`
-  const tab = (id: string, startedMs: number, path = 'C:\\p\\rpndominatorcalculator') =>
+  const tab = (id: string, startedMs: number, path = 'C:\\p\\calculator') =>
     row({ id, agent: 'claude', state: 'idle', tab: id, path, where: 'Windows Terminal', host: 'Windows Terminal', startedAt: ago(startedMs) })
-  const NATIVE_PEER = '  rpndominatorcalculator-a3  ·  interactive  ·  idle  ·  started 18m ago'
+  const NATIVE_PEER = '  calculator-a3  ·  interactive  ·  idle  ·  started 18m ago'
 
   async function list($: Engine) {
     const listed = await $.tool.call({ tool: 'ListAgents' })
@@ -1557,12 +1557,12 @@ describe('joining a Claude tab with no native name', () => {
     const w = world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!, tab('45f20000-2222', 18 * MIN + 40_000)], listing: listingOf(NATIVE_PEER) })
     await start($)
     const listing = await list($)
-    expect(listing.match(/rpndominatorcalculator-/g)).toHaveLength(1)
-    expect(listing).toMatch(/\nWindows Terminal\n {2}rpndominatorcalculator\n {4}rpndominatorcalculator-a3 +idle +18m +Claude Code +— +— +45f20000$/)
+    expect(listing.match(/calculator-/g)).toHaveLength(1)
+    expect(listing).toMatch(/\nWindows Terminal\n {2}calculator\n {4}calculator-a3 +idle +18m +Claude Code +— +— +45f20000$/)
     expect(listing).not.toContain('Folder not known')
     expect(listing).not.toContain('no native name')
-    await $.session.send({ to: 'rpndominatorcalculator-a3', text: 'hi', origin: MODEL })
-    expect(w.native.map(n => n.to)).toEqual(['rpndominatorcalculator-a3'])
+    await $.session.send({ to: 'calculator-a3', text: 'hi', origin: MODEL })
+    expect(w.native.map(n => n.to)).toEqual(['calculator-a3'])
   })
 
   test('two tabs that fit one native peer keep all three rows', async ($, on) => {
@@ -1570,25 +1570,25 @@ describe('joining a Claude tab with no native name', () => {
     await start($)
     const listing = await list($)
     expect(listing).toContain('Folder not known')
-    expect(listing).toMatch(/ {4}rpndominatorcalculator-a3 /)
-    expect(listing).toMatch(/ {4}rpndominatorcalculator-45 +idle +18m +Claude Code \(no native name\)/)
-    expect(listing).toMatch(/ {4}rpndominatorcalculator-46 +idle +19m +Claude Code \(no native name\)/)
+    expect(listing).toMatch(/ {4}calculator-a3 /)
+    expect(listing).toMatch(/ {4}calculator-45 +idle +18m +Claude Code \(no native name\)/)
+    expect(listing).toMatch(/ {4}calculator-46 +idle +19m +Claude Code \(no native name\)/)
   })
 
   test('a start more than 2 minutes and the native precision apart keeps both rows', async ($, on) => {
     world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!, tab('45f20000-2222', 22 * MIN)], listing: listingOf(NATIVE_PEER) })
     await start($)
     const listing = await list($)
-    expect(listing).toMatch(/\n {2}Folder not known\n {4}rpndominatorcalculator-a3 /)
-    expect(listing).toMatch(/ {4}rpndominatorcalculator-45 +idle +22m +Claude Code \(no native name\)/)
+    expect(listing).toMatch(/\n {2}Folder not known\n {4}calculator-a3 /)
+    expect(listing).toMatch(/ {4}calculator-45 +idle +22m +Claude Code \(no native name\)/)
   })
 
   test('a different folder slug never joins', async ($, on) => {
-    world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!, tab('45f20000-2222', 18 * MIN, 'C:\\p\\cartographer')], listing: listingOf(NATIVE_PEER) })
+    world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!, tab('45f20000-2222', 18 * MIN, 'C:\\p\\webapp')], listing: listingOf(NATIVE_PEER) })
     await start($)
     const listing = await list($)
-    expect(listing).toMatch(/ {4}rpndominatorcalculator-a3 /)
-    expect(listing).toMatch(/ {4}cartographer-45 /)
+    expect(listing).toMatch(/ {4}calculator-a3 /)
+    expect(listing).toMatch(/ {4}webapp-45 /)
   })
 
   test('Remote Control peers get their own group after the hosts and before cloud, in ListAgents and the pane', async ($, on) => {
@@ -1809,7 +1809,7 @@ describe('counts and the messages view', () => {
   })
   const MAIL: Record<string, ReturnType<typeof msg>[]> = {
     'tab-d': [msg(1, 'a'), msg(2, 'b'), msg(3, 'c')],
-    'rpndominatorcalculator-a3': [msg(4, 'd'), msg(5, 'e')],
+    'calculator-a3': [msg(4, 'd'), msg(5, 'e')],
     'nightly-sync [c0ffee]': [msg(6, 'f'), msg(7, 'g'), msg(8, 'h'), msg(9, 'i')],
   }
   const mailOf = (who: { session?: string; names: string[] }) =>
@@ -1819,10 +1819,10 @@ describe('counts and the messages view', () => {
     '',
     'Peer sessions (3):',
     '  docs-9b [11aa22]  ·  interactive  ·  busy  ·  started 2h ago',
-    '  rpndominatorcalculator-a3  ·  interactive  ·  idle  ·  started 18m ago',
+    '  calculator-a3  ·  interactive  ·  idle  ·  started 18m ago',
     '  nightly-sync [c0ffee]  ·  background  ·  idle  ·  tmux build  ·  started 3h ago',
   ].join('\n')
-  const unnamed = row({ id: '45f20000-2222', agent: 'claude', state: 'idle', tab: '45f20000-2222', path: 'C:\\p\\rpndominatorcalculator', where: 'Windows Terminal', host: 'Windows Terminal', startedAt: ago(18 * MIN + 20_000) })
+  const unnamed = row({ id: '45f20000-2222', agent: 'claude', state: 'idle', tab: '45f20000-2222', path: 'C:\\p\\calculator', where: 'Windows Terminal', host: 'Windows Terminal', startedAt: ago(18 * MIN + 20_000) })
 
   test("opening a session from the agents view lists exactly the count its row showed: an Agent Tabs row, a joined 0.5.3 row and a native peer", async ($, on) => {
     world(on, { tab: 'tab-c', rows: [ROWS[0]!, ROWS[3]!, unnamed], listing: LISTING_OF, mailOf })
@@ -1831,7 +1831,7 @@ describe('counts and the messages view', () => {
     for (const surface of SURFACES) {
       for (const [ref, name, count] of [
         ['agent:id:tab-d', 'docs-9b', 3],
-        ['agent:id:45f20000-2222', 'rpndominatorcalculator-a3', 2],
+        ['agent:id:45f20000-2222', 'calculator-a3', 2],
         ['agent:name:nightly-sync [c0ffee]', 'nightly-sync', 4],
       ] as const) {
         const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })

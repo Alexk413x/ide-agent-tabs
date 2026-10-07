@@ -12,7 +12,7 @@ This document is the contract every part builds against. Change it before you ch
 |---|---|---|
 | JetBrains plugin | Built | `jetbrains/` |
 | Protocol: registry and HTTP API | Built | This document |
-| Claude Code plugin: `delegate` skill | Built | `claude-plugin/`, marketplace in `.claude-plugin/` |
+| Claude Code plugin: `delegate` skill | Built | `claude-plugin/` |
 | CI workflow | Built | `.github/workflows/ci.yml` |
 | Claude Code plugin: MCP server, `new-tab`, `setup` and `update` skills | Built | `claude-plugin/`, `mcp/` |
 | VS Code extension (VS Code and editors built on it) | Built | `vscode/` |
@@ -1453,15 +1453,12 @@ question to another agent CLI in headless mode and reads the answer back. The Cl
 
 ## Install
 
-The repository is a Claude Code plugin marketplace. Two commands install the plugin:
+The plugin installs from the `alexk413x` marketplace, `Alexk413x/marketplace`. Two commands install it:
 
 ```sh
-claude plugin marketplace add Alexk413x/ide-agent-tabs
-claude plugin install ide-agent-tabs@ide-agent-tabs
+claude plugin marketplace add Alexk413x/marketplace
+claude plugin install ide-agent-tabs@alexk413x
 ```
-
-The repository is private, so installing needs read access to it: sign in to GitHub with an account
-that has access, for example with `gh auth login`.
 
 Installing the plugin at user scope makes its skills available in every session and every IDE.
 
@@ -1529,7 +1526,7 @@ in `vscode/package.json`.
 
 | Part | Update source | How it updates |
 |---|---|---|
-| Claude Code plugin | This repository, through the marketplace | `claude plugin update ide-agent-tabs@ide-agent-tabs`, or auto-update turned on for the marketplace in `/plugin` (off by default for a marketplace you add yourself) |
+| Claude Code plugin | This repository's `release` branch, through the `alexk413x` marketplace | `claude plugin update ide-agent-tabs@alexk413x`, or auto-update turned on for the marketplace in `/plugin` (off by default for a marketplace you add yourself) |
 | VS Code extension | `dist/ide/ide-agent-tabs.vsix` in the installed plugin | The session start hook runs `<cli> --install-extension <vsix> --force` in each editor that has an older version. |
 | JetBrains plugin | `~/.ide-agent-tabs/repository/updatePlugins.xml` | The session start hook puts the bundled zip there. The IDE offers the update from its custom plugin repository. |
 | MCP server for other agents | `~/.ide-agent-tabs/mcp/`, a copy of `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt` | Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code and Goose run this copy, because the plugin's own path changes with each version. The session start hook refreshes it when the bundled server changes and the folder exists. `version.json` records the plugin version it came from, and an older plugin never replaces a copy from a newer one, because every Claude Code install on the machine shares the copy. |
@@ -1575,10 +1572,10 @@ the bundled version passes it.
 
 `/ide-agent-tabs:update`:
 
-1. Runs `claude plugin marketplace update ide-agent-tabs`, reads the available version from the
-   marketplace clone's `claude-plugin/.claude-plugin/plugin.json` and the installed one from
+1. Runs `claude plugin marketplace update alexk413x`, reads the available version from
+   `.claude-plugin/plugin.json` on the repository's `release` branch and the installed one from
    `claude plugin list --json`, runs `sync-ides.mjs --status`, and reports the versions.
-2. If a newer plugin version exists, runs `claude plugin update ide-agent-tabs@ide-agent-tabs`, then asks
+2. If a newer plugin version exists, runs `claude plugin update ide-agent-tabs@alexk413x`, then asks
    the user to run `/reload-plugins` and the skill again. The loaded skill's paths point to the old
    version's files.
 3. Runs `sync-ides.mjs --hook` to bring each set-up IDE to the bundled versions.
@@ -1640,7 +1637,7 @@ The server reads the key the first time a Jev tool runs, and keeps it only in me
 
 1. `TYPESAFE_API_KEY` in the server's environment.
 2. The operating system's credential store, service `typesafe`, account `api_key`. This is the entry
-   Python's `keyring` writes, so the key cartographer uses on the same machine also works here.
+   Python's `keyring` writes, so a key stored with it also works here.
    - Windows: the generic credential `typesafe` whose user name is `api_key`, else `api_key@typesafe`.
      A fixed PowerShell script reads it with `CredRead`. The script takes no caller text.
    - macOS: `security find-generic-password -s typesafe -a api_key -w`.

@@ -58,7 +58,6 @@ const steps = [
   ['validate plugin', () => run('claude', ['plugin', 'validate', '--strict', 'claude-plugin'], root)],
   ...(skipTests ? [] : [['mod tests', () => run('claude', ['plugin', 'test', 'claude-plugin'], root)]]),
   ...(skipTests ? [] : [['script tests', () => run('node', ['--test', 'scripts/test/bump.test.mjs'], root)]]),
-  ['validate marketplace', () => run('claude', ['plugin', 'validate', '--strict', '.'], root)],
   ...(skipTests || skipIde ? [] : [['ide tests', () => run('node', ['scripts/pack-ides.mjs', '--test'], root)]]),
 ];
 

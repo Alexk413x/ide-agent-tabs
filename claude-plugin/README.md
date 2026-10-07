@@ -4,19 +4,16 @@ This folder is the Agent Tabs plugin for Claude Code. It lets an agent open, lis
 sessions in IDE tabs and terminal tabs, and delegate work to other agent CLIs. It also carries the IDE
 extensions and keeps them up to date.
 
-For an overview of the whole project, see the [root README](../README.md).
+For an overview of the whole project, see the [root README](https://github.com/Alexk413x/ide-agent-tabs#readme).
 
 ## Install
 
 Add the marketplace and install the plugin:
 
 ```sh
-claude plugin marketplace add Alexk413x/ide-agent-tabs
-claude plugin install ide-agent-tabs@ide-agent-tabs
+claude plugin marketplace add Alexk413x/marketplace
+claude plugin install ide-agent-tabs@alexk413x
 ```
-
-The repository is private, so installing needs read access to it: sign in to GitHub with an account
-that has access, for example with `gh auth login`.
 
 Then, in a Claude Code session, run `/ide-agent-tabs:setup` to install the IDE extensions.
 
@@ -46,5 +43,5 @@ commit it:
 - `scripts/pack-ides.mjs` writes `dist/ide/`. It builds the JetBrains plugin and the VS Code extension
   from `jetbrains/` and `vscode/`.
 
-[docs/design.md](../docs/design.md#distribution-and-updates) describes how the plugin
+[docs/design.md](https://github.com/Alexk413x/ide-agent-tabs/blob/main/docs/design.md#distribution-and-updates) describes how the plugin
 distributes and updates the IDE extensions.

@@ -33,11 +33,10 @@ TypeSafe reports 70 to 500 ms per call. Jev charges only for input tokens, at $0
 output tokens are free. A large-model call that makes the same pick takes several seconds and costs
 far more.
 
-## What cartographer measured
+## What earlier tests measured
 
-The cartographer plugin tested Jev on real app screens and code in 20 small tests (see
-`cartographer/plans/jev/FINDINGS.md`). The rules below come from those tests and bind every tool in
-this plan.
+Twenty small tests ran Jev on real app screens and code. The rules below come from those tests and
+bind every tool in this plan.
 
 1. **Narrow questions work and broad ones fail.** "Is this control unsafe?" scored "Transfer funds"
    the same as "Reset form". A Choice among six named consequences separated all 40 labels. "Does
@@ -50,20 +49,6 @@ this plan.
 5. **Less state is better.** Unrelated text distracts Jev and can flip right answers.
 6. **Answers are stable when the input is stable.** Sort items and keep options in a fixed order.
 7. **Jev can follow instructions placed in its state.** TypeSafe advises stating that risk in the criteria. Say the state is data, and never let a Jev answer alone approve anything.
-
-## How this differs from cartographer's use of Jev
-
-Both use Jev. They split the work differently (owner, 2026-09-28):
-
-| | Agent Tabs | Cartographer |
-|---|---|---|
-| Who writes the question | The calling LLM, at run time. It supplies the input and the answers it expects. | Code, ahead of time. The questions, options and state layout are fixed and tested. |
-| What the input is | Whatever the agent holds: files, diffs, search results, a task. | Structured run data: a screen's controls, the tree, the route so far. |
-| What the answer drives | The agent's next move, which the agent still owns. | A program: exploring an app fully, driving to a goal, or authoring test steps that then replay with no model. |
-| Where it lives | Generic tools in the MCP server, for any agent. | Cartographer's own `jev.py`, with no dependency on this plugin. |
-
-Agent Tabs gives an LLM a cheap way to get a decision about data it passes in. Cartographer makes Jev
-one part of a deterministic pipeline. The question-writing rules above hold for both.
 
 ## Design decisions
 
@@ -92,7 +77,7 @@ or later). It retries 408, 429 and 5xx with backoff, honours `Retry-After`, and 
 Community MCP servers already wrap the TypeSafe API (`itsmostafa/system-one-connector`, formerly `typesafe-mcp`, `codaaiteam/jev-mcp`,
 `jkudish/jev-mcp`). TypeSafe ships a Claude Code skill, not an MCP server. The useful parts here are
 Agent Tabs parts: registration with every agent, the tiers `jev_route` reads beside the agent profiles,
-the key shared with cartographer, and the ledger. `jev_ask` is the same idea as `system-one-connector`'s
+the key in the credential store that Python's `keyring` also reads, and the ledger. `jev_ask` is the same idea as `system-one-connector`'s
 `evaluate`.
 
 ## How agents use Jev on their own
@@ -143,11 +128,11 @@ diff, answer or document meets each of several narrow conditions.
 | J4 | `jev_gate` and an opt-in `PreToolUse` guard hook for Claude Code, which can only answer `ask`, never `allow` | A bench of 40 harmless and 40 destructive shell commands, written before the question is tuned | No destructive command under the threshold |
 | J5 | A cost report: the same fixed tasks with and without Jev for routing and ranking | J3 | Tokens and wall time per task, both ways |
 
-Each bench is written, and labelled by a person, before its tool is tuned. Some of cartographer's
-wordings were tuned on the cases they were scored on, and this plan counts those results as
+Each bench is written, and labelled by a person, before its tool is tuned. Some wordings in the
+earlier tests were tuned on the cases they were scored on, and this plan counts those results as
 indications only.
 
-`jev_gate` waits for J4 because cartographer's consequence question was tested on 40 app control
+`jev_gate` waits for J4 because the earlier consequence question was tested on 40 app control
 labels, not on shell commands, and its gap between harmless and destructive was narrow.
 
 ## What stays out
@@ -163,8 +148,6 @@ labels, not on shell commands, and its gap between harmless and destructive was 
 1. Whether `jev_route` also picks a model inside Claude Code, for a subagent's `model`, or only an
    agent profile. The tiers already allow `claude:<model>`.
 2. Whether the J4 guard hook covers only `Bash`, or also file writes outside the project.
-3. Whether cartographer calls this server. Today it should not: a cartographer run must not depend on
-   another plugin being installed. It keeps its own Python `jev.py`, and shares only the key entry.
 
 ## Sources
 
@@ -174,4 +157,3 @@ labels, not on shell commands, and its gap between harmless and destructive was 
 - Jev and coding agents: https://docs.typesafe.ai/introduction/coding-agents.md
 - LangChain, Jev for model routing and tool-call gating: https://www.langchain.com/blog/building-a-harness-with-jev
 - Python `keyring`'s Windows layout: https://github.com/jaraco/keyring/blob/main/keyring/backends/Windows.py
-- Cartographer's Jev research: `cartographer/plans/jev/` in the sibling repository
