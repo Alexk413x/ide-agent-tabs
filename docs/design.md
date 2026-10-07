@@ -927,8 +927,8 @@ itself raised the call. The model's own calls to those tools keep the engine's d
 | `ack`, `release` | `claim` | `ack` moves the claimed messages to `cur/`; `release` returns them to `new/`. |
 | `sessions` | none | The `list_sessions` rows. |
 | `log` | `direction` (`sent` or `received`), `peer`, `text`, optional `id`, `at`, `delivery` | Records a native SendMessage message of this session in its `sent-log/` or `received-log/`. |
-| `history` | `session` and/or `names`, optional `before` (a message id or ISO time) | `total`, the number of messages the session sent or received; `messages`, the newest batch older than `before` (all, without it), oldest first, with each `text` cut to 200 characters and its full `textLength`, as many as fit in about 59,000 characters; and `older`, how many older ones that batch left out (see [Agents pane](#agents-pane)). Claude Code replaces an MCP result over its output limit, about 25,000 tokens, with an error text, so no reply may come near it. |
-| `message` | `session` and/or `names`, `id`, optional `offset` | `message`: that message of the same history without its text, or `null`; `text`, the piece from `offset`, at most 50,000 characters of JSON, never splitting a surrogate pair; `offset`; and `total`, the text's length. |
+| `history` | `session` and/or `names`, optional `before` (a message id or ISO time) | `total`, the number of messages the session sent or received; `messages`, the newest batch older than `before` (all, without it), oldest first, with each `text` cut to 200 characters and its full `textLength`, at most 50 and as many as fit in about 29,000 characters (Claude Code's limit counts tokens, and this JSON runs about 2.3 characters a token: a 58,651-character reply was refused); and `older`, how many older ones that batch left out (see [Agents pane](#agents-pane)). Claude Code replaces an MCP result over its output limit, about 25,000 tokens, with an error text, so no reply may come near it. |
+| `message` | `session` and/or `names`, `id`, optional `offset` | `message`: that message of the same history without its text, or `null`; `text`, the piece from `offset`, at most 30,000 characters of JSON, never splitting a surrogate pair; `offset`; and `total`, the text's length. |
 | `counts` | `agents`: up to 500 of `{ session?, names }`, as `history` takes one | `counts`: for each, the number of messages `history` would list, or `null` for one with neither a valid session nor a name. |
 | `settings` | none | `claudeMod` from `config.json`. |
 
@@ -1207,7 +1207,9 @@ request for the keys only.
   `HH:MM  ↘ peer  first line…` for received, in local time. A message line lights like a session, with
   `▎` at column 0, and a click opens its detail. When `history` left older messages out, the list ends
   with a blank line and `Show older messages (<n>)`, which fetches the batch before the oldest shown
-  and adds it above. Each refresh merges the newest batch with the older ones already shown. The
+  and adds it above. Each refresh merges the newest batch with the older ones already shown, and a
+  refresh never starts a second `history` fetch while one is out. A failed first read ends the
+  `Reading messages…` line in a centred `Couldn't read the messages.` and a Retry chip. The
   pane's scroll belongs to the engine, so the mod can't hold its place when the list grows.
 - **Detail:** the `← Back` and `↩ Reply` chips at indent 1, which underline when lit; a blank line; then,
   at indent 3, two aligned columns: the labels `From`, `To`, `Time`, `Reply to` (only when set) and

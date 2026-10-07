@@ -9,9 +9,12 @@ export const RECEIVED_LOG = 'received-log';
 export const HISTORY_MAX = 500;
 // Claude Code replaces an MCP result over its output limit (about 25,000 tokens) with an error, so the mod's
 // history reply stays well under it: message texts cut to a preview, and only the newest that fit.
-export const HISTORY_REPLY_CHARS = 60_000;
+// The limit counts tokens, and JSON of ids, times and hex tokenizes at about 2.3 characters each: a
+// 58,651-character history reply was refused, so a reply stays near half that.
+export const HISTORY_REPLY_CHARS = 30_000;
+export const HISTORY_BATCH = 50;
 export const PREVIEW_CHARS = 200;
-export const PIECE_CHARS = 50_000;
+export const PIECE_CHARS = 30_000;
 
 export function textPiece(text: string, offset: number, budget = PIECE_CHARS): string {
   let n = Math.min(budget, Math.max(0, text.length - offset));
@@ -213,7 +216,7 @@ export async function history(home: string, who: Who, index = new MailIndex()): 
 export function previews(items: readonly HistoryItem[], budget = HISTORY_REPLY_CHARS - 1_000): (HistoryItem & { textLength: number })[] {
   const out: (HistoryItem & { textLength: number })[] = [];
   let used = 0;
-  for (let i = items.length - 1; i >= 0; i--) {
+  for (let i = items.length - 1; i >= 0 && out.length < HISTORY_BATCH; i--) {
     const item = items[i]!;
     const preview = { ...item, text: item.text.slice(0, PREVIEW_CHARS), textLength: item.text.length };
     used += JSON.stringify(preview).length + 1;

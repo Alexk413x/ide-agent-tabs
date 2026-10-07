@@ -251,7 +251,7 @@ test('a piece never splits a surrogate pair and shrinks until its JSON fits', ()
   assert.equal(piece.length % 2, 0);
   assert.ok(JSON.stringify(textPiece('"'.repeat(100), 0, 50)).length <= 50);
   assert.equal(textPiece('abc', 3), '');
-  assert.equal(PIECE_CHARS, 50_000);
+  assert.equal(PIECE_CHARS, 30_000);
 });
 
 test('history pages older batches by a before cursor, and the totals add up', async () => {

@@ -83,6 +83,7 @@ declare module 'claude-code' {
       paneTotal: number | null
       paneMessage: AgentTabsFullText | null
       paneOlder: number | null
+      paneHistoryError: string | null
     }
   }
 }
