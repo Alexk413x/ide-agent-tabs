@@ -17,7 +17,7 @@ import { recordEnded, transcriptDirs, type TranscriptDirs } from './messaging/cl
 import { isSessionId, readPresence, updatePresence, withState, type PresenceFile, type Via } from './messaging/sessions.js';
 import { isProcessAlive, readRegistry, type Endpoint } from './registry.js';
 import { validateOpen, type OpenInput, type OpenRequest } from './request.js';
-import { checkRevealTarget, systemReveal, type RevealDeps } from './reveal.js';
+import { checkRevealTarget, fileManagerCommand, systemReveal, type RevealDeps } from './reveal.js';
 import { chooseIde, chooseTerminal, type IdeCandidate, type Project } from './routing.js';
 import { ORI_AGENTS, planLaunch, type LaunchPlan } from './launchPlan.js';
 import { launchSpec } from './spec.js';
@@ -397,9 +397,10 @@ export class Service {
   ): Promise<{ ok: true; ide: string; product: string; path: string } | { ok: false; reason: string }> {
     const { endpoints } = await this.registry();
     const { infos } = await this.infos(endpoints);
+    const revealDeps = this.deps.reveal ?? systemReveal(this.deps.platform);
     let real: string;
     try {
-      real = await checkRevealTarget(target, [...sessionFolders, ...infos.flatMap((i) => i.projects.map((p) => p.path))], this.deps.reveal ?? systemReveal(this.deps.platform));
+      real = await checkRevealTarget(target, [...sessionFolders, ...infos.flatMap((i) => i.projects.map((p) => p.path))], revealDeps);
     } catch (e) {
       return { ok: false, reason: errorText(e) };
     }
@@ -413,7 +414,14 @@ export class Service {
         errors.push(errorText(e));
       }
     }
-    return { ok: false, reason: errors.length ? errors.join('; ') : 'no IDE is running' };
+    if (!order.length) errors.push('no IDE is running');
+    try {
+      await revealDeps.open(real);
+      return { ok: true, ide: 'system', product: fileManagerCommand(this.deps.platform), path: real };
+    } catch (e) {
+      errors.push(errorText(e));
+    }
+    return { ok: false, reason: errors.join('; ') };
   }
 
   async closeTab(id?: string) {

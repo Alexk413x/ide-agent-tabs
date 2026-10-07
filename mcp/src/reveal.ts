@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
@@ -6,14 +7,33 @@ export const BUNDLE_SEGMENT = /\.(app|bundle|framework|pkg|plugin|prefPane)$/i;
 export interface RevealDeps {
   realpath(target: string): Promise<string | undefined>;
   isDirectory(target: string): Promise<boolean>;
+  open(folder: string): Promise<void>;
   platform: NodeJS.Platform;
 }
 
 export const systemReveal = (platform: NodeJS.Platform): RevealDeps => ({
   realpath: (target) => fs.realpath(target).catch(() => undefined),
   isDirectory: (target) => fs.stat(target).then((s) => s.isDirectory(), () => false),
+  open: (folder) => openInFileManager(platform, folder),
   platform,
 });
+
+export function fileManagerCommand(platform: NodeJS.Platform): string {
+  return platform === 'win32' ? 'explorer.exe' : platform === 'darwin' ? 'open' : 'xdg-open';
+}
+
+// windowsHide stays false: Explorer applies a hidden start to the folder window it opens, so a hidden
+// launch leaves an invisible window that never closes.
+export function openInFileManager(platform: NodeJS.Platform, folder: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(fileManagerCommand(platform), [folder], { stdio: 'ignore', detached: true, windowsHide: false, shell: false });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
+  });
+}
 
 // Only a folder of a live session or an open IDE project is revealed, and never a macOS bundle: the OS
 // opens a bundle by launching it.

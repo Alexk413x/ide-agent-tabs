@@ -162,6 +162,7 @@ type WorldOptions = {
   historyErrors?: number
   hangHistory?: boolean
   revealOk?: boolean
+  revealIde?: string
   batch?: number
   pieceChars?: number
   failPieces?: number[]
@@ -342,7 +343,7 @@ function world(on: On, options: WorldOptions = {}) {
         return ok({ message: { ...found, text: '' }, text: found.text.slice(offset, offset + (options.pieceChars ?? 50_000)), offset, total: found.text.length })
       }
       case 'reveal':
-        return options.revealOk ? ok({ ok: true, ide: 'vscode-2', product: 'Antigravity', path: e.args.path }) : ok({ ok: false, reason: 'no IDE is running' })
+        return options.revealOk ? ok({ ok: true, ide: options.revealIde ?? 'vscode-2', product: 'Antigravity', path: e.args.path }) : ok({ ok: false, reason: 'no IDE is running' })
       case 'counts':
         return ok({
           counts: (e.args.agents as { session?: string; names: string[] }[]).map(a => (options.mailOf ? options.mailOf(a).length : a.session === 'tab-d' ? (options.history ?? []).length : 0)),
@@ -1098,7 +1099,7 @@ describe('agents pane', () => {
   })
 
   test('a surface with no Client draws the pane with Buttons', async ($, on) => {
-    const w = world(on, { tab: 'tab-c', history: HISTORY, os: 'Windows_NT', dirs: ['C:\\a'] })
+    const w = world(on, { tab: 'tab-c', history: HISTORY, os: 'Windows_NT', dirs: ['C:\\a'], revealOk: true })
     await start($)
     await openPane($)
     for (const surface of ['vscode', 'mobile'] as const) {
@@ -1109,7 +1110,8 @@ describe('agents pane', () => {
       expect((await ui.find({ type: 'Text', text: /^ *2 $/ }))?.props.bold).toBe(true)
       w.runs.length = 0
       await ui.press({ key: 'folder:4:C:\\a' })
-      expect(w.runs).toEqual([['explorer.exe', 'C:\\a']])
+      expect(w.ops('reveal').at(-1)?.args.path).toBe('C:\\a')
+      expect(w.runs).toEqual([])
       await ui.press({ key: 'agent:id:tab-d' })
       expect(await ui.find({ type: 'Text', text: 'docs-9b · 2 messages' })).toBeDefined()
       await ui.press({ key: 'msg:m-aaaaaaaaaaaaaaa1' })
@@ -1204,7 +1206,7 @@ describe('agents pane', () => {
   })
 
   test('a folder heading shows its base name, reveals the full path on hover, and opens the folder in Explorer on Windows', async ($, on) => {
-    const w = world(on, { tab: 'tab-c', os: 'Windows_NT', dirs: ['C:\\a', 'C:\\W\\sub'] })
+    const w = world(on, { tab: 'tab-c', os: 'Windows_NT', dirs: ['C:\\a', 'C:\\W\\sub'], revealOk: true, revealIde: 'system' })
     await start($)
     await openPane($)
     for (const surface of SURFACES) {
@@ -1219,7 +1221,7 @@ describe('agents pane', () => {
 
       w.runs.length = 0
       await click(ui, 'folder:4:C:\\W\\sub')
-      expect(w.runs).toEqual([['explorer.exe', 'C:\\W\\sub']])
+      expect(w.runs).toEqual([])
       expect(await textIn(ui, 'Opened C:\\W\\sub in File Explorer (it may be behind this window).')).toBeDefined()
 
       w.runs.length = 0
@@ -1517,8 +1519,7 @@ describe('opening the pane from a message', () => {
 })
 
 describe('folder opener', () => {
-  test('argv per platform: explorer.exe on Windows, open on macOS, xdg-open on Linux, the path as one argument', () => {
-    expect(folderOpener('windows', 'C:\\Users\\me\\ide agent tabs')).toEqual(['explorer.exe', 'C:\\Users\\me\\ide agent tabs'])
+  test('argv per platform: open on macOS, xdg-open on Linux, the path as one argument', () => {
     expect(folderOpener('mac', '/Users/me/ide agent tabs')).toEqual(['open', '/Users/me/ide agent tabs'])
     expect(folderOpener('linux', '/home/me/ide-agent-tabs')).toEqual(['xdg-open', '/home/me/ide-agent-tabs'])
   })
@@ -2048,15 +2049,26 @@ describe('opening a folder', () => {
     await ui.unmount()
   })
 
-  test('with no IDE to reveal it, the folder opens with explorer.exe and the notice says it may be behind', async ($, on) => {
-    const w = world(on, { tab: 'tab-c', os: 'Windows_NT', dirs: ['C:\\a'] })
+  test("with no IDE to reveal it, the server's File Explorer opens it, and the notice says it may be behind", async ($, on) => {
+    const w = world(on, { tab: 'tab-c', os: 'Windows_NT', dirs: ['C:\\a'], revealOk: true, revealIde: 'system' })
     await start($)
     await openPane($)
     const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
     await click(ui, 'folder:4:C:\\a')
     expect(w.ops('reveal')).toHaveLength(1)
-    expect(w.runs).toEqual([['explorer.exe', 'C:\\a']])
+    expect(w.runs).toEqual([])
     expect(await textIn(ui, 'Opened C:\\a in File Explorer (it may be behind this window).')).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('on Windows the mod never runs explorer.exe itself, since $.process.run would start its window hidden', async ($, on) => {
+    const w = world(on, { tab: 'tab-c', os: 'Windows_NT', dirs: ['C:\\a'] })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await click(ui, 'folder:4:C:\\a')
+    expect(w.runs).toEqual([])
+    expect(await textIn(ui, 'Could not open C:\\a: no IDE is running.')).toBeDefined()
     await ui.unmount()
   })
 
