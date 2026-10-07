@@ -8,7 +8,7 @@ import { checkRevealTarget, systemReveal, type RevealDeps } from '../src/reveal.
 import { Service } from '../src/service.js';
 import { tempDir } from './tempDir.js';
 
-function setup(failing: string[] = []) {
+function setup(failing: string[] = [], openFails = false) {
   const home = tempDir('iat-reveal-');
   const project = tempDir('iat-reveal-p-');
   const session = tempDir('iat-reveal-s-');
@@ -17,12 +17,21 @@ function setup(failing: string[] = []) {
   writeFileSync(path.join(home, 'endpoints', 'jetbrains-1.json'), JSON.stringify({ ...base, ide: 'jetbrains', product: 'Android Studio', url: 'http://127.0.0.1:1/ide-agent-tabs' }));
   writeFileSync(path.join(home, 'endpoints', 'vscode-2.json'), JSON.stringify({ ...base, ide: 'vscode', product: 'Antigravity', url: 'http://127.0.0.1:2/ide-agent-tabs' }));
   const calls: [string, Route, unknown][] = [];
+  const opened: string[] = [];
+  const reveal: RevealDeps = {
+    ...systemReveal(process.platform),
+    open: async (folder) => {
+      if (openFails) throw new Error('spawn explorer.exe ENOENT');
+      opened.push(folder);
+    },
+  };
   const service = new Service({
     home,
     scriptsDir: home,
     platform: process.platform,
     env: { PATH: '' },
     drivers: [],
+    reveal,
     callIde: async (endpoint, route, body) => {
       calls.push([endpoint.id, route, body]);
       if (route === 'info') return { ok: true, projects: endpoint.id.startsWith('jetbrains') ? [{ name: 'p', path: project, focused: true }] : [] };
@@ -30,10 +39,10 @@ function setup(failing: string[] = []) {
       return { ok: true };
     },
   });
-  return { home, project, session, service, calls, reveals: () => calls.filter((c) => c[1] === 'reveal').map((c) => c[0]) };
+  return { home, project, session, service, calls, opened, reveals: () => calls.filter((c) => c[1] === 'reveal').map((c) => c[0]) };
 }
 
-test("reveal goes to the session's own IDE first, then any other, and returns ok: false when none can", async () => {
+test("reveal goes to the session's own IDE first, then any other, then the OS file manager, and returns ok: false when none can", async () => {
   const s = setup();
   const ids = (await s.service.reveal(s.session, undefined, [s.session])) as { ok: true; ide: string };
   assert.equal(ids.ok, true);
@@ -47,10 +56,16 @@ test("reveal goes to the session's own IDE first, then any other, and returns ok
   assert.equal(fallback.ok, true);
   assert.deepEqual(f.reveals(), ['vscode-2', first], 'an IDE without the route is skipped');
 
-  const n = setup(['vscode-2', 'jetbrains-1']);
+  assert.deepEqual([s.opened, f.opened], [[], []], 'the file manager runs only when no IDE can reveal');
+
+  const sys = setup(['vscode-2', 'jetbrains-1']);
+  const system = await sys.service.reveal(sys.session, undefined, [sys.session]);
+  assert.deepEqual([system.ok, (system as { ide: string }).ide, sys.opened.length], [true, 'system', 1]);
+
+  const n = setup(['vscode-2', 'jetbrains-1'], true);
   const none = await n.service.reveal(n.session, undefined, [n.session]);
   assert.equal(none.ok, false);
-  assert.match((none as { reason: string }).reason, /no such route/);
+  assert.match((none as { reason: string }).reason, /no such route.*ENOENT/);
 });
 
 test('reveal refuses a file, a folder no session or project has, and never asks an IDE then', async () => {
@@ -77,7 +92,7 @@ test('reveal resolves links before it compares, and refuses a macOS bundle', asy
     ['/work/link', '/elsewhere/secret'],
     ['/Applications/Foo.app/Contents', '/Applications/Foo.app/Contents'],
   ]);
-  const deps = (platform: NodeJS.Platform): RevealDeps => ({ realpath: async (p) => links.get(p), isDirectory: async () => true, platform });
+  const deps = (platform: NodeJS.Platform): RevealDeps => ({ realpath: async (p) => links.get(p), isDirectory: async () => true, open: async () => undefined, platform });
   assert.equal(await checkRevealTarget('/work/repo', ['/work/repo'], deps('linux')), '/work/repo');
   await assert.rejects(checkRevealTarget('/work/link', ['/work/repo'], deps('linux')), /is not the folder of a live session/);
   await assert.rejects(checkRevealTarget('/Applications/Foo.app/Contents', ['/Applications/Foo.app/Contents'], deps('darwin')), /inside a macOS bundle/);

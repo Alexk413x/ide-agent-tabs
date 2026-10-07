@@ -1180,10 +1180,12 @@ request for the keys only.
   `reveal` op, which applies the same rules as the IDE's `reveal` route against the folders of live
   sessions and the IDEs' open projects, and asks this session's IDE first, then every other running
   one. When an IDE shows it, the notice says `Opened <path> in File Explorer.` (Finder, the file
-  manager). Only when none can does the mod run, by argv with no shell, `explorer.exe <path>` on Windows
-  (`OS` is `Windows_NT`), `open <path>` on macOS and `xdg-open <path>` on Linux (`uname -s`), with the
-  resolved path. `explorer.exe` exits 1 even when it opened the folder, so on Windows only a failed
-  start counts as an error.
+  manager). When none can, the server starts the file manager itself, by argv with no shell, detached
+  and not hidden: `explorer.exe <path>` on Windows, `open <path>` on macOS and `xdg-open <path>` on
+  Linux. It returns `ide: "system"`, and on Windows the notice adds `(it may be behind this window)`.
+  The mod never runs `explorer.exe`: `$.process.run` starts its child hidden, and Explorer keeps that
+  state, which leaves an invisible window. Only when the server doesn't answer does the mod run `open`
+  or `xdg-open` (`uname -s`) itself; on Windows it reports that it could not open the folder.
 - The pane has no close control of its own: the engine's close mark on the frame, Esc from the agents
   view, and `/agent-messages` close it.
 - A blank line comes before each session. Each session takes two lines. Line 1, indented four: the session's message count, bold, padded to
