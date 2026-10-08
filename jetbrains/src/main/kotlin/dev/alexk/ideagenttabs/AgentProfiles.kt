@@ -124,7 +124,7 @@ fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
     return profile.launch(context.prompt, context.args, context.env, context.model)
 }
 
-// Same strings as CODEX_TAB_ARGS in mcp/src/profiles.ts, which explains them; mcp/test/codexTab.test.ts checks both.
+// Same strings as CODEX_TAB_ARGS in claude-plugin/mcp/src/ide_agent_tabs/profiles.py, which explains them; mcp/tests/test_codex_tab.py checks both.
 val CODEX_TAB_ARGS = listOf(
     "--no-daemon",
     "-c",
