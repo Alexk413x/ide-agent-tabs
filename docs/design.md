@@ -846,6 +846,39 @@ Python code.
   root `pyproject.toml` holds their settings and the pyright dev group; it declares no runtime
   dependencies.
 
+### Foundations
+
+- `files` writes files atomically (a temp file renamed over the target, retried while Windows refuses
+  the rename) and takes lock files in Node's format: `<file>.lock` holds `"<pid> <16 hex digits>"`, and
+  a waiter breaks a lock whose owner is dead or whose file is more than 10 s old.
+- On Windows, Python's `open()` doesn't share delete access, so a Python reader would stop a Node
+  process from releasing a lock or renaming over a presence file. `winapi.open_shared_read` opens files
+  with `CreateFileW` and all three share flags, and `files` reads through it.
+- `processes.pid_alive` uses `OpenProcess` and `GetExitCodeProcess` on Windows, because
+  `os.kill(pid, 0)` there ends the process.
+- `jsjson.stringify` writes what `JSON.stringify` writes: compact or indented, no ASCII escaping,
+  lone surrogates as `\udXXX`, integer-like keys first, and numbers in JavaScript's format.
+  `utf16_len` and `utf16_slice` count and cut strings the way JavaScript strings do.
+- `clock.iso` writes `Date.prototype.toISOString` timestamps, and `clock.parse_iso` reads the ISO forms
+  `Date.parse` reads.
+
+### Message store in Python
+
+`ide_agent_tabs.messaging` opens the same `messages.db` as the Node build, with the same schema text,
+`user_version`, pragmas, busy timeout, retry jitter and deadlines. A process keeps one connection per
+home behind a lock, so its threads take turns as Node's write turns do. Text with a lone surrogate is
+stored with U+FFFD, as Node's driver stores it, and the dedupe digest hashes the `JSON.stringify` form,
+so a send from either build deduplicates against the other.
+
+A Python waiter doesn't watch the wake folder. One thread per home polls `PRAGMA data_version` every
+100 ms and wakes that home's waiters when it changes; a send in the same process wakes them directly.
+Python senders still write wake files, because Node waiters watch that folder.
+
+`mcp/tests/test_store_interop.py` runs the same operations through Node and Python processes on one
+home: schema, message shape, dedupe, limits, claims, history, presence files and wake latency.
+`mcp/tests/test_stress_mixed.py` runs the Node stress cases with Node and Python workers on one home,
+under the Node limits: a 600 ms median burst send and a 750 ms p99 loop delay.
+
 ### Baseline before the port
 
 Measured on 2026-10-08 on the 16-thread i9-9980HK under Windows 11 with Node 24.19.0, at a CPU load of
