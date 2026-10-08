@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -10,6 +10,7 @@ import { Messaging, type Hosts } from '../src/messaging/messaging.js';
 import { resolveSettings } from '../src/profiles.js';
 import { createServer, MOD_TOOL } from '../src/server.js';
 import { Service } from '../src/service.js';
+import { unread } from './mail.js';
 import { tempDir } from './tempDir.js';
 
 const hosts: Hosts = { findHost: async () => undefined, typeInto: async () => ({ ok: true }) };
@@ -18,9 +19,11 @@ function session(home: string, id: string, agent: string, pid: number, now?: () 
   return new Messaging({ home, env: { IDE_AGENT_TABS_ID: id, IDE_AGENT_TABS_AGENT: agent }, pid, cwd: `/w/${id}`, hosts, isAlive: () => true, ...(now ? { now } : {}) });
 }
 
+const unreadIds = async (home: string, id: string) => (await unread(home, id)).map((m) => m.id);
+
 const files = (dir: string) => readdirSync(dir).filter((n) => n.endsWith('.json')).sort();
 
-test('every send writes an owner-only sent-log entry beside the mailbox', async () => {
+test('every send is in the sender\'s history with its delivery', async () => {
   const home = tempDir('iat-hist-');
   const a = session(home, 'tab-a', 'codex', 1);
   const b = session(home, 'tab-b', 'claude', 2);
@@ -28,14 +31,10 @@ test('every send writes an owner-only sent-log entry beside the mailbox', async 
   await b.start();
   try {
     const sent = await a.send({ to: 'tab-b', text: 'review x.ts' });
-    const dir = path.join(mailboxDir(home, 'tab-a'), SENT_LOG);
-    const [name] = files(dir);
-    assert.match(name!, new RegExp(`^\\d+-${sent.id}\\.json$`));
-    if (process.platform !== 'win32') assert.equal(statSync(path.join(dir, name!)).mode & 0o777, 0o600);
-    const record = JSON.parse(readFileSync(path.join(dir, name!), 'utf8'));
+    const [record] = (await a.modHistory({ id: 'tab-a', names: [] })).messages;
     assert.deepEqual(
-      { id: record.id, route: record.route, from: record.from.id, to: record.to.id, text: record.text, delivery: record.delivery },
-      { id: sent.id, route: 'agent-tabs', from: 'tab-a', to: 'tab-b', text: 'review x.ts', delivery: 'queued' },
+      { id: record!.id, route: record!.route, from: record!.from.id, to: record!.to.id, text: record!.text, delivery: record!.delivery, direction: record!.direction },
+      { id: sent.id, route: 'agent-tabs', from: 'tab-a', to: 'tab-b', text: 'review x.ts', delivery: 'queued', direction: 'sent' },
     );
   } finally {
     a.stopFollowUps();
@@ -61,8 +60,8 @@ test('history merges sent, received and native traffic oldest first, and marks n
     clock += 60_000;
     await b.modLog({ direction: 'sent', peer: 'docs-9b [11aa22]', text: 'native reply', delivery: 'delivered' });
 
-    const unreadB = files(path.join(mailboxDir(home, 'tab-b'), 'new'));
-    const unreadA = files(path.join(mailboxDir(home, 'tab-a'), 'new'));
+    const unreadB = await unreadIds(home, 'tab-b');
+    const unreadA = await unreadIds(home, 'tab-a');
     const { messages } = await b.modHistory({ id: 'tab-b', names: ['plugins-fa [6a3948]'] });
     assert.deepEqual(
       messages.map((m) => [m.direction, m.peer.id ?? m.peer.name, m.text, m.route]),
@@ -91,8 +90,8 @@ test('history merges sent, received and native traffic oldest first, and marks n
       ['received', 'native reply'],
     ], 'a native peer without Agent Tabs shows the traffic logged by sessions that talked to it');
 
-    assert.deepEqual(files(path.join(mailboxDir(home, 'tab-b'), 'new')), unreadB, 'history leaves new/ as it was');
-    assert.deepEqual(files(path.join(mailboxDir(home, 'tab-a'), 'new')), unreadA);
+    assert.deepEqual(await unreadIds(home, 'tab-b'), unreadB, 'history leaves unread messages unread');
+    assert.deepEqual(await unreadIds(home, 'tab-a'), unreadA);
   } finally {
     a.stopFollowUps();
     b.stopFollowUps();

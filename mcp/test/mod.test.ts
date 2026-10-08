@@ -4,13 +4,14 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { CLAIM_TIMEOUT_MS, deliver, mailboxDir, MAX_READ_CHARS, MAX_TEXT_CHARS, newMessageId, peekUnread, type Message } from '../src/messaging/mailbox.js';
+import { CLAIM_TIMEOUT_MS, mailboxDir, MAX_READ_CHARS, MAX_TEXT_CHARS } from '../src/messaging/mailbox.js';
 import { runHook } from '../src/messaging/hook.js';
 import { parseCodexConfig } from '../src/messaging/codexConfig.js';
 import { folderSlug, Messaging, MOD_DELIVERY_NOTE, sessionNames, shortNames, type Hosts } from '../src/messaging/messaging.js';
 import { isModDriven, MOD_STALE_MS, readPresence, updatePresence } from '../src/messaging/sessions.js';
 import { createServer, MOD_TOOL } from '../src/server.js';
 import { Service } from '../src/service.js';
+import { deliverTo, newMessageId, readBy, unread, type Message } from './mail.js';
 import { tempDir } from './tempDir.js';
 
 function message(to: string, text = 'hello'): Message {
@@ -93,7 +94,7 @@ test('the classic hooks do nothing for a mod-driven session and resume with no d
   const claude = session(home, 'tab-c', 'claude', 1);
   await claude.start();
   await claude.modPresence({ driver: true, state: 'idle' });
-  await deliver(home, message('tab-c'));
+  await deliverTo(home, message('tab-c'));
   assert.equal(await runHook({ cli: 'claude', event: 'Stop', input: {}, home, sessionId: 'tab-c' }), undefined, 'the mod delivers; the Stop hook keeps no turn open');
   assert.equal(await runHook({ cli: 'claude', event: 'UserPromptSubmit', input: {}, home, sessionId: 'tab-c' }), undefined);
   assert.equal((await readPresence(home, 'tab-c'))!.state, 'idle', 'the hook left the state to the mod');
@@ -127,24 +128,24 @@ test('take claims mail at least once: release and a stale claim return it, ack m
   const home = tempDir('iat-mod-');
   const claude = session(home, 'tab-c', 'claude', 1);
   await claude.start();
-  await deliver(home, message('tab-c', 'one'));
-  await deliver(home, message('tab-c', 'two'));
+  await deliverTo(home, message('tab-c', 'one'));
+  await deliverTo(home, message('tab-c', 'two'));
 
   const first = await claude.modTake();
   assert.equal(first.messages.length, 2);
   assert.match('notice' in first ? first.notice : '', /not from your user/);
-  assert.equal((await peekUnread(home, 'tab-c')).length, 0, 'a claimed message is no longer unread');
+  assert.equal((await unread(home, 'tab-c')).length, 0, 'a claimed message is no longer unread');
   assert.deepEqual(await claude.modSettle(first.claim!, 'release'), { claim: first.claim, released: 2 });
-  assert.equal((await peekUnread(home, 'tab-c')).length, 2);
+  assert.equal((await unread(home, 'tab-c')).length, 2);
 
   const both = await claude.modTake();
   assert.deepEqual(both.messages.map((m) => m.text), ['one', 'two']);
   assert.deepEqual(await claude.modSettle(both.claim!, 'ack'), { claim: both.claim, read: 2 });
-  assert.equal(readdirSync(path.join(mailboxDir(home, 'tab-c'), 'cur')).length, 2);
+  assert.equal((await readBy(home, 'tab-c')).length, 2);
   await assert.rejects(claude.modSettle(both.claim!, 'ack'), /no open claim/);
   assert.deepEqual(await claude.modTake(), { claim: null, messages: [] });
 
-  await deliver(home, message('tab-c', 'three'));
+  await deliverTo(home, message('tab-c', 'three'));
   const lost = await claude.modTake();
   const held = path.join(mailboxDir(home, 'tab-c'), 'held');
   const old = new Date(Date.now() - CLAIM_TIMEOUT_MS - 1000);
@@ -155,7 +156,7 @@ test('take claims mail at least once: release and a stale claim return it, ack m
   assert.equal(readdirSync(held).length, 1);
 
   for (const name of readdirSync(held)) utimesSync(path.join(held, name), old, old);
-  assert.equal((await peekUnread(home, 'tab-c')).length, 1, 'with the mod gone, the classic hooks see the message again');
+  assert.equal((await unread(home, 'tab-c')).length, 1, 'with the mod gone, the classic hooks see the message again');
   assert.deepEqual((await claude.read()).messages.map((m) => m.text), ['three']);
   claude.stopSync();
 });
@@ -225,11 +226,11 @@ test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', 
     assert.equal(presence.json.driver, true);
     const sent = await claude.call({ op: 'send', to: 'tab-x', text: 'from the mod' });
     assert.equal(sent.isError, false);
-    assert.equal((await peekUnread(home, 'tab-x'))[0]!.from.id, 'tab-c');
+    assert.equal((await unread(home, 'tab-x'))[0]!.from.id, 'tab-c');
     assert.match((await claude.call({ op: 'send', to: 'tab-x' })).text, /send needs text/);
     assert.match((await claude.call({ op: 'send', to: 'tab-c', text: 'me' })).text, /to is this session/);
 
-    await deliver(home, message('tab-c', 'for claude'));
+    await deliverTo(home, message('tab-c', 'for claude'));
     const taken = await claude.call({ op: 'take' });
     assert.equal(taken.json.messages[0].text, 'for claude');
     assert.deepEqual((await claude.call({ op: 'ack', claim: taken.json.claim })).json, { claim: taken.json.claim, read: 1 });
@@ -265,10 +266,10 @@ test('one take claims every waiting message up to MAX_READ_CHARS, at least one, 
   const m = new Messaging({ home, env: { IDE_AGENT_TABS_ID: 'tab-t', IDE_AGENT_TABS_AGENT: 'claude' }, pid: 9, cwd: '/t', hosts: { findHost: async () => undefined, typeInto: async () => ({ ok: true }) }, isAlive: () => true });
   await m.start();
   try {
-    for (let i = 0; i < 12; i++) await deliver(home, message('tab-t', `short ${i}`));
+    for (let i = 0; i < 12; i++) await deliverTo(home, message('tab-t', `short ${i}`));
     const all = await m.modTake();
     assert.equal(all.messages.length, 12, 'no count limit');
-    for (let i = 0; i < 3; i++) await deliver(home, message('tab-t', String(i).repeat(MAX_TEXT_CHARS)));
+    for (let i = 0; i < 3; i++) await deliverTo(home, message('tab-t', String(i).repeat(MAX_TEXT_CHARS)));
     const capped = await m.modTake();
     assert.equal(capped.messages.length, Math.max(1, Math.floor(MAX_READ_CHARS / MAX_TEXT_CHARS)));
     assert.equal(capped.remaining, 3 - capped.messages.length);
@@ -299,7 +300,7 @@ test('send_message takes a short name as well as the full id', async () => {
   assert.equal(byName.to, 'f99f0a1b-2222-4333-8444-555566667777');
   const byId = await sender.send({ to: 'f99f0a1b-2222-4333-8444-555566667777', text: 'by id' });
   assert.equal(byId.to, 'f99f0a1b-2222-4333-8444-555566667777');
-  assert.deepEqual((await peekUnread(home, 'f99f0a1b-2222-4333-8444-555566667777')).map((m) => m.text).sort(), ['by id', 'by name']);
+  assert.deepEqual((await unread(home, 'f99f0a1b-2222-4333-8444-555566667777')).map((m) => m.text).sort(), ['by id', 'by name']);
   await assert.rejects(sender.send({ to: 'codex-0000', text: 'x' }), /no live session with id or name codex-0000/);
   await assert.rejects(codex.send({ to: 'codex-f99f', text: 'x' }), /to is this session/);
   for (const m of [sender, codex]) {

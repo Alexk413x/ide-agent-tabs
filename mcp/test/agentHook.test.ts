@@ -4,9 +4,9 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { deliver, newMessageId, takeMessages } from '../src/messaging/mailbox.js';
 import { HOOK_EVENTS, runHook } from '../src/messaging/hook.js';
 import { presencePath, readPresence, updatePresence } from '../src/messaging/sessions.js';
+import { deliverTo, newMessageId, take } from './mail.js';
 import { tempDir } from './tempDir.js';
 
 const ID = 'tab-hook-1';
@@ -16,7 +16,7 @@ function hook(home: string, cli: string, event: string, input: Record<string, un
 }
 
 async function mail(home: string) {
-  await deliver(home, { id: newMessageId(), from: { id: 'abcdef0123456', agent: 'codex', path: '/w' }, to: ID, text: 'secret text', sentAt: new Date().toISOString() });
+  await deliverTo(home, { id: newMessageId(), from: { id: 'abcdef0123456', agent: 'codex', path: '/w' }, to: ID, text: 'secret text', sentAt: new Date().toISOString() });
 }
 
 const state = async (home: string) => (await readPresence(home, ID))?.state;
@@ -133,7 +133,7 @@ test('a message is reminded once, and a new message brings a new reminder', asyn
   await mail(home);
   assert.deepEqual(await hook(home, 'claude', 'PostToolUse'), context('Agent Tabs: 2 unread messages from codex abcdef01. read_messages returns them.'));
   assert.equal(await hook(home, 'claude', 'PostToolUse'), undefined);
-  await takeMessages(home, ID);
+  await take(home, ID);
   await hook(home, 'claude', 'PostToolUse');
   assert.equal((await readPresence(home, ID))!.reminded, undefined);
 });
@@ -169,7 +169,7 @@ test('turn end blocks at most three times in a row, and a prompt or a read reset
   assert.equal(await hook(home, 'hermes', 'on_session_end'), undefined);
   assert.equal(await state(home), 'idle');
 
-  await takeMessages(home, ID);
+  await take(home, ID);
   assert.equal(await hook(home, 'claude', 'Stop'), undefined);
   assert.equal((await readPresence(home, ID))!.nudges, 0);
 });

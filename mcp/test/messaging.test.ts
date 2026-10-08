@@ -5,20 +5,15 @@ import path from 'node:path';
 import { test } from 'node:test';
 import {
   cleanMail,
-  deliver,
   KEEP_MS,
   mailboxDir,
   MAX_SENT_PER_MINUTE,
   MAX_READ_CHARS,
   MAX_TEXT_CHARS,
   MAX_UNREAD,
-  newMessageId,
-  peekUnread,
   reserveSend,
   takeBatch,
-  takeMessages,
   waitForMessage,
-  type Message,
 } from '../src/messaging/mailbox.js';
 import { AGY_MAX_WAIT_S, Messaging, type Hosts } from '../src/messaging/messaging.js';
 import { runHook } from '../src/messaging/hook.js';
@@ -35,6 +30,7 @@ import {
   WAKE_TIMEOUT_MS,
   type SessionState,
 } from '../src/messaging/sessions.js';
+import { deliverTo, newMessageId, readBy, take, unread, type Message } from './mail.js';
 import { tempDir } from './tempDir.js';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -88,29 +84,27 @@ test('the wake line and the reminder hold only sanitized names and short ids', (
   assert.equal(unreadReminder(two), 'Agent Tabs: 2 unread messages from codex tab-a, gemini s-123456. read_messages returns them.');
 });
 
-test('a message lands in new/ whole, moves to cur/ when read, and nobody reads it twice', async () => {
+test('a message arrives whole, counts as read once taken, and nobody reads it twice', async () => {
   const home = tempDir('iat-mail-');
   const first = message('tab-b', { text: 'x'.repeat(32_000) });
-  await deliver(home, first);
-  await deliver(home, message('tab-b'));
-  const box = mailboxDir(home, 'tab-b');
-  assert.deepEqual(readdirSync(path.join(box, 'tmp')), []);
-  assert.equal(readdirSync(path.join(box, 'new')).length, 2);
-  const [a, b] = await Promise.all([takeMessages(home, 'tab-b'), takeMessages(home, 'tab-b')]);
+  await deliverTo(home, first);
+  await deliverTo(home, message('tab-b'));
+  assert.equal((await unread(home, 'tab-b')).length, 2);
+  const [a, b] = await Promise.all([take(home, 'tab-b'), take(home, 'tab-b')]);
   assert.equal(a!.length + b!.length, 2);
   assert.equal([...a!, ...b!].find((m) => m.id === first.id)!.text.length, 32_000);
-  assert.deepEqual(readdirSync(path.join(box, 'new')), []);
-  assert.equal(readdirSync(path.join(box, 'cur')).length, 2);
+  assert.deepEqual(await unread(home, 'tab-b'), []);
+  assert.equal((await readBy(home, 'tab-b')).length, 2);
 });
 
 test('refuses text over 32,000 characters and a full mailbox', async () => {
   const home = tempDir('iat-mail-');
-  await assert.rejects(deliver(home, message('tab-b', { text: 'x'.repeat(32_001) })), /32000/);
-  for (let i = 0; i < MAX_UNREAD; i++) await deliver(home, message('tab-b'));
-  await assert.rejects(deliver(home, message('tab-b')), /50 unread/);
-  await takeMessages(home, 'tab-b', {}, 1);
-  await deliver(home, message('tab-b'));
-  await assert.rejects(deliver(home, message('../x')), /not a session id/);
+  await assert.rejects(deliverTo(home, message('tab-b', { text: 'x'.repeat(32_001) })), /32000/);
+  for (let i = 0; i < MAX_UNREAD; i++) await deliverTo(home, message('tab-b'));
+  await assert.rejects(deliverTo(home, message('tab-b')), /50 unread/);
+  await take(home, 'tab-b', {}, 1);
+  await deliverTo(home, message('tab-b'));
+  await assert.rejects(deliverTo(home, message('../x')), /not a session id/);
 });
 
 test('the send rate limit holds across two processes that share a home', async () => {
@@ -135,10 +129,10 @@ process.stdout.write(String(ok));`;
 
 test('cleanup deletes read messages and stale mailboxes after 7 days', async () => {
   const home = tempDir('iat-clean-');
-  await deliver(home, message('live'));
-  await deliver(home, message('live'));
-  await takeMessages(home, 'live', {}, 1);
-  await deliver(home, message('gone'));
+  await deliverTo(home, message('live'));
+  await deliverTo(home, message('live'));
+  await take(home, 'live', {}, 1);
+  await deliverTo(home, message('gone'));
   const now = Date.now();
   const old = new Date(now - KEEP_MS - DAY);
   const cur = path.join(mailboxDir(home, 'live'), 'cur');
@@ -413,7 +407,7 @@ test('one read returns at most MAX_READ_CHARS of text and leaves the rest unread
   const first = await b.read();
   assert.equal(first.messages.length, Math.max(1, Math.floor(MAX_READ_CHARS / MAX_TEXT_CHARS)));
   assert.equal(first.remaining, 3 - first.messages.length);
-  assert.equal(readdirSync(path.join(mailboxDir(home, 'tab-b'), 'new')).length, first.remaining);
+  assert.equal((await unread(home, 'tab-b')).length, first.remaining);
   const rest: string[] = [];
   for (let r = await b.read(); r.messages.length; r = await b.read()) rest.push(...r.messages.map((m) => m.text[0]!));
   assert.deepEqual([...first.messages.map((m) => m.text[0]!), ...rest], ['0', '1', '2']);
@@ -426,22 +420,22 @@ test('a read cancelled before it answers leaves the messages unread', async () =
   const cancel = new AbortController();
   cancel.abort();
   await assert.rejects(b.read(cancel.signal), /cancelled/);
-  assert.deepEqual((await peekUnread(home, 'tab-b')).map((m) => m.text), ['keep me']);
+  assert.deepEqual((await unread(home, 'tab-b')).map((m) => m.text), ['keep me']);
   assert.equal((await b.read()).messages[0]!.text, 'keep me');
 });
 
 test('a wait cancelled after it takes a message puts the message back', async () => {
   const home = tempDir('iat-mail-');
-  await deliver(home, message('tab-b', { text: 'keep me' }));
+  await deliverTo(home, message('tab-b', { text: 'keep me' }));
   const cancel = new AbortController();
   cancel.abort();
   assert.equal(await waitForMessage(home, 'tab-b', {}, 1_000, cancel.signal), undefined);
-  assert.deepEqual((await peekUnread(home, 'tab-b')).map((m) => m.text), ['keep me']);
+  assert.deepEqual((await unread(home, 'tab-b')).map((m) => m.text), ['keep me']);
 });
 
 test('a file that cannot be read now stays unread, and one that is not a message is set aside', async () => {
   const home = tempDir('iat-mail-');
-  await deliver(home, message('tab-b', { text: 'good' }));
+  await deliverTo(home, message('tab-b', { text: 'good' }));
   const box = mailboxDir(home, 'tab-b');
   mkdirSync(path.join(box, 'new', '0-m-00000000000000aa.json'));
   writeFileSync(path.join(box, 'new', '0-m-00000000000000bb.json'), '{not json');
@@ -503,7 +497,7 @@ test('a wake that fails on a cached host finds the host again and types there', 
 
 test('a send that fails to deliver gives its rate slot back', async () => {
   const { home, a } = await pair([]);
-  for (let i = 0; i < MAX_UNREAD; i++) await deliver(home, message('tab-b'));
+  for (let i = 0; i < MAX_UNREAD; i++) await deliverTo(home, message('tab-b'));
   for (let i = 0; i < MAX_SENT_PER_MINUTE + 1; i++) await assert.rejects(a.send({ to: 'tab-b', text: `x${i}` }), /50 unread/);
   a.stopFollowUps();
 });
@@ -517,7 +511,7 @@ test('the same message sent again within DEDUPE_MS is not delivered twice', asyn
   assert.equal(again.id, first.id);
   assert.equal(again.duplicate, true);
   assert.notEqual(other.id, first.id);
-  assert.equal((await peekUnread(home, 'tab-b')).length, 2);
+  assert.equal((await unread(home, 'tab-b')).length, 2);
 });
 
 test('a presence whose heartbeat stopped counts as gone even if its pid is reused', async () => {
