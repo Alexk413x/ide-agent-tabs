@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import hashlib
+import os
 import re
-import secrets
 import sqlite3
 import threading
 import time
@@ -52,11 +51,11 @@ Message = dict[str, Any]
 
 
 def new_message_id() -> str:
-    return f"m-{secrets.token_hex(8)}"
+    return f"m-{os.urandom(8).hex()}"
 
 
 def _new_claim_id() -> str:
-    return f"c-{secrets.token_hex(8)}"
+    return f"c-{os.urandom(8).hex()}"
 
 
 def check_message_id(value: str, field: str) -> None:
@@ -65,6 +64,8 @@ def check_message_id(value: str, field: str) -> None:
 
 
 def send_digest(to: str, text: str, reply_to: str | None = None) -> str:
+    import hashlib
+
     payload = stringify([to, "" if reply_to is None else reply_to, text])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

@@ -15,6 +15,7 @@ sys.path.insert(
 from ide_agent_tabs.clock import now_ms
 from ide_agent_tabs.files import file_lock, read_text_if_exists
 from ide_agent_tabs.messaging import db, sessions, store, wake
+from ide_agent_tabs.messaging.hook import run_hook
 from ide_agent_tabs.processes import utf8_stdio
 
 MODES: dict[str, Callable[[dict[str, Any]], None]] = {}
@@ -121,6 +122,8 @@ def run_op(home: str, o: dict[str, Any]) -> Any:
             }
 
         return db.query(home, schema)
+    if op == "hook":
+        return run_hook(o["cli"], o["event"], o.get("input") or {}, home, sid, now)
     if op == "rows":
         return db.query(home, lambda d: [dict(r) for r in d.all("SELECT * FROM messages ORDER BY seq")])
     raise ValueError(f"unknown op {op}")

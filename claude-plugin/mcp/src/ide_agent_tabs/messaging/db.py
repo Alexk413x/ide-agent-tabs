@@ -3,9 +3,7 @@ from __future__ import annotations
 import contextlib
 import os
 import posixpath
-import random
 import re
-import shutil
 import sqlite3
 import sys
 import threading
@@ -13,7 +11,7 @@ import time
 from typing import Any, Callable, TypeVar
 
 from ..clock import now_ms
-from ..files import ensure_private_dir, file_lock
+from ..files import ensure_private_dir, file_lock, remove_tree
 
 T = TypeVar("T")
 
@@ -183,7 +181,7 @@ open_stats = {"opened": 0}
 
 
 def _jitter_s() -> float:
-    return (10 + random.randint(0, 40)) / 1000
+    return (10 + os.urandom(1)[0] % 41) / 1000
 
 
 def set_busy_timeout(ms: int) -> None:
@@ -288,7 +286,9 @@ def _connect(home: str, file: str, deadline: float) -> Db:
         if is_corrupt(e):
             raise MailError(CORRUPT_MESSAGE) from e
         raise
-    shutil.rmtree(os.path.join(home, FILE_MAILBOX_DIR), ignore_errors=True)
+    mailbox = os.path.join(home, FILE_MAILBOX_DIR)
+    if os.path.isdir(mailbox):
+        remove_tree(mailbox)
     return Db(home, file, sql, os.stat(file).st_ino)
 
 

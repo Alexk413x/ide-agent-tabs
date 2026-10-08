@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { withFileLock } from '../src/files.js';
 import { closeAllDbs, query } from '../src/messaging/db.js';
+import { runHook } from '../src/messaging/hook.js';
 import { liveSessions, readPresence, updatePresence, type PresenceFile } from '../src/messaging/sessions.js';
 import {
   claimBatch,
@@ -103,6 +104,8 @@ async function runOp(home: string, o: Op): Promise<unknown> {
         userVersion: Number(db.sql.prepare('PRAGMA user_version').get()!.user_version),
         journalMode: String(db.sql.prepare('PRAGMA journal_mode').get()!.journal_mode),
       }));
+    case 'hook':
+      return (await runHook({ cli: String(o.cli), event: String(o.event), input: (o.input as Record<string, unknown>) ?? {}, home, sessionId: id, ...(o.now !== undefined ? { now: Number(o.now) } : {}) })) ?? null;
     case 'rows':
       return query(home, (db) => db.sql.prepare('SELECT * FROM messages ORDER BY seq').all());
     default:

@@ -9,7 +9,6 @@ GENERIC_READ = 0x80000000
 FILE_SHARE_ALL = 0x1 | 0x2 | 0x4
 OPEN_EXISTING = 3
 FILE_ATTRIBUTE_NORMAL = 0x80
-INVALID_HANDLE_VALUE = -1
 
 
 @functools.cache
@@ -40,15 +39,12 @@ def kernel32() -> Any:
 def open_shared_read(path: str) -> int:
     if sys.platform != "win32":
         return os.open(path, os.O_RDONLY)
-    import ctypes
+    import _winapi
     import msvcrt
 
-    handle = kernel32().CreateFileW(path, GENERIC_READ, FILE_SHARE_ALL, None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None)
-    if handle is None or handle == ctypes.c_void_p(INVALID_HANDLE_VALUE).value:
-        code = ctypes.get_last_error()
-        raise ctypes.WinError(code)
+    handle = _winapi.CreateFile(path, GENERIC_READ, FILE_SHARE_ALL, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0)
     try:
         return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
     except BaseException:
-        kernel32().CloseHandle(handle)
+        _winapi.CloseHandle(handle)
         raise
