@@ -2,7 +2,7 @@
 name: new-tab
 description: Open a new agent session (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose, Codex (local), or a custom profile) in an IDE editor tab or a terminal tab, optionally in another folder and with a first message. Also lists and closes those tabs, and reopens a closed session. Use when the user asks to open a new tab, session or agent somewhere, to see which agent tabs are open, to close one, or to reopen or resume a session that ended. Not for opening a file or a web page in a tab.
 argument-hint: "[agent] [folder] [-- first message]"
-allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" list-ides)
+allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" list-ides)
 ---
 
 Open, list or close agent tabs through the `ide-agent-tabs` MCP server. The tab can be in any running IDE
@@ -34,7 +34,7 @@ terminal, or one of several windows of the same IDE, pass its id. To list the ru
 terminals with their ids, run:
 
 ```sh
-node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" list-ides
+"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" list-ides
 ```
 
 It prints JSON: `ides` (id, product and open projects), `installed`, `terminals` and `shells`. Pass `args` or `env`
