@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import unittest
 from typing import Any, Callable
 
@@ -176,8 +177,12 @@ class NamedIdeTest(unittest.TestCase):
         holder: dict[str, Setup] = {}
 
         def register(folder: str) -> None:
-            later(0.02, lambda: holder["t"].add_ide("jetbrains-new", "Android Studio", []))
-            later(0.05, lambda: holder["t"].ides["jetbrains-new"].update(projects=[folder]))
+            def endpoint_then_project() -> None:
+                holder["t"].add_ide("jetbrains-new", "Android Studio", [])
+                time.sleep(0.03)
+                holder["t"].ides["jetbrains-new"].update(projects=[folder])
+
+            later(0.02, endpoint_then_project)
 
         t = Setup(self, [CODE, STUDIO], timeout_s=5, register=register, sync_ms=3000)
         holder["t"] = t
