@@ -238,7 +238,7 @@ const NAME_SLUG_CHARS = 24
 const baseName = (name: string) => name.replace(/ \[[^\]]*\]$/, '')
 const rank = (list: readonly string[], value: string) => (list.includes(value) ? list.indexOf(value) : list.length)
 
-// Duplicates folderSlug in mcp/src/messaging/messaging.ts: the mod runs apart from the server and can't import it.
+// Duplicates folder_slug in mcp/src/ide_agent_tabs/messaging/messaging.py: the mod runs apart from the server and can't import it.
 export function folderSlug(folder: string): string {
   const base = folder.split(/[\\/]+/).filter(p => p !== '').at(-1) ?? ''
   const slug = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, NAME_SLUG_CHARS).replace(/^-+|-+$/g, '')

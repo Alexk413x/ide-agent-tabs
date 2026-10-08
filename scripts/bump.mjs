@@ -41,8 +41,6 @@ function setJsonVersion(name, next, lock = false) {
 }
 
 setJsonVersion('claude-plugin/.claude-plugin/plugin.json', version);
-setJsonVersion('mcp/package.json', version);
-setJsonVersion('mcp/package-lock.json', version, true);
 if (vscode !== undefined) {
   setJsonVersion('vscode/package.json', vscode);
   setJsonVersion('vscode/package-lock.json', vscode, true);
@@ -66,10 +64,11 @@ if (changelog.includes(`## ${version}\n`)) {
 
 console.log(`Set the plugin version to ${version}${vscode ? `, VS Code to ${vscode}` : ''}${jetbrains ? `, JetBrains to ${jetbrains}` : ''}.`);
 for (const name of changed) console.log(`  ${name}`);
-console.log(`
-Next steps:
-  1. Fill in the CHANGELOG.md entry for ${version}.
-  2. Build: cd mcp && npm run bundle${vscode || jetbrains ? ' && cd .. && node scripts/pack-ides.mjs' : ''}
-  3. Check: node scripts/check.mjs
-  4. Commit the changes.
-  5. Tag: git tag ide-agent-tabs--v${version}`);
+const steps = [
+  `Fill in the CHANGELOG.md entry for ${version}.`,
+  ...(vscode || jetbrains ? ['Build the IDE packages: node scripts/pack-ides.mjs'] : []),
+  'Check: node scripts/check.mjs',
+  'Commit the changes.',
+  `Tag: git tag ide-agent-tabs--v${version}`,
+];
+console.log(`\nNext steps:\n${steps.map((step, i) => `  ${i + 1}. ${step}`).join('\n')}`);

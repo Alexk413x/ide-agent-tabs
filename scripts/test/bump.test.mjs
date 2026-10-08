@@ -10,8 +10,6 @@ const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const bump = path.join(repo, 'scripts', 'bump.mjs');
 const FILES = [
   'claude-plugin/.claude-plugin/plugin.json',
-  'mcp/package.json',
-  'mcp/package-lock.json',
   'vscode/package.json',
   'vscode/package-lock.json',
   'jetbrains/gradle.properties',
@@ -38,10 +36,6 @@ test('bumps the plugin version in every file and adds a changelog stub', () => {
     const result = run(dir, '9.8.7');
     assert.equal(result.status, 0, result.stderr);
     assert.equal(json(dir, 'claude-plugin/.claude-plugin/plugin.json').version, '9.8.7');
-    assert.equal(json(dir, 'mcp/package.json').version, '9.8.7');
-    const lock = json(dir, 'mcp/package-lock.json');
-    assert.equal(lock.version, '9.8.7');
-    assert.equal(lock.packages[''].version, '9.8.7');
     assert.equal(text(dir, 'vscode/package.json'), original('vscode/package.json'));
     assert.equal(text(dir, 'jetbrains/gradle.properties'), original('jetbrains/gradle.properties'));
     const stub = '## 9.8.7\n\nPlugin and MCP server 9.8.7.\n\n';
@@ -89,7 +83,7 @@ test('a bad version or missing argument fails and writes nothing', () => {
     for (const args of [[], ['1.2'], ['1.2.3', '--vscode', 'x'], ['1.2.3', '--jetbrains']]) {
       assert.equal(run(dir, ...args).status, 1, args.join(' '));
     }
-    assert.equal(text(dir, 'mcp/package.json'), original('mcp/package.json'));
+    assert.equal(text(dir, 'claude-plugin/.claude-plugin/plugin.json'), original('claude-plugin/.claude-plugin/plugin.json'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

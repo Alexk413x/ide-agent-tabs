@@ -19,13 +19,13 @@ from ide_agent_tabs.shared.start_hook import run as run_hook
 from ide_agent_tabs.shared.state import ServerState, read_state, read_token, state_path, write_state
 from shared_support import McpHttp, free_port, pid_headers, reset_store_mode, serve
 from store_host import StoreHost
-from support import MCP, ROOT, TESTS, require_node, temp_home
+from support import MCP, NODE_080, ROOT, TESTS, require_node, temp_home
 
 PLUGIN = os.path.join(ROOT, "claude-plugin")
 LAUNCHER = launcher_path(PLUGIN)
 AS_BUILD = os.path.join(TESTS, "shared_server_as.py")
-NODE_LAUNCHER = os.path.join(MCP, "test", "serverLauncher.mjs")
-NODE_HELPER = os.path.join(PLUGIN, "mcp", "launch", "headers.mjs")
+NODE_SERVER = os.path.join(NODE_080, "shared-server.mjs")
+NODE_HELPER = os.path.join(NODE_080, "headers.mjs")
 START_WAIT_MS = 20_000
 
 
@@ -212,7 +212,7 @@ class NodeHandoverTest(unittest.TestCase):
 
     def node_server(self, home: str, port: int) -> subprocess.Popen[bytes]:
         child = subprocess.Popen(
-            [self.node, "--import", "tsx", NODE_LAUNCHER, "--port", str(port)],
+            [self.node, NODE_SERVER, "--port", str(port)],
             cwd=MCP,
             env=self.env(home),
             stdin=subprocess.DEVNULL,

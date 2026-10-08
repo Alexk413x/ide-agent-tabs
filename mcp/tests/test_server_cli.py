@@ -16,11 +16,11 @@ from ide_agent_tabs import server_cli
 from ide_agent_tabs.shared import client
 from ide_agent_tabs.shared.state import parse_port, read_state, read_token, state_path, token_path
 from jev_support import QuietServer
-from support import ROOT, require_node, temp_home
+from support import NODE_080, ROOT, require_node, temp_home
 
 LAUNCHER = os.path.join(ROOT, "claude-plugin", "mcp", "launch", "agent_tabs.py")
-NODE_SERVER = os.path.join(ROOT, "claude-plugin", "dist", "shared-server.mjs")
-NODE_CLI = os.path.join(ROOT, "claude-plugin", "dist", "mcp-server.mjs")
+NODE_SERVER = os.path.join(NODE_080, "shared-server.mjs")
+NODE_CLI = os.path.join(NODE_080, "mcp-server.mjs")
 
 
 def free_port() -> int:
