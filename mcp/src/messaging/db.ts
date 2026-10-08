@@ -16,6 +16,7 @@ const JOURNAL_SIZE_LIMIT = 4 * 1024 * 1024;
 const MIN_NODE = '22.13';
 
 const SQLITE_BUSY = 5;
+const SQLITE_IOERR = 10;
 const SQLITE_CORRUPT = 11;
 const SQLITE_FULL = 13;
 const SQLITE_CONSTRAINT = 19;
@@ -40,6 +41,8 @@ export function sqliteCode(e: unknown): number | undefined {
 export const isBusy = (e: unknown) => sqliteCode(e) === SQLITE_BUSY;
 export const isFull = (e: unknown) => sqliteCode(e) === SQLITE_FULL;
 export const isConstraint = (e: unknown) => sqliteCode(e) === SQLITE_CONSTRAINT;
+// Windows reports SQLITE_IOERR when processes open a new database at once and race to set up its WAL files.
+const isOpenRace = (e: unknown) => isBusy(e) || sqliteCode(e) === SQLITE_IOERR;
 export const isCorrupt = (e: unknown) => sqliteCode(e) === SQLITE_CORRUPT || sqliteCode(e) === SQLITE_NOTADB;
 
 // Migrations stay additive (new tables, columns with defaults, indexes): an older build keeps using a database
@@ -162,12 +165,12 @@ export function setBusyTimeout(ms: number): void {
   for (const pending of connections.values()) void pending.then((db) => db.sql.exec(`PRAGMA busy_timeout=${ms}`)).catch(() => undefined);
 }
 
-async function retryBusy<T>(work: () => T, deadline: number, label?: string): Promise<T> {
+async function retryBusy<T>(work: () => T, deadline: number, label?: string, retryable: (e: unknown) => boolean = isBusy): Promise<T> {
   for (;;) {
     try {
       return work();
     } catch (e) {
-      if (!isBusy(e)) throw e;
+      if (!retryable(e)) throw e;
       if (Date.now() + 10 >= deadline) {
         if (label !== undefined) process.stderr.write(`ide-agent-tabs: ${label} gave up waiting for the message store lock\n`);
         throw new StoreBusyError();
@@ -220,10 +223,12 @@ async function connect(home: string, file: string, deadline: number): Promise<Db
   await ensurePrivateDir(home);
   await ensurePrivateDir(wakeDir(home));
   writeFileSync(file, '', { flag: 'a', mode: 0o600 });
+  const fresh = statSync(file).size === 0;
   const sql = new DatabaseSync(file);
   openStats.opened++;
+  const ready = () => retryBusy(() => setup(sql), deadline, 'open', isOpenRace);
   try {
-    await retryBusy(() => setup(sql), deadline, 'open');
+    await (fresh ? withFileLock(`${file}.init`, ready) : ready());
   } catch (e) {
     sql.close();
     throw isCorrupt(e) ? new MailError(CORRUPT_MESSAGE) : e;
@@ -281,11 +286,24 @@ export interface StoreOptions {
   label?: string;
 }
 
+const writeTurns = new WeakMap<Db, Promise<unknown>>();
+
+// Each busy wait blocks the event loop for the busy timeout (65 ms for 25 ms on Windows, whose sleeps round
+// up), so a process that serves many sessions takes write transactions one at a time instead of letting
+// every waiting session block in turn.
+function inWriteTurn<T>(db: Db, deadline: number, work: () => Promise<T>): Promise<T> {
+  const turn = (writeTurns.get(db) ?? Promise.resolve()).then(() => (Date.now() >= deadline ? Promise.reject(new StoreBusyError()) : work()));
+  writeTurns.set(db, turn.catch(() => undefined));
+  return turn;
+}
+
 async function guarded<T>(home: string, options: StoreOptions, work: (db: Db) => T, inTx: boolean): Promise<T> {
   const deadline = Date.now() + (options.deadlineMs ?? TOOL_DEADLINE_MS);
   const db = await openDb(home, options.deadlineMs);
   try {
-    return await retryBusy(() => (inTx ? runTx(db.sql, () => work(db)) : work(db)), deadline, options.label);
+    return inTx
+      ? await inWriteTurn(db, deadline, () => retryBusy(() => runTx(db.sql, () => work(db)), deadline, options.label))
+      : await retryBusy(() => work(db), deadline, options.label);
   } catch (e) {
     if (isCorrupt(e)) {
       closeDb(home);
