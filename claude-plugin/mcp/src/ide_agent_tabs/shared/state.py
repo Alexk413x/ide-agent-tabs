@@ -4,7 +4,6 @@ import contextlib
 import os
 import re
 from typing import Any, NamedTuple
-from urllib.parse import urlsplit
 
 from ..files import ensure_private_dir, read_text_if_exists, remove_file, write_atomically, write_new_private_file
 from ..jsjson import parse, stringify, trim
@@ -22,6 +21,7 @@ HEADER_PID = "x-agent-tabs-pid"
 HEADER_PID_START = "x-agent-tabs-pid-start"
 _PORT = re.compile("[0-9]{1,5}")
 _TOKEN = re.compile("[0-9a-f]{64}")
+_LOOPBACK_URL = re.compile(r"http://127\.0\.0\.1:([0-9]{1,5})(?:[/?#].*)?", re.IGNORECASE | re.DOTALL)
 
 
 class ServerState(NamedTuple):
@@ -52,15 +52,8 @@ def parse_port(value: str | None) -> int | None:
 
 
 def port_from_url(value: str | None) -> int | None:
-    if not value:
-        return None
-    try:
-        url = urlsplit(value)
-        if url.scheme != "http" or url.hostname != "127.0.0.1":
-            return None
-        return parse_port(str(url.port) if url.port is not None else None)
-    except ValueError:
-        return None
+    match = _LOOPBACK_URL.fullmatch(value or "")
+    return parse_port(match.group(1)) if match else None
 
 
 def new_token() -> str:

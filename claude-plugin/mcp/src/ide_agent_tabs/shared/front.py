@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import contextlib
-import hmac
 import math
 import re
 import select
 import socket
+import socketserver
 import sys
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, NamedTuple, cast
-from urllib.parse import unquote
 
 from ..jsjson import js_string, parse, stringify
 from .hub import Identity
@@ -49,6 +47,11 @@ _MAX_SAFE_INTEGER = 2**53 - 1
 _WATCH_POLL_S = 0.25
 _WATCH_LIMIT = 500
 _DISCARD_LIMIT = 1024 * 1024
+_MAX_LINE = 65536
+_MAX_HEADERS = 100
+_REASONS = {200: "OK", 202: "Accepted", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed"}
+_REASONS.update({406: "Not Acceptable", 413: "Content Too Large", 414: "URI Too Long", 431: "Request Header Fields Too Large"})
+_PERCENT_RUN = re.compile("(?:%[0-9A-Fa-f]{2})+")
 
 
 class RpcError(Exception):
@@ -86,7 +89,13 @@ def positive_int(value: str | None, minimum: int) -> int | None:
     return number if minimum <= number <= _MAX_SAFE_INTEGER else None
 
 
+def percent_decoded(text: str) -> str:
+    return _PERCENT_RUN.sub(lambda m: bytes.fromhex(m.group().replace("%", "")).decode("utf-8", "replace"), text)
+
+
 def _bearer(value: str | None, expected: str) -> bool:
+    import hmac
+
     parts = (value or "").split(" ")
     if len(parts) < 1 or parts[0].lower() != "bearer" or expected == "":
         return False
@@ -144,7 +153,22 @@ class DropWatch:
                     cancel.set()
 
 
-class Front(ThreadingHTTPServer):
+class Headers:
+    def __init__(self) -> None:
+        self._values: dict[str, list[str]] = {}
+
+    def add(self, name: str, value: str) -> None:
+        self._values.setdefault(name.lower(), []).append(value)
+
+    def get_all(self, name: str) -> list[str] | None:
+        return self._values.get(name.lower())
+
+    def get(self, name: str) -> str | None:
+        values = self._values.get(name.lower())
+        return values[0] if values else None
+
+
+class Front(socketserver.ThreadingTCPServer):
     daemon_threads = True
     block_on_close = False
     request_queue_size = 128
@@ -168,17 +192,71 @@ class Front(ThreadingHTTPServer):
         super().server_close()
 
 
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
+# http.server would double the server's start-up with the email, mimetypes and ssl modules it imports; this
+# handler reads the HTTP/1.1 subset MCP clients send: one request line, headers, a Content-Length or chunked body.
+class Handler(socketserver.StreamRequestHandler):
     timeout = KEEPALIVE_TIMEOUT_S
     body_read = False
+    close_connection = True
+    command = ""
+    path = ""
+    headers = Headers()
 
     @property
     def front(self) -> Front:
         return cast(Front, self.server)
 
-    def log_message(self, format: str, *args: Any) -> None:
-        pass
+    def handle(self) -> None:
+        while True:
+            try:
+                if not self.read_request():
+                    return
+                self.route()
+            except (OSError, ValueError):
+                return
+            if self.close_connection:
+                return
+
+    def read_request(self) -> bool:
+        line = self.rfile.readline(_MAX_LINE + 1)
+        if not line:
+            return False
+        if len(line) > _MAX_LINE:
+            self.reject(414)
+            return False
+        parts = line.decode("latin-1").split()
+        if len(parts) != 3 or not parts[2].startswith("HTTP/1."):
+            self.reject(400)
+            return False
+        self.command, self.path, version = parts
+        headers = Headers()
+        for _ in range(_MAX_HEADERS + 1):
+            raw = self.rfile.readline(_MAX_LINE + 1)
+            if not raw:
+                return False
+            if len(raw) > _MAX_LINE:
+                self.reject(431)
+                return False
+            if raw in (b"\r\n", b"\n"):
+                break
+            name, colon, value = raw.decode("latin-1").partition(":")
+            if not colon or not name or name != name.strip():
+                self.reject(400)
+                return False
+            headers.add(name, value.strip())
+        else:
+            self.reject(431)
+            return False
+        tokens = {t.strip().lower() for t in (headers.get("connection") or "").split(",")}
+        self.close_connection = "close" in tokens or (version == "HTTP/1.0" and "keep-alive" not in tokens)
+        self.headers = headers
+        self.body_read = False
+        return True
+
+    def reject(self, status: int) -> None:
+        self.wfile.write(
+            f"HTTP/1.1 {status} {_REASONS.get(status, '')}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".encode("latin-1")
+        )
 
     def header(self, name: str) -> str | None:
         values = self.headers.get_all(name)
@@ -205,17 +283,14 @@ class Handler(BaseHTTPRequestHandler):
         if close:
             self.discard_body()
             self.close_connection = True
-        self.send_response_only(status)
+        lines = [f"HTTP/1.1 {status} {_REASONS.get(status, '')}"]
         if text:
-            self.send_header("Content-Type", "application/json")
-        for name, value in (headers or {}).items():
-            self.send_header(name, value)
-        self.send_header("Content-Length", str(len(text)))
-        if close:
-            self.send_header("Connection", "close")
-        self.end_headers()
-        if text:
-            self.wfile.write(text)
+            lines.append("Content-Type: application/json")
+        lines.extend(f"{name}: {value}" for name, value in (headers or {}).items())
+        lines.append(f"Content-Length: {len(text)}")
+        if self.close_connection:
+            lines.append("Connection: close")
+        self.wfile.write(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1") + text)
 
     def refuse(self, status: int, error: str) -> None:
         self.send(status, {"error": error}, close=True)
@@ -236,13 +311,7 @@ class Handler(BaseHTTPRequestHandler):
             body["data"] = error.data
         self.send(STATUS.get(error.code, 200), {"jsonrpc": "2.0", "id": request_id, "error": body})
 
-    def do_GET(self) -> None:
-        self.route()
-
-    do_DELETE = do_PUT = do_PATCH = do_HEAD = do_OPTIONS = do_POST = do_GET
-
     def route(self) -> None:
-        self.body_read = False
         front = self.front
         deps = front.deps
         if (self.header("host") or "").lower() not in front.hosts:
@@ -264,7 +333,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.refuse(405, "use POST")
                 return
             self.send(200, {"ok": True}, close=True)
-            self.wfile.flush()
             deps.on_shutdown()
             return
         # A 401 starts Claude Code's OAuth flow, which this server doesn't offer, so a bad token gets 403.
@@ -388,7 +456,11 @@ class Handler(BaseHTTPRequestHandler):
         if self.header("mcp-method") != method:
             self.rpc_error(request_id, RpcError(HEADER_MISMATCH, "mcp-method header does not match the request body's method"))
             return
-        if method == "tools/call" and isinstance(params.get("name"), str) and unquote(self.header("mcp-name") or "") != params["name"]:
+        if (
+            method == "tools/call"
+            and isinstance(params.get("name"), str)
+            and percent_decoded(self.header("mcp-name") or "") != params["name"]
+        ):
             self.rpc_error(request_id, RpcError(HEADER_MISMATCH, "mcp-name header does not match the request body's name"))
             return
         try:

@@ -14,7 +14,7 @@ from ide_agent_tabs.messaging.sessions import read_presence, update_presence
 from ide_agent_tabs.shared.host import Binding, BoundSession, Catalog, Progress
 from ide_agent_tabs.shared.hub import Identity, derived_id, root_path, session_key
 from ide_agent_tabs.shared.server import IDLE_EXIT_MS, SharedServer
-from ide_agent_tabs.shared.state import read_state, state_path
+from ide_agent_tabs.shared.state import port_from_url, read_state, state_path
 from shared_support import PROTOCOL, McpHttp, free_port, pid_headers, request, serve
 from store_host import StoreHost
 from support import temp_home
@@ -312,6 +312,12 @@ class UnitTest(unittest.TestCase):
         self.assertIsNone(session_key(Identity()))
         self.assertRegex(derived_id("pid:5:9"), r"^s-[0-9a-f]{12}$")
 
+    def test_the_helper_reads_the_port_only_from_a_loopback_http_url(self) -> None:
+        self.assertEqual(port_from_url("http://127.0.0.1:47828/mcp"), 47828)
+        self.assertEqual(port_from_url("http://127.0.0.1:5"), 5)
+        for url in ("http://127.0.0.1/mcp", "http://localhost:5/mcp", "https://127.0.0.1:5/mcp", "http://127.0.0.1:99999/mcp", "", None):
+            self.assertIsNone(port_from_url(url), url)
+
     def test_roots_must_be_local_file_urls(self) -> None:
         root = "file:///C:/work/repo" if sys.platform == "win32" else "file:///work/repo"
         expected = "C:\\work\\repo" if sys.platform == "win32" else "/work/repo"
@@ -319,6 +325,17 @@ class UnitTest(unittest.TestCase):
         self.assertIsNone(root_path({"agent-tabs-roots": {"roots": [{"uri": "file://server/share"}]}}))
         self.assertIsNone(root_path({"agent-tabs-roots": {"roots": "nope"}}))
         self.assertIsNone(root_path(None))
+
+    def test_a_stop_before_serving_returns_and_serving_after_it_does_nothing(self) -> None:
+        home = temp_home(self, "iat-shared-")
+        server = SharedServer(home, free_port(), StoreHost(home), version="9.9.9", log=lambda _m: None)
+        self.assertTrue(server.claim())
+        stopper = threading.Thread(target=server.stop, args=("early",), daemon=True)
+        stopper.start()
+        stopper.join(10)
+        self.assertFalse(stopper.is_alive())
+        self.assertIsNone(read_state(home, server.port))
+        server.serve()
 
     def test_the_server_refuses_a_port_another_listener_holds(self) -> None:
         home = temp_home(self, "iat-shared-")

@@ -3,11 +3,10 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import os
+import sys
 import threading
 from collections import OrderedDict
 from typing import Any, Callable, NamedTuple
-from urllib.parse import urlsplit
-from urllib.request import url2pathname
 
 from ..processes import pid_alive
 from .host import Binding, BoundSession, ToolHost
@@ -15,6 +14,16 @@ from .host import Binding, BoundSession, ToolHost
 ROOTS_REQUEST = "agent-tabs-roots"
 LIVENESS_S = 15.0
 MAX_CLIENTS = 1024
+
+
+def _file_path(url_path: str) -> str:
+    if sys.platform == "win32":
+        from nturl2path import url2pathname
+
+        return url2pathname(url_path)
+    from urllib.parse import unquote
+
+    return unquote(url_path)
 
 
 class Identity(NamedTuple):
@@ -26,6 +35,8 @@ class Identity(NamedTuple):
 
 
 def root_path(responses: object) -> str | None:
+    from urllib.parse import urlsplit
+
     answer = responses.get(ROOTS_REQUEST) if isinstance(responses, dict) else None
     roots = answer.get("roots") if isinstance(answer, dict) else None
     for root in roots if isinstance(roots, list) else []:
@@ -38,7 +49,7 @@ def root_path(responses: object) -> str | None:
             continue
         if parts.scheme != "file" or parts.netloc not in ("", "localhost"):
             continue
-        path = url2pathname(parts.path)
+        path = _file_path(parts.path)
         if os.path.isabs(path):
             return path
     return None
@@ -77,8 +88,11 @@ class Hub:
         alive: Callable[[int], bool] = pid_alive,
         server_pid: int | None = None,
         log: Callable[[str], None] = lambda _m: None,
+        prepare: Callable[[], None] | None = None,
     ) -> None:
         self.host = host
+        self._prepare = prepare
+        self._prepared = threading.Lock()
         self.alive = alive
         self.server_pid = os.getpid() if server_pid is None else server_pid
         self.log = log
@@ -169,6 +183,10 @@ class Hub:
                 return entry
             entry = _Entry(key, pid, owned)
             self._entries[key] = entry
+        with self._prepared:
+            if self._prepare is not None:
+                self._prepare()
+                self._prepare = None
         binding = Binding(derived_id(key), identity.agent or "claude", pid, cwd, identity.tab, identity.pid_start)
         try:
             entry.session = self.host.bind(binding)

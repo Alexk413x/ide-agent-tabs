@@ -5,14 +5,12 @@ import os
 import signal
 import threading
 import time
-import traceback
 from collections.abc import Mapping, Sequence
 from typing import Any, Callable
 
 from ..clock import now_iso
 from ..home import agent_tabs_home
-from ..messaging.db import SHARED_BUSY_TIMEOUT_MS, set_busy_timeout
-from ..messaging.wake import skip_wake_files_for_local_waiters
+from ..processes import pid_alive
 from ..version import PACKAGE_VERSION
 from .front import Front, FrontDeps
 from .handover import HANDOVER_MS, claim_port
@@ -82,11 +80,12 @@ class SharedServer:
         self.last_request = now()
         self.token = ensure_token(home)
         self.shutdown_token = new_token()
-        self.hub = Hub(host, log=self.log) if alive is None else Hub(host, alive=alive, log=self.log)
+        self.hub = Hub(host, alive=alive or pid_alive, log=self.log, prepare=shared_store_mode)
         self.front: Front | None = None
         self.stopped = threading.Event()
         self._stopping = threading.Lock()
         self._stop_started = False
+        self._serving = False
         self._timers = threading.Event()
 
     def health(self) -> dict[str, Any]:
@@ -165,11 +164,14 @@ class SharedServer:
             if self._stop_started:
                 return
             self._stop_started = True
+            serving = self._serving
         self.log(f"stopping: {why}")
         self._timers.set()
         if self.front is not None:
-            with contextlib.suppress(Exception):
-                self.front.shutdown()
+            # socketserver's shutdown() waits for serve_forever() to return, so it would hang before serve() runs.
+            if serving:
+                with contextlib.suppress(Exception):
+                    self.front.shutdown()
             with contextlib.suppress(Exception):
                 self.front.server_close()
         with contextlib.suppress(Exception):
@@ -181,12 +183,24 @@ class SharedServer:
         self.stopped.set()
 
     def serve(self) -> None:
-        if self.front is None:
-            return
+        with self._stopping:
+            if self.front is None or self._stop_started:
+                return
+            self._serving = True
         try:
             self.front.serve_forever(poll_interval=0.5)
         finally:
             self.stopped.wait(HANDOVER_MS / 1000)
+
+
+# One process writes for every Claude Code session, so a busy store returns at once and retries off the lock,
+# and a send to a session waiting in this process wakes it directly instead of through a wake file.
+def shared_store_mode() -> None:
+    from ..messaging.db import SHARED_BUSY_TIMEOUT_MS, set_busy_timeout
+    from ..messaging.wake import skip_wake_files_for_local_waiters
+
+    set_busy_timeout(SHARED_BUSY_TIMEOUT_MS)
+    skip_wake_files_for_local_waiters(True)
 
 
 def load_host(home: str, log: Callable[[str], None]) -> ToolHost:
@@ -205,13 +219,13 @@ def main(
     home = agent_tabs_home(env)
     port = port_of(args, env)
     log = Logger(os.path.join(server_dir(home), f"server-{port}.log"))
-    set_busy_timeout(SHARED_BUSY_TIMEOUT_MS)
-    skip_wake_files_for_local_waiters(True)
     try:
         server = SharedServer(home, port, load(home, log), version, log)
         if not server.claim():
             return 0
     except Exception:  # noqa: BLE001 - a server that can't start logs why and exits; the helper reports the rest
+        import traceback
+
         log(f"start failed: {traceback.format_exc()}")
         return 1
     server.start_timers()
