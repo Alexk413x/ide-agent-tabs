@@ -55,7 +55,9 @@ class Dispatch(unittest.TestCase):
             self.assertEqual(done.returncode, 2)
             self.assertEqual(
                 json.loads(done.stderr),
-                {"error": "Usage: agent-tabs list-ides | jev <status|ask|choose|check|rank|route> | server status|stop [--port <port>]"},
+                {
+                    "error": "Usage: agent-tabs list-ides | jev <status|ask|choose|check|rank|route> | server status|stop [--port <port>] | sync-ides <--hook|--status|--install|--agents|--register|--unregister> [<editor cli or agent>...]"
+                },
             )
 
     def test_jev_usage_and_off(self) -> None:

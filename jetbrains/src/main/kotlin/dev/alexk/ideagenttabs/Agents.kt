@@ -65,6 +65,7 @@ object Agents {
                 ori = settings.detected().ori,
                 windows = SystemInfo.isWindows,
                 searchPath = searchPath,
+                python = codexPython(ideAgentTabsHome(), SystemInfo.isWindows),
             ),
         )
 

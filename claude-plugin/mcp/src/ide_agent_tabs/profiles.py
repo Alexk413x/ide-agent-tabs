@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
@@ -62,10 +64,19 @@ def _profile(
 # Codex's shared daemon runs MCP servers and hooks with its own environment and a stale IDE_AGENT_TABS_ID, so a
 # Codex tab runs in-process with its own server and trusted hooks. The IDE copies hold the same strings.
 # No '"' or '%', and a space in any argument with a cmd.exe metacharacter: PowerShell 5.1 and codex.cmd mangle them.
+CODEX_SERVER_SCRIPT = (
+    "import os,runpy;h=os.environ.get('IDE_AGENT_TABS_HOME') or os.path.join(os.path.expanduser('~'),'.ide-agent-tabs');"
+    "runpy.run_path(os.path.join(h,'mcp','py','launch','mcp_server.py'),run_name='__main__')"
+)
+CODEX_SERVER_TAIL = (
+    f"'-I', '-S', '-c', '''{CODEX_SERVER_SCRIPT}'''], env_vars = ['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'], "
+    "tool_timeout_sec = 660 }"
+)
+CODEX_SERVER_ARG = f"mcp_servers.ide-agent-tabs={{ command = 'python3', args = [{CODEX_SERVER_TAIL}"
 CODEX_TAB_ARGS: tuple[str, ...] = (
     "--no-daemon",
     "-c",
-    "mcp_servers.ide-agent-tabs={ command = 'node', args = ['-e', 'const p=require(`node:path`);import(require(`node:url`).pathToFileURL(p.join(process.env.IDE_AGENT_TABS_HOME||p.join(require(`node:os`).homedir(),`.ide-agent-tabs`),`mcp`,`mcp-server.mjs`)).href)'], env_vars = ['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'], tool_timeout_sec = 660 }",
+    CODEX_SERVER_ARG,
     "-c",
     "hooks.UserPromptSubmit=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'UserPromptSubmit', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
     "-c",
@@ -79,6 +90,36 @@ CODEX_TAB_ARGS: tuple[str, ...] = (
     "-c",
     "hooks.state={ '/<session-flags>/config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, 'C:\\<session-flags>\\config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, '/<session-flags>/config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, 'C:\\<session-flags>\\config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, '/<session-flags>/config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, 'C:\\<session-flags>\\config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, '/<session-flags>/config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, 'C:\\<session-flags>\\config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, '/<session-flags>/config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' }, 'C:\\<session-flags>\\config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' } }",
 )
+
+
+# A Codex tab runs its server on the interpreter that python.json records, so no py.exe stays behind as its parent.
+# The path goes into a TOML literal string and through cmd.exe, so it may not hold a quote, % or !, or end in \.
+_CODEX_PYTHON_SAFE = re.compile(r"[^'\"%!\x00-\x1f\x7f]*[^'\"%!\x00-\x1f\x7f\\]\Z")
+
+
+def codex_server_arg(python: Sequence[str]) -> str:
+    head = "".join(f"'{a}', " for a in python[1:])
+    return f"mcp_servers.ide-agent-tabs={{ command = '{python[0]}', args = [{head}{CODEX_SERVER_TAIL}"
+
+
+def with_codex_python(args: Sequence[str], python: Sequence[str] | None) -> tuple[str, ...]:
+    if not python:
+        return tuple(args)
+    arg = codex_server_arg(python)
+    return tuple(arg if a == CODEX_SERVER_ARG else a for a in args)
+
+
+def codex_python(home: str, windows: bool) -> tuple[str, ...]:
+    try:
+        with open(os.path.join(home, "mcp", "python.json"), encoding="utf-8") as f:
+            python = json.load(f).get("python")
+    except (OSError, ValueError, AttributeError):
+        python = None
+    absolute = win32_is_absolute if windows else posix_is_absolute
+    if isinstance(python, str) and absolute(python) and _CODEX_PYTHON_SAFE.match(python) and os.path.isfile(python):
+        return (python,)
+    return ("py", "-3") if windows else ("python3",)
+
 
 # goose run -s takes the first message from -t and stays interactive, but refuses to start without one.
 GOOSE_RUN_ARGS: tuple[str, ...] = ("run", "-s")

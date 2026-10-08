@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { HOOK_EVENTS } from '../src/messaging/hook.js';
 import { BUILTIN_PROFILES, CODEX_TAB_ARGS } from '../src/profiles.js';
 import { HOOK_TOOL, SERVER_NAME } from '../src/server.js';
@@ -49,7 +49,10 @@ test('the Codex profile launches in-process with its own Agent Tabs server and t
   const flags = CODEX_TAB_ARGS.slice(1);
   assert.ok(flags.every((a, i) => (i % 2 === 0) === (a === '-c')));
   const overrides = flags.filter((_, i) => i % 2 === 1);
-  assert.match(overrides[0]!, /^mcp_servers\.ide-agent-tabs=\{ command = 'node', args = \['-e', '[^']+'\], env_vars = \['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'\], tool_timeout_sec = 660 \}$/);
+  assert.match(
+    overrides[0]!,
+    /^mcp_servers\.ide-agent-tabs=\{ command = 'python3', args = \['-I', '-S', '-c', '''[^\n]+'''\], env_vars = \['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'\], tool_timeout_sec = 660 \}$/,
+  );
 
   const hooks = HOOKS.map(
     ([event, , input, timeout = HOOK_TIMEOUT_S]) =>
@@ -67,18 +70,28 @@ test('the hooked events are the ones the hook tool handles', () => {
   assert.deepEqual(HOOKS.map(([event]) => event).sort(), Object.keys(HOOK_EVENTS.codex).sort());
 });
 
-test('the server one-liner loads the shared copy from the Agent Tabs home', () => {
-  const code = /args = \['-e', '([^']+)'\]/.exec(CODEX_TAB_ARGS[2]!)![1]!;
+test('the server one-liner runs the shared copy from the Agent Tabs home', (t) => {
+  const code = /'''(.+)'''/.exec(CODEX_TAB_ARGS[2]!)![1]!;
+  const [python, ...pythonArgs] = process.platform === 'win32' ? ['py', '-3'] : ['python3'];
+  if (spawnSync(python!, [...pythonArgs, '-c', ''], { windowsHide: true }).status !== 0) {
+    t.skip(`${python} is not on PATH`);
+    return;
+  }
   const root = tempDir('iat-codex-tab-');
-  const fake = `process.stdout.write(import.meta.url);\n`;
+  const fake = 'import sys\nsys.stdout.write(__file__)\n';
+  const stub = (home: string) => path.join(home, 'mcp', 'py', 'launch', 'mcp_server.py');
   for (const home of [path.join(root, 'custom'), path.join(root, 'user', '.ide-agent-tabs')]) {
-    mkdirSync(path.join(home, 'mcp'), { recursive: true });
-    writeFileSync(path.join(home, 'mcp', 'mcp-server.mjs'), fake);
+    mkdirSync(path.dirname(stub(home)), { recursive: true });
+    writeFileSync(stub(home), fake);
   }
   const run = (env: Record<string, string>) =>
-    spawnSync(process.execPath, ['-e', code], { env: { ...process.env, HOME: path.join(root, 'user'), USERPROFILE: path.join(root, 'user'), ...env }, encoding: 'utf8', windowsHide: true }).stdout;
-  assert.equal(run({ IDE_AGENT_TABS_HOME: path.join(root, 'custom') }), pathToFileURL(path.join(root, 'custom', 'mcp', 'mcp-server.mjs')).href);
-  assert.equal(run({ IDE_AGENT_TABS_HOME: '' }), pathToFileURL(path.join(root, 'user', '.ide-agent-tabs', 'mcp', 'mcp-server.mjs')).href);
+    spawnSync(python!, [...pythonArgs, '-I', '-S', '-c', code], {
+      env: { ...process.env, HOME: path.join(root, 'user'), USERPROFILE: path.join(root, 'user'), ...env },
+      encoding: 'utf8',
+      windowsHide: true,
+    }).stdout;
+  assert.equal(run({ IDE_AGENT_TABS_HOME: path.join(root, 'custom') }), stub(path.join(root, 'custom')));
+  assert.equal(run({ IDE_AGENT_TABS_HOME: '' }), stub(path.join(root, 'user', '.ide-agent-tabs')));
 });
 
 test('no argument can be changed by Windows PowerShell 5.1 or cmd.exe on its way to Codex', () => {
