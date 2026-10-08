@@ -19,7 +19,6 @@ export const SERVER_NAME = 'ide-agent-tabs';
 export const SERVER_VERSION = PACKAGE_VERSION;
 export const HOOK_TOOL = 'agent_tabs_hook';
 export const MOD_TOOL = 'agent_tabs_mod';
-// list-ides and jev status run from the command line (mcp-server.mjs list-ides, jev status); one catalog serves every client.
 export const CLI_ONLY_TOOLS: ReadonlySet<string> = new Set(['jev_status']);
 export const MOD_OPS = ['presence', 'unread', 'send', 'take', 'ack', 'release', 'sessions', 'log', 'history', 'message', 'counts', 'reveal', 'settings'] as const;
 

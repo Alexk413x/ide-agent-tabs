@@ -7,7 +7,7 @@ export const CATALOG_FILE = fileURLToPath(new URL('../src/shared/catalog.generat
 export async function catalogText(): Promise<string> {
   const data = await buildCatalog();
   return [
-    '// Written by scripts/write-catalog.ts from the tool registrations in server.ts; test/catalog.test.ts fails when it is stale.',
+    '// Written by scripts/write-catalog.ts from the tool registrations in server.ts; test/sharedServer.test.ts fails when it is stale.',
     "import type { CatalogData } from './catalogSource.js';",
     '',
     `export const CATALOG: CatalogData = ${JSON.stringify(data, null, 2)};`,
