@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import threading
 import time
 import unittest
 from typing import Any
+from unittest import mock
 
 from ide_agent_tabs.clock import iso, parse_iso
 from ide_agent_tabs.messaging import store
 from ide_agent_tabs.messaging.db import MailError, query
 from ide_agent_tabs.messaging.wake import wake_path
-from support import temp_home
+from support import SRC, temp_home
 
 T0 = parse_iso("2026-10-07T12:00:00Z") or 0
 MINUTE = 60_000
@@ -258,6 +261,40 @@ class WaitTest(unittest.TestCase):
         assert found is not None
         self.assertEqual(found["text"], "wanted")
         self.assertEqual(texts(store.peek_unread(home, "tab-b")), ["other"])
+
+    def send_from_another_process(self, home: str, text: str) -> threading.Thread:
+        script = (
+            "import sys; sys.path.insert(0, sys.argv[1]); from ide_agent_tabs.messaging import store; "
+            "store.send_message(sys.argv[2], {'from': {'id': 'tab-z', 'agent': 'codex', 'path': '/z'}, 'to': 'tab-b', 'text': sys.argv[3]})"
+        )
+
+        def run() -> None:
+            time.sleep(0.2)
+            subprocess.run([sys.executable, "-I", "-S", "-c", script, SRC, home, text], check=True, timeout=60)
+
+        sender = threading.Thread(target=run)
+        sender.start()
+        return sender
+
+    def test_a_waiter_wakes_on_a_send_from_another_process_through_the_wake_file(self) -> None:
+        home = temp_home(self)
+        store.peek_unread(home, "tab-b")
+        sender = self.send_from_another_process(home, "from afar")
+        with mock.patch.object(store, "RECHECK_MS", 60_000):
+            found = store.wait_for_message(home, "tab-b", None, 20_000)
+        sender.join()
+        assert found is not None
+        self.assertEqual(found["text"], "from afar")
+
+    def test_a_waiter_whose_watch_misses_still_finds_the_message_by_polling(self) -> None:
+        home = temp_home(self)
+        store.peek_unread(home, "tab-b")
+        sender = self.send_from_another_process(home, "polled")
+        with mock.patch.object(store, "on_wake", lambda *_a: lambda: None), mock.patch.object(store, "RECHECK_MS", 100):
+            found = store.wait_for_message(home, "tab-b", None, 20_000)
+        sender.join()
+        assert found is not None
+        self.assertEqual(found["text"], "polled")
 
 
 if __name__ == "__main__":

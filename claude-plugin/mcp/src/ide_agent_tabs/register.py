@@ -53,6 +53,7 @@ from .server_copy import (
     build_name,
     current_build,
     hook_copy_path,
+    old_hook_path,
     old_server_path,
     refresh_server_copy,
     server_copy_path,
@@ -423,6 +424,20 @@ def has_any_hooks(ctx: RegisterContext, agent: str) -> bool:
     return has_any_settings_hooks(root)
 
 
+def hooks_name_this_home(ctx: RegisterContext, agent: str) -> bool:
+    text = read_text_if_exists(_hook_file(ctx, agent))
+    if text is None:
+        return False
+    paths = [hook_copy_path(ctx.home, ctx.platform), old_hook_path(ctx.home, ctx.platform)]
+    if ctx.platform == "win32":
+        text = text.replace("\\\\", "/").replace("\\", "/")
+        paths = [p.replace("\\", "/") for p in paths]
+    if ctx.platform in ("win32", "darwin"):
+        text = text.lower()
+        paths = [p.lower() for p in paths]
+    return any(p in text for p in paths)
+
+
 def _change_json(file: str, change: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
     nxt = edit_json(read_text_if_exists(file), file, change)
     if nxt is not None:
@@ -737,17 +752,23 @@ def migrate_registrations(ctx: RegisterContext) -> tuple[list[str], list[str]]:
     migrated: list[str] = []
     errors: list[str] = []
     for agent in AGENTS:
-        if agent == "codex" and ctx.platform == "win32":
-            continue
         try:
             status = agent_status(ctx, agent)
             if status.get("error"):
                 errors.append(f"{agent}: {status['error']}")
                 continue
+            if agent == "codex" and ctx.platform == "win32":
+                if (
+                    status["registered"]
+                    and status["path"] is not None
+                    and same_path(status["path"], old_server_path(ctx.home, ctx.platform), ctx.platform)
+                ):
+                    errors.append(f"codex: registered with {status['path']}; run sync-ides --unregister codex")
+                continue
             if status["registered"] and _is_our_server(status["path"], ctx) and not status["stable"]:
                 register(ctx, agent, status["config"])
                 migrated.append(agent)
-            elif takes_hooks(agent) and status["hooks"] is False and has_any_hooks(ctx, agent):
+            elif takes_hooks(agent) and status["hooks"] is False and has_any_hooks(ctx, agent) and hooks_name_this_home(ctx, agent):
                 install_hooks(ctx, agent)
                 migrated.append(agent)
         except (OSError, ValueError, RuntimeError, TimeoutError) as e:

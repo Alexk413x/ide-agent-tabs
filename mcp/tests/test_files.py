@@ -55,6 +55,9 @@ class AtomicWriteTest(unittest.TestCase):
 
 
 class FileLockTest(unittest.TestCase):
+    def test_a_waiter_outlasts_the_stale_limit_so_it_can_take_over_an_orphaned_lock(self) -> None:
+        self.assertGreater(files.LOCK_WAIT_MS, files.LOCK_STALE_MS)
+
     def test_token_is_pid_and_16_hex_digits(self) -> None:
         self.assertRegex(files.new_lock_token(), rf"^{os.getpid()} [0-9a-f]{{16}}$")
 

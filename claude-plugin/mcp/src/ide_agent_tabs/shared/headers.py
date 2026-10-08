@@ -8,9 +8,12 @@ from collections.abc import Mapping
 from ..home import agent_tabs_home
 from ..version import PACKAGE_VERSION
 from .ancestry import LOOKUP_TIMEOUT_S, ProcessInfo, find_agent_process
-from .client import START_WAIT_MS, ensure_server, server_command
+from .client import ensure_server, server_command
 from .state import DEFAULT_PORT, PORT_OPTION_ENV, SERVER_LAUNCHER, parse_port, port_from_url
 
+# Claude Code gives a headers helper 10 s, and a helper that prints no token gets the server marked as needing
+# auth until the user clears it; so the helper waits for a slow first start up to well inside that limit.
+HELPER_START_WAIT_MS = 7_000
 _TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _AGENT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
@@ -25,7 +28,7 @@ def helper_headers(
     env: Mapping[str, str],
     plugin_root: str,
     lookup_timeout_s: float = LOOKUP_TIMEOUT_S,
-    wait_ms: float = START_WAIT_MS,
+    wait_ms: float = HELPER_START_WAIT_MS,
     version: str = PACKAGE_VERSION,
 ) -> dict[str, str]:
     port = port_from_url(env.get("CLAUDE_CODE_MCP_SERVER_URL")) or parse_port(env.get(PORT_OPTION_ENV)) or DEFAULT_PORT

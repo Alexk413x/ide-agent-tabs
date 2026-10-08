@@ -22,8 +22,8 @@ from ide_agent_tabs.shared.state import read_token
 
 PY_SERVER = os.path.join(PLUGIN, "mcp", "launch", "shared_server.py")
 PY_HELPER = os.path.join(PLUGIN, "mcp", "launch", "headers.py")
-NODE_SERVER = os.path.join(PLUGIN, "dist", "shared-server.mjs")
-NODE_HELPER = os.path.join(PLUGIN, "mcp", "launch", "headers.mjs")
+NODE_SERVER = os.path.join(ROOT, "mcp", "tests", "node080", "shared-server.mjs")
+NODE_HELPER = os.path.join(ROOT, "mcp", "tests", "node080", "headers.mjs")
 SESSION_ENV = ("IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_MOD", "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_OPTION_SERVER_PORT")
 
 

@@ -10,12 +10,11 @@ import unittest
 
 from ide_agent_tabs.jev.cli import CliIo, run_jev_cli
 from jev_support import StubTypeSafe
-from support import ROOT, require_node, temp_home
+from support import ROOT, temp_home
 
 LAUNCH = os.path.join(ROOT, "claude-plugin", "mcp", "launch")
 ENTRY = os.path.join(LAUNCH, "agent_tabs.py")
 POSIX_LAUNCHER = os.path.join(LAUNCH, "agent-tabs")
-NODE_CLI = os.path.join(ROOT, "claude-plugin", "dist", "mcp-server.mjs")
 PASSED_ENV = ("SYSTEMROOT", "SystemRoot", "WINDIR", "TEMP", "TMP", "PATH", "Path", "HOME", "USERPROFILE", "LOCALAPPDATA", "APPDATA")
 
 
@@ -84,7 +83,7 @@ class Dispatch(unittest.TestCase):
         self.assertEqual(out, [])
 
 
-class NodeParity(unittest.TestCase):
+class JevCommands(unittest.TestCase):
     stub: StubTypeSafe
 
     @classmethod
@@ -95,32 +94,37 @@ class NodeParity(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.stub.close()
 
-    def both(
-        self, args: list[str], env: dict[str, str], stdin: str = ""
-    ) -> tuple[subprocess.CompletedProcess[str], subprocess.CompletedProcess[str]]:
-        require_node(self)
-        node = shutil.which("node")
-        assert node is not None
-        return run(py_cli(*args), env, stdin), run([node, NODE_CLI, *args], env, stdin)
-
-    def test_jev_status_matches_node(self) -> None:
+    def test_jev_status(self) -> None:
         home = temp_home(self)
         enable_jev(home, {"enabled": True, "sure": 0.9, "tiers": {"codex": "Quick", "claude:opus": "Hard"}})
         ledger = os.path.join(home, "jev")
         os.makedirs(ledger)
         with open(os.path.join(ledger, "ledger.jsonl"), "w", encoding="utf-8") as f:
             f.write('{"at":"2020-01-01T00:00:00.000Z","tool":"jev_check","model":"jev-old","input_tokens":5,"ok":true}\n')
-        py, node = self.both(["jev", "status"], base_env(home, TYPESAFE_API_KEY="tsk-x"))
-        self.assertEqual((py.returncode, py.stdout, py.stderr), (node.returncode, node.stdout, node.stderr))
-        self.assertEqual(json.loads(py.stdout)["model"], "jev-old")
+        done = run(py_cli("jev", "status"), base_env(home, TYPESAFE_API_KEY="tsk-x"))
+        self.assertEqual((done.returncode, done.stderr), (0, ""))
+        expected = {
+            "key": "env",
+            "model": "jev-old",
+            "today": {"calls": 0, "failed": 0, "input_tokens": 0, "cost_usd": 0},
+            "sure": 0.9,
+            "tiers": ["claude:opus", "codex"],
+            "ledger": os.path.join(ledger, "ledger.jsonl"),
+        }
+        self.assertEqual(done.stdout, json.dumps(expected, indent=2, ensure_ascii=False) + "\n")
 
-    def test_jev_off_matches_node(self) -> None:
+    def test_jev_off(self) -> None:
         home = temp_home(self)
         enable_jev(home, {"enabled": True, "sure": 2})
-        py, node = self.both(["jev", "status"], base_env(home))
-        self.assertEqual((py.returncode, py.stdout, py.stderr), (node.returncode, node.stdout, node.stderr))
+        done = run(py_cli("jev", "status"), base_env(home))
+        path = os.path.join(home, "config.json")
+        error = f'Jev is off. Set "jev": {{"enabled": true}} in {path}. Ignoring jev in {path}, so Jev is off: jev.sure must be a number above 0 and at most 1'
+        self.assertEqual(
+            (done.returncode, done.stdout, done.stderr),
+            (1, "", json.dumps({"error": error}, ensure_ascii=False, separators=(",", ":")) + "\n"),
+        )
 
-    def test_jev_choose_matches_node(self) -> None:
+    def test_jev_choose(self) -> None:
         home = temp_home(self)
         enable_jev(home, {"enabled": True})
         answer = {"pick": {"type": "choice", "choice": "b", "confidence": 0.8, "probabilities": {"a": 0.1, "b": 0.8, "none": 0.1}}}
@@ -128,18 +132,29 @@ class NodeParity(unittest.TestCase):
         request = json.dumps(
             {"instruction": "Which?", "options": [{"id": "a", "description": "A"}, {"id": "b", "description": "B"}], "state": "café 😀"}
         )
-        env = base_env(home, TYPESAFE_API_KEY="tsk-x", TYPESAFE_BASE_URL=self.stub.url)
-        py, node = self.both(["jev", "choose"], env, request)
-        self.assertEqual((py.returncode, py.stdout, py.stderr), (node.returncode, node.stdout, node.stderr))
-        self.assertEqual(self.stub.seen[0]["body"], self.stub.seen[1]["body"])
-        self.assertEqual(json.loads(py.stdout)["band"], "unsure")
+        done = run(py_cli("jev", "choose"), base_env(home, TYPESAFE_API_KEY="tsk-x", TYPESAFE_BASE_URL=self.stub.url), request)
+        self.assertEqual((done.returncode, done.stderr), (0, ""))
+        self.assertEqual(
+            done.stdout,
+            '{\n  "model": "jev-9",\n  "choice": "b",\n  "probabilities": {\n    "a": 0.1,\n    "b": 0.8,\n    "none": 0.1\n  },\n'
+            '  "confidence": 0.8,\n  "band": "unsure",\n  "runner_up": "a",\n  "cost_usd": 0.00000323\n}\n',
+        )
 
-    def test_validation_errors_match_node(self) -> None:
+    def test_validation_errors(self) -> None:
         home = temp_home(self)
         enable_jev(home, {"enabled": True})
         request = json.dumps({"query": "", "items": [{"id": "", "text": 5}], "top": 0.5})
-        py, node = self.both(["jev", "rank"], base_env(home, TYPESAFE_API_KEY="tsk-x"), request)
-        self.assertEqual((py.returncode, py.stdout, py.stderr), (node.returncode, node.stdout, node.stderr))
+        done = run(py_cli("jev", "rank"), base_env(home, TYPESAFE_API_KEY="tsk-x"), request)
+        error = (
+            "✖ Too small: expected string to have >=1 characters\n  → at query\n"
+            "✖ Invalid input: expected int, received number\n  → at top\n"
+            "✖ Too small: expected string to have >=1 characters\n  → at items[0].id\n"
+            "✖ Invalid input: expected string, received number\n  → at items[0].text"
+        )
+        self.assertEqual(
+            (done.returncode, done.stdout, done.stderr),
+            (1, "", json.dumps({"error": error}, ensure_ascii=False, separators=(",", ":")) + "\n"),
+        )
 
 
 @unittest.skipIf(find_sh() is None, "no POSIX sh")

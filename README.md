@@ -26,7 +26,10 @@ the new plugin as a normal plugin update.
 - Windows, macOS or Linux. Windows is tested, Linux is tested in WSL, and macOS is tested with tmux
   only.
 - Claude Code, at a version that speaks MCP 2026-07-28 over HTTP. Tested with 2.1.293.
-- Node.js 22.13 or later. Messaging between sessions uses Node's built-in SQLite.
+- Python 3.9 or later. The MCP server, its hooks and the `agent-tabs` command run on it and import only
+  the standard library. On macOS, the `/usr/bin/python3` from the Xcode Command Line Tools works.
+- On Windows, Git Bash. Claude Code runs the plugin's hooks through it; install
+  [Git for Windows](https://git-scm.com/download/win).
 - An IDE: IntelliJ IDEA, Android Studio or another JetBrains IDE at build 262.10315 or later (2026.2.2),
   or VS Code 1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium, Antigravity, Kiro,
   Positron and Trae.
@@ -59,7 +62,7 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 |---|---|---|
 | JetBrains plugin | [`jetbrains/`](jetbrains/) | Adds the **New Agent Tab** button and a local HTTP API to IntelliJ IDEA, Android Studio and other JetBrains IDEs. |
 | VS Code extension | [`vscode/`](vscode/) | Adds the same button and API to VS Code and editors built on it. |
-| MCP server | [`mcp/`](mcp/) | Gives an agent tools to open, list and close tabs, to message other sessions, and to hand its work to a new tab. One shared server serves every Claude Code session; other agent CLIs run it over stdio. |
+| MCP server | [`claude-plugin/mcp/`](claude-plugin/mcp/); docs, tests and benchmarks in [`mcp/`](mcp/) | Gives an agent tools to open, list and close tabs, to message other sessions, and to hand its work to a new tab. One shared server serves every Claude Code session; other agent CLIs run it over stdio. |
 | Claude Code plugin | [`claude-plugin/`](claude-plugin/) | Bundles the MCP server, the skills and the IDE extensions. |
 
 ## Models, Ori and handoff
@@ -96,8 +99,10 @@ and possible future work. Change the design before you change the protocol.
 
 ## Checks
 
-Before you commit, run `node scripts/check.mjs` from the repo root. It runs the MCP typecheck and tests,
-confirms `claude-plugin/dist` matches a fresh bundle, checks the plugin version, confirms the bundled IDE
+Before you commit, run `node scripts/check.mjs` from the repo root. Node.js is a development tool here:
+the checks, the IDE packaging and the VS Code build use it, and users of the plugin don't need it. The
+script runs ruff and pyright on the Python MCP server, its tests on Python 3.13 and 3.9 (see
+[Development](mcp/README.md#development)), checks the plugin version, confirms the bundled IDE
 packages match their sources (see below), runs `claude plugin validate --strict`, the mod tests and the
 script tests, then the JetBrains and VS Code tests. Gradle runs
 without its build cache, so a stale cache entry can't fail or skip a test. The JetBrains tests need JDK 25
@@ -111,9 +116,9 @@ in `claude-plugin/dist/ide/versions.json`. It needs no build. When a source chan
 "vscode/ changed since the last repack; run node scripts/pack-ides.mjs".
 
 To release, run `node scripts/bump.mjs <version>`. It sets the version in
-`claude-plugin/.claude-plugin/plugin.json`, `mcp/package.json` and `mcp/package-lock.json`, adds a
-`## <version>` stub to `CHANGELOG.md` if none exists, and prints the next steps: build, check, commit and
-tag `ide-agent-tabs--v<version>`. Add `--vscode <version>` or `--jetbrains <version>` to bump the
+`claude-plugin/.claude-plugin/plugin.json`, which the MCP server reads its version from, adds a
+`## <version>` stub to `CHANGELOG.md` if none exists, and prints the next steps: build the IDE packages
+when you bumped one, check, commit and tag `ide-agent-tabs--v<version>`. Add `--vscode <version>` or `--jetbrains <version>` to bump the
 extension (`package.json` and its lock) or the plugin (`pluginVersion` in `gradle.properties`). The script
 never commits or tags.
 
@@ -121,5 +126,4 @@ never commits or tags.
 
 Free to use, including at work, and free to fork and share. You may not sell it, a fork
 of it, or paid setup or hosting of it, and you may not use it for fraud or scams. See
-[LICENSE](LICENSE) for the full terms. The bundled third-party licenses are in
-`claude-plugin/dist/THIRD_PARTY_NOTICES.txt`.
+[LICENSE](LICENSE) for the full terms.

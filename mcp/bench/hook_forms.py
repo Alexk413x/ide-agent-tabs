@@ -11,7 +11,7 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLUGIN = os.path.join(ROOT, "claude-plugin")
-NODE_HOOK = os.path.join(PLUGIN, "dist", "agent-hook.mjs")
+NODE_HOOK = os.path.join(ROOT, "mcp", "tests", "node080", "agent-hook.mjs")
 PY_HOOK = os.path.join(PLUGIN, "mcp", "launch", "agent_hook.py")
 RUNS = int(os.environ.get("RUNS", "20"))
 

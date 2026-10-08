@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up Agent Tabs on this machine - check Node.js, install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and where new tabs open, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin and turn on Jev judgments. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
+description: Set up Agent Tabs on this machine - check Python (and Git Bash on Windows), install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and where new tabs open, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin and turn on Jev judgments. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
 argument-hint: "[--check]"
 disable-model-invocation: true
 ---
@@ -14,13 +14,34 @@ Ask before each change. Show the exact command you will run. At the end, give a 
 done, what's skipped, and anything the user must do by hand, such as restarting an IDE.
 
 This plugin carries the IDE extensions in `${CLAUDE_PLUGIN_ROOT}/dist/ide/`. You don't download
-anything. `${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs` installs them and reports on them. Every step runs
+anything. `"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" sync-ides` installs them and reports on them. Every step runs
 on this machine and needs a local shell, so this skill can't run in claude.ai chat or a cloud session.
 
-## 1. Prerequisite
+## 1. Prerequisites
 
-Run `node --version`. The MCP server and `sync-ides.mjs` need Node.js 22.13 or later. If Node.js is
-missing or older, ask the user to install the current Node.js LTS, and stop. Nothing else is required.
+The MCP server, its hooks and the `agent-tabs` command need Python 3.9 or later. On Windows, Claude Code
+also needs Git Bash to run the plugin's hooks. Nothing else is required.
+
+1. Check Python:
+
+   - Windows: run `py -3 --version`. If the `py` launcher is missing, run `command -v python3 python`
+     and ignore any path under `WindowsApps`: those are Microsoft Store stubs that open the Store
+     instead of running Python. Run `--version` on a path that remains.
+   - macOS and Linux: run `python3 --version`.
+
+   If no Python 3.9 or later is found, tell the user how to install it, and stop:
+
+   - Windows: the installer from https://www.python.org/downloads/ with the `py` launcher selected, or
+     `winget install Python.Python.3.13`.
+   - macOS: the installer from https://www.python.org/downloads/, or `brew install python`. The
+     `/usr/bin/python3` that the Xcode Command Line Tools install is Python 3.9 and works.
+   - Linux: the distribution's `python3` package, such as `sudo apt install python3`.
+
+2. On Windows, check Git Bash. If `CLAUDE_CODE_GIT_BASH_PATH` is set, check that the file it names
+   exists. Otherwise run `command -v bash`, or look for `bin\bash.exe` under the Git install folder,
+   usually `C:\Program Files\Git`. If there is no Git Bash, tell the user to install Git for Windows
+   from https://git-scm.com/download/win or with `winget install Git.Git`, then restart Claude Code,
+   and stop.
 
 ## 2. Find the IDEs
 
@@ -28,7 +49,7 @@ missing or older, ask the user to install the current Node.js LTS, and stop. Not
    Positron and Trae:
 
    ```sh
-   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --status
+   "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" sync-ides --status
    ```
 
    The JSON lists each editor's command-line tool (`cli`, `path`) and the extension version installed
@@ -67,7 +88,7 @@ Install the extension into the editors the user chose. Pass each `cli` name, or 
 that isn't on `PATH`:
 
 ```sh
-node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --install <cli> [<cli>...]
+"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" sync-ides --install <cli> [<cli>...]
 ```
 
 The JSON report lists each editor with `ok`, or an `error`. Tell the user to reload open windows
@@ -78,7 +99,7 @@ The JSON report lists each editor with `ok`, or an `error`. Tell the user to rel
 1. Create the local plugin repository:
 
    ```sh
-   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --install --jetbrains
+   "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" sync-ides --install --jetbrains
    ```
 
    The report's `jetbrains.url` is the `file:///` URL of `updatePlugins.xml` in
@@ -116,11 +137,12 @@ config and would open a console window each time it starts the server.
 1. Run:
 
    ```sh
-   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --agents
+   "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" sync-ides --agents
    ```
 
    The JSON lists each agent with `installed`, `registered`, the server `path` it's registered with,
-   `stable`, which is `true` when that path is the copy in `~/.ide-agent-tabs/mcp/`, and `hooks`, which
+   `stable`, which is `true` when the agent runs the server copy in `~/.ide-agent-tabs/mcp/py/` with the
+   interpreter that `~/.ide-agent-tabs/mcp/python.json` records, and `hooks`, which
    is `true` when the messaging hooks are in place (`null` for Codex, Pi and OpenCode, which get none). Claude Code
    isn't listed, because it gets the server and the hooks from this plugin.
 
@@ -132,7 +154,7 @@ config and would open a console window each time it starts the server.
    the stable copy, except Codex on Windows. Then run:
 
    ```sh
-   node "${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs" --register <agent> [<agent>...]
+   "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" sync-ides --register <agent> [<agent>...]
    ```
 
    Registering also adds the messaging hooks: as the `ide-agent-tabs` group in
@@ -237,7 +259,7 @@ To change a setting, use the IDE settings or edit `config.json` and keep every o
   when Ori is detected.
 
 The lists of terminals and PowerShell installs come from `~/.ide-agent-tabs/detected.json`, which the
-MCP server writes. `node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" list-ides` prints the same `terminals`, and on
+MCP server writes. `"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" list-ides` prints the same `terminals`, and on
 Windows the `shells`.
 
 Ask whether the user wants to change any of them. Write only the keys they change. Ask whether they want agent tabs outside IDEs, in a
@@ -305,7 +327,7 @@ skip this step.
 3. Check that the server finds a key:
 
    ```sh
-   node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status
+   "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" jev status
    ```
 
    The reply's `key` is `env`, `credential-store` or `missing`. This check sends nothing to TypeSafe.
@@ -319,7 +341,7 @@ skip this step.
 
 ## 10. Check it works
 
-1. Run `node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" list-ides`. Every IDE with the extension installed and a window
+1. Run `"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" list-ides`. Every IDE with the extension installed and a window
    open appears under `ides`.
 2. Offer to open a test tab with `mcp__plugin_ide-agent-tabs_ide-agent-tabs__open_tab` in the current folder, then close it with
    `mcp__plugin_ide-agent-tabs_ide-agent-tabs__close_tab`.

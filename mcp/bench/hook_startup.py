@@ -10,7 +10,7 @@ import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-HOOK = os.path.join(ROOT, "claude-plugin", "dist", "agent-hook.mjs")
+HOOK = os.path.join(ROOT, "mcp", "tests", "node080", "agent-hook.mjs")
 RUNS = int(os.environ.get("RUNS", "20"))
 
 

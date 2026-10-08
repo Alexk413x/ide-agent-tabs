@@ -1,7 +1,7 @@
 ---
 name: jev
 description: When jev_ tools are listed, use them for a judgment step instead of a model turn - a pick from options you list, a yes or no about text you hold, a grade on described levels, or a ranking - and when the user asks for Jev. Not for text, code, counts or a final verdict.
-allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status)
+allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" jev status)
 ---
 
 Jev is TypeSafe's "System One" model. It reads text and returns a typed judgment in under a second:
@@ -44,7 +44,7 @@ Typical steps:
 | Order candidates by relevance, or keep the top few | `jev_rank` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_rank`) with `query`, `items` and `top` |
 | Which agent or model tier takes a task | `jev_route` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_route`) with `task` |
 | A score on described levels, or a mix of question kinds | `jev_ask` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_ask`) with `state` and `questions` in the API's form |
-| Whether a key is found, and today's calls and cost | `node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status` on the command line |
+| Whether a key is found, and today's calls and cost | `"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" jev status` on the command line |
 
 ## Write questions Jev answers well
 
@@ -76,9 +76,10 @@ The same server answers on the command line. `jev status` takes no input. The ot
 JSON request on stdin, in the same form as the tool's input. Each prints the reply as JSON:
 
 ```sh
-node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status
-node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev choose < request.json
+"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" jev status
+"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" jev choose < request.json
 ```
 
 Write the request to a file with the Write tool. Never put request text on the command line. The
-command exits with code 1 and prints `{"error": ...}` on stderr when it fails.
+command exits with code 1 and prints `{"error": ...}` on stderr when it fails, or with code 127 when it
+finds no Python 3.9 or later.

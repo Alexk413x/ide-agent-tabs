@@ -9,7 +9,7 @@ from typing import Any
 from ide_agent_tabs.messaging import db, store
 from support import Worker, node_worker, percentile, py_worker, require_node, start_together, temp_home
 
-# The limits of the Node stress test in mcp/test/mailboxStress.test.ts.
+# The limits the 0.8.0 Node build met in the same burst, so a mixed store must not slow it down.
 BURST_SEND_MS = 600
 BURST_LOOP_DELAY_MS = 750
 

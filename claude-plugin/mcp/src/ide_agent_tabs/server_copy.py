@@ -8,7 +8,7 @@ import sys
 from typing import Any, NamedTuple
 
 from .clock import now_ms
-from .files import ensure_private_dir, file_lock, mtime_ms, read_bytes, read_text_if_exists, remove_tree, write_atomically
+from .files import ensure_private_dir, file_lock, mtime_ms, read_bytes, read_text_if_exists, remove_file, remove_tree, write_atomically
 from .jsjson import parse, stringify
 from .version import PACKAGE_VERSION, compare_versions
 
@@ -24,6 +24,8 @@ HOOK_ENTRY = "agent_hook.py"
 STUB_ENTRIES = (SERVER_ENTRY, HOOK_ENTRY)
 OLD_SERVER_FILE = "mcp-server.mjs"
 OLD_HOOK_FILE = "agent-hook.mjs"
+OLD_FILES = (OLD_SERVER_FILE, OLD_HOOK_FILE, "THIRD_PARTY_NOTICES.txt")
+OLD_VERSION_FILE = "version.json"
 TEMP_MAX_AGE_MS = 60 * 60 * 1000
 _TERMINAL_SCRIPT = re.compile(r"agent-launch\.[A-Za-z0-9]+\Z")
 _VERSION_SAFE = re.compile(r"[^0-9A-Za-z.+-]")
@@ -92,6 +94,24 @@ def hook_copy_path(home: str, platform: str) -> str:
 
 def old_server_path(home: str, platform: str) -> str:
     return slashes(os.path.join(copy_root(home), OLD_SERVER_FILE), platform)
+
+
+def old_hook_path(home: str, platform: str) -> str:
+    return slashes(os.path.join(copy_root(home), OLD_HOOK_FILE), platform)
+
+
+def old_copy_exists(home: str) -> bool:
+    root = copy_root(home)
+    return any(os.path.exists(os.path.join(root, name)) for name in (*OLD_FILES, LAUNCH_DIR))
+
+
+def remove_old_copy(home: str, version: str) -> None:
+    root = copy_root(home)
+    for name in OLD_FILES:
+        remove_file(os.path.join(root, name))
+    remove_tree(os.path.join(root, LAUNCH_DIR))
+    # A 0.8.0 plugin still installed elsewhere reads this file and leaves a copy newer than itself alone.
+    write_atomically(os.path.join(root, OLD_VERSION_FILE), stringify({"version": version}) + "\n")
 
 
 def source_files(source: Source) -> list[tuple[str, str]]:

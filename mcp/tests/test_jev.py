@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import os
-import subprocess
 import sys
 import time
 import unittest
@@ -19,7 +18,7 @@ from ide_agent_tabs.jev.tools import run_tool
 from ide_agent_tabs.jsjson import parse, stringify
 from ide_agent_tabs.processes import RunResult
 from jev_support import StubTypeSafe, expand, jev_fixtures
-from support import MCP, temp_home
+from support import temp_home
 
 FIXTURES = jev_fixtures()
 
@@ -203,29 +202,6 @@ class ToolParity(unittest.TestCase):
         for case in FIXTURES["tools"]:
             with self.subTest(case=case["name"]):
                 self.run_case(case)
-
-
-class FixturesCurrent(unittest.TestCase):
-    def test_fixture_file_matches_the_generator(self) -> None:
-        from support import require_node
-
-        require_node(self)
-        import shutil
-
-        node = shutil.which("node")
-        assert node is not None
-        script = "import { jevFixturesText } from './scripts/write-jev-fixtures.ts'; process.stdout.write(await jevFixturesText());"
-        done = subprocess.run(
-            [node, "--import", "tsx", "--input-type=module", "-e", script],
-            cwd=MCP,
-            capture_output=True,
-            timeout=180,
-            check=False,
-        )
-        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
-        with open(os.path.join(MCP, "tests", "fixtures", "jev.json"), "rb") as f:
-            committed = f.read()
-        self.assertEqual(done.stdout.replace(b"\r\n", b"\n"), committed, "run: node --import tsx scripts/write-jev-fixtures.ts (in mcp/)")
 
 
 class Timing(unittest.TestCase):

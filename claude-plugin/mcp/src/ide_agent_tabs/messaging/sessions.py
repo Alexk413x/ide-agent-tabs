@@ -208,6 +208,27 @@ def effective_state(p: Presence, now: float) -> str:
     return state if 0 <= elapsed < limit else "idle"
 
 
+def _is_live(presence: Presence, mtime: float | None, alive: Callable[[int], bool], now: float) -> bool:
+    beat = presence.get("beatMs")
+    # A pid alone can name a new process once Windows reuses it; a server that beats proves it still runs.
+    silent = beat is not None and mtime is not None and now - mtime > beat * PRESENCE_BEATS_MISSED
+    return is_complete(presence) and not silent and alive(presence["pid"])
+
+
+# Unlike live_sessions, this leaves a dead session's file in place: the next full scan records its end.
+def live_session(home: str, session_id: str, alive: Callable[[int], bool], now: float) -> Presence | None:
+    if not is_session_id(session_id):
+        return None
+    file = presence_path(home, session_id)
+    try:
+        presence = parse_presence(read_text_if_exists(file))
+    except OSError:
+        return None
+    if presence is None or presence["id"] != session_id or not _is_live(presence, mtime_ms(file), alive, now):
+        return None
+    return {**presence, "state": effective_state(presence, now)}
+
+
 def live_sessions(
     home: str,
     alive: Callable[[int], bool] = pid_alive,
@@ -231,10 +252,7 @@ def live_sessions(
             continue
         presence = parse_presence(text)
         mtime = mtime_ms(file)
-        beat = presence.get("beatMs") if presence else None
-        # A pid alone can name a new process once Windows reuses it; a server that beats proves it still runs.
-        silent = beat is not None and mtime is not None and now - mtime > beat * PRESENCE_BEATS_MISSED
-        if presence is not None and is_complete(presence) and not silent and alive(presence["pid"]):
+        if presence is not None and _is_live(presence, mtime, alive, now):
             sessions.append({**presence, "state": effective_state(presence, now)})
             continue
         dead = presence is not None and presence.get("pid") is not None
