@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { CLAIM_TIMEOUT_MS, mailboxDir, MAX_READ_CHARS, MAX_TEXT_CHARS } from '../src/messaging/mailbox.js';
+import { CLAIM_TIMEOUT_MS, MAX_READ_CHARS, MAX_TEXT_CHARS } from '../src/messaging/store.js';
 import { runHook } from '../src/messaging/hook.js';
 import { parseCodexConfig } from '../src/messaging/codexConfig.js';
 import { folderSlug, Messaging, MOD_DELIVERY_NOTE, sessionNames, shortNames, type Hosts } from '../src/messaging/messaging.js';
@@ -14,7 +14,9 @@ import { Service } from '../src/service.js';
 import { deliverTo, newMessageId, readBy, unread, type Message } from './mail.js';
 import { tempDir } from './tempDir.js';
 
-function message(to: string, text = 'hello'): Message {
+let texts = 0;
+
+function message(to: string, text = `hello ${texts++}`): Message {
   return { id: newMessageId(), from: { id: 'codex-1a2b', agent: 'codex', path: '/w' }, to, text, sentAt: new Date().toISOString() };
 }
 
@@ -37,12 +39,12 @@ async function idle(home: string, id: string, at = Date.now() - 10_000) {
   await updatePresence(home, id, (p) => (p ? { ...p, state: 'idle', stateAt: new Date(at).toISOString(), inputIdle: true } : p));
 }
 
-test('the mod claims a tab, reports its state and native name, and gets its mailbox path', async () => {
+test('the mod claims a tab and reports its state and native name', async () => {
   const home = tempDir('iat-mod-');
   const claude = session(home, 'tab-c', 'claude', 1);
   await claude.start();
   const reply = await claude.modPresence({ driver: true, nativeName: 'plugins-fa [6a3948]', state: 'busy' });
-  assert.deepEqual(reply, { id: 'tab-c', tab: true, driver: true, mailbox: path.join(mailboxDir(home, 'tab-c'), 'new') });
+  assert.deepEqual(reply, { id: 'tab-c', tab: true, driver: true });
   const p = (await readPresence(home, 'tab-c'))!;
   assert.equal(p.driver, 'mod');
   assert.equal(p.nativeName, 'plugins-fa [6a3948]');
@@ -126,7 +128,8 @@ test('a server that replaces a dead one drops the driver its mod left', async ()
 
 test('take claims mail at least once: release and a stale claim return it, ack marks it read', async () => {
   const home = tempDir('iat-mod-');
-  const claude = session(home, 'tab-c', 'claude', 1);
+  let clock = Date.now();
+  const claude = session(home, 'tab-c', 'claude', 1, fakeHosts(), () => clock);
   await claude.start();
   await deliverTo(home, message('tab-c', 'one'));
   await deliverTo(home, message('tab-c', 'two'));
@@ -147,16 +150,14 @@ test('take claims mail at least once: release and a stale claim return it, ack m
 
   await deliverTo(home, message('tab-c', 'three'));
   const lost = await claude.modTake();
-  const held = path.join(mailboxDir(home, 'tab-c'), 'held');
-  const old = new Date(Date.now() - CLAIM_TIMEOUT_MS - 1000);
-  for (const name of readdirSync(held)) utimesSync(path.join(held, name), old, old);
+  clock += CLAIM_TIMEOUT_MS + 1000;
   const again = await claude.modTake();
   assert.deepEqual(again.messages.map((m) => m.text), ['three'], 'an unsettled claim returns to unread after the timeout');
   assert.notEqual(again.claim, lost.claim);
-  assert.equal(readdirSync(held).length, 1);
+  assert.deepEqual(await unread(home, 'tab-c', clock), [], 'the new claim holds it');
 
-  for (const name of readdirSync(held)) utimesSync(path.join(held, name), old, old);
-  assert.equal((await unread(home, 'tab-c')).length, 1, 'with the mod gone, the classic hooks see the message again');
+  clock += CLAIM_TIMEOUT_MS + 1000;
+  assert.equal((await unread(home, 'tab-c', clock)).length, 1, 'with the mod gone, the classic hooks see the message again');
   assert.deepEqual((await claude.read()).messages.map((m) => m.text), ['three']);
   claude.stopSync();
 });
@@ -231,9 +232,11 @@ test('agent_tabs_mod is offered to Claude Code only, and its ops run over MCP', 
     assert.match((await claude.call({ op: 'send', to: 'tab-c', text: 'me' })).text, /to is this session/);
 
     await deliverTo(home, message('tab-c', 'for claude'));
+    assert.deepEqual((await claude.call({ op: 'unread' })).json, { count: 1, senders: ['codex-1a2b'] });
     const taken = await claude.call({ op: 'take' });
     assert.equal(taken.json.messages[0].text, 'for claude');
     assert.deepEqual((await claude.call({ op: 'ack', claim: taken.json.claim })).json, { claim: taken.json.claim, read: 1 });
+    assert.deepEqual((await claude.call({ op: 'unread' })).json, { count: 0, senders: [] });
     assert.match((await claude.call({ op: 'release', claim: 'c-0000' })).text, /no open claim/);
     const rows = (await claude.call({ op: 'sessions' })).json.sessions;
     assert.deepEqual(rows.map((r: { name: string }) => r.name), ['plugins-fa [6a3948]', 'tab-x-ab']);

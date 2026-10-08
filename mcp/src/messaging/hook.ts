@@ -1,5 +1,6 @@
-import { peekUnread } from './mailbox.js';
+import { HOOK_DEADLINE_MS } from './db.js';
 import { unreadReminder } from './notice.js';
+import { peekUnread, type Message } from './store.js';
 import { effectiveState, isEffort, isModDriven, isModel, isSessionId, readPresence, updatePresence, withState, type PresenceFile, type SessionState } from './sessions.js';
 
 export const HOOK_CLIS = ['claude', 'codex', 'gemini', 'copilot', 'agy', 'grok', 'hermes', 'qwen', 'goose'] as const;
@@ -145,7 +146,7 @@ export async function runHook(run: HookRun): Promise<object | undefined> {
   if (before && isModDriven(before, now)) return undefined;
   const inputIdle = inputIdleAfter(cli, action, run.input);
   const state = action.notification ? notificationState(run.input) : action.failure ? (run.input.is_interrupt === true ? 'idle' : 'busy') : action.state;
-  const unread = action.remind || action.stop ? await peekUnread(home, sessionId) : [];
+  const unread: Message[] = action.remind || action.stop ? await peekUnread(home, sessionId, now, { deadlineMs: HOOK_DEADLINE_MS }).catch(() => []) : [];
   const reminder = unreadReminder(unread);
   const reported = reportedModel(run.input);
 

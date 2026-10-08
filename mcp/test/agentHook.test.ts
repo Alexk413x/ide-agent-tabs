@@ -15,8 +15,10 @@ function hook(home: string, cli: string, event: string, input: Record<string, un
   return runHook({ cli, event, input, home, sessionId: ID });
 }
 
+let mails = 0;
+
 async function mail(home: string) {
-  await deliverTo(home, { id: newMessageId(), from: { id: 'abcdef0123456', agent: 'codex', path: '/w' }, to: ID, text: 'secret text', sentAt: new Date().toISOString() });
+  await deliverTo(home, { id: newMessageId(), from: { id: 'abcdef0123456', agent: 'codex', path: '/w' }, to: ID, text: `secret text ${mails++}`, sentAt: new Date().toISOString() });
 }
 
 const state = async (home: string) => (await readPresence(home, ID))?.state;

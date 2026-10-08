@@ -5,7 +5,6 @@ export type AgentTabsSelf = {
   id: string
   name: string
   isDriver: boolean
-  mailbox: string | null
 }
 
 export type AgentTabsView = 'agents' | 'messages' | 'detail'

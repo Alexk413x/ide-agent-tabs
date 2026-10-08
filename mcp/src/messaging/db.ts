@@ -5,6 +5,7 @@ import { ensurePrivateDir, withFileLock } from '../files.js';
 
 export const DB_FILE = 'messages.db';
 export const WAKE_DIR = 'wake';
+export const FILE_MAILBOX_DIR = 'mail';
 export const SCHEMA_VERSION = 1;
 export const BUSY_TIMEOUT_MS = 200;
 export const SHARED_BUSY_TIMEOUT_MS = 25;
@@ -198,18 +199,17 @@ function userVersion(sql: DatabaseSync): number {
   return Number(sql.prepare('PRAGMA user_version').get()?.user_version ?? 0);
 }
 
-function setup(sql: DatabaseSync): boolean {
+function setup(sql: DatabaseSync): void {
   sql.exec(`PRAGMA busy_timeout=${busyTimeoutMs}`);
   if (String(sql.prepare('PRAGMA journal_mode').get()?.journal_mode).toLowerCase() !== 'wal') sql.exec('PRAGMA journal_mode=WAL');
   sql.exec('PRAGMA synchronous=NORMAL');
   sql.exec(`PRAGMA journal_size_limit=${JOURNAL_SIZE_LIMIT}`);
-  if (userVersion(sql) >= SCHEMA_VERSION) return false;
-  return runTx(sql, () => {
+  if (userVersion(sql) >= SCHEMA_VERSION) return;
+  runTx(sql, () => {
     const from = userVersion(sql);
-    if (from >= SCHEMA_VERSION) return false;
+    if (from >= SCHEMA_VERSION) return;
     for (const step of MIGRATIONS.slice(from, SCHEMA_VERSION)) sql.exec(step);
     sql.exec(`PRAGMA user_version=${SCHEMA_VERSION}`);
-    return true;
   });
 }
 
@@ -228,6 +228,7 @@ async function connect(home: string, file: string, deadline: number): Promise<Db
     sql.close();
     throw isCorrupt(e) ? new MailError(CORRUPT_MESSAGE) : e;
   }
+  await fs.rm(path.join(home, FILE_MAILBOX_DIR), { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined);
   const statements = new Map<string, StatementSync>();
   const db: Db = {
     home,

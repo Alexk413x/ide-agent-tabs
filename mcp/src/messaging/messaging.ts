@@ -5,28 +5,25 @@ import { isProcessAlive } from '../registry.js';
 import {
   checkMessageId,
   claimBatch,
-  cleanMail,
-  deliver,
+  cleanStore,
+  hasUnread,
+  logNative,
   MailError,
-  peekUnread,
   MAX_READ_CHARS,
   MAX_TEXT_CHARS,
-  newMessageId,
   putBack,
-  releaseSend,
-  reserveSend,
-  returnStaleClaims,
-  sendDigest,
+  sendMessage,
+  setDelivery,
   settleClaim,
   takeBatch,
-  unreadDir,
+  unreadSummary,
   waitForMessage,
   type Message,
-} from './mailbox.js';
+} from './store.js';
 import { readCodexConfig } from './codexConfig.js';
 import { recordEnded, transcriptDirs, type TranscriptDirs } from './closed.js';
 import { runHook } from './hook.js';
-import { history, historyCounts, logId, MailIndex, olderThan, previews, textPiece, RECEIVED_LOG, SENT_LOG, writeLog, type Who } from './history.js';
+import { history, historyCounts, logId, olderThan, previews, textPiece, type Who } from './history.js';
 import { UNTRUSTED_NOTICE, wakeLine } from './notice.js';
 import {
   agentFromClient,
@@ -41,6 +38,7 @@ import {
   isModel,
   isSessionId,
   liveSessions,
+  MAIL_VERSION,
   parsePresence,
   presencePath,
   readPresence,
@@ -205,13 +203,11 @@ export class Messaging {
   private agent: string;
   private readonly startedAt: string;
   private lastClean = 0;
-  private readonly mailIndex = new MailIndex();
   private threadId?: string;
   private ownHost?: Promise<string | undefined>;
   private identified: Promise<void> = Promise.resolve();
   private readonly followUps = new Map<string, ReturnType<typeof setInterval>>();
   private heartbeat?: ReturnType<typeof setInterval>;
-  private readonly claims = new Map<string, string[]>();
   private startError?: string;
   private stopped = false;
   registration: Promise<void> = Promise.resolve();
@@ -277,6 +273,7 @@ export class Messaging {
       ...(current?.effort !== undefined ? { effort: current.effort } : {}),
       ...(current?.product !== undefined ? { product: current.product } : {}),
       beatMs: this.beatMs,
+      mail: MAIL_VERSION,
     };
   }
 
@@ -462,7 +459,7 @@ export class Messaging {
     if (now - this.lastClean < CLEAN_EVERY_MS) return;
     this.lastClean = now;
     const live = await liveSessions(this.deps.home, this.alive, now, this.ended);
-    await cleanMail(this.deps.home, new Set(live.map((s) => s.id)), now);
+    await cleanStore(this.deps.home, new Set(live.map((s) => s.id)), now);
   }
 
   async listSessions() {
@@ -531,39 +528,26 @@ export class Messaging {
     }
     const to = recipient.id;
     if (to === this.sessionId) throw new MailError('to is this session; pick another id from list_sessions');
-    const id = newMessageId();
-    const { duplicateOf } = await reserveSend(this.deps.home, this.sessionId, now, { id, to, digest: sendDigest(to, text, replyTo) });
-    if (duplicateOf !== undefined) {
-      return { id: duplicateOf, to, delivery: 'queued' as const, duplicate: true, note: 'an identical message went to this session less than a minute ago; it was not sent again' };
-    }
-    const message: Message = {
-      id,
-      from: { id: this.sessionId, agent: this.agent, path: this.deps.cwd },
-      to,
-      text,
-      ...(replyTo !== undefined ? { replyTo } : {}),
-      sentAt: new Date(now).toISOString(),
-    };
-    try {
-      await deliver(this.deps.home, message, now);
-    } catch (e) {
-      await releaseSend(this.deps.home, this.sessionId, id).catch(() => undefined);
-      throw e;
+    if ((recipient.mail ?? 0) < MAIL_VERSION) throw new MailError(`${to} runs an older Agent Tabs; restart that session to message it`);
+    const sent = await sendMessage(
+      this.deps.home,
+      {
+        from: { id: this.sessionId, agent: this.agent, path: this.deps.cwd },
+        to,
+        ...(recipient.nativeName !== undefined ? { toName: recipient.nativeName } : {}),
+        text,
+        ...(replyTo !== undefined ? { replyTo } : {}),
+      },
+      now,
+    );
+    if (sent.duplicate) {
+      return { id: sent.id, to, delivery: 'queued' as const, duplicate: true, note: 'an identical message went to this session less than a minute ago; it was not sent again' };
     }
     const wake = await this.wake(recipient, now).catch((e: unknown) => ({ delivery: 'queued' as const, note: String(e) }));
-    await writeLog(this.deps.home, this.sessionId, SENT_LOG, {
-      id,
-      at: message.sentAt,
-      route: 'agent-tabs',
-      from: message.from,
-      to: { id: to, ...(recipient.nativeName !== undefined ? { name: recipient.nativeName } : {}) },
-      text,
-      ...(replyTo !== undefined ? { replyTo } : {}),
-      delivery: wake.delivery,
-    }).catch(() => undefined);
+    await setDelivery(this.deps.home, sent.id, wake.delivery).catch(() => undefined);
     this.followUp(to);
     void this.clean().catch(() => undefined);
-    return { id: message.id, to, ...wake, ...this.warnings };
+    return { id: sent.id, to, ...wake, ...this.warnings };
   }
 
   private async wake(recipient: Presence, now: number): Promise<{ delivery: 'woken' | 'queued'; note?: string }> {
@@ -621,7 +605,7 @@ export class Messaging {
   }
 
   private async rewake(peer: string): Promise<boolean> {
-    const pending = (await peekUnread(this.deps.home, peer)).some((m) => m.from.id === this.sessionId);
+    const pending = await hasUnread(this.deps.home, peer, { from: this.sessionId }, this.now());
     if (!pending) return false;
     const now = this.now();
     const recipient = (await liveSessions(this.deps.home, this.alive, now, this.ended)).find((s) => s.id === peer);
@@ -666,13 +650,14 @@ export class Messaging {
     const at = new Date(input.at !== undefined && Number.isFinite(input.at) ? input.at : this.now()).toISOString();
     const text = input.text.slice(0, MAX_TEXT_CHARS);
     const sent = input.direction === 'sent';
-    await writeLog(this.deps.home, this.sessionId, sent ? SENT_LOG : RECEIVED_LOG, {
+    await logNative(this.deps.home, {
       id,
-      at,
-      route: 'native',
+      owner: this.sessionId,
+      direction: input.direction,
       from: sent ? self : peer,
       to: sent ? peer : self,
       text,
+      sentAt: at,
       ...(input.delivery !== undefined ? { delivery: input.delivery.slice(0, 200) } : {}),
     });
     return { id };
@@ -682,7 +667,7 @@ export class Messaging {
     if (who.id !== undefined && !isSessionId(who.id)) throw new MailError(`not a session id: ${who.id}`);
     const names = who.names.filter((n) => NATIVE_NAME.test(n)).slice(0, 8);
     if (who.id === undefined && names.length === 0) throw new MailError('history needs session or names');
-    return history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names }, this.mailIndex);
+    return history(this.deps.home, { ...(who.id !== undefined ? { id: who.id } : {}), names });
   }
 
   async modHistory(who: Who, before?: string) {
@@ -713,7 +698,7 @@ export class Messaging {
       ...(who.id !== undefined && isSessionId(who.id) ? { id: who.id } : {}),
       names: who.names.filter((n) => NATIVE_NAME.test(n)).slice(0, 8),
     }));
-    const counts = await historyCounts(this.deps.home, valid, this.mailIndex);
+    const counts = await historyCounts(this.deps.home, valid);
     return { counts: counts.map((n, i) => (valid[i]!.id === undefined && valid[i]!.names.length === 0 ? null : n)) };
   }
 
@@ -748,39 +733,38 @@ export class Messaging {
       };
     });
     const own = await readPresence(this.deps.home, this.sessionId);
-    return { id: this.sessionId, tab: this.isTab, driver: own?.driver === 'mod', mailbox: unreadDir(this.deps.home, this.sessionId) };
+    return { id: this.sessionId, tab: this.isTab, driver: own?.driver === 'mod' };
+  }
+
+  modUnread() {
+    return unreadSummary(this.deps.home, this.sessionId, this.now());
   }
 
   async modTake() {
-    await returnStaleClaims(this.deps.home, this.sessionId, this.now());
-    const { messages, names, remaining, unreadable } = await claimBatch(this.deps.home, this.sessionId, Infinity);
+    const { claim, messages, remaining, unreadable } = await claimBatch(this.deps.home, this.sessionId, Infinity, MAX_READ_CHARS, this.now());
     const extra = { ...(remaining ? { remaining } : {}), ...(unreadable ? { unreadable } : {}) };
-    if (!messages.length) return { claim: null, messages: [], ...extra };
-    const claim = `c-${randomBytes(8).toString('hex')}`;
-    this.claims.set(claim, names);
+    if (claim === null || !messages.length) return { claim: null, messages: [], ...extra };
     return { claim, notice: UNTRUSTED_NOTICE, messages: messages.map(shown), ...extra };
   }
 
   async modSettle(claim: string, op: 'ack' | 'release') {
-    const names = this.claims.get(claim);
-    if (names === undefined) throw new MailError(`no open claim ${claim}; an unsettled claim returns its messages to unread after two minutes`);
-    this.claims.delete(claim);
-    const moved = await settleClaim(this.deps.home, this.sessionId, names, op === 'ack' ? 'cur' : 'new');
+    const moved = await settleClaim(this.deps.home, this.sessionId, claim, op, this.now());
+    if (moved === 0) throw new MailError(`no open claim ${claim}; an unsettled claim returns its messages to unread after two minutes`);
     if (op === 'ack') await this.resetNudges();
     return { claim, ...(op === 'ack' ? { read: moved } : { released: moved }) };
   }
 
   async read(signal?: AbortSignal) {
-    const { messages, names, remaining, unreadable } = await takeBatch(this.deps.home, this.sessionId, { chars: MAX_READ_CHARS });
+    const { messages, ids, remaining, unreadable } = await takeBatch(this.deps.home, this.sessionId, { chars: MAX_READ_CHARS }, this.now());
     if (signal?.aborted) {
-      await putBack(this.deps.home, this.sessionId, names);
+      await putBack(this.deps.home, this.sessionId, ids, this.now());
       throw new MailError('read_messages was cancelled; the messages stay unread');
     }
     await this.resetNudges();
     void this.clean().catch(() => undefined);
     const result: ReadResult = { ...(messages.length ? { notice: UNTRUSTED_NOTICE } : {}), messages: messages.map(shown), ...this.warnings };
     if (remaining) Object.assign(result, { remaining, next: `${remaining} more unread; call read_messages again` });
-    if (unreadable) Object.assign(result, { unreadable, unreadableNote: `${unreadable} mailbox file(s) held no valid message and were set aside` });
+    if (unreadable) Object.assign(result, { unreadable, unreadableNote: `${unreadable} stored message(s) were not valid and were set aside` });
     return result;
   }
 
@@ -793,7 +777,7 @@ export class Messaging {
     const retry = peer === undefined ? undefined : setInterval(() => void this.rewake(peer).catch(() => undefined), this.deps.rewakeEveryMs ?? REWAKE_EVERY_MS);
     let message: Message | undefined;
     try {
-      message = await waitForMessage(this.deps.home, this.sessionId, filter, seconds * 1000, signal);
+      message = await waitForMessage(this.deps.home, this.sessionId, filter, seconds * 1000, signal, { now: () => this.now() });
     } finally {
       if (retry) clearInterval(retry);
     }
