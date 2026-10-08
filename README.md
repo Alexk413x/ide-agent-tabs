@@ -26,7 +26,7 @@ the new plugin as a normal plugin update.
 - Windows, macOS or Linux. Windows is tested, Linux is tested in WSL, and macOS is tested with tmux
   only.
 - Claude Code.
-- Node.js 20 or later.
+- Node.js 22.13 or later. Messaging between sessions uses Node's built-in SQLite.
 - An IDE: IntelliJ IDEA, Android Studio or another JetBrains IDE at build 262.10315 or later (2026.2.2),
   or VS Code 1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium, Antigravity, Kiro,
   Positron and Trae.

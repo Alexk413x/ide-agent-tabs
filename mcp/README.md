@@ -355,8 +355,8 @@ Claude Code's own tools to Agent Tabs:
   folder heading opens the folder in the file manager.
 - A delivered message's card has an **Open in Agent Tabs** button, and a band above the prompt shows
   unread mail with an **Open** button.
-- Each send is logged in `~/.ide-agent-tabs/mail/<sender>/sent-log/`, and the mod logs native
-  SendMessage traffic; the logs last 7 days, as read mail does.
+- Each send is kept in the message database, and the mod logs native SendMessage traffic there; both
+  last 7 days, as read mail does.
 - `"claudeMod": "off"` in `config.json` turns the mod off.
 
 See [Claude Code mod](../docs/design.md#claude-code-mod) in the design doc.
@@ -375,17 +375,35 @@ starts and no console window opens. The options also trust the five hooks, so Co
 A Codex session outside a tab, such as one in the Codex desktop app, has no hooks. When its server's
 `IDE_AGENT_TABS_ID` names no open tab, the session's id becomes `codex-<thread id>`.
 
+### Message store
+
+Messages live in one SQLite database, `~/.ide-agent-tabs/messages.db`, that every agent session on the
+machine shares. The server uses Node's built-in `node:sqlite`, so messaging needs Node.js 22.13 or
+later; on an older Node the tab tools still work and the messaging tools say which Node they need.
+
+- Keep `~/.ide-agent-tabs` on a local disk. SQLite's locks don't hold on a network file system, so the
+  server refuses a UNC path on Windows and an NFS, SMB or 9P folder on Linux, including WSL's `/mnt/c`.
+  Set `IDE_AGENT_TABS_HOME` to a local folder in that case.
+- Keep the folder out of OneDrive and other sync tools. A tool that copies or restores the database's
+  `-wal` file while a session writes can corrupt it.
+- To back the database up, run `VACUUM INTO` on it; don't copy the file.
+- If you see `the message store is busy; try again` often, exclude `~/.ide-agent-tabs` from antivirus
+  scanning.
+- A corrupt database is moved aside as `messages.corrupt-<ms>.db` at the next server start or hourly
+  cleanup, and a new one replaces it. Unread messages in it can be lost.
+
 ### Limits
 
 - A message holds up to 32,000 characters.
 - A session sends at most 20 messages a minute.
 - A mailbox holds at most 50 unread messages.
-- The server deletes read messages after 7 days, and the mailbox of a session that ended 7 days ago.
+- The server deletes read messages after 7 days, and the unread mail of a session that ended 7 days ago.
+- A session that runs a build from before 0.7.0 can't be messaged until it restarts.
 
 ### Security
 
-- Messages are files in `~/.ide-agent-tabs/mail/` that only your user can read. Any process of your
-  user can write one, as it can open a tab.
+- Messages are rows in `~/.ide-agent-tabs/messages.db`, a file only your user can read. Any process of
+  your user can write one, as it can open a tab.
 - A message's text never reaches a command line or a terminal. The wake line holds only the sender's
   cleaned agent name and the first 8 characters of its id.
 - The server sets `from` itself, so an agent can't send as another session.
@@ -406,7 +424,8 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `jev/ledger.jsonl` | One line per Jev call: time, tool, agent, tab, model, question count, input tokens and result. |
 | `terminal-tabs.json` | The terminal tabs this server opened. The server writes it; don't edit it. |
 | `sessions/*.json` | One presence file per running server: session id, agent, folder, process id, host and state. |
-| `mail/<id>/` | A session's mailbox: `tmp/`, `new/` (unread), `cur/` (read), and `sent.json` for the rate limit. |
+| `messages.db` | Every session's messages, with `messages.db-wal` and `messages.db-shm` beside it. See [Message store](#message-store). |
+| `wake/` | One small file per session that a send rewrites, so a waiting session wakes. |
 | `launch/` | Short-lived launch files. Each is deleted as soon as its tab starts. |
 | `mcp/` | A copy of the server for other agent CLIs. See [Other agents](#other-agents). |
 
@@ -749,7 +768,7 @@ tab. Add the driver to
 
 ## Build and test
 
-You need Node.js 20 or later.
+You need Node.js 22.13 or later.
 
 ```sh
 npm install

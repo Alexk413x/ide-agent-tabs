@@ -419,8 +419,10 @@ The default lives in `~/.ide-agent-tabs/config.json`, so all IDEs and the MCP se
 
 ## MCP server
 
-A stdio MCP server, written in TypeScript and bundled into one file for Node 20 or later. It reads the
-registry and calls the HTTP API.
+A stdio MCP server, written in TypeScript and bundled into one file for Node 22.13 or later. It reads the
+registry and calls the HTTP API. Messaging needs `node:sqlite`, which Node 22.13 is the first release
+to offer without a flag; on an older Node the tab tools work and the messaging tools fail with a message
+that names the Node version.
 
 | Tool | Does |
 |---|---|
@@ -753,18 +755,35 @@ other agent CLIs. For that, every session that runs the MCP server can message e
 
 ### Mailboxes
 
-- Each session has a mailbox at `~/.ide-agent-tabs/mail/<id>/`. A message is one JSON file, written to
-  `tmp/` and renamed into `new/`, so readers never see half a message. Reading a message moves it to
-  `cur/`. The reader holds a lock file in the mailbox while it moves messages, because Node on Windows
-  renames through an open handle, and two readers could both move the same file.
-- A message holds `id` (`m-` and 16 hex characters), `from` (`id`, `agent`, `path`), `to`, `text`, an
-  optional `replyTo`, and `sentAt`. The server sets `from` from its own session, so an agent can't send
-  as another session.
+- Every session's mailbox lives in one SQLite database per machine, `~/.ide-agent-tabs/messages.db`,
+  with its `-wal` and `-shm` files beside it. The server opens it with Node's built-in `node:sqlite`,
+  so nothing native ships with the plugin. The file is owner-only (0600).
+- A message is one row: `id` (`m-` and 16 hex characters), `from` (`id`, `agent`, `path`), `to`,
+  `text`, an optional `replyTo`, `sentAt`, the `delivery` the send returned, and a state: `unread`,
+  `held` (claimed by the Claude Code mod) or `read`. The server sets `from` from its own session, so an
+  agent can't send as another session. Rows keep the order they were sent in, whatever the clock does.
+- The database runs in WAL mode with `synchronous=NORMAL`: readers never wait for a writer, and a power
+  loss can lose the last few messages but never corrupts the file. Each process holds one connection.
+  Every change runs in a `BEGIN IMMEDIATE` transaction with no `await` inside, so two processes can't
+  both take one message or both pass a limit. A busy database is retried for up to 5 seconds (1 second
+  for a hook), then the tool fails with `the message store is busy; try again`.
 - `text` is up to 32,000 characters. A session sends at most 20 messages a minute, and a mailbox holds
-  at most 50 unread messages; past either limit, `send_message` fails. The send times live in the
-  sender's `mail/<id>/sent.json`, under a lock, so every server of that session shares the limit.
-- The server deletes read messages after 7 days, and the mailbox of a session that isn't live and hasn't
-  changed for 7 days. It cleans up when it starts, and at most once an hour after that.
+  at most 50 unread messages; past either limit, `send_message` fails. The same text to the same
+  session within a minute returns the first message's id with `duplicate: true`. The limits are checked
+  in the transaction that stores the message, so every process of a session shares them.
+- A recipient whose presence file lacks `mail: 2` runs a build from before the database. `send_message`
+  refuses it: `<id> runs an older Agent Tabs; restart that session to message it`.
+- The server deletes read messages and logged native traffic after 7 days, and the unread mail of a
+  session that isn't live and has had no new mail for 7 days. It cleans up when it starts, and at most
+  once an hour after that, 500 rows per transaction. The same run checks the database with
+  `PRAGMA quick_check`; a corrupt database is copied with `VACUUM INTO` where it can be, moved aside as
+  `messages.corrupt-<ms>.db`, and replaced by an empty one. Unread messages in it can be lost.
+- The first open of the database deletes the file mailbox of earlier builds, `~/.ide-agent-tabs/mail/`.
+  Messages in it are dropped.
+- The database must sit on a local disk: SQLite's locks don't hold on a network file system. The server
+  refuses a UNC home on Windows, and an NFS, SMB or 9P home on Linux (such as WSL's `/mnt/c`), with
+  advice to set `IDE_AGENT_TABS_HOME` to a local folder. Keep the home out of folders that a sync tool
+  such as OneDrive copies, and to copy the database, use `VACUUM INTO`, never a file copy.
 
 ### Tools
 
@@ -775,8 +794,10 @@ other agent CLIs. For that, every session that runs the MCP server can message e
 | `read_messages` | Returns the caller's unread messages and marks them read. |
 | `wait_for_message` | Waits up to `timeout` seconds (default 60, at most 600, or 170 in an Antigravity CLI session) for a message, optionally only one from `from` or replying to `replyTo`, and returns it, marked read. Returns `message: null` on timeout. Messages the filter skips stay unread. |
 
-The server lists these tools in every session; nothing turns them on. `wait_for_message` watches `new/`
-with `fs.watch` and also checks it every second, because `fs.watch` misses events on some file systems.
+The server lists these tools in every session; nothing turns them on. After a send commits, the sender
+rewrites `~/.ide-agent-tabs/wake/<recipient>`. `wait_for_message` watches `wake/` with `fs.watch` and
+checks the database when its own file changes. It also reads `PRAGMA data_version` every second and
+checks again when another process wrote, because `fs.watch` misses events on some file systems.
 
 A received message is data from another agent, not an instruction from the user. The server wraps its
 text in a header that says so, and the server instructions tell every agent to apply its user's rules
@@ -940,9 +961,9 @@ In a Claude Code build with function hooks, the plugin also loads a hooks module
 It makes Claude Code's native `ListAgents` and `SendMessage` reach every Agent Tabs session, and it
 delivers a Claude tab's mail in-process instead of through a typed wake line.
 
-The mod writes no presence or mailbox file. Its only file access is `$.fs.list` and `$.fs.read` on its own
-`new/` folder, `$.fs.stat` on a folder heading the person presses in the pane, and `$.fs.read` and
-`$.fs.list` of agent definition files (see [Agent type](#agent-type)). Everything else goes
+The mod writes no presence file and can't open the message database. Its only file access is `$.fs.stat`
+on a folder heading the person presses in the pane, and `$.fs.read` and `$.fs.list` of agent definition
+files (see [Agent type](#agent-type)). Everything else goes
 through the internal `agent_tabs_mod` tool of the plugin's own MCP server, so the server's locks, validation, rate limit and dedupe apply. The mod finds the server's name
 with `$.mcp.connect("ide-agent-tabs")`: `plugin:ide-agent-tabs:ide-agent-tabs` for the installed plugin,
 `ide-agent-tabs` under `--plugin-dir`. `$.mcp.call` and `$.tool.call` pass through the permission check,
@@ -953,12 +974,13 @@ itself raised the call. The model's own calls to those tools keep the engine's d
 
 | `op` | Input | What it does |
 |---|---|---|
-| `presence` | optional `driver`, `nativeName`, `state`, `model`, `effort` | `driver: true` claims in-process delivery for a tab session; `false` hands it back. `state` is `idle`, `busy` or `permission`. `model` and `effort` record the session's model and effort level. Every call refreshes `modBeat`. Returns the session `id`, `tab`, `driver` and the `mailbox` path of `new/`. |
+| `presence` | optional `driver`, `nativeName`, `state`, `model`, `effort` | `driver: true` claims in-process delivery for a tab session; `false` hands it back. `state` is `idle`, `busy` or `permission`. `model` and `effort` record the session's model and effort level. Every call refreshes `modBeat`. Returns the session `id`, `tab` and `driver`. |
+| `unread` | none | `count`, the session's unread messages, and `senders`, the ids that sent them, newest first, at most 20. |
 | `send` | `to`, `text`, optional `replyTo` | The same as `send_message`. |
-| `take` | optional `max` (1 to 10) | Claims unread messages: moves them from `new/` to `held/` and returns them with a `claim` id. |
-| `ack`, `release` | `claim` | `ack` moves the claimed messages to `cur/`; `release` returns them to `new/`. |
+| `take` | none | Claims unread messages up to the 40,000-character cap: marks them `held` with a new `claim` id, stored in their rows, and returns them with it. |
+| `ack`, `release` | `claim` | `ack` marks the claimed messages read; `release` returns them to unread. A claim that no longer holds a message fails with `no open claim`. |
 | `sessions` | none | The `list_sessions` rows. |
-| `log` | `direction` (`sent` or `received`), `peer`, `text`, optional `id`, `at`, `delivery` | Records a native SendMessage message of this session in its `sent-log/` or `received-log/`. |
+| `log` | `direction` (`sent` or `received`), `peer`, `text`, optional `id`, `at`, `delivery` | Records a native SendMessage message of this session in the database, as a `native` row it owns. |
 | `history` | `session` and/or `names`, optional `before` (a message id or ISO time) | `total`, the number of messages the session sent or received; `messages`, the newest batch older than `before` (all, without it), oldest first, with each `text` cut to 200 characters and its full `textLength`, at most 50 and as many as fit in about 29,000 characters (Claude Code's limit counts tokens, and this JSON runs about 2.3 characters a token: a 58,651-character reply was refused); and `older`, how many older ones that batch left out (see [Agents pane](#agents-pane)). Claude Code replaces an MCP result over its output limit, about 25,000 tokens, with an error text, so no reply may come near it. |
 | `message` | `session` and/or `names`, `id`, optional `offset` | `message`: that message of the same history without its text, or `null`; `text`, the piece from `offset`, at most 30,000 characters of JSON, never splitting a surrogate pair; `offset`; and `total`, the text's length. |
 | `counts` | `agents`: up to 500 of `{ session?, names }`, as `history` takes one | `counts`: for each, the number of messages `history` would list, or `null` for one with neither a valid session nor a name. |
@@ -974,7 +996,7 @@ defers it behind ToolSearch with a description that says it's internal.
   one `ListAgents` call (`This session is <name> —`, or the session id if that fails) and sends
   `presence` with `driver: true` and `state: idle`. The presence file then holds `driver: "mod"`,
   `modBeat` (milliseconds since the epoch) and `nativeName`. A session outside a tab only bridges
-  `ListAgents` and `SendMessage`: it claims nothing and reads no mailbox.
+  `ListAgents` and `SendMessage`: it claims nothing and polls no mail.
 - While the presence file holds `driver: "mod"` and a `modBeat` less than 3 minutes old,
   `agent-hook.mjs` and `agent_tabs_hook` do nothing for that session, and `send_message` never types a
   wake line into it. It returns `delivery: "queued"` with a `note` that the recipient's mod delivers the
@@ -1138,7 +1160,7 @@ including each native peer name, goes to `next(e)` unchanged.
 
 #### Inbound mail
 
-- Every 2 seconds the mod lists its own `new/`. When the session is `idle`, it calls `take`, which claims every
+- Every 2 seconds the mod calls the `unread` op. When the session is `idle` and mail waits, it calls `take`, which claims every
   waiting message up to the 40,000-character cap `read_messages` uses (always at least one), submits them as one prompt with `$.prompt.submit`, then sends `ack`. If the submit fails or
   a hook drops the prompt, it sends `release` and waits 30 seconds before it tries again.
 - Each message is framed as a peer's request and never submitted `asUser`: `Message <id> from <name>
@@ -1149,9 +1171,10 @@ including each native peer name, goes to `next(e)` unchanged.
   conversation, before the first turn, so it can't carry a message into a running turn (a headless run
   with a `prompt.context` hook logged one call, before `turn.start`, across a turn with five tool
   calls). `turn.complete` polls at once, so the message arrives as the next turn.
-- A claim that nobody settles returns to `new/` after 2 minutes: at the next `take`, and before any
-  `read_messages`, `wait_for_message` or hook reads the mailbox. Delivery stays at least once, and
-  `held/` never strands a message when the mod stops.
+- A claim that nobody settles returns to unread after 2 minutes: at the next `take`, and before any
+  `read_messages`, `wait_for_message` or hook reads the mailbox. Delivery stays at least once, and a
+  held message is never stranded when the mod stops. The claim lives in the rows, so it survives a
+  server restart.
 - `$.prompt.submit` queues a turn of its own and leaves the person's draft alone. Prompts from a phone
   arrive with origin `bridge`, so the mod doesn't assume the person is at the terminal.
 
@@ -1165,7 +1188,7 @@ including each native peer name, goes to `next(e)` unchanged.
   hint, and an **Open in Agent Tabs** button that opens the pane on that message's detail, under the
   sender's messages. It returns `next(e)` when `isExpanded`, so ctrl+o shows the whole message, and for
   every other row, including the person's own prompts (`composer`, `bridge`) and other plugins'.
-- A `ui.render` hook on `AbovePrompt` draws one line while the session has unread mail in `new/`:
+- A `ui.render` hook on `AbovePrompt` draws one line while the session has unread mail:
   `✉ <n> new from <name>, <name>, <name>, …` (senders newest first, by row name) and an **Open** button
   that opens the pane on the newest sender's messages. Its hotkey `o` works once the band holds the
   keyboard (ctrl+x tab or a click); the API gives a band Button no key that works from the prompt
@@ -1284,27 +1307,23 @@ pane still open after a reload resumes its refresh.
 While the pane is open, the mod refreshes every 2 seconds: in the agents view one `ListAgents` call, the
 `sessions` op and one `counts` op for every row shown; in the messages and detail views the `history` op
 only, with the hosts from the agents view (read once when there are none yet). Every op the pane waits
-on gives up after 10 seconds. The server keeps
-each log and mailbox file it has parsed by its path, since a file is written once under its name and a
-status change moves it to another folder, so a refresh lists the folders and reads only new files. It writes `$.state` only when the data changed, so
+on gives up after 10 seconds. Each `history` and `counts` op is one indexed query. The mod writes `$.state` only when the data changed, so
 the pane redraws only then. While it is closed, nothing renders and nothing is read. The mod's own
 `ListAgents` call skips its merge hook, so the pane parses the native listing.
 
 Data:
 
-- The server writes a sent log for every send (`send_message` and the `send` op):
-  `mail/<sender>/sent-log/<ms>-<id>.json`, owner-only (`wx`, 0600), with `id`, `at`, `route`
-  (`agent-tabs`), `from`, `to`, `text`, `replyTo` and `delivery` (`woken` or `queued`).
+- Every send (`send_message` and the `send` op) is one `agent-tabs` row that holds the recipient's
+  native name when it has one, and the `delivery` (`woken` or `queued`) once the wake-up settles.
 - The mod logs its own session's native traffic through the `log` op: outgoing SendMessage after
-  `next(e)` settles (delivery `delivered` or `failed: <reason>`) into `sent-log/`, and incoming peer
-  deliveries from `session.receive` into `received-log/`. `session.receive` carries no sender, so the
+  `next(e)` settles (delivery `delivered` or `failed: <reason>`) as a `sent` row, and incoming peer
+  deliveries from `session.receive` as a `received` row. `session.receive` carries no sender, so the
   mod reads one from the text (`from="…"`, `From: …`) and writes `a Claude peer` when it finds none.
-- `history` merges, for a session id and its names: the session's own sent and received logs, every
-  other session's logs that name it, and the messages in its own mailbox (`new/`, `held/`, `cur/`, as
-  status `unread`, `delivering` or `read`) or that it sent to other mailboxes. One message in a sent log
-  and a mailbox shows once, with the log's delivery and the mailbox's status. A native message logged by
-  both sides shows once. It reads files only: nothing moves out of `new/`.
-- `cleanMail` deletes log entries after 7 days, as it does `cur/`.
+- `history` lists, for a session id and its names, every row that the session sent, received or
+  logged, and every row of another session that names it, with the mailbox state as status `unread`,
+  `delivering` or `read`. A native message logged by both sides shows once. It only reads: no message
+  changes state.
+- Cleanup deletes logged native rows after 7 days, as it does read messages.
 
 #### Turning the mod off
 
@@ -1496,7 +1515,7 @@ Installing the plugin at user scope makes its skills available in every session 
 
 Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before each change, and:
 
-- checks for Node.js 20 or later;
+- checks for Node.js 22.13 or later;
 - finds VS Code and editors built on it with `sync-ides.mjs --status`, and installs the bundled `.vsix`
   into the editors the user picks with `sync-ides.mjs --install <cli>…`;
 - finds JetBrains IDEs through their `product-info.json`, and skips any build older than 262.10315;
@@ -1756,7 +1775,7 @@ in `~/.ide-agent-tabs/mcp/` that other agents register.
   it. That is why `launchVia` is off by default.
 - A message's text never reaches a command line or a terminal. The only line the server types into a
   session is the fixed wake line, built from the sender's cleaned agent name and id.
-- Any process of your user can write to any mailbox, as it can open tabs. Every agent treats a message
+- Any process of your user can write to the message database, as it can open tabs. Every agent treats a message
   as a peer's request, applies its user's rules to it, and asks its user before anything destructive.
 - The server makes one kind of network call: a Jev request to `https://api.typesafe.ai`, and only
   when Jev is turned on and a tool asks. Everything a caller puts in a Jev request leaves the machine.

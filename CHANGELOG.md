@@ -4,6 +4,40 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 `mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
 `ide-agent-tabs--v<version>`.
 
+## 0.7.0
+
+Plugin and MCP server 0.7.0. The IDE packages don't change.
+
+### Update and restart every session
+
+This release moves messaging to a new store, and sessions on 0.7.0 and older sessions can't message each
+other. Update, then restart every agent session on the machine, in every IDE and terminal:
+
+```sh
+claude plugin marketplace update alexk413x
+claude plugin update ide-agent-tabs@alexk413x
+```
+
+Until an older session restarts, a send to it fails with `<id> runs an older Agent Tabs; restart that
+session to message it`, and what it sends reaches nobody. Unread messages and message history from
+before the update are dropped.
+
+### Changed
+
+- Messages live in one SQLite database per machine, `~/.ide-agent-tabs/messages.db`, through Node's
+  built-in `node:sqlite`. The file mailbox in `~/.ide-agent-tabs/mail/` is gone; the first start deletes
+  it. Each send, read, wait and claim runs in one transaction, so many sessions and processes can send
+  and read at once without losing or repeating a message.
+- Agent Tabs needs Node.js 22.13 or later. On an older Node, the tab tools still work and the messaging
+  tools say which Node they need.
+- `wait_for_message` wakes on a signal file in `~/.ide-agent-tabs/wake/` that the sender writes, and
+  checks the database every second as a fallback.
+- The Claude Code mod asks the server for its unread count and senders instead of listing its mailbox
+  folder. Its claims live in the database, so they survive a server restart.
+- The server refuses a home folder on a network file system, where SQLite's locks don't hold, and says
+  to set `IDE_AGENT_TABS_HOME` to a local folder. A corrupt database is moved aside and replaced at the
+  next start or hourly cleanup.
+
 ## 0.6.2
 
 Plugin and MCP server 0.6.2. The IDE packages don't change.
