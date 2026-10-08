@@ -392,4 +392,27 @@ class AgentProfilesTest {
         assertTrue(error.message!!.contains("can't launch through Ori"))
         assertEquals(LaunchVia.ORI, planLaunch(real, ctx(via = LaunchVia.ORI)).via)
     }
+
+    @Test
+    fun `a Codex tab runs its server on the interpreter python json records`() {
+        val windows = File.separatorChar == '\\'
+        assertEquals(if (windows) listOf("py", "-3") else listOf("python3"), codexPython(home, windows))
+        val python = home.resolve("python.exe")
+        Files.writeString(python, "")
+        Files.createDirectories(home.resolve("mcp"))
+        Files.writeString(home.resolve("mcp").resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", python.toString()) }.toString())
+        assertEquals(listOf(python.toString()), codexPython(home, windows))
+        Files.writeString(home.resolve("mcp").resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", "$python'x") }.toString())
+        assertEquals(listOf("py", "-3"), codexPython(home, true))
+        assertEquals(listOf("python3"), codexPython(home, false))
+
+        val args = withCodexPython(CODEX_TAB_ARGS, listOf("py", "-3"))
+        assertEquals(CODEX_TAB_ARGS.size, args.size)
+        assertTrue(args[2].startsWith("mcp_servers.ide-agent-tabs={ command = 'py', args = ['-3', '-I', '-S', '-c', '''"))
+        assertEquals(CODEX_TAB_ARGS[2].substringAfter("'-I'"), args[2].substringAfter("'-I'"))
+        assertEquals(CODEX_TAB_ARGS.filterIndexed { i, _ -> i != 2 }, args.filterIndexed { i, _ -> i != 2 })
+        assertEquals(CODEX_TAB_ARGS, withCodexPython(CODEX_TAB_ARGS, null))
+        val plan = planLaunch(BUILTIN_PROFILES[1], LaunchContext(python = listOf("/usr/bin/python3")))
+        assertTrue(plan.args[2].contains("command = '/usr/bin/python3', args = ['-I'"))
+    }
 }

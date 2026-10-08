@@ -905,37 +905,43 @@ Claude Code runs `mcp/launch/agent_hook.py` for its seven agent hook events. `me
 then they keep running `agent-hook.mjs`. `mcp/tests/test_hook_interop.py` runs one scenario of 20 hook
 events and two messages through both builds and compares their output and presence files.
 
-Each hook command in `hooks/hooks.json` is a shell string:
+Each hook command in `hooks/hooks.json` is a shell string that sh, Git Bash and PowerShell all parse:
 
 ```sh
-[ -n "$IDE_AGENT_TABS_ID" ] && [ "$IDE_AGENT_TABS_ID" != "$IDE_AGENT_TABS_MOD" ] || exit 0; set -- claude Stop; . "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh"
+set -- claude Stop; . "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1"
 ```
 
-The guard ends the hook before any interpreter starts in a session outside an Agent Tabs tab and in a
-tab the Claude Code mod drives. `agent-hook.sh` then runs `py -3` on Windows, else the first `python3`
-or `python` outside `WindowsApps`, with `-I -S`. Claude Code runs a shell string with `sh -c` on macOS
-and Linux, and with Git Bash on Windows; on a Windows machine without Git Bash it uses PowerShell, where
-the guard fails and the hook does nothing.
+Claude Code runs a shell string with `sh -c` on macOS and Linux, with Git Bash on Windows, and with
+PowerShell on Windows without Git Bash. A hook has no per-platform command: the hooks reference lists
+`command`, `args`, `shell` (`bash` or `powershell`, ignored with `args`), `if`, `timeout`, `async` and
+`statusMessage`, and nothing that picks a command by OS. The exec form (`command` with `args`) spawns one
+executable by name with no shell, and no name exists on every OS: `py` is Windows-only, `python3` and
+`python` on Windows are often the Microsoft Store stubs, and the exec form can't run a `.cmd` or a script.
 
-`mcp/bench/hook_forms.py` compares the forms, 30 runs each against a temporary home, at a CPU load of
-about 75% (medians):
+`agent-hook.ps1` is both a POSIX sh script and a PowerShell script. In sh, `set --` sets the arguments;
+in PowerShell, `set` is `Set-Variable`, so `set -- claude Stop` sets `$claude` to the event. The file
+starts with `echo @'`, which sh reads as one quoted word and PowerShell as the start of a here-string, so
+sh runs the first part and exits, and PowerShell skips it and runs the second. Both parts end the hook
+before any interpreter starts in a session outside an Agent Tabs tab and in a tab the Claude Code mod
+drives. Then they run the interpreter recorded in `~/.ide-agent-tabs/mcp/hook-python`, else `py -3` on
+Windows, else the first `python3` or `python` outside `WindowsApps`, with `-I -S`. A hook that found no
+recorded interpreter sets `IDE_AGENT_TABS_HOOK_PYTHON`, and `agent_hook.py` writes its own path there, so
+later hooks skip `py.exe`. The hook's stdin passes through to Python in both shells.
 
-| Hook command | Mod-driven tab | Tab, `UserPromptSubmit` |
-|---|---|---|
-| `node agent-hook.mjs` (0.8.0, exec form) | 152 ms | 202 ms |
-| Exec form, `py -3` | 102 ms | 275 ms |
-| Exec form, `python.exe` | 59 ms | 293 ms |
-| Exec form, `pythonw.exe` | 71 ms | 283 ms |
-| Shell string with the guard, Git Bash | 98 ms | 557 ms |
+`mcp/bench/hook_forms.py` compares the forms, 25 runs each against a temporary home with a recorded
+interpreter, on Windows at a CPU load of 85-100% (medians):
 
-A second run at 100% load kept the order: 284, 218, 83, 88 and 304 ms for a mod-driven tab, and 536,
-456, 246, 219 and 754 ms in a tab.
+| Hook command | No tab | Mod-driven tab | Tab, `UserPromptSubmit` |
+|---|---|---|---|
+| `node agent-hook.mjs` (0.8.0, exec form) | 110 ms | 182 ms | 192 ms |
+| Exec form, `python.exe` (for comparison) | 65 ms | 54 ms | 169 ms |
+| Shell string, Git Bash | 67 ms | 59 ms | 320-570 ms |
+| Shell string, Windows PowerShell 5.1 | 683 ms | 566 ms | 745 ms |
 
-The shell string is the one form that works from a static `hooks.json` on every OS. An exec form needs
-one executable name, and none fits: `py` exists only on Windows, and `python3` or `python` on Windows
-is often the Microsoft Store stub. On Windows, Git Bash costs 100-300 ms per hook, so a tab whose hooks
-run Python pays more than with Node; a mod-driven tab and a session outside a tab pay about what Node
-cost. On macOS and Linux, `sh -c` adds a few milliseconds and the guard skips Python's start-up.
+The Python hook itself is now faster than Node's. In a tab, Git Bash adds 100-400 ms before Python runs:
+MSYS starts bash and then the native interpreter. That cost needs an exec form on Windows, which a static
+`hooks.json` can't give without breaking macOS and Linux. PowerShell takes 400-700 ms to start and serves
+only Windows machines without Git Bash. On macOS and Linux, `sh -c` adds a few milliseconds.
 
 `pythonw.exe` runs a hook with piped stdin and stdout and is as fast as `python.exe`. Claude Code's
 hooks don't need it: the interpreter shares the hidden console of the shell that starts it.
@@ -943,6 +949,35 @@ hooks don't need it: the interpreter shares the hidden console of the shell that
 The hook script imports no `shutil`, `subprocess`, `secrets`, `hashlib`, `ctypes` or `random`, and
 reads files and checks processes through `_winapi` instead of `ctypes`; `test_hook.py` fails when a
 heavy import comes back.
+
+### Python stdio server
+
+`mcp/launch/mcp_server.py` runs the stdio MCP server, which the other CLIs register through the server copy.
+Claude Code moves to it in a later phase.
+
+- Transport: newline-delimited JSON-RPC on stdin and stdout, in UTF-8. Each `tools/call` runs on its
+  own thread, so a 600 s `wait_for_message` doesn't hold back other calls. `notifications/cancelled`
+  sets the call's cancel event, which ends a wait, and the call sends no reply, as the SDK does.
+  `open_tab` sends `notifications/progress` when the request carries a `progressToken`.
+- Protocol: `initialize` echoes a version the SDK 1.30.1 accepts (2025-11-25, 2025-06-18, 2025-03-26,
+  2024-11-05, 2024-10-07) and offers 2025-11-25 otherwise. The tool list comes from `catalog.json` and
+  depends on the client name from `initialize`: `agent_tabs_mod` for Claude Code, `agent_tabs_hook` for
+  Codex, and the Jev tools when Jev is on. The server declares `tools` without `listChanged`; the Node
+  server announced a list change after `initialized` instead.
+- Arguments: `tool_input.py` validates against each tool's schema in `catalog.json` and words issues as
+  zod does, with string lengths in code points. Mod `history` and `message` offsets, totals and the
+  200-character previews count UTF-16 units.
+- Start: the server answers `initialize` before it loads the service, then registers the session on a
+  background thread; tool calls wait for that. One scheduler thread runs heartbeats, follow-up wakes,
+  start retries and the hourly clean-up.
+
+`mcp/tests/test_mcp_parity.py` runs one scripted session of three clients against the Node bundle and
+the Python server and compares every reply after it replaces ids, times and paths. It covers
+`initialize` with each kind of version, per-client tool lists, `ping`, an unknown method, malformed
+lines, invalid `tools/call` params, validation errors for most tools, `list_sessions`, every mod op,
+send, read, wait (with a concurrent call and with a cancel), a Codex thread id that renames a session,
+the Codex hook tool, handoff and `open_tab` errors, `close_tab`, `list_tabs`, `list_agents`,
+`closed_sessions`, `resume_tab`, a Jev call against a stub API, and the presence files and exit.
 
 ### Shared server in Python
 
@@ -957,7 +992,9 @@ headers, token and state files, so either build can hand the port to the other.
   store's shared mode (busy timeout 0, no wake files for waiters in the process) before the first bind.
 - Tools come through `host.ToolHost`: `tools_for` and `instructions_for` an agent, and `bind` for one
   session, whose `end` records the session as closed and whose `release` keeps its presence for the next
-  server.
+  server. `engine.py` gives each bound session its own `Messaging`, service, Jev and `mcp_tools.Tools`,
+  as a stdio server has, with an HTTP wait cap of 240 s; the sessions share one scheduler thread and the
+  store's one `data_version` poll.
 - `handover.py` takes the port from an older build after the state-file check. It then waits until the
   old server has removed its state file, because that server reads and removes the file in two steps and
   would otherwise delete the new server's file.
@@ -965,8 +1002,10 @@ headers, token and state files, so either build can hand the port to the other.
   process with `CreateToolhelp32Snapshot` and `GetProcessTimes` on Windows, `/proc` on Linux and one `ps`
   call on macOS, and skips shells and `py.exe`. The helper's HTTP requests use a raw socket, because
   `http.client` would load the `email` package.
-- `mcp/launch/server_hook.py` is the `SessionStart` and `SessionEnd` hook; `server-hook.sh` picks the
-  interpreter as `agent-hook.sh` does.
+- `mcp/launch/server_hook.py` is the `SessionStart` and `SessionEnd` hook. Its `hooks.json` commands are
+  `set -- server <event>; . ".../server-hook.ps1"`, a file that sh and PowerShell both read, as
+  `agent-hook.ps1` is, and that runs the interpreter recorded in `mcp/hook-python`. The `SessionStart`
+  entry comes first in the list.
 
 `mcp/bench/shared_server.py` measures the start, the idle memory and the helper against the 0.8.0 bundle.
 

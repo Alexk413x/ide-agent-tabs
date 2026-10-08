@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -13,10 +12,10 @@ from typing import Any
 from ide_agent_tabs.shared.client import probe, stop_server
 from ide_agent_tabs.shared.state import read_token
 from shared_support import McpHttp, free_port
-from support import ROOT, TESTS, percentile, require_node, temp_home
+from support import ROOT, TESTS, percentile, temp_home
 
 AS_BUILD = os.path.join(TESTS, "shared_server_as.py")
-NODE_STDIO = os.path.join(ROOT, "claude-plugin", "dist", "mcp-server.mjs")
+PY_STDIO = os.path.join(ROOT, "claude-plugin", "mcp", "launch", "mcp_server.py")
 HTTP_SESSIONS = 32
 STDIO_SESSIONS = 8
 ROUNDS = 10
@@ -54,10 +53,10 @@ class HttpSession:
 
 
 class StdioSession:
-    def __init__(self, node: str, home: str, tab: str) -> None:
+    def __init__(self, home: str, tab: str) -> None:
         self.tab = tab
         self.child = subprocess.Popen(
-            [node, NODE_STDIO],
+            [sys.executable, "-I", "-S", PY_STDIO],
             env=clean_env(home, IDE_AGENT_TABS_ID=tab, IDE_AGENT_TABS_AGENT="claude"),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -113,17 +112,11 @@ def median(values: list[float]) -> float:
 
 
 class SharedStressTest(unittest.TestCase):
-    def setUp(self) -> None:
-        require_node(self)
-        if not os.path.exists(NODE_STDIO):
-            self.skipTest("claude-plugin/dist/mcp-server.mjs is missing")
-
     def test_32_http_and_8_stdio_sessions_lose_nothing_and_read_nothing_twice(self) -> None:
-        node = shutil.which("node") or "node"
         home = temp_home(self, "iat-stress-")
         port = free_port()
         server = subprocess.Popen(
-            [sys.executable, "-I", "-S", AS_BUILD, "0.9.0", "--store", "--port", str(port)],
+            [sys.executable, "-I", "-S", AS_BUILD, "0.9.0", "--port", str(port)],
             env=clean_env(home),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
@@ -139,8 +132,7 @@ class SharedStressTest(unittest.TestCase):
         sessions: list[Any] = [HttpSession(port, token, f"stress-http-{i:03d}", i, home) for i in range(HTTP_SESSIONS)]
         opened: list[Any] = []
         openers = [
-            threading.Thread(target=lambda i=i: opened.append(StdioSession(node, home, f"stress-stdio-{i:03d}")))
-            for i in range(STDIO_SESSIONS)
+            threading.Thread(target=lambda i=i: opened.append(StdioSession(home, f"stress-stdio-{i:03d}"))) for i in range(STDIO_SESSIONS)
         ]
         for t in openers:
             t.start()

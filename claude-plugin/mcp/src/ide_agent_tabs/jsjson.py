@@ -131,9 +131,9 @@ def _write(value: Any, indent: str, step: str, out: list[str]) -> None:
         raise TypeError(f"{type(value).__name__} is not JSON serializable")
 
 
-def stringify(value: Any, indent: int = 0) -> str:
+def stringify(value: Any, indent: int | str = 0) -> str:
     out: list[str] = []
-    _write(value, "", " " * min(indent, 10), out)
+    _write(value, "", indent[:10] if isinstance(indent, str) else " " * min(indent, 10), out)
     return "".join(out)
 
 

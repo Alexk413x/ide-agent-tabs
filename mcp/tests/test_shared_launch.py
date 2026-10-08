@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -54,20 +55,53 @@ class McpJsonTest(unittest.TestCase):
         self.assertRegex(headers["X-Agent-Tabs-Pid"], r"^\d+$")
 
 
+def server_hook_commands() -> dict[str, str]:
+    with open(os.path.join(PLUGIN, "hooks", "hooks.json"), encoding="utf-8") as f:
+        hooks = json.load(f)["hooks"]
+    return {event: hooks[event][0]["hooks"][0]["command"] for event in ("SessionStart", "SessionEnd")}
+
+
+def shells() -> list[tuple[str, list[str]]]:
+    found: list[tuple[str, list[str]]] = []
+    posix = git_bash() if sys.platform == "win32" else "/bin/sh"
+    if posix is not None:
+        found.append(("sh", [posix, "-c"]))
+    if sys.platform == "win32":
+        for name in ("powershell", "pwsh"):
+            path = shutil.which(name)
+            if path is not None:
+                found.append((name, [path, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]))
+    return found
+
+
 class ServerHookShellTest(unittest.TestCase):
-    def test_the_sourced_server_hook_starts_the_server(self) -> None:
-        shell = git_bash() if sys.platform == "win32" else "/bin/sh"
-        if shell is None:
-            self.skipTest("no POSIX shell")
-        home = temp_home(self, "iat-launch-")
-        port = free_port()
-        self.addCleanup(lambda: stop_server(home, port))
-        env = clean_env(home, CLAUDE_PLUGIN_ROOT=PLUGIN.replace("\\", "/"), CLAUDE_PLUGIN_OPTION_SERVER_PORT=str(port))
-        command = 'set -- SessionStart; . "${CLAUDE_PLUGIN_ROOT}/mcp/launch/server-hook.sh"'
-        done = subprocess.run([shell, "-c", command], input=b"{}", env=env, capture_output=True, timeout=60, check=False)
-        self.assertEqual((done.returncode, done.stdout), (0, b""))
-        self.assertEqual(probe(port).kind, "ours")
-        self.assertIsNotNone(read_token(home))
+    def test_the_server_hooks_come_first_and_run_the_python_hook(self) -> None:
+        commands = server_hook_commands()
+        self.assertEqual(commands["SessionStart"], 'set -- server SessionStart; . "${CLAUDE_PLUGIN_ROOT}/mcp/launch/server-hook.ps1"')
+        self.assertEqual(commands["SessionEnd"], 'set -- server SessionEnd; . "${CLAUDE_PLUGIN_ROOT}/mcp/launch/server-hook.ps1"')
+
+    def test_the_hook_commands_start_the_server_and_end_a_session_in_every_shell(self) -> None:
+        root = PLUGIN.replace("\\", "/")
+        commands = {event: command.replace("${CLAUDE_PLUGIN_ROOT}", root) for event, command in server_hook_commands().items()}
+        found = shells()
+        if not found:
+            self.skipTest("no shell")
+        for name, shell in found:
+            with self.subTest(shell=name):
+                home = temp_home(self, "iat-launch-")
+                port = free_port()
+                self.addCleanup(lambda home=home, port=port: stop_server(home, port))
+                env = clean_env(home, CLAUDE_PLUGIN_ROOT=PLUGIN.replace("\\", "/"), CLAUDE_PLUGIN_OPTION_SERVER_PORT=str(port))
+                done = subprocess.run(
+                    [*shell, commands["SessionStart"]], input=b"{}", env=env, capture_output=True, timeout=60, check=False
+                )
+                self.assertEqual((done.returncode, done.stdout), (0, b""), done.stderr)
+                self.assertEqual(probe(port).kind, "ours")
+                self.assertIsNotNone(read_token(home))
+                env["CLAUDE_PID"] = "1"
+                end = commands["SessionEnd"]
+                done = subprocess.run([*shell, end], input=b'{"reason":"other"}', env=env, capture_output=True, timeout=60, check=False)
+                self.assertEqual((done.returncode, done.stdout), (0, b""), done.stderr)
 
 
 def tearDownModule() -> None:

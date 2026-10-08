@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 import threading
 from collections.abc import Mapping, Sequence
 from typing import Callable, NamedTuple, Optional
@@ -72,6 +73,7 @@ def pick_windows_credential(entries: Sequence[StoredCredential]) -> str | None:
 
 
 def read_windows_credential(target: str) -> StoredCredential | None:
+    assert sys.platform == "win32"
     import ctypes
     from ctypes import wintypes
 

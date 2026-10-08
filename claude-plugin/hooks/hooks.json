@@ -7,8 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/server-start.mjs", "SessionStart"],
+            "command": "set -- server SessionStart; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/server-hook.ps1\"",
             "timeout": 10
           }
         ]
@@ -18,8 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/sync-ides.mjs", "--hook"],
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs\" sync-ides --hook",
             "timeout": 60
           }
         ]
@@ -29,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude SessionStart; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
+            "command": "set -- claude SessionStart; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
             "timeout": 5
           }
         ]
@@ -40,8 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/server-start.mjs", "SessionEnd"],
+            "command": "set -- server SessionEnd; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/server-hook.ps1\"",
             "timeout": 5
           }
         ]
@@ -52,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude UserPromptSubmit; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
+            "command": "set -- claude UserPromptSubmit; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
             "timeout": 5
           }
         ]
@@ -63,7 +60,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude PostToolUse; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
+            "command": "set -- claude PostToolUse; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
             "timeout": 5
           }
         ]
@@ -74,7 +71,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude PostToolUseFailure; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
+            "command": "set -- claude PostToolUseFailure; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
             "timeout": 5
           }
         ]
@@ -86,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude Notification; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
+            "command": "set -- claude Notification; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
             "timeout": 5
           }
         ]
@@ -97,7 +94,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude Stop; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
+            "command": "set -- claude Stop; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
             "timeout": 5
           }
         ]
@@ -108,7 +105,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude StopFailure; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
+            "command": "set -- claude StopFailure; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
             "timeout": 5
           }
         ]
