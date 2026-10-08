@@ -13,9 +13,7 @@ from .register import RegisterContext, agents_report, register_agents, unregiste
 from .server_copy import Source, base_interpreter, plugin_source
 from .sync import append_log, sync_hook, sync_install, sync_status
 
-USAGE = (
-    "sync-ides --hook | --status | --install [--jetbrains] [<editor cli>...] | --agents | --register <agent>... | --unregister <agent>..."
-)
+USAGE = "sync-ides <--hook|--status|--install|--agents|--register|--unregister> [<editor cli or agent>...]"
 
 
 def _stdout(text: str) -> None:

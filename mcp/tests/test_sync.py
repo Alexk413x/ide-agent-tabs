@@ -174,7 +174,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(report["server"]["exists"], False)
         self.assertEqual(len(report["agents"]), 10)
         self.assertEqual(run(["--register"], h.ctx, h.bundle, out.append, err.append), 2)
-        self.assertIn("Usage: agent-tabs sync-ides --hook", err[-1])
+        self.assertIn("Usage: agent-tabs sync-ides <--hook", err[-1])
         self.assertEqual(run(["--register", "claude"], h.ctx, h.bundle, out.append, err.append), 1)
         self.assertEqual(run(["--hook"], h.ctx, h.bundle, out.append, err.append), 0)
         self.assertTrue(os.path.isfile(os.path.join(h.ctx.home, "detected.json")))
