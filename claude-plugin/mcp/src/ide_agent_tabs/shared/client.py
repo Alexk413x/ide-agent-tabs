@@ -196,14 +196,35 @@ def server_command(launcher: str, port: int, python: str | None = None) -> list[
 
 
 def start_server(command: Sequence[str], home: str, env: Mapping[str, str] | None = None) -> int | None:
-    from ..terminals.processes import spawn_detached, terminal_environment
+    import subprocess
+
+    from ..processes import CREATE_BREAKAWAY_FROM_JOB, detached_flags
+    from ..terminals.processes import terminal_environment
 
     child_env = terminal_environment(os.environ if env is None else env)
     child_env["IDE_AGENT_TABS_HOME"] = home
-    try:
-        return spawn_detached(list(command), child_env).pid
-    except OSError:
-        return None
+    # The helper runs in the plugin's versioned folder; a server left in it would keep Windows from removing
+    # that folder when the plugin updates.
+    cwd = os.path.expanduser("~")
+    for flags in (detached_flags(), detached_flags() & ~CREATE_BREAKAWAY_FROM_JOB):
+        try:
+            return subprocess.Popen(
+                list(command),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=child_env,
+                cwd=cwd,
+                creationflags=flags,
+                start_new_session=sys.platform != "win32",
+            ).pid
+        except PermissionError:
+            # A job object that forbids breakaway refuses CREATE_BREAKAWAY_FROM_JOB with access denied.
+            if sys.platform != "win32":
+                return None
+        except OSError:
+            return None
+    return None
 
 
 class Ensured(NamedTuple):

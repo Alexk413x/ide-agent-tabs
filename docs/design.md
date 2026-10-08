@@ -944,6 +944,32 @@ The hook script imports no `shutil`, `subprocess`, `secrets`, `hashlib`, `ctypes
 reads files and checks processes through `_winapi` instead of `ctypes`; `test_hook.py` fails when a
 heavy import comes back.
 
+### Shared server in Python
+
+`ide_agent_tabs.shared` serves Claude Code sessions as the Node shared server does, with the same routes,
+headers, token and state files, so either build can hand the port to the other.
+
+- `front.py` speaks MCP 2026-07-28 on `socketserver.ThreadingTCPServer` with a small HTTP/1.1 reader.
+  `http.server` would load `email`, `mimetypes` and `ssl` and double the start-up. A dropped connection
+  cancels its tool call: one thread watches the sockets of open calls for the end of the stream.
+- `hub.py` keys sessions on the pid and start time, else the client id, asks for roots on a client's first
+  call, ends a session when its process exits (checked every 15 s) or `/end` names its pid, and sets the
+  store's shared mode (busy timeout 0, no wake files for waiters in the process) before the first bind.
+- Tools come through `host.ToolHost`: `tools_for` and `instructions_for` an agent, and `bind` for one
+  session, whose `end` records the session as closed and whose `release` keeps its presence for the next
+  server.
+- `handover.py` takes the port from an older build after the state-file check. It then waits until the
+  old server has removed its state file, because that server reads and removes the file in two steps and
+  would otherwise delete the new server's file.
+- `headers.py` and `mcp/launch/headers.py` are the headers helper. `ancestry.py` finds the Claude Code
+  process with `CreateToolhelp32Snapshot` and `GetProcessTimes` on Windows, `/proc` on Linux and one `ps`
+  call on macOS, and skips shells and `py.exe`. The helper's HTTP requests use a raw socket, because
+  `http.client` would load the `email` package.
+- `mcp/launch/server_hook.py` is the `SessionStart` and `SessionEnd` hook; `server-hook.sh` picks the
+  interpreter as `agent-hook.sh` does.
+
+`mcp/bench/shared_server.py` measures the start, the idle memory and the helper against the 0.8.0 bundle.
+
 ## Terminals
 
 Standalone terminal apps need no extension. The MCP server drives them directly and shows each one in

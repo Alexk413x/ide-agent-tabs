@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from ide_agent_tabs.processes import pid_alive
-from ide_agent_tabs.shared.client import ensure_server, probe, server_command, stop_server
+from ide_agent_tabs.shared.client import ensure_server, probe, server_command, start_server, stop_server
 from ide_agent_tabs.shared.handover import claim_port
 from ide_agent_tabs.shared.headers import helper_headers, launcher_path
 from ide_agent_tabs.shared.start_hook import run as run_hook
@@ -110,6 +110,19 @@ class StartedServerTest(unittest.TestCase):
         os.remove(state_path(home, port))
         self.assertTrue(wait_until(lambda: probe(port).kind == "free", 8))
         self.assertTrue(wait_until(lambda: not pid_alive(int(ensured.health["pid"])), 5))  # type: ignore[index]
+
+    def test_a_started_server_runs_in_the_home_folder_without_the_session_variables(self) -> None:
+        home = temp_home(self, "iat-srv-")
+        out = os.path.join(home, "seen.json")
+        code = "import json, os, sys; json.dump([os.getcwd(), os.environ.get('IDE_AGENT_TABS_ID'), os.environ['IDE_AGENT_TABS_HOME']], open(sys.argv[1], 'w'))"
+        env = {**os.environ, "IDE_AGENT_TABS_ID": "tab-parent"}
+        self.assertIsNotNone(start_server([sys.executable, "-I", "-S", "-c", code, out], home, env))
+        self.assertTrue(wait_until(lambda: os.path.exists(out) and os.path.getsize(out) > 0, 30))
+        with open(out, encoding="utf-8") as f:
+            cwd, tab, seen_home = json.load(f)
+        self.assertEqual(os.path.normcase(os.path.realpath(cwd)), os.path.normcase(os.path.realpath(os.path.expanduser("~"))))
+        self.assertIsNone(tab)
+        self.assertEqual(seen_home, home)
 
     def test_a_second_server_of_the_same_build_leaves_the_port_and_exits(self) -> None:
         home, port, ensured = self.started()
