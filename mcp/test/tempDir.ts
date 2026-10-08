@@ -2,10 +2,12 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after } from 'node:test';
+import { closeAllDbs } from '../src/messaging/db.js';
 
 const dirs: string[] = [];
 
-after(() => {
+after(async () => {
+  await closeAllDbs();
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 

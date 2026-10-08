@@ -19,7 +19,7 @@ on this machine and needs a local shell, so this skill can't run in claude.ai ch
 
 ## 1. Prerequisite
 
-Run `node --version`. The MCP server and `sync-ides.mjs` need Node.js 20 or later. If Node.js is
+Run `node --version`. The MCP server and `sync-ides.mjs` need Node.js 22.13 or later. If Node.js is
 missing or older, ask the user to install the current Node.js LTS, and stop. Nothing else is required.
 
 ## 2. Find the IDEs

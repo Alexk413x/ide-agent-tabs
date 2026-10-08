@@ -18,6 +18,7 @@ export const DRIVERS = ['mod'] as const;
 export type Driver = (typeof DRIVERS)[number];
 export const VIAS = ['ori', 'direct'] as const;
 export type Via = (typeof VIAS)[number];
+export const MAIL_VERSION = 2;
 
 export interface PresenceFile {
   id: string;
@@ -45,6 +46,7 @@ export interface PresenceFile {
   agentType?: string;
   agentColor?: AgentColor;
   product?: string;
+  mail?: number;
 }
 
 export interface Presence extends PresenceFile {
@@ -134,6 +136,7 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...(typeof o.agentType === 'string' && isAgentType(o.agentType) ? { agentType: o.agentType } : {}),
     ...(typeof o.agentColor === 'string' && isAgentColor(o.agentColor) ? { agentColor: o.agentColor } : {}),
     ...str('product'),
+    ...(typeof o.mail === 'number' && Number.isSafeInteger(o.mail) && o.mail > 0 ? { mail: o.mail } : {}),
   };
 }
 

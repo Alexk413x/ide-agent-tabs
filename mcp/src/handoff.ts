@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { readTextIfExists, withFileLock, writeAtomically, writeNewPrivateFile } from './files.js';
-import { mailboxDir, parseMessage, type Message } from './messaging/mailbox.js';
+import { mailTo, type Message } from './messaging/store.js';
 import { MAX_WAIT_S } from './messaging/messaging.js';
 import { isSessionId, updatePresence } from './messaging/sessions.js';
 import { CONFIG_FILE, TAB_ID_ENV } from './profiles.js';
@@ -116,19 +116,6 @@ function parseRecord(text: string | undefined): HandoffRecord | undefined {
   }
 }
 
-async function mailOf(home: string, id: string): Promise<Message[]> {
-  const messages: Message[] = [];
-  for (const sub of ['new', 'cur']) {
-    const dir = path.join(mailboxDir(home, id), sub);
-    for (const name of await fs.readdir(dir).catch(() => [] as string[])) {
-      if (!name.endsWith('.json')) continue;
-      const m = parseMessage(await readTextIfExists(path.join(dir, name)).catch(() => undefined));
-      if (m) messages.push(m);
-    }
-  }
-  return messages;
-}
-
 export class Handoffs {
   constructor(private readonly deps: HandoffDeps) {}
 
@@ -236,11 +223,11 @@ export class Handoffs {
   async confirmation(r: HandoffRecord): Promise<{ takeover?: Message; stopped?: Message }> {
     const deadline = Date.parse(r.confirmBy);
     const created = Date.parse(r.createdAt);
-    const takeovers = (await mailOf(this.deps.home, r.oldSession)).filter((m) => {
+    const takeovers = (await mailTo(this.deps.home, r.oldSession)).filter((m) => {
       const at = Date.parse(m.sentAt);
       return m.from.id === r.newTab && at >= created && at <= deadline;
     });
-    const replies = (await mailOf(this.deps.home, r.newTab)).filter((m) => m.from.id === r.oldSession && m.replyTo !== undefined);
+    const replies = (await mailTo(this.deps.home, r.newTab)).filter((m) => m.from.id === r.oldSession && m.replyTo !== undefined);
     for (const takeover of takeovers) {
       const stopped = replies.find((m) => m.replyTo === takeover.id);
       if (stopped) return { takeover, stopped };

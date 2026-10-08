@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { HISTORY_REPLY_CHARS, PIECE_CHARS, PREVIEW_CHARS, RECEIVED_LOG, SENT_LOG, textPiece, writeLog } from '../src/messaging/history.js';
-import { cleanMail, KEEP_MS, mailboxDir } from '../src/messaging/mailbox.js';
+import { HISTORY_REPLY_CHARS, PIECE_CHARS, PREVIEW_CHARS, textPiece } from '../src/messaging/history.js';
+import { cleanStore, KEEP_MS, MAX_TEXT_CHARS } from '../src/messaging/store.js';
 import { Messaging, type Hosts } from '../src/messaging/messaging.js';
 import { resolveSettings } from '../src/profiles.js';
 import { createServer, MOD_TOOL } from '../src/server.js';
 import { Service } from '../src/service.js';
+import { unread } from './mail.js';
 import { tempDir } from './tempDir.js';
 
 const hosts: Hosts = { findHost: async () => undefined, typeInto: async () => ({ ok: true }) };
@@ -18,9 +19,9 @@ function session(home: string, id: string, agent: string, pid: number, now?: () 
   return new Messaging({ home, env: { IDE_AGENT_TABS_ID: id, IDE_AGENT_TABS_AGENT: agent }, pid, cwd: `/w/${id}`, hosts, isAlive: () => true, ...(now ? { now } : {}) });
 }
 
-const files = (dir: string) => readdirSync(dir).filter((n) => n.endsWith('.json')).sort();
+const unreadIds = async (home: string, id: string) => (await unread(home, id)).map((m) => m.id);
 
-test('every send writes an owner-only sent-log entry beside the mailbox', async () => {
+test('every send is in the sender\'s history with its delivery', async () => {
   const home = tempDir('iat-hist-');
   const a = session(home, 'tab-a', 'codex', 1);
   const b = session(home, 'tab-b', 'claude', 2);
@@ -28,14 +29,10 @@ test('every send writes an owner-only sent-log entry beside the mailbox', async 
   await b.start();
   try {
     const sent = await a.send({ to: 'tab-b', text: 'review x.ts' });
-    const dir = path.join(mailboxDir(home, 'tab-a'), SENT_LOG);
-    const [name] = files(dir);
-    assert.match(name!, new RegExp(`^\\d+-${sent.id}\\.json$`));
-    if (process.platform !== 'win32') assert.equal(statSync(path.join(dir, name!)).mode & 0o777, 0o600);
-    const record = JSON.parse(readFileSync(path.join(dir, name!), 'utf8'));
+    const [record] = (await a.modHistory({ id: 'tab-a', names: [] })).messages;
     assert.deepEqual(
-      { id: record.id, route: record.route, from: record.from.id, to: record.to.id, text: record.text, delivery: record.delivery },
-      { id: sent.id, route: 'agent-tabs', from: 'tab-a', to: 'tab-b', text: 'review x.ts', delivery: 'queued' },
+      { id: record!.id, route: record!.route, from: record!.from.id, to: record!.to.id, text: record!.text, delivery: record!.delivery, direction: record!.direction },
+      { id: sent.id, route: 'agent-tabs', from: 'tab-a', to: 'tab-b', text: 'review x.ts', delivery: 'queued', direction: 'sent' },
     );
   } finally {
     a.stopFollowUps();
@@ -61,8 +58,8 @@ test('history merges sent, received and native traffic oldest first, and marks n
     clock += 60_000;
     await b.modLog({ direction: 'sent', peer: 'docs-9b [11aa22]', text: 'native reply', delivery: 'delivered' });
 
-    const unreadB = files(path.join(mailboxDir(home, 'tab-b'), 'new'));
-    const unreadA = files(path.join(mailboxDir(home, 'tab-a'), 'new'));
+    const unreadB = await unreadIds(home, 'tab-b');
+    const unreadA = await unreadIds(home, 'tab-a');
     const { messages } = await b.modHistory({ id: 'tab-b', names: ['plugins-fa [6a3948]'] });
     assert.deepEqual(
       messages.map((m) => [m.direction, m.peer.id ?? m.peer.name, m.text, m.route]),
@@ -91,8 +88,8 @@ test('history merges sent, received and native traffic oldest first, and marks n
       ['received', 'native reply'],
     ], 'a native peer without Agent Tabs shows the traffic logged by sessions that talked to it');
 
-    assert.deepEqual(files(path.join(mailboxDir(home, 'tab-b'), 'new')), unreadB, 'history leaves new/ as it was');
-    assert.deepEqual(files(path.join(mailboxDir(home, 'tab-a'), 'new')), unreadA);
+    assert.deepEqual(await unreadIds(home, 'tab-b'), unreadB, 'history leaves unread messages unread');
+    assert.deepEqual(await unreadIds(home, 'tab-a'), unreadA);
   } finally {
     a.stopFollowUps();
     b.stopFollowUps();
@@ -112,21 +109,16 @@ test('log refuses a bad peer or direction, and history needs a session or a name
   b.stopSync();
 });
 
-test('cleanMail drops sent-log and received-log entries after 7 days, like read mail', async () => {
+test('cleanup drops logged native traffic after 7 days, like read mail', async () => {
   const home = tempDir('iat-hist-');
   const b = session(home, 'tab-b', 'claude', 2);
   await b.start();
-  await b.modLog({ direction: 'sent', peer: 'p', text: 'old' });
-  await b.modLog({ direction: 'received', peer: 'p', text: 'old' });
+  const old = Date.now() - KEEP_MS - 60_000;
+  await b.modLog({ direction: 'sent', peer: 'p', text: 'old sent', at: old });
+  await b.modLog({ direction: 'received', peer: 'p', text: 'old received', at: old });
   await b.modLog({ direction: 'sent', peer: 'p', text: 'new' });
-  const old = new Date(Date.now() - KEEP_MS - 60_000);
-  for (const folder of [SENT_LOG, RECEIVED_LOG]) {
-    const dir = path.join(mailboxDir(home, 'tab-b'), folder);
-    for (const name of files(dir).filter((n) => JSON.parse(readFileSync(path.join(dir, n), 'utf8')).text === 'old')) utimesSync(path.join(dir, name), old, old);
-  }
-  await cleanMail(home, new Set(['tab-b']));
-  assert.equal(files(path.join(mailboxDir(home, 'tab-b'), SENT_LOG)).length, 1);
-  assert.equal(files(path.join(mailboxDir(home, 'tab-b'), RECEIVED_LOG)).length, 0);
+  await cleanStore(home, new Set(['tab-b']));
+  assert.deepEqual((await b.modHistory({ id: 'tab-b', names: [] })).messages.map((m) => m.text), ['new']);
   b.stopSync();
 });
 
@@ -155,7 +147,7 @@ test('claudeMod comes from config.json: on by default, off when set, a warning o
   }
 });
 
-test('counts match the history each session shows, and a refresh reads only the files it has not seen', async () => {
+test('counts match the history each session shows, and grow with new traffic', async () => {
   const home = tempDir('iat-hist-');
   const a = session(home, 'tab-a', 'codex', 1);
   const b = session(home, 'tab-b', 'claude', 2);
@@ -172,12 +164,8 @@ test('counts match the history each session shows, and a refresh reads only the 
     assert.deepEqual(counts, [...shown, null]);
     assert.deepEqual(counts, [2, 3, 1, null]);
 
-    const sentLog = path.join(mailboxDir(home, 'tab-a'), SENT_LOG);
-    const [first] = files(sentLog);
-    writeFileSync(path.join(sentLog, first!), 'not json any more');
-    assert.deepEqual((await b.modCounts(whos)).counts, [2, 3, 1, null], 'a file already read is not read again');
     await a.send({ to: 'tab-b', text: 'three' });
-    assert.deepEqual((await b.modCounts(whos)).counts, [3, 4, 1, null], 'a new file is read');
+    assert.deepEqual((await b.modCounts(whos)).counts, [3, 4, 1, null]);
   } finally {
     a.stopFollowUps();
     b.stopFollowUps();
@@ -218,28 +206,28 @@ test('a long history fits one MCP reply: its full total, text previews of the ne
   }
 });
 
-test('a 300,000-character message comes back in pieces that each stay under the MCP output limit', async () => {
+test('a message whose JSON outgrows one reply comes back in pieces that each stay under the MCP output limit', async () => {
   const home = tempDir('iat-hist-');
   const b = session(home, 'tab-b', 'claude', 2);
   await b.start();
   try {
-    const text = Array.from({ length: 300_000 }, (_, i) => (i % 97 === 0 ? '"' : i % 89 === 0 ? String.fromCharCode(10) : String.fromCharCode(97 + (i % 26)))).join('');
-    await writeLog(home, 'tab-b', SENT_LOG, { id: 'm-00000000000000aa', at: new Date().toISOString(), route: 'native', from: { id: 'tab-b' }, to: { name: 'docs-9b [11aa22]' }, text });
+    const text = Array.from({ length: MAX_TEXT_CHARS }, (_, i) => (i % 7 === 0 ? '"' : i % 5 === 0 ? String.fromCharCode(10) : String.fromCharCode(97 + (i % 26)))).join('');
+    const { id } = await b.modLog({ direction: 'sent', peer: 'docs-9b [11aa22]', text });
     const who = { id: 'tab-b', names: [] };
     let offset = 0;
     let joined = '';
     let pieces = 0;
     while (offset < text.length) {
-      const reply = await b.modMessage(who, 'm-00000000000000aa', offset);
+      const reply = await b.modMessage(who, id, offset);
       assert.ok(JSON.stringify(reply).length < HISTORY_REPLY_CHARS, `piece ${pieces} fits`);
       assert.equal(reply.offset, offset);
-      assert.equal(reply.total, 300_000);
+      assert.equal(reply.total, MAX_TEXT_CHARS);
       joined += reply.text!;
       offset += reply.text!.length;
       pieces++;
     }
     assert.equal(joined, text);
-    assert.ok(pieces >= 6);
+    assert.ok(pieces >= 2);
   } finally {
     b.stopSync();
   }

@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { readTextIfExists, removeStaleFiles, writeAtomically } from '../files.js';
 import { BUILTIN_PROFILES } from '../profiles.js';
-import { KEEP_MS } from './mailbox.js';
+import { KEEP_MS } from './store.js';
 import { isSessionId, VIAS, type PresenceFile, type Via } from './sessions.js';
 
 export const CLOSED_DIR = 'history';

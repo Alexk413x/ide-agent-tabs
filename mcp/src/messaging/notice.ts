@@ -1,4 +1,4 @@
-import type { Message } from './mailbox.js';
+import type { Message } from './store.js';
 import { safeName } from './sessions.js';
 
 export const UNTRUSTED_NOTICE =

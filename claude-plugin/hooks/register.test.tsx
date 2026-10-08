@@ -5,7 +5,6 @@ import { listRows, SPINNER, type ListProps } from './list'
 import { DEFAULT_PANE, definitionColor, folderName, markdownBlocks, folderOpener, platformOf, upFrom } from './register'
 
 const SERVER = 'plugin:ide-agent-tabs:ide-agent-tabs'
-const MAILBOX = 'C:\\Users\\me\\.ide-agent-tabs\\mail\\tab-c\\new'
 const NATIVE = 'plugins-fa [6a3948]'
 const HEADER = `This session is ${NATIVE} — the name other sessions use to message it (it is not listed below; a message to it would be a message to yourself).`
 const OFFLINE = Array.from({ length: 150 }, (_, i) => `  Status line sub-agent model display ${i} [r${String(i).padStart(5, '0')}]  ·  Remote Control  ·  offline`)
@@ -274,23 +273,28 @@ function world(on: On, options: WorldOptions = {}) {
     toasts.push(e.text)
     return { value: undefined }
   })
-  on('fs.list', () => ({ value: mail.unread.map(name => ({ name, kind: 'file' as const, size: 10, mtimeMs: 1, isLink: false })) }))
   on('fs.read', (_$, e) => {
-    if (options.files !== undefined && !e.path.startsWith(MAILBOX)) {
-      const file = options.files[e.path]
-      if (file === undefined) throw new Error(`ENOENT: ${e.path}`)
-      return { value: file }
-    }
-    const from = options.mailFrom?.[e.path.split('\\').at(-1)!]
-    return { value: JSON.stringify(from === undefined ? MESSAGE : { ...MESSAGE, from: { ...MESSAGE.from, id: from } }) }
+    const file = options.files?.[e.path]
+    if (file === undefined) throw new Error(`ENOENT: ${e.path}`)
+    return { value: file }
   })
+  const unreadSenders = () => {
+    const ids: string[] = []
+    for (const name of [...mail.unread].sort().reverse()) {
+      const id = options.mailFrom?.[name] ?? MESSAGE.from.id
+      if (!ids.includes(id)) ids.push(id)
+    }
+    return ids.slice(0, 20)
+  }
   on('mcp.call', async (_$, e) => {
     calls.push({ tool: e.tool, args: e.args })
     const ok = (value: unknown) => ({ value: { content: [{ type: 'text', text: JSON.stringify(value) }], isError: false } })
     const fail = (text: string) => ({ value: { content: [{ type: 'text', text }], isError: true } })
     switch (e.args.op) {
       case 'presence':
-        return ok({ id: options.tab ?? 's-000000000001', tab: options.tab !== undefined, driver: options.tab !== undefined && e.args.driver !== false, mailbox: MAILBOX })
+        return ok({ id: options.tab ?? 's-000000000001', tab: options.tab !== undefined, driver: options.tab !== undefined && e.args.driver !== false })
+      case 'unread':
+        return ok({ count: mail.unread.length, senders: unreadSenders() })
       case 'sessions':
         return ok({ sessions: options.rows ?? ROWS })
       case 'send':
@@ -396,6 +400,7 @@ describe('presence and state', () => {
     await w.clock.advance(10_000)
     expect(w.ops('presence')).toHaveLength(1)
     expect(w.ops('take')).toHaveLength(0)
+    expect(w.ops('unread')).toHaveLength(0)
     expect(await $.session.send({ to: 'codex-1a2b', text: 'still bridged', origin: MODEL })).toEqual({ isDelivered: true })
     expect(w.ops('send')).toHaveLength(1)
   })

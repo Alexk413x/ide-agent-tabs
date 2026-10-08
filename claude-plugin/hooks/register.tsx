@@ -66,7 +66,6 @@ const PANE_ROWS = 18
 const PANE_OPEN = { id: PANE, title: PANE_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows: PANE_ROWS } as const
 const OTHER_HOST = 'Other'
 const BAND_NAMES = 3
-const SENDERS_READ = 20
 const OPEN_TIMEOUT_MS = 10_000
 const NOTICE_MS = 6_000
 const PANE_REFRESH_MS = 2_000
@@ -150,7 +149,9 @@ type Taken = { claim: string | null; messages: PeerMessage[] }
 
 type ModelInfo = { model?: string; effort?: string }
 
-type PresenceReply = { id: string; tab: boolean; driver: boolean; mailbox: string }
+type PresenceReply = { id: string; tab: boolean; driver: boolean }
+
+type UnreadReply = { count: number; senders: string[] }
 
 export const agentLabel = (agent: string) => AGENT_LABELS[agent] ?? agent
 
@@ -710,32 +711,10 @@ async function boot($: EngineInterface): Promise<AgentTabsSelf | null> {
     ...(SESSION_ID.test(fallback) ? { session: fallback } : {}),
   })) as PresenceReply
   Object.assign(reported, info)
-  const me: AgentTabsSelf = { server, id: reply.id, name: name ?? fallback, isDriver: reply.driver, mailbox: reply.driver ? reply.mailbox : null }
+  const me: AgentTabsSelf = { server, id: reply.id, name: name ?? fallback, isDriver: reply.driver }
   await $.state.set(selfRef, me)
   await $.state.set(activityRef, 'idle')
   return me
-}
-
-async function senderOf($: EngineInterface, mailbox: string, name: string): Promise<string | undefined> {
-  const separator = mailbox.includes('\\') ? '\\' : '/'
-  try {
-    const message = JSON.parse(await $.fs.read(`${mailbox}${separator}${name}`)) as Partial<PeerMessage>
-    return typeof message.from?.id === 'string' ? message.from.id : undefined
-  } catch {
-    return undefined
-  }
-}
-
-async function unreadNames($: EngineInterface, mailbox: string): Promise<string[]> {
-  try {
-    const entries = await $.fs.list(mailbox)
-    return entries
-      .filter(f => f.kind === 'file' && f.name.endsWith('.json'))
-      .map(f => f.name)
-      .sort()
-  } catch {
-    return []
-  }
 }
 
 async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> {
@@ -754,12 +733,7 @@ async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> 
   return submitted
 }
 
-async function senders($: EngineInterface, server: string, mailbox: string, names: readonly string[]): Promise<AgentTabsSender[]> {
-  const ids: string[] = []
-  for (const name of [...names].reverse().slice(0, SENDERS_READ)) {
-    const id = await senderOf($, mailbox, name)
-    if (id !== undefined && !ids.includes(id)) ids.push(id)
-  }
+async function senders($: EngineInterface, server: string, ids: readonly string[]): Promise<AgentTabsSender[]> {
   if (!ids.length) return []
   const rows = await sessions($, server).catch(() => [] as SessionRow[])
   return ids.map(id => ({ id, name: rows.find(r => r.id === id)?.name ?? id }))
@@ -770,19 +744,21 @@ let timers: { cancel: () => void }[] = []
 
 async function poll($: EngineInterface) {
   const { value: me } = await $.state.get(selfRef)
-  if (!me?.mailbox) return
-  const names = await unreadNames($, me.mailbox)
-  const key = names.join('|')
+  if (!me?.isDriver) return
+  const unread = (await callMod($, me.server, { op: 'unread' }).catch(() => undefined)) as UnreadReply | undefined
+  if (unread === undefined) return
+  const { count } = unread
+  const key = `${count}|${unread.senders.join('|')}`
   if (key !== inbox.shown) {
     inbox.shown = key
-    const from = names.length ? await senders($, me.server, me.mailbox, names) : []
+    const from = count ? await senders($, me.server, unread.senders) : []
     const sender = from.at(-1)?.name
-    $.ui.status(names.length ? `✉ ${names.length}${sender !== undefined ? ` · ${sender}` : ''}` : undefined)
-    if (names.length > inbox.unread) $.ui.toast(`✉ Agent Tabs message${sender !== undefined ? ` from ${sender}` : ''} · /agent-messages to view`)
-    inbox.unread = names.length
-    await $.state.set(inboxRef, names.length ? { count: names.length, senders: from } : null)
+    $.ui.status(count ? `✉ ${count}${sender !== undefined ? ` · ${sender}` : ''}` : undefined)
+    if (count > inbox.unread) $.ui.toast(`✉ Agent Tabs message${sender !== undefined ? ` from ${sender}` : ''} · /agent-messages to view`)
+    inbox.unread = count
+    await $.state.set(inboxRef, count ? { count, senders: from } : null)
   }
-  if (!names.length || inbox.delivering) return
+  if (!count || inbox.delivering) return
   const { value: state = 'idle' } = await $.state.get(activityRef)
   if (state !== 'idle' || (await $.clock.now()) < inbox.retryAt) return
   inbox.delivering = true

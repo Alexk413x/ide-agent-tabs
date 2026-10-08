@@ -24,7 +24,7 @@ const result = await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node20',
+  target: 'node22',
   minify: true,
   legalComments: 'none',
   metafile: true,
