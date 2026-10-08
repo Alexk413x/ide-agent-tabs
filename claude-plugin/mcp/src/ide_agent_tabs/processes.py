@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import io
 import os
-import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from typing import NamedTuple
-
-from . import winapi
 
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 CREATE_BREAKAWAY_FROM_JOB = 0x01000000
@@ -41,20 +38,18 @@ def pid_alive(pid: int) -> bool:
         if pid > 0xFFFFFFFF:
             return False
         # os.kill(pid, 0) on Windows calls TerminateProcess with exit code 0, so it ends the process it asks about.
-        import ctypes
-        from ctypes import wintypes
+        import _winapi
 
-        kernel32 = winapi.kernel32()
-        handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not handle:
-            return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
         try:
-            code = wintypes.DWORD()
-            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                return False
-            return code.value == _STILL_ACTIVE
+            handle = _winapi.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        except OSError as e:
+            return getattr(e, "winerror", None) == _ERROR_ACCESS_DENIED
+        try:
+            return _winapi.GetExitCodeProcess(handle) == _STILL_ACTIVE
+        except OSError:
+            return False
         finally:
-            kernel32.CloseHandle(handle)
+            _winapi.CloseHandle(handle)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -73,6 +68,8 @@ def run(
     env: Mapping[str, str] | None = None,
     cwd: str | None = None,
 ) -> RunResult:
+    import subprocess
+
     try:
         done = subprocess.run(
             [command, *args],

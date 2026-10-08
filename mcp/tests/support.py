@@ -28,7 +28,14 @@ def temp_home(test: unittest.TestCase, prefix: str = "iat-py-") -> str:
     folder = os.path.realpath(tempfile.mkdtemp(prefix=prefix))
     # Windows can refuse the delete while a closing handle lingers; a leftover temp folder must not fail the run.
     test.addCleanup(shutil.rmtree, folder, True)
+    test.addCleanup(close_store, folder)
     return folder
+
+
+def close_store(home: str) -> None:
+    from ide_agent_tabs.messaging import db
+
+    db.close_db(home)
 
 
 def js_fixtures() -> dict[str, Any]:

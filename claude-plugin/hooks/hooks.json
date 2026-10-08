@@ -29,8 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/agent-hook.mjs", "claude", "SessionStart"],
+            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude SessionStart; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -53,8 +52,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/agent-hook.mjs", "claude", "UserPromptSubmit"],
+            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude UserPromptSubmit; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -65,8 +63,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/agent-hook.mjs", "claude", "PostToolUse"],
+            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude PostToolUse; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -77,8 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/agent-hook.mjs", "claude", "PostToolUseFailure"],
+            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude PostToolUseFailure; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -90,8 +86,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/agent-hook.mjs", "claude", "Notification"],
+            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude Notification; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -102,8 +97,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/agent-hook.mjs", "claude", "Stop"],
+            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude Stop; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
             "timeout": 5
           }
         ]
@@ -114,8 +108,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/agent-hook.mjs", "claude", "StopFailure"],
+            "command": "[ -n \"$IDE_AGENT_TABS_ID\" ] && [ \"$IDE_AGENT_TABS_ID\" != \"$IDE_AGENT_TABS_MOD\" ] || exit 0; set -- claude StopFailure; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh\"",
             "timeout": 5
           }
         ]

@@ -846,6 +846,39 @@ Python code.
   root `pyproject.toml` holds their settings and the pyright dev group; it declares no runtime
   dependencies.
 
+### Foundations
+
+- `files` writes files atomically (a temp file renamed over the target, retried while Windows refuses
+  the rename) and takes lock files in Node's format: `<file>.lock` holds `"<pid> <16 hex digits>"`, and
+  a waiter breaks a lock whose owner is dead or whose file is more than 10 s old.
+- On Windows, Python's `open()` doesn't share delete access, so a Python reader would stop a Node
+  process from releasing a lock or renaming over a presence file. `winapi.open_shared_read` opens files
+  with `CreateFile` and all three share flags, and `files` reads through it.
+- `processes.pid_alive` uses `OpenProcess` and `GetExitCodeProcess` on Windows, because
+  `os.kill(pid, 0)` there ends the process.
+- `jsjson.stringify` writes what `JSON.stringify` writes: compact or indented, no ASCII escaping,
+  lone surrogates as `\udXXX`, integer-like keys first, and numbers in JavaScript's format.
+  `utf16_len` and `utf16_slice` count and cut strings the way JavaScript strings do.
+- `clock.iso` writes `Date.prototype.toISOString` timestamps, and `clock.parse_iso` reads the ISO forms
+  `Date.parse` reads.
+
+### Message store in Python
+
+`ide_agent_tabs.messaging` opens the same `messages.db` as the Node build, with the same schema text,
+`user_version`, pragmas, busy timeout, retry jitter and deadlines. A process keeps one connection per
+home behind a lock, so its threads take turns as Node's write turns do. Text with a lone surrogate is
+stored with U+FFFD, as Node's driver stores it, and the dedupe digest hashes the `JSON.stringify` form,
+so a send from either build deduplicates against the other.
+
+A Python waiter doesn't watch the wake folder. One thread per home polls `PRAGMA data_version` every
+100 ms and wakes that home's waiters when it changes; a send in the same process wakes them directly.
+Python senders still write wake files, because Node waiters watch that folder.
+
+`mcp/tests/test_store_interop.py` runs the same operations through Node and Python processes on one
+home: schema, message shape, dedupe, limits, claims, history, presence files and wake latency.
+`mcp/tests/test_stress_mixed.py` runs the Node stress cases with Node and Python workers on one home,
+under the Node limits: a 600 ms median burst send and a 750 ms p99 loop delay.
+
 ### Baseline before the port
 
 Measured on 2026-10-08 on the 16-thread i9-9980HK under Windows 11 with Node 24.19.0, at a CPU load of
@@ -864,6 +897,52 @@ about 75%, 20 runs each with `mcp/bench/hook_startup.py` against a temporary hom
 The target for the Python hook is half of Node's, so about 100 ms for the early exit and 200 ms for a
 tab's `UserPromptSubmit` at this load. The protocol version each agent CLI sends in `initialize` is
 measured at the cutover, with live sessions of each CLI.
+
+### Claude Code's agent hook in Python
+
+Claude Code runs `mcp/launch/agent_hook.py` for its seven agent hook events. `messaging/hook.py` ports
+`mcp/src/messaging/hook.ts` for every CLI, so the other CLIs can move to it in a later phase; until
+then they keep running `agent-hook.mjs`. `mcp/tests/test_hook_interop.py` runs one scenario of 20 hook
+events and two messages through both builds and compares their output and presence files.
+
+Each hook command in `hooks/hooks.json` is a shell string:
+
+```sh
+[ -n "$IDE_AGENT_TABS_ID" ] && [ "$IDE_AGENT_TABS_ID" != "$IDE_AGENT_TABS_MOD" ] || exit 0; set -- claude Stop; . "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.sh"
+```
+
+The guard ends the hook before any interpreter starts in a session outside an Agent Tabs tab and in a
+tab the Claude Code mod drives. `agent-hook.sh` then runs `py -3` on Windows, else the first `python3`
+or `python` outside `WindowsApps`, with `-I -S`. Claude Code runs a shell string with `sh -c` on macOS
+and Linux, and with Git Bash on Windows; on a Windows machine without Git Bash it uses PowerShell, where
+the guard fails and the hook does nothing.
+
+`mcp/bench/hook_forms.py` compares the forms, 30 runs each against a temporary home, at a CPU load of
+about 75% (medians):
+
+| Hook command | Mod-driven tab | Tab, `UserPromptSubmit` |
+|---|---|---|
+| `node agent-hook.mjs` (0.8.0, exec form) | 152 ms | 202 ms |
+| Exec form, `py -3` | 102 ms | 275 ms |
+| Exec form, `python.exe` | 59 ms | 293 ms |
+| Exec form, `pythonw.exe` | 71 ms | 283 ms |
+| Shell string with the guard, Git Bash | 98 ms | 557 ms |
+
+A second run at 100% load kept the order: 284, 218, 83, 88 and 304 ms for a mod-driven tab, and 536,
+456, 246, 219 and 754 ms in a tab.
+
+The shell string is the one form that works from a static `hooks.json` on every OS. An exec form needs
+one executable name, and none fits: `py` exists only on Windows, and `python3` or `python` on Windows
+is often the Microsoft Store stub. On Windows, Git Bash costs 100-300 ms per hook, so a tab whose hooks
+run Python pays more than with Node; a mod-driven tab and a session outside a tab pay about what Node
+cost. On macOS and Linux, `sh -c` adds a few milliseconds and the guard skips Python's start-up.
+
+`pythonw.exe` runs a hook with piped stdin and stdout and is as fast as `python.exe`. Claude Code's
+hooks don't need it: the interpreter shares the hidden console of the shell that starts it.
+
+The hook script imports no `shutil`, `subprocess`, `secrets`, `hashlib`, `ctypes` or `random`, and
+reads files and checks processes through `_winapi` instead of `ctypes`; `test_hook.py` fails when a
+heavy import comes back.
 
 ## Terminals
 
@@ -1106,9 +1185,10 @@ to a peer's request, and to ask the user before anything destructive a peer asks
 
 An agent sees a message only when it calls `read_messages` or `wait_for_message`. Three things prompt it:
 
-1. **Hooks.** `dist/agent-hook.mjs` runs as a command hook in Claude Code, Antigravity CLI, Copilot CLI,
-   Gemini CLI, Grok Build, Hermes, Qwen Code and Goose:
-   `node agent-hook.mjs <cli> <event>`, with the hook's JSON on stdin. Codex tabs call the server's
+1. **Hooks.** In Claude Code, `mcp/launch/agent_hook.py` runs as a command hook through
+   `mcp/launch/agent-hook.sh`, with the hook's JSON on stdin. `dist/agent-hook.mjs` runs as a command
+   hook in Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Hermes, Qwen Code and Goose:
+   `node agent-hook.mjs <cli> <event>`. Codex tabs call the server's
    `agent_tabs_hook` tool instead, which runs the same logic. The hooks set `state`: `busy` when a
    prompt is submitted or a tool starts, `permission` when a permission prompt shows, and `idle` when a
    turn ends. When a message arrives unread, it adds a one-line reminder to the agent's context after

@@ -3,8 +3,6 @@ from __future__ import annotations
 import contextlib
 import errno
 import os
-import secrets
-import shutil
 import sys
 import time
 from collections.abc import Iterator, Sequence
@@ -94,6 +92,8 @@ def remove_file(path: str) -> None:
 
 
 def remove_tree(path: str) -> None:
+    import shutil
+
     shutil.rmtree(path, ignore_errors=True)
 
 
@@ -152,7 +152,7 @@ def _remove_if_still(lock: str, text: str) -> None:
 
 
 def new_lock_token() -> str:
-    return f"{os.getpid()} {secrets.token_hex(8)}"
+    return f"{os.getpid()} {os.urandom(8).hex()}"
 
 
 @contextlib.contextmanager

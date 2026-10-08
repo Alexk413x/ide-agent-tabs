@@ -143,7 +143,7 @@ jobs:
         working-directory: mcp
       - uses: astral-sh/setup-uv@v7
       - run: uv python install ${{ matrix.python }}
-      - run: uv run --python ${{ matrix.python }} --no-project python -I -S mcp/tests/run.py -v test_lock_interop test_store_interop test_stress_mixed
+      - run: uv run --python ${{ matrix.python }} --no-project python -I -S mcp/tests/run.py -v test_lock_interop test_store_interop test_stress_mixed test_hook_interop
 
   vscode:
     needs: parts
