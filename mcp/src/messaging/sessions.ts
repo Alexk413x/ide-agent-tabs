@@ -214,6 +214,29 @@ export async function liveSessions(
   return sessions;
 }
 
+const pending = new WeakMap<(pid: number) => boolean, Map<string, Promise<Presence[]>>>();
+
+// The shared server answers many sessions at once, and each call that lists sessions reads every presence
+// file; calls that overlap share one read instead of queueing their own on the file system thread pool.
+export function joinLiveSessions(
+  home: string,
+  alive: (pid: number) => boolean,
+  now: number,
+  ended?: (p: PresenceFile, at: number) => Promise<unknown>,
+): Promise<Presence[]> {
+  let byHome = pending.get(alive);
+  if (byHome === undefined) {
+    byHome = new Map();
+    pending.set(alive, byHome);
+  }
+  const key = path.resolve(home);
+  const known = byHome.get(key);
+  if (known !== undefined) return known;
+  const read = liveSessions(home, alive, now, ended).finally(() => byHome.delete(key));
+  byHome.set(key, read);
+  return read;
+}
+
 // A wake line that never starts a turn, such as one typed while the agent was still finishing, leaves the
 // session waking; after WAKE_TIMEOUT_MS it counts as idle again, so the next send or wait retries. A busy turn
 // refreshes its state on every tool call, so one silent for BUSY_STALE_MS was interrupted without a turn-end hook.

@@ -21,6 +21,7 @@ export interface EngineDeps {
   scriptsDir: string;
   env: NodeJS.ProcessEnv;
   log: (message: string) => void;
+  detect?: boolean;
 }
 
 export interface Binding {
@@ -50,7 +51,7 @@ export class Engine {
     setBusyTimeout(SHARED_BUSY_TIMEOUT_MS);
     pollInsteadOfWatch(SHARED_POLL_MS);
     this.detection = this.service(this.env);
-    void this.detection.refreshDetection().catch(() => undefined);
+    if (deps.detect !== false) void this.detection.refreshDetection().catch(() => undefined);
   }
 
   private service(env: NodeJS.ProcessEnv): Service {

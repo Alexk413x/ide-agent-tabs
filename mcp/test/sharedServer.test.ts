@@ -17,7 +17,7 @@ async function server(t: TestContext, options: { alive?: (pid: number) => boolea
   const port = await freePort();
   const token = await ensureToken(home);
   const shutdownToken = newToken();
-  const engine = new Engine({ home, scriptsDir: home, env: { PATH: process.env.PATH ?? '' }, log: () => undefined });
+  const engine = new Engine({ home, scriptsDir: home, env: { PATH: process.env.PATH ?? '' }, log: () => undefined, detect: false });
   const hub = new Hub({ bind: (binding) => engine.bind(binding), ...(options.alive ? { isAlive: options.alive } : {}) });
   let shutdowns = 0;
   const front = new Front({

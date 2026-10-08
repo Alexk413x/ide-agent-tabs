@@ -194,7 +194,7 @@ async function health() {
 
 async function startShared(home) {
   const started = performance.now();
-  const child = spawn(process.execPath, [...(process.env.BENCH_NO_FLAGS ? [] : ['--max-semi-space-size=1']), path.join(dist, 'shared-server.mjs'), '--port', String(port)], { env: baseEnv(home), stdio: 'ignore', windowsHide: true });
+  const child = spawn(process.execPath, [...(process.env.BENCH_NO_FLAGS ? [] : ['--max-semi-space-size=1']), ...(process.env.BENCH_PROF ? ['--cpu-prof', '--cpu-prof-dir=' + process.env.BENCH_PROF] : []), path.join(dist, 'shared-server.mjs'), '--port', String(port)], { env: baseEnv(home), stdio: 'ignore', windowsHide: true });
   for (;;) {
     const h = await health();
     if (h?.pid === child.pid) break;
@@ -202,11 +202,16 @@ async function startShared(home) {
     await sleep(5);
   }
   const ready = performance.now() - started;
-  return { child, pid: child.pid, readyMs: ready };
+  return { child, pid: child.pid, readyMs: ready, home };
 }
 
 async function stopShared(server) {
-  server.child.kill();
+  try {
+    const state = JSON.parse(readFileSync(path.join(server.home, 'server', `state-${port}.json`), 'utf8'));
+    await post('/shutdown', { host: `127.0.0.1:${port}`, authorization: `Bearer ${state.shutdownToken}` }, '');
+  } catch {
+    server.child.kill();
+  }
   await new Promise((r) => (server.child.exitCode !== null ? r() : server.child.once('exit', r)));
 }
 
