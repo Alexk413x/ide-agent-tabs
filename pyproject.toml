@@ -73,4 +73,5 @@ known-first-party = ["ide_agent_tabs", "support"]
 include = ["claude-plugin/mcp/src", "claude-plugin/mcp/launch", "mcp/tests"]
 extraPaths = ["claude-plugin/mcp/src", "mcp/tests"]
 pythonVersion = "3.9"
+pythonPlatform = "Windows"
 typeCheckingMode = "standard"

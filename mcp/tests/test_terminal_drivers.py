@@ -57,6 +57,7 @@ class DriverOrderTest(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(sys.platform == "win32", "Windows Terminal paths use Windows separators")
 class WindowsTerminalTest(unittest.TestCase):
     def test_open_starts_wt_with_the_spec_file_and_records_the_pid_file(self) -> None:
         home = temp_home(self)

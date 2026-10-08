@@ -111,7 +111,7 @@ def _unescape_mount(path: str) -> str:
 
 
 def _linux_fs_type(folder: str, mountinfo: str) -> str | None:
-    target = os.path.realpath(folder) if os.sep == "/" else posixpath.normpath(folder)
+    target = os.path.realpath(folder) if sys.platform.startswith("linux") else posixpath.normpath(folder)
     best: tuple[int, str] | None = None
     for line in mountinfo.splitlines():
         head, sep, tail = line.partition(" - ")
