@@ -52,3 +52,48 @@ def open_shared_read(path: str) -> int:
     except BaseException:
         kernel32().CloseHandle(handle)
         raise
+
+
+_FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+_FSCTL_GET_REPARSE_POINT = 0x000900A8
+_IO_REPARSE_TAG_APPEXECLINK = 0x8000001B
+_REPARSE_BUFFER_SIZE = 16 * 1024
+
+
+# os.readlink reads symlinks and junctions only; the Store's pwsh.exe and wt.exe are app execution aliases,
+# whose target Node's readlink returns.
+def read_app_exec_link(path: str) -> str | None:
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    import struct
+    from ctypes import wintypes
+
+    k = kernel32()
+    handle = k.CreateFileW(path, 0, FILE_SHARE_ALL, None, OPEN_EXISTING, _FILE_FLAG_OPEN_REPARSE_POINT | _FILE_FLAG_BACKUP_SEMANTICS, None)
+    if handle is None or handle == ctypes.c_void_p(INVALID_HANDLE_VALUE).value:
+        return None
+    try:
+        buffer = ctypes.create_string_buffer(_REPARSE_BUFFER_SIZE)
+        returned = wintypes.DWORD()
+        k.DeviceIoControl.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.LPVOID,
+        )
+        ok = k.DeviceIoControl(handle, _FSCTL_GET_REPARSE_POINT, None, 0, buffer, _REPARSE_BUFFER_SIZE, ctypes.byref(returned), None)
+        if not ok:
+            return None
+        data = buffer.raw[: returned.value]
+    finally:
+        k.CloseHandle(handle)
+    if len(data) < 12 or struct.unpack_from("<I", data)[0] != _IO_REPARSE_TAG_APPEXECLINK:
+        return None
+    strings = data[12:].decode("utf-16-le", "replace").split("\0")
+    return strings[2] if len(strings) > 2 and strings[2] else None

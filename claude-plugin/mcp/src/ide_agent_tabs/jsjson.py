@@ -154,3 +154,55 @@ def utf16_slice(text: str, start: int, end: int | None = None) -> str:
 
 def well_formed(text: str) -> str:
     return _units(text).decode("utf-16-le", "replace")
+
+
+JS_WHITESPACE = "\t\n\v\f\r                  　﻿"
+CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")
+
+
+def js_trim(text: str) -> str:
+    return text.strip(JS_WHITESPACE)
+
+
+def is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def is_finite(value: Any) -> bool:
+    return is_number(value) and not (isinstance(value, float) and (math.isnan(value) or math.isinf(value)))
+
+
+def is_safe_integer(value: Any) -> bool:
+    if not is_finite(value):
+        return False
+    if isinstance(value, float) and not value.is_integer():
+        return False
+    return abs(value) <= MAX_SAFE_INTEGER
+
+
+def entries(obj: dict[Any, Any]) -> list[tuple[str, Any]]:
+    return _ordered_keys(obj)
+
+
+def js_object(obj: dict[Any, Any]) -> dict[str, Any]:
+    return dict(_ordered_keys(obj))
+
+
+def js_string(value: Any) -> str:
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, str):
+        return value
+    if is_number(value):
+        return number(value)
+    if isinstance(value, (list, tuple)):
+        return ",".join("" if v is None else js_string(v) for v in value)
+    return "[object Object]"
+
+
+def js_round(value: float) -> int:
+    return math.floor(value + 0.5)
