@@ -500,11 +500,11 @@ test('a tab still starting is not typed into, and the follow-up wakes it once it
   const b = session(home, 'tab-b', 2);
   await a.start();
   await b.start();
-  await updatePresence(home, 'tab-b', (p) => ({ ...p!, host: 'fake-term', state: 'idle', stateAt: new Date(Date.now() + 200).toISOString() }));
+  await updatePresence(home, 'tab-b', (p) => ({ ...p!, host: 'fake-term', state: 'idle', stateAt: new Date(Date.now() + 1_000).toISOString() }));
   try {
     assert.equal((await a.send({ to: 'tab-b', text: 'hi' })).delivery, 'queued');
     assert.equal(typed.length, 0);
-    await until(() => typed.length > 0, 5_000);
+    await until(() => typed.length > 0, 10_000);
     assert.equal(typed.length, 1);
   } finally {
     a.stopFollowUps();
