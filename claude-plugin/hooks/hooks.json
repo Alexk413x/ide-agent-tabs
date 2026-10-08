@@ -7,8 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/server-start.mjs", "SessionStart"],
+            "command": "set -- server SessionStart; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/server-hook.ps1\"",
             "timeout": 10
           }
         ]
@@ -39,8 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/server-start.mjs", "SessionEnd"],
+            "command": "set -- server SessionEnd; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/server-hook.ps1\"",
             "timeout": 5
           }
         ]

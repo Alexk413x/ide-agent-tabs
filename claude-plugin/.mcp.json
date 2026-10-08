@@ -3,7 +3,7 @@
     "ide-agent-tabs": {
       "type": "http",
       "url": "http://127.0.0.1:${user_config.server_port}/mcp",
-      "headersHelper": "node \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/headers.mjs\"",
+      "headersHelper": "py -3 -I -S \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/headers.py\" || python3 -I -S \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/headers.py\" || python -I -S \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/headers.py\"",
       "timeout": 300000
     }
   }
