@@ -8,6 +8,8 @@ import { readState, readToken, SERVICE, type Health, type ServerState } from './
 export const START_WAIT_MS = 3_000;
 const POLL_MS = 50;
 const HEALTH_TIMEOUT_MS = 1_000;
+// A small young generation keeps the long-lived server about 6 MB lighter; its tool calls wait on I/O, not on the GC.
+export const SERVER_NODE_FLAGS = ['--max-semi-space-size=1'];
 
 export type Probe = { kind: 'free' } | { kind: 'other' } | { kind: 'ours'; health: Health };
 
@@ -63,7 +65,7 @@ export async function verifiedToken(home: string, port: number, health: Health):
 }
 
 export function startServer(script: string, port: number, home: string, env: NodeJS.ProcessEnv = process.env): number | undefined {
-  const child = spawn(process.execPath, [script, '--port', String(port)], {
+  const child = spawn(process.execPath, [...SERVER_NODE_FLAGS, script, '--port', String(port)], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,

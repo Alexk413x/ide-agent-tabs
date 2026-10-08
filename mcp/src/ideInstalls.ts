@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { entryForProductInfo, IDE_CATALOG, type IdeKind } from './ideCatalog.js';
-import { cliInvocation, findEditorClis } from './sync.js';
+import { cliInvocation, findEditorClis } from './editorClis.js';
 import { terminalEnvironment } from './terminals/processes.js';
 import { compareVersions } from './version.js';
 

@@ -36,10 +36,18 @@ const result = await build({
     'mcp-server': path.join(root, 'src', 'main.ts'),
     'sync-ides': path.join(root, 'src', 'syncMain.ts'),
     'agent-hook': path.join(root, 'src', 'agentHook.ts'),
-    'shared-server': path.join(root, 'src', 'serverMain.ts'),
     'server-start': path.join(root, 'src', 'serverHook.ts'),
   },
   outdir: dist,
+});
+// The shared server answers server/discover and tools/list from its catalog; splitting keeps the MCP SDK,
+// zod and the tool code out of memory until the first tool call.
+const shared = await build({
+  ...common,
+  entryPoints: { 'shared-server': path.join(root, 'src', 'serverMain.ts') },
+  outdir: dist,
+  splitting: true,
+  chunkNames: 'server-[name]-[hash]',
 });
 await build({ ...common, entryPoints: { headers: path.join(root, 'src', 'headersMain.ts') }, outdir: helperDir, metafile: false });
 
@@ -48,7 +56,7 @@ for (const name of readdirSync(path.join(root, 'launch'))) {
 }
 
 const packages = new Set();
-for (const input of Object.keys(result.metafile.inputs)) {
+for (const input of [...Object.keys(result.metafile.inputs), ...Object.keys(shared.metafile.inputs)]) {
   const match = input.replace(/\\/g, '/').match(/node_modules\/((?:@[^/]+\/)?[^/]+)\//);
   if (match) packages.add(match[1]);
 }
