@@ -8,10 +8,12 @@ from typing import Any
 
 from ide_agent_tabs import closed
 from ide_agent_tabs.clock import iso, parse_iso
+from ide_agent_tabs.list_ides_cli import SessionPresence
 from ide_agent_tabs.profiles import resolve_settings
 from ide_agent_tabs.resume import CHEAP_NOTE, ResumeDeps, Resumes
-from ide_agent_tabs.service import ToolError
+from ide_agent_tabs.service import Service, ServiceDeps, ToolError
 from support import temp_home
+from test_service import FakeTerminal
 
 CLAUDE_ID = "0b5d2c1e-1111-4222-8333-444455556666"
 CODEX_ID = "01a10626-3892-7963-938c-a326a5769d94"
@@ -130,6 +132,31 @@ class ClosedRecordTest(unittest.TestCase):
             with open(closed.closed_path(home, session_id), "w", encoding="utf-8") as f:
                 json.dump({"id": session_id, "agent": "claude", "folder": "/w", "endedAt": iso(ended)}, f)
         self.assertEqual([r["id"] for r in closed.read_closed(home, NOW)], ["a", "b", "c"])
+
+    def test_close_tab_records_the_session_it_ends(self) -> None:
+        root = temp_home(self)
+        home = os.path.join(root, "home")
+        dirs = dirs_in(root)
+        write_claude(dirs, "/work/app", CLAUDE_ID, [{"text": "bye", "usage": {"input_tokens": 7}}])
+        presences = SessionPresence()
+        service = Service(
+            ServiceDeps(
+                home=home,
+                scripts_dir=home,
+                platform="linux",
+                env={"PATH": ""},
+                call_ide=lambda *_a: {},
+                drivers=[FakeTerminal()],
+                new_id=lambda: "tab-claude-1",
+                transcripts=dirs,
+                presence=presences,
+            )
+        )
+        service.open_tab({"path": root, "ide": "fake-term"})
+        presences.update(home, "tab-claude-1", lambda _p: presence(path="/work/app"))
+        service.close_tab("tab-claude-1")
+        with open(closed.closed_path(home, CLAUDE_ID), encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["preview"], "bye")
 
 
 class ResumesTest(unittest.TestCase):
