@@ -251,7 +251,7 @@ test('a queued send keeps retrying the wake-up until the message is read', async
     await pause(80);
     assert.equal(typed.length, 0, 'no wake line while the state allows none');
     await setState(home, 'tab-b', 'idle');
-    await pause(150);
+    await until(() => typed.length > 0, 3_000);
     assert.equal(typed.length, 1, 'the retry types once the session is idle');
     assert.equal((await readPresence(home, 'tab-b'))!.state, 'waking');
     await setState(home, 'tab-b', 'idle');
