@@ -12,7 +12,7 @@ from typing import Any
 
 from support import ROOT
 
-PY_SERVER = os.path.join(ROOT, "claude-plugin", "mcp", "launch", "stdio_server.py")
+PY_SERVER = os.path.join(ROOT, "claude-plugin", "mcp", "launch", "mcp_server.py")
 NODE_SERVER = os.path.join(ROOT, "claude-plugin", "dist", "mcp-server.mjs")
 REPLY_TIMEOUT_S = 60.0
 

@@ -952,8 +952,8 @@ heavy import comes back.
 
 ### Python stdio server
 
-`mcp/launch/stdio_server.py` runs the stdio MCP server. It isn't registered with any CLI yet; later
-phases move the other CLIs and then Claude Code to it.
+`mcp/launch/mcp_server.py` runs the stdio MCP server, which the other CLIs register through the server copy.
+Claude Code moves to it in a later phase.
 
 - Transport: newline-delimited JSON-RPC on stdin and stdout, in UTF-8. Each `tools/call` runs on its
   own thread, so a 600 s `wait_for_message` doesn't hold back other calls. `notifications/cancelled`
