@@ -8,7 +8,7 @@ const dirs: string[] = [];
 
 after(async () => {
   await closeAllDbs();
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 export function tempDir(prefix: string): string {
