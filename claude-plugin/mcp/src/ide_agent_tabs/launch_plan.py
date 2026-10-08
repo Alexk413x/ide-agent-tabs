@@ -3,7 +3,16 @@ from __future__ import annotations
 import re
 from typing import Any, NamedTuple
 
-from .profiles import GOOSE_EMPTY_ARGS, GOOSE_RUN_ARGS, AgentLaunch, AgentProfile, ConfigError, launch_of, with_codex_python
+from .profiles import (
+    GOOSE_EMPTY_ARGS,
+    GOOSE_RUN_ARGS,
+    AgentLaunch,
+    AgentProfile,
+    ConfigError,
+    launch_of,
+    with_claude_settings,
+    with_codex_python,
+)
 
 ORI_AGENTS: tuple[str, ...] = ("claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent")
 MODEL_SOURCE = "^[A-Za-z0-9._:/@+-]{1,200}$"
@@ -27,6 +36,7 @@ class LaunchRequest(NamedTuple):
     via: str | None = None
     cmd_shim: bool | None = None
     python: tuple[str, ...] | None = None
+    claude_settings: str | None = None
 
 
 class LaunchPlan(NamedTuple):
@@ -56,6 +66,7 @@ def _without_prompt(p: AgentProfile, prompt: str | None) -> AgentProfile:
 def plan_launch(profile: AgentProfile, r: LaunchRequest) -> LaunchPlan:
     p = _without_prompt(profile, r.prompt)
     p = p._replace(args=with_codex_python(p.args, r.python))
+    p = p._replace(args=with_claude_settings(p.command, p.args, r.args, r.claude_settings))
     if r.model is not None and not is_model(r.model):
         raise ConfigError(f"model must match {MODEL_SOURCE}")
     via = r.via if r.via is not None else r.launch_via

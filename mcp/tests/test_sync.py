@@ -71,7 +71,30 @@ class SyncHook(unittest.TestCase):
         self.assertEqual((state["vscode"], state["jetbrains"], state["failures"]), ("0.9.0", "0.9.1", 0))
         self.assertTrue(os.path.isfile(os.path.join(repository_dir(h.ctx.home), "ide-agent-tabs-0.9.1.zip")))
         self.assertIsNone(sync_hook(h.ctx, h.bundle))
-        self.assertIsNone(current_build(h.ctx.home), "no copy is made for a user who registered no agent")
+        self.assertIsNotNone(current_build(h.ctx.home), "Claude Code tabs run their hooks from the copy")
+
+    def test_the_hook_writes_the_claude_tab_settings_and_restores_them_when_they_change(self) -> None:
+        h = Home(self)
+        sync_hook(h.ctx, h.bundle)
+        settings_file = os.path.join(h.ctx.home, "mcp", "claude-tab-settings.json")
+        settings = read_json(settings_file)
+        python = sys.executable.replace("\\", "/") if sys.platform == "win32" else sys.executable
+        hook = os.path.join(h.ctx.home, "mcp", "py", "launch", "agent_hook.py")
+        hook = hook.replace("\\", "/") if sys.platform == "win32" else hook
+        self.assertEqual(settings["env"], {"IDE_AGENT_TABS_HOOKS": "1"})
+        self.assertEqual(
+            settings["hooks"]["UserPromptSubmit"],
+            [{"hooks": [{"type": "command", "command": python, "args": ["-I", "-S", hook, "claude", "UserPromptSubmit"], "timeout": 5}]}],
+        )
+        self.assertTrue(os.path.isfile(hook))
+        before = read_text(settings_file)
+        self.assertIsNone(sync_hook(h.ctx, h.bundle))
+        write(settings_file, "{}")
+        sync_hook(h.ctx, h.bundle)
+        self.assertEqual(read_text(settings_file), before)
+        os.remove(settings_file)
+        sync_hook(h.ctx, h.bundle)
+        self.assertEqual(read_text(settings_file), before)
 
     def test_a_failed_editor_is_logged_and_retried_up_to_three_times(self) -> None:
         h = Home(self)

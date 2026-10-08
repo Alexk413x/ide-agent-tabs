@@ -70,6 +70,7 @@ class LaunchContext(
     val windows: Boolean = false,
     val searchPath: String = "",
     val python: List<String>? = null,
+    val claudeSettings: String? = null,
 )
 
 private fun isCmdShim(command: String, searchPath: String): Boolean {
@@ -105,7 +106,8 @@ private fun withoutPrompt(profile: AgentProfile, prompt: String?): AgentProfile 
 
 fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
     val unplanned = withoutPrompt(requested, context.prompt)
-    val profile = unplanned.copy(args = withCodexPython(unplanned.args, context.python))
+    val codex = unplanned.copy(args = withCodexPython(unplanned.args, context.python))
+    val profile = codex.copy(args = withClaudeSettings(codex.command, codex.args, context.args, context.claudeSettings))
     if ((context.via ?: context.setting) == LaunchVia.ORI) {
         val flag = listOfNotNull(profile.promptFlag?.takeIf { context.prompt != null })
         val model = context.model?.let { listOf("--model", it) }.orEmpty()
@@ -157,15 +159,38 @@ fun withCodexPython(args: List<String>, python: List<String>?): List<String> {
     return args.map { if (it == CODEX_SERVER_ARG) arg else it }
 }
 
-fun codexPython(home: Path, windows: Boolean): List<String> {
+fun recordedPython(home: Path, windows: Boolean): String? {
     val python = runCatching {
         JsonParser.parseString(Files.readString(home.resolve("mcp").resolve("python.json"))).asJsonObject.get("python")?.asString
     }.getOrNull()
     val absolute = python != null && (if (windows) Regex("([A-Za-z]:)?[\\\\/].*").matches(python) else python.startsWith("/"))
     if (python != null && absolute && CODEX_PYTHON_SAFE.matches(python) && runCatching { Files.isRegularFile(Path.of(python)) }.getOrDefault(false)) {
-        return listOf(python)
+        return python
     }
-    return if (windows) listOf("py", "-3") else listOf("python3")
+    return null
+}
+
+fun codexPython(home: Path, windows: Boolean): List<String> =
+    recordedPython(home, windows)?.let { listOf(it) } ?: if (windows) listOf("py", "-3") else listOf("python3")
+
+// Same rules as claude_tab_settings and with_claude_settings in claude-plugin/mcp/src/ide_agent_tabs/profiles.py.
+const val CLAUDE_TAB_SETTINGS_FILE = "claude-tab-settings.json"
+
+// The settings path reaches cmd.exe when claude is a .cmd shim, so it may not hold a double quote or a cmd.exe metacharacter.
+private val CMD_SAFE_PATH = Regex("[^\"%!^&|<>\\u0000-\\u001f\\u007f]+")
+private val CLAUDE_COMMAND = Regex("(?:.*[\\\\/])?claude(?:\\.(?:exe|cmd|bat|ps1))?", RegexOption.IGNORE_CASE)
+
+fun claudeTabSettings(home: Path, windows: Boolean): String? {
+    val file = home.resolve("mcp").resolve(CLAUDE_TAB_SETTINGS_FILE)
+    val path = file.toString()
+    if (recordedPython(home, windows) == null || !CMD_SAFE_PATH.matches(path)) return null
+    return if (runCatching { Files.isRegularFile(file) }.getOrDefault(false)) path else null
+}
+
+fun withClaudeSettings(command: String, args: List<String>, callerArgs: List<String>, settings: String?): List<String> {
+    if (settings == null || !CLAUDE_COMMAND.matches(command)) return args
+    if ((args + callerArgs).any { it == "--settings" || it.startsWith("--settings=") }) return args
+    return args + listOf("--settings", settings)
 }
 
 val BUILTIN_PROFILES = listOf(

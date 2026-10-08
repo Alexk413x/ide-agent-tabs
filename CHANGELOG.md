@@ -42,6 +42,12 @@ takes over the shared server port from a running 0.8.0 server.
   including Hermes's hook approvals. When no registration uses the 0.8.0 Node copy any more, it
   deletes that copy from `~/.ide-agent-tabs/mcp/`.
 - Codex tabs in VS Code and JetBrains IDEs start their Agent Tabs server with Python.
+- Claude Code tabs run their agent hooks from `~/.ide-agent-tabs/mcp/claude-tab-settings.json`, which the
+  server and the IDEs pass with `--settings` to every profile that runs `claude`, an `agents.json`
+  override of `claude` included. The hooks start the recorded Python interpreter directly instead of
+  through Git Bash, and the plugin's own agent hooks exit at once in such a tab.
+- The first Claude Code session writes the server copy in `~/.ide-agent-tabs/mcp/py/`, even when no other
+  agent CLI is registered, because Claude Code tabs run their hooks from it.
 
 ## 0.8.0
 

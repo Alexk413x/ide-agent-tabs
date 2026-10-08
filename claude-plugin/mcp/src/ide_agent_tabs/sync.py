@@ -12,8 +12,8 @@ from .editor_clis import find_editor_clis, resolve_editor_cli
 from .files import ensure_private_dir, mtime_ms, read_text_if_exists, remove_file, write_atomically, write_new_private_file
 from .jsjson import parse, stringify
 from .parallel import run_all
-from .register import RegisterContext, migrate_registrations, refresh_copy
-from .server_copy import bundled_build, copy_root, old_copy_exists, read_python, remove_old_copy
+from .register import RegisterContext, migrate_registrations, refresh_copy, tab_settings_file, tab_settings_text
+from .server_copy import bundled_build, old_copy_exists, read_python, remove_old_copy
 from .version import compare_versions
 
 EXTENSION_ID = "alexk413x.ide-agent-tabs"
@@ -229,11 +229,13 @@ def _sync_editors(ctx: RegisterContext, bundle: Bundle, errors: list[str]) -> tu
 
 
 def _copy_needs(ctx: RegisterContext, previous: dict[str, Any] | None) -> tuple[str | None, bool]:
-    if not os.path.isdir(copy_root(ctx.home)):
-        return None, False
     build = bundled_build(ctx.source)
     server = None if previous is not None and previous.get("server") == build and not old_copy_exists(ctx.home) else build
-    python_changed = (previous or {}).get("python") != ctx.python or read_python(ctx.home) != ctx.python
+    python_changed = (
+        (previous or {}).get("python") != ctx.python
+        or read_python(ctx.home) != ctx.python
+        or read_text_if_exists(tab_settings_file(ctx)) != tab_settings_text(ctx)
+    )
     return server, python_changed
 
 

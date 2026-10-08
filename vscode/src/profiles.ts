@@ -80,6 +80,7 @@ export interface LaunchContext {
   windows: boolean;
   searchPath: string;
   python?: readonly string[];
+  claudeSettings?: string;
 }
 
 function isCmdShim(command: string, searchPath: string): boolean {
@@ -115,8 +116,9 @@ function withoutPrompt(p: AgentProfile, prompt: string | undefined): AgentProfil
 
 export function planLaunch(profile: AgentProfile, ctx: LaunchContext): AgentLaunch {
   const unplanned = withoutPrompt(profile, ctx.prompt);
-  const p = { ...unplanned, args: withCodexPython(unplanned.args, ctx.python) };
+  const codex = { ...unplanned, args: withCodexPython(unplanned.args, ctx.python) };
   const callerArgs = ctx.args ?? [];
+  const p = { ...codex, args: withClaudeSettings(codex.command, codex.args, callerArgs, ctx.claudeSettings) };
   const callerEnv = ctx.env ?? {};
   if ((ctx.via ?? ctx.setting) === 'ori') {
     const flag = ctx.prompt !== undefined && p.promptFlag !== undefined ? [p.promptFlag] : [];
@@ -165,7 +167,7 @@ export function withCodexPython(args: readonly string[], python: readonly string
   return args.map(a => (a === CODEX_SERVER_ARG ? arg : a));
 }
 
-export function codexPython(home: string, windows: boolean): string[] {
+export function recordedPython(home: string, windows: boolean): string | undefined {
   let python: unknown;
   try {
     python = (JSON.parse(fs.readFileSync(path.join(home, 'mcp', 'python.json'), 'utf8')) as { python?: unknown }).python;
@@ -173,8 +175,35 @@ export function codexPython(home: string, windows: boolean): string[] {
     python = undefined;
   }
   const absolute = windows ? path.win32.isAbsolute : path.posix.isAbsolute;
-  if (typeof python === 'string' && absolute(python) && CODEX_PYTHON_SAFE.test(python) && isFile(python)) return [python];
+  return typeof python === 'string' && absolute(python) && CODEX_PYTHON_SAFE.test(python) && isFile(python) ? python : undefined;
+}
+
+export function codexPython(home: string, windows: boolean): string[] {
+  const python = recordedPython(home, windows);
+  if (python !== undefined) return [python];
   return windows ? ['py', '-3'] : ['python3'];
+}
+
+// Same rules as claude_tab_settings and with_claude_settings in claude-plugin/mcp/src/ide_agent_tabs/profiles.py.
+export const CLAUDE_TAB_SETTINGS_FILE = 'claude-tab-settings.json';
+// The settings path reaches cmd.exe when claude is a .cmd shim, so it may not hold a double quote or a cmd.exe metacharacter.
+const CMD_SAFE_PATH = /^[^"%!^&|<>\x00-\x1f\x7f]+$/;
+const CLAUDE_COMMAND = /^(?:.*[\\/])?claude(?:\.(?:exe|cmd|bat|ps1))?$/i;
+
+export function claudeTabSettings(home: string, windows: boolean): string | undefined {
+  const file = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
+  return recordedPython(home, windows) !== undefined && CMD_SAFE_PATH.test(file) && isFile(file) ? file : undefined;
+}
+
+export function withClaudeSettings(
+  command: string,
+  args: readonly string[],
+  callerArgs: readonly string[],
+  settings: string | undefined,
+): string[] {
+  if (settings === undefined || !CLAUDE_COMMAND.test(command)) return [...args];
+  if ([...args, ...callerArgs].some(a => a === '--settings' || a.startsWith('--settings='))) return [...args];
+  return [...args, '--settings', settings];
 }
 
 function isFile(file: string): boolean {

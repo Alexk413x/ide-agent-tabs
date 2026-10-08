@@ -8,6 +8,8 @@ import {
   AgentProfile,
   AgentSettings,
   BUILTIN_PROFILES,
+  CLAUDE_TAB_SETTINGS_FILE,
+  claudeTabSettings,
   CODEX_TAB_ARGS,
   codexPython,
   CONFIG_FILE,
@@ -628,4 +630,45 @@ test('a Codex tab runs its server on the interpreter python.json records, or on 
   assert.deepEqual(withCodexPython(CODEX_TAB_ARGS, undefined), [...CODEX_TAB_ARGS]);
   const plan = planLaunch(BUILTIN_PROFILES[1]!, { setting: 'direct', ori: null, windows: false, searchPath: '', python: ['/usr/bin/python3'] });
   assert.match(plan.args[2]!, /command = '\/usr\/bin\/python3', args = \['-I'/);
+});
+
+test('a Claude Code tab gets the tab settings file after its profile arguments, unless it brings its own', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-claude-'));
+  const windows = process.platform === 'win32';
+  const settings = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
+  fs.mkdirSync(path.join(home, 'mcp'));
+  assert.equal(claudeTabSettings(home, windows), undefined);
+  fs.writeFileSync(settings, '{}');
+  assert.equal(claudeTabSettings(home, windows), undefined);
+  const python = path.join(home, 'python.exe');
+  fs.writeFileSync(python, '');
+  fs.writeFileSync(path.join(home, 'mcp', 'python.json'), JSON.stringify({ python }));
+  assert.equal(claudeTabSettings(home, windows), settings);
+  fs.rmSync(settings);
+  assert.equal(claudeTabSettings(home, windows), undefined);
+
+  const claude = BUILTIN_PROFILES[0]!;
+  const ctx: LaunchContext = { setting: 'direct', ori: null, windows: false, searchPath: '', prompt: 'hi', claudeSettings: '/h/s.json' };
+  assert.deepEqual(planLaunch(claude, { ...ctx, model: 'opus', args: ['--resume', 'abc'] }).args, [
+    '--settings',
+    '/h/s.json',
+    '--model',
+    'opus',
+    '--resume',
+    'abc',
+  ]);
+  const bypass = { ...claude, args: ['--permission-mode', 'bypassPermissions'] };
+  assert.deepEqual(planLaunch(bypass, ctx).args, ['--permission-mode', 'bypassPermissions', '--settings', '/h/s.json']);
+  for (const command of ['/usr/local/bin/claude', 'C:\\Users\\a b\\.local\\bin\\claude.exe', 'CLAUDE.CMD']) {
+    assert.deepEqual(planLaunch({ ...claude, command }, ctx).args, ['--settings', '/h/s.json'], command);
+  }
+  const ori = planLaunch(claude, { ...ctx, setting: 'ori', ori: { path: '/bin/ori', agents: ['claude'] } });
+  assert.deepEqual([ori.via, ori.args], ['ori', ['claude', '--settings', '/h/s.json']]);
+  for (const name of ['gemini', 'copilot', 'pi']) {
+    assert.ok(!planLaunch(BUILTIN_PROFILES.find(p => p.name === name)!, ctx).args.includes('--settings'), name);
+  }
+  assert.deepEqual(planLaunch({ ...claude, command: 'claude-wrapper' }, ctx).args, []);
+  assert.deepEqual(planLaunch({ ...claude, args: ['--settings=x.json'] }, ctx).args, ['--settings=x.json']);
+  assert.deepEqual(planLaunch(claude, { ...ctx, args: ['--settings', 'y'] }).args, ['--settings', 'y']);
+  assert.deepEqual(planLaunch(claude, { ...ctx, claudeSettings: undefined }).args, []);
 });

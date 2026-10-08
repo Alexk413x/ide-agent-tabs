@@ -3,7 +3,7 @@ echo @'
 # Sourced, not run, by both sh and PowerShell: each hook command in hooks/hooks.json runs `set -- claude <event>` and
 # dot-sources this file. Claude Code runs it in Git Bash or sh, or in PowerShell on Windows without Git Bash. sh reads
 # this part and exits before the PowerShell part, which PowerShell reads after skipping this here-string.
-[ -n "${IDE_AGENT_TABS_ID:-}" ] && [ "$IDE_AGENT_TABS_ID" != "${IDE_AGENT_TABS_MOD:-}" ] || exit 0
+[ -z "${IDE_AGENT_TABS_HOOKS:-}" ] && [ -n "${IDE_AGENT_TABS_ID:-}" ] && [ "$IDE_AGENT_TABS_ID" != "${IDE_AGENT_TABS_MOD:-}" ] || exit 0
 hook="$CLAUDE_PLUGIN_ROOT/mcp/launch/agent_hook.py"
 cache="${IDE_AGENT_TABS_HOME:-$HOME/.ide-agent-tabs}/mcp/hook-python"
 if { read -r python < "$cache"; } 2>/dev/null && [ -f "$python" ]; then
@@ -22,7 +22,7 @@ for name in python3 python; do
 done
 exit 0
 '@ > $null
-if (-not $env:IDE_AGENT_TABS_ID -or $env:IDE_AGENT_TABS_ID -eq $env:IDE_AGENT_TABS_MOD) { exit 0 }
+if ($env:IDE_AGENT_TABS_HOOKS -or -not $env:IDE_AGENT_TABS_ID -or $env:IDE_AGENT_TABS_ID -eq $env:IDE_AGENT_TABS_MOD) { exit 0 }
 $hook = Join-Path $PSScriptRoot 'agent_hook.py'
 $base = if ($env:IDE_AGENT_TABS_HOME) { $env:IDE_AGENT_TABS_HOME } else { Join-Path $HOME '.ide-agent-tabs' }
 $cache = Join-Path (Join-Path $base 'mcp') 'hook-python'
