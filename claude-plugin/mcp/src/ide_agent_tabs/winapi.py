@@ -14,6 +14,7 @@ INVALID_HANDLE_VALUE = -1
 
 @functools.cache
 def kernel32() -> Any:
+    assert sys.platform == "win32"
     import ctypes
     from ctypes import wintypes
 

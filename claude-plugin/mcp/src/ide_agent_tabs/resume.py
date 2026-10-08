@@ -130,7 +130,7 @@ class ResumeDeps(NamedTuple):
     settings: Callable[[], AgentSettings]
     open_tab: Callable[[dict[str, Any]], dict[str, Any]]
     live_host: Callable[[str | None, str | None], str | None]
-    live: Callable[[], list[Mapping[str, Any]]]
+    live: Callable[[], Sequence[Mapping[str, Any]]]
     now: Callable[[], int] = now_ms
 
 

@@ -4,6 +4,7 @@ import contextlib
 import math
 import os
 import re
+import threading
 from typing import Any, Callable
 
 from ..clock import iso, now_ms, parse_iso
@@ -244,3 +245,41 @@ def live_sessions(
             with contextlib.suppress(OSError):
                 remove_file(file)
     return sessions
+
+
+class _SharedRead:
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.value: list[Presence] = []
+        self.error: BaseException | None = None
+
+
+_reads: dict[tuple[Callable[[int], bool], str], _SharedRead] = {}
+_reads_lock = threading.Lock()
+
+
+# The shared server answers many sessions at once, and each call that lists sessions reads every presence
+# file; calls that overlap share one read instead of each reading the folder.
+def join_live_sessions(home: str, alive: Callable[[int], bool], now: float, ended: Ended | None = None) -> list[Presence]:
+    key = (alive, os.path.abspath(home))
+    with _reads_lock:
+        shared = _reads.get(key)
+        owner = shared is None
+        if shared is None:
+            shared = _SharedRead()
+            _reads[key] = shared
+    if not owner:
+        shared.done.wait()
+        if shared.error is not None:
+            raise shared.error
+        return list(shared.value)
+    try:
+        shared.value = live_sessions(home, alive, now, ended)
+    except BaseException as e:
+        shared.error = e
+        raise
+    finally:
+        with _reads_lock:
+            del _reads[key]
+        shared.done.set()
+    return list(shared.value)

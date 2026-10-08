@@ -30,6 +30,7 @@ class Probe(NamedTuple):
 
 @functools.cache
 def _wsa_ioctl() -> Any:
+    assert sys.platform == "win32"
     import ctypes
     from ctypes import wintypes
 
