@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import functools
-import http.client
+import os
 import socket
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple
 
-from ..jsjson import js_ordered, parse
-from .state import SERVICE, ServerState, read_state
+from ..jsjson import js_ordered, parse, stringify
+from ..version import compare_versions
+from .state import SERVICE, ServerState, read_state, read_token
 
 HEALTH_TIMEOUT_MS = 1_000
 POLL_S = 0.05
 STOP_WAIT_MS = 5_000
+START_WAIT_MS = 3_000
 _SIO_TCP_INITIAL_RTO = 0x98000011
 _RTO_UNSPECIFIED_RTT = 0xFFFF
 _RTO_NO_SYN_RETRANSMISSIONS = 0xFE
@@ -30,6 +33,8 @@ class Probe(NamedTuple):
 
 @functools.cache
 def _wsa_ioctl() -> Any:
+    if sys.platform != "win32":
+        return None
     import ctypes
     from ctypes import wintypes
 
@@ -79,28 +84,56 @@ def connect_loopback(port: int, timeout_s: float) -> socket.socket:
     return sock
 
 
+def _read_reply(sock: socket.socket) -> Reply:
+    data = b""
+    head_end = -1
+    length: int | None = None
+    while True:
+        if head_end == -1:
+            head_end = data.find(b"\r\n\r\n")
+            if head_end != -1:
+                for line in data[:head_end].split(b"\r\n")[1:]:
+                    name, _, value = line.partition(b":")
+                    if name.strip().lower() == b"content-length" and value.strip().isdigit():
+                        length = int(value.strip())
+        if head_end != -1 and length is not None and len(data) >= head_end + 4 + length:
+            break
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        data += chunk
+    status_line = data.split(b"\r\n", 1)[0].split(b" ")
+    if head_end == -1 or len(status_line) < 2 or not status_line[0].startswith(b"HTTP/") or not status_line[1].isdigit():
+        raise OSError("not an HTTP reply")
+    body = data[head_end + 4 :]
+    return Reply(int(status_line[1]), (body if length is None else body[:length]).decode("utf-8", "replace"))
+
+
+# http.client pulls in the email package and ssl, which doubles the headers helper's start-up; these requests
+# go only to loopback servers that answer with a Content-Length.
 def request(
     port: int, method: str, route: str, token: str | None = None, timeout_ms: float = HEALTH_TIMEOUT_MS, payload: str = ""
 ) -> Reply | None:
     timeout_s = timeout_ms / 1000
     body = payload.encode("utf-8")
-    headers = {"Host": f"127.0.0.1:{port}", "Content-Length": str(len(body))}
+    lines = [f"{method} {route} HTTP/1.1", f"Host: 127.0.0.1:{port}", f"Content-Length: {len(body)}", "Connection: close"]
     if token:
-        headers["Authorization"] = f"Bearer {token}"
+        lines.append(f"Authorization: Bearer {token}")
     if payload != "":
-        headers["Content-Type"] = "application/json"
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout_s)
+        lines.append("Content-Type: application/json")
     try:
-        conn.sock = connect_loopback(port, timeout_s)
-        conn.request(method, route, body=body, headers=headers)
-        response = conn.getresponse()
-        return Reply(response.status, response.read().decode("utf-8", "replace"))
+        sock = connect_loopback(port, timeout_s)
     except ConnectionRefusedError:
         return None
-    except (OSError, http.client.HTTPException):
+    except OSError:
+        return Reply(0, "")
+    try:
+        sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1") + body)
+        return _read_reply(sock)
+    except OSError:
         return Reply(0, "")
     finally:
-        conn.close()
+        sock.close()
 
 
 def _is_number(value: Any) -> bool:
@@ -152,3 +185,87 @@ def stop_server(home: str, port: int, wait_ms: float = STOP_WAIT_MS) -> dict[str
             return {"stopped": True, "pid": state.pid}
         time.sleep(POLL_S)
     return {"stopped": False, "pid": state.pid, "problem": f"the server still listens on port {port} after {wait_ms / 1000:g} s"}
+
+
+def verified_token(home: str, port: int, health: dict[str, Any]) -> str | None:
+    return None if verified_state(home, port, health) is None else read_token(home)
+
+
+def server_command(launcher: str, port: int, python: str | None = None) -> list[str]:
+    return [python or sys.executable, "-I", "-S", launcher, "--port", str(port)]
+
+
+def start_server(command: Sequence[str], home: str, env: Mapping[str, str] | None = None) -> int | None:
+    from ..terminals.processes import spawn_detached, terminal_environment
+
+    child_env = terminal_environment(os.environ if env is None else env)
+    child_env["IDE_AGENT_TABS_HOME"] = home
+    try:
+        return spawn_detached(list(command), child_env).pid
+    except OSError:
+        return None
+
+
+class Ensured(NamedTuple):
+    started: bool
+    health: dict[str, Any] | None = None
+    token: str | None = None
+    problem: str | None = None
+
+
+# Claude Code caches a 403 as "needs auth" and stops connecting, so no caller sends a request without the
+# token: each one waits for a server it can verify, starting one when nothing listens.
+def ensure_server(
+    command: Sequence[str],
+    port: int,
+    home: str,
+    version: str,
+    wait_ms: float = START_WAIT_MS,
+    env: Mapping[str, str] | None = None,
+) -> Ensured:
+    deadline = time.monotonic() + wait_ms / 1000
+    started = False
+    while True:
+        found = probe(port)
+        other = found.kind == "other" or found.health is None and found.kind == "ours"
+        # A server handing the port to the one this caller started can reset a probe; only a holder seen before
+        # any start counts as another program.
+        if other and not started:
+            return Ensured(started, problem=f"port {port} belongs to another program; set the Agent Tabs server_port option to a free port")
+        health = None if other else found.health
+        stale = health is not None and compare_versions(str(health.get("version")), version) < 0
+        if health is not None and not stale:
+            token = verified_token(home, port, health)
+            if token is not None:
+                return Ensured(started, health, token)
+        if not started and (found.kind == "free" or stale):
+            start_server(command, home, env)
+            started = True
+        if time.monotonic() >= deadline:
+            if health is not None:
+                token = verified_token(home, port, health)
+                if token is not None:
+                    return Ensured(started, health, token)
+                return Ensured(
+                    started,
+                    health,
+                    problem=f"the Agent Tabs server on port {port} (pid {health.get('pid')}) matches no state file in {home}",
+                )
+            return Ensured(started, problem=f"the Agent Tabs server did not start on port {port} within {wait_ms / 1000:g} s")
+        time.sleep(POLL_S)
+
+
+def ask_to_stop(port: int, shutdown_token: str) -> bool:
+    reply = request(port, "POST", "/shutdown", shutdown_token)
+    return reply is not None and reply.status == 200
+
+
+def notify_end(home: str, port: int, pid: int) -> bool:
+    found = probe(port)
+    if found.kind != "ours" or found.health is None:
+        return False
+    token = verified_token(home, port, found.health)
+    if token is None:
+        return False
+    reply = request(port, "POST", "/end", token, HEALTH_TIMEOUT_MS, stringify({"pid": pid}))
+    return reply is not None and reply.status == 200
