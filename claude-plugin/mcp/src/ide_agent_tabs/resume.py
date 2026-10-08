@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Callable, NamedTuple
 
 from .clock import now_ms
@@ -41,6 +40,8 @@ def ago(ms: float) -> str:
 
 
 def _to_fixed_1(value: float) -> str:
+    from decimal import ROUND_HALF_UP, Decimal
+
     return str(Decimal(value).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 

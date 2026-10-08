@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import math
 import os
 import re
@@ -38,6 +37,7 @@ from .sessions import (
     is_model,
     is_session_id,
     join_live_sessions,
+    live_sessions,
     parse_presence,
     presence_path,
     read_presence,
@@ -148,6 +148,8 @@ def folder_slug(folder: str) -> str:
 
 def _suffix_pool(session_id: str) -> str:
     core = re.sub(r"[^0-9a-f]", "", _id_core(session_id).lower())
+    import hashlib
+
     return core + hashlib.sha256(session_id.encode("utf-8", "surrogatepass")).hexdigest()
 
 
@@ -339,7 +341,8 @@ class Messaging:
                 return
             self.scheduler.after(pending.pop(0) / 1000, retry)
 
-        self.scheduler.after(pending.pop(0) / 1000, retry)
+        if pending:
+            self.scheduler.after(pending.pop(0) / 1000, retry)
 
     def _warnings(self) -> dict[str, Any]:
         return {} if self._start_error is None else {"warnings": [f"this session isn't registered: {self._start_error}"]}
@@ -496,7 +499,8 @@ class Messaging:
         if now - self._last_clean < CLEAN_EVERY_MS:
             return
         self._last_clean = now
-        live = join_live_sessions(self.deps.home, self._alive, now, self._ended)
+        # Not joined: a tool call that joined this background scan could miss a session registered after it began.
+        live = live_sessions(self.deps.home, self._alive, now, self._ended)
         clean_store(self.deps.home, {s["id"] for s in live}, now)
 
     def _clean_later(self) -> None:

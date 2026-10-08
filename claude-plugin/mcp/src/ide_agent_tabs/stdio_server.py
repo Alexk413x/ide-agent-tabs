@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import signal
 import sys
 import threading
 from collections.abc import Mapping
@@ -177,7 +176,7 @@ class StdioServer:
             if cancel is not None:
                 cancel.set()
 
-    def serve(self, fd: int = 0) -> None:
+    def serve(self, fd: int = 0, after_first: Callable[[], None] | None = None) -> None:
         buffer = b""
         while True:
             try:
@@ -193,6 +192,9 @@ class StdioServer:
                     break
                 line, buffer = buffer[:end], buffer[end + 1 :]
                 self.receive_line(line)
+                if after_first is not None:
+                    after_first()
+                    after_first = None
 
 
 def _log(message: str) -> None:
@@ -209,7 +211,17 @@ class Boot:
         self._client_done.set()
         self._deps: ToolDeps | None = None
         self._error: BaseException | None = None
+        self._started = False
+        self._start_lock = threading.Lock()
         self.messaging: Any = None
+
+    # The first reply goes out before this starts: the service's imports would otherwise hold the GIL while
+    # the client waits for initialize.
+    def start(self) -> None:
+        with self._start_lock:
+            if self._started:
+                return
+            self._started = True
         threading.Thread(target=self._run, name="agent-tabs-boot", daemon=True).start()
 
     def _run(self) -> None:
@@ -257,6 +269,7 @@ class Boot:
         return ToolDeps(service, jev, messaging, handoffs, resumes)
 
     def deps(self) -> ToolDeps:
+        self.start()
         self._done.wait()
         if self._deps is None:
             raise RuntimeError(f"the server did not start: {self._error}")
@@ -277,7 +290,8 @@ class Boot:
         threading.Thread(target=run, name="agent-tabs-client", daemon=True).start()
 
     def wait(self, timeout: float) -> None:
-        self._done.wait(timeout)
+        if self._started:
+            self._done.wait(timeout)
 
 
 def _quietly(work: Callable[[], object]) -> None:
@@ -320,11 +334,17 @@ def main() -> None:
     stopper = Stopper(boot)
     tools = Tools(boot.deps, settings.enabled)
     server = StdioServer(tools, Output(sys.stdout.buffer), boot.initialized)
-    for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
-        number = getattr(signal, name, None)
-        if number is not None:
-            with contextlib.suppress(OSError, ValueError):
-                signal.signal(number, lambda *_: stopper.stop())
+
+    def after_first() -> None:
+        import signal
+
+        for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
+            number = getattr(signal, name, None)
+            if number is not None:
+                with contextlib.suppress(OSError, ValueError):
+                    signal.signal(number, lambda *_: stopper.stop())
+        boot.start()
+
     # Windows sends no SIGTERM to a child; a client ends the server by closing its stdin.
-    server.serve()
+    server.serve(after_first=after_first)
     stopper.stop()

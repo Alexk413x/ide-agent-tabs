@@ -4,13 +4,13 @@ import json
 import os
 import threading
 from collections.abc import Mapping
-from typing import Any, Callable, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
-from .jev.inputs import ABSENT, INPUTS, Schema
 from .jsjson import js_round, stringify
-from .messaging.history import Who
-from .messaging.sessions import agent_from_client
-from .tool_input import compile_schema, issues_text, parse_args
+
+if TYPE_CHECKING:
+    from .jev.inputs import Schema
+    from .messaging.history import Who
 
 SERVER_NAME = "ide-agent-tabs"
 HOOK_TOOL = "agent_tabs_hook"
@@ -50,6 +50,8 @@ def server_instructions(jev: bool) -> str:
 
 
 def tools_for(client_name: str | None, jev: bool) -> list[dict[str, Any]]:
+    from .messaging.sessions import agent_from_client
+
     agent = agent_from_client(client_name)
     only = catalog().only
     return [t for t in catalog().tools if (jev or not t["name"].startswith("jev_")) and (t["name"] not in only or agent in only[t["name"]])]
@@ -77,6 +79,9 @@ _schemas_lock = threading.Lock()
 
 
 def _schema(name: str, tool: Mapping[str, Any]) -> Schema | None:
+    from .jev.inputs import INPUTS
+    from .tool_input import compile_schema
+
     with _schemas_lock:
         if name not in _schemas:
             if name in INPUTS:
@@ -95,6 +100,8 @@ def need(op: str, value: Any, field: str) -> Any:
 
 
 def _who(given: Mapping[str, Any]) -> Who:
+    from .messaging.history import Who
+
     return Who(given.get("session"), list(given.get("names") or []))
 
 
@@ -118,6 +125,9 @@ class Tools:
         return tools_for(client_name, self.jev_enabled)
 
     def call(self, client_name: str | None, name: str, arguments: Any, call: Call) -> dict[str, Any]:
+        from .jev.inputs import ABSENT
+        from .tool_input import issues_text, parse_args
+
         try:
             tool = next((t for t in self.list(client_name) if t["name"] == name), None)
             if tool is None:
