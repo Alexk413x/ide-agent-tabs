@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
-from .jsjson import js_trim
+from .jsjson import trim
 
 
 class IdeEntry(NamedTuple):
@@ -67,7 +67,7 @@ def normalize_ide_name(text: str) -> str:
 
 
 def matches_product(entry: IdeEntry, product: str) -> bool:
-    return entry.product.search(js_trim(product)) is not None
+    return entry.product.search(trim(product)) is not None
 
 
 def find_ide_entry(name: str) -> IdeEntry | None:

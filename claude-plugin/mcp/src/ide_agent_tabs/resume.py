@@ -7,7 +7,7 @@ from typing import Any, Callable, NamedTuple
 
 from .clock import now_ms
 from .closed import ClosedSession, ended_ms, read_closed, resumable_id
-from .jsjson import JS_WHITESPACE, js_round, number, utf16_len, utf16_slice
+from .jsjson import JS_SPACE, js_round, number, utf16_len, utf16_slice
 from .launch_plan import is_model
 from .profiles import ALLOW_RESUME_KEY, CONFIG_FILE, AgentSettings
 from .service import ToolError
@@ -115,7 +115,7 @@ def closed_listing(records: Sequence[ClosedSession], now: float) -> str:
     widths = [max(utf16_len(h), *(utf16_len(c[i]) for c in rows)) for i, h in enumerate(header)]
 
     def line(c: list[str]) -> str:
-        return ("  " + "  ".join(_pad_end(v, widths[i]) for i, v in enumerate(c))).rstrip(JS_WHITESPACE)
+        return ("  " + "  ".join(_pad_end(v, widths[i]) for i, v in enumerate(c))).rstrip(JS_SPACE)
 
     folders: list[str] = []
     for r in records:

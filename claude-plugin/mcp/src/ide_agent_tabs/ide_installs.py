@@ -11,7 +11,7 @@ from typing import Any, Callable, NamedTuple
 
 from .editor_clis import cli_invocation, env_value, find_editor_clis
 from .ide_catalog import IDE_CATALOG, entry_for_product_info
-from .jsjson import CONTROL, js_trim, parse
+from .jsjson import CONTROL, parse, trim
 from .jspath import posix_resolve, win32_resolve
 from .terminals.processes import spawn_detached, terminal_environment
 from .version import compare_versions
@@ -99,7 +99,7 @@ class ProductInfo(NamedTuple):
 
 
 def _text(value: Any) -> str | None:
-    return value if isinstance(value, str) and js_trim(value) != "" else None
+    return value if isinstance(value, str) and trim(value) != "" else None
 
 
 def parse_product_info(text: str | None) -> ProductInfo | None:

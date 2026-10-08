@@ -5,7 +5,8 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any, NamedTuple
 
-from .jsjson import entries, is_finite, is_number, js_trim, parse, utf16_len
+from .jev.settings import JEV_OFF, JevSettings, parse_jev_settings
+from .jsjson import entries, is_finite, parse, trim, utf16_len
 from .jspath import posix_is_absolute, win32_is_absolute
 
 DEFAULT_AGENT = "claude"
@@ -116,7 +117,7 @@ def is_reserved_env(name: str) -> bool:
 
 
 def _is_blank(s: str) -> bool:
-    return js_trim(s) == ""
+    return trim(s) == ""
 
 
 def check_env(env: dict[str, Any], field_name: str) -> None:
@@ -226,48 +227,7 @@ def read_default_agent(text: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-# Track B ports jev/settings.ts; this copy of its parser stands in until P7 imports theirs.
-JEV_MODEL = "jev-latest"
-DEFAULT_SURE = 0.85
-DEFAULT_PRICE_PER_MILLION_INPUT = 0.042
-_TIER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}(:[^\s:]{1,128})?")
-JEV_OFF: dict[str, Any] = {"enabled": False, "sure": DEFAULT_SURE, "tiers": {}, "pricePerMillionInput": DEFAULT_PRICE_PER_MILLION_INPUT}
-
-
-def parse_jev_settings(value: Any) -> dict[str, Any]:
-    if value is None:
-        return dict(JEV_OFF, tiers={})
-    if not isinstance(value, dict):
-        raise TypeError("jev must be an object")
-    enabled = value.get("enabled")
-    sure = value.get("sure")
-    price = value.get("pricePerMillionInput")
-    if enabled is not None and not isinstance(enabled, bool):
-        raise ValueError("jev.enabled must be true or false")
-    if sure is not None and not (is_number(sure) and 0 < sure <= 1):
-        raise ValueError("jev.sure must be a number above 0 and at most 1")
-    if price is not None and not (is_finite(price) and price >= 0):
-        raise ValueError("jev.pricePerMillionInput must be a number of dollars, 0 or more")
-    tiers: dict[str, str] = {}
-    raw = value.get("tiers")
-    if raw is not None:
-        if not isinstance(raw, dict):
-            raise ValueError("jev.tiers must be an object of tier name to description")
-        for name, text in entries(raw):
-            if not _TIER_NAME.fullmatch(name):
-                raise ValueError(f"jev.tiers name '{name}' must be <profile> or <profile>:<model>")
-            if not isinstance(text, str) or js_trim(text) == "":
-                raise ValueError(f"jev.tiers.{name} must be a description")
-            tiers[name] = text
-    return {
-        "enabled": enabled is True,
-        "sure": sure if sure is not None else DEFAULT_SURE,
-        "tiers": tiers,
-        "pricePerMillionInput": price if price is not None else DEFAULT_PRICE_PER_MILLION_INPUT,
-    }
-
-
-def read_jev_settings(text: str) -> dict[str, Any]:
+def read_jev_settings(text: str) -> JevSettings:
     return parse_jev_settings(parse_json_object(text, CONFIG_FILE).get("jev"))
 
 
@@ -362,7 +322,7 @@ class AgentSettings(NamedTuple):
     profiles: list[AgentProfile]
     default_agent: AgentProfile
     terminal: TerminalSettings
-    jev: dict[str, Any]
+    jev: JevSettings
     warnings: list[str]
 
 
@@ -381,7 +341,7 @@ def resolve_settings(
             warnings.append(f"Ignoring {agents_path} and using the built-in agent profiles: {e}")
     configured: str | None = None
     terminal = TerminalSettings()
-    jev = parse_jev_settings(None)
+    jev = JEV_OFF
     if config_text is not None:
         readable = True
         try:

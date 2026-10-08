@@ -10,7 +10,7 @@ from typing import Any, Callable, NamedTuple
 
 from .. import winapi
 from ..clock import parse_iso
-from ..jsjson import js_trim
+from ..jsjson import trim
 from ..jspath import win32_is_absolute, win32_normalize
 from ..parallel import run_all
 from ..processes import run
@@ -38,7 +38,7 @@ class ShellProbe(NamedTuple):
 def _env_value(env: Mapping[str, str], name: str) -> str | None:
     key = next((k for k in env if k.upper() == name.upper()), None)
     value = env.get(key) if key is not None else None
-    return value if value and js_trim(value) != "" else None
+    return value if value and trim(value) != "" else None
 
 
 class _Locations(NamedTuple):
@@ -116,7 +116,7 @@ def _classify(file: str, loc: _Locations, probe: ShellProbe) -> _Candidate:
 
 
 def _js_number(text: str) -> float:
-    text = js_trim(text)
+    text = trim(text)
     if text == "":
         return 0
     try:
@@ -169,7 +169,7 @@ def _newest_store_package(loc: _Locations, probe: ShellProbe, preview: bool) -> 
 
 
 def _path_dirs(env: Mapping[str, str]) -> list[str]:
-    return [d for d in (js_trim(raw).strip('"') for raw in (_env_value(env, "PATH") or "").split(";")) if d != ""]
+    return [d for d in (trim(raw).strip('"') for raw in (_env_value(env, "PATH") or "").split(";")) if d != ""]
 
 
 def candidate_paths(probe: ShellProbe) -> list[_Candidate]:
@@ -213,8 +213,8 @@ def candidate_paths(probe: ShellProbe) -> list[_Candidate]:
 
 
 def parse_version_output(stdout: str) -> str | None:
-    lines = re.split(r"\r?\n", js_trim(stdout))
-    line = js_trim(lines[0]) if lines else ""
+    lines = re.split(r"\r?\n", trim(stdout))
+    line = trim(lines[0]) if lines else ""
     return line if _VERSION.fullmatch(line) else None
 
 

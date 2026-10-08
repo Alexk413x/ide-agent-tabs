@@ -491,7 +491,9 @@ class CliTest(unittest.TestCase):
         self.assertEqual(cli_list_ides(["extra"], out, err), 1)
         self.assertEqual(
             json.loads(err.getvalue()),
-            {"error": "list-ides takes no arguments. Usage: agent-tabs list-ides | jev <subcommand> | server status|stop [--port <port>]"},
+            {
+                "error": "list-ides takes no arguments. Usage: agent-tabs list-ides | jev <status|ask|choose|check|rank|route> | server status|stop [--port <port>]"
+            },
         )
         self.assertEqual(out.getvalue(), b"")
 

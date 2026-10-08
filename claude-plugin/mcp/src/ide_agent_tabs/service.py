@@ -661,7 +661,7 @@ class Service:
     # stay unknown and never be woken. It waits at its prompt once the CLI has had FRESH_TAB_START_MS to start.
     def _mark_opened(self, tab_id: Any, host: str, fresh: bool, launch: dict[str, Any]) -> None:
         presence = self.deps.presence
-        from .closed import is_session_id
+        from .messaging.sessions import is_session_id
 
         if presence is None or not isinstance(tab_id, str) or not is_session_id(tab_id):
             return

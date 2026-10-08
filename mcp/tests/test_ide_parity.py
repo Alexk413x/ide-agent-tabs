@@ -56,7 +56,7 @@ def settings(agents: str | None, config: str | None) -> dict[str, Any]:
         "ideStartTimeoutSec": t.ide_start_timeout_sec,
         "preferredTerminal": t.preferred_terminal,
         "shell": t.shell,
-        "jev": s.jev,
+        "jev": {"enabled": s.jev.enabled, "sure": s.jev.sure, "tiers": s.jev.tiers, "pricePerMillionInput": s.jev.price_per_million_input},
         "warnings": s.warnings,
     }
 

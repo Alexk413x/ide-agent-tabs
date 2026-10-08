@@ -4,7 +4,7 @@ import os
 from typing import Any, Callable
 
 from .files import file_lock, read_text_if_exists, write_atomically
-from .jsjson import is_number, js_trim, parse, stringify
+from .jsjson import is_number, parse, stringify, trim
 from .terminals.driver import TerminalTab
 
 TABS_FILE = "terminal-tabs.json"
@@ -22,7 +22,7 @@ def _is_tab(t: Any) -> bool:
 
 
 def parse_tabs(text: str | None) -> list[TerminalTab]:
-    if text is None or js_trim(text) == "":
+    if text is None or trim(text) == "":
         return []
     try:
         value = parse(text)

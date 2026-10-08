@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from ..clock import now_ms
 from ..files import read_bytes
 from ..installed import find_on_path
-from ..jsjson import js_trim
+from ..jsjson import trim
 from ..processes import CREATE_BREAKAWAY_FROM_JOB, detached_flags, pid_alive, run
 from .driver import TerminalTab
 
@@ -90,7 +90,7 @@ def read_pid(file: str | None) -> int | None:
     if not file:
         return None
     try:
-        text = js_trim(read_bytes(file).decode("utf-8", "replace"))
+        text = trim(read_bytes(file).decode("utf-8", "replace"))
     except OSError:
         return None
     if not text.isdigit() or not text.isascii():
@@ -100,7 +100,7 @@ def read_pid(file: str | None) -> int | None:
 
 
 def is_shell_name(comm: str) -> bool:
-    name = posixpath.basename(js_trim(comm))
+    name = posixpath.basename(trim(comm))
     return (name.removeprefix("-")) in _SHELL_NAMES
 
 

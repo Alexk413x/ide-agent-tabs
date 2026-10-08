@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, NamedTuple
 
-from .jsjson import js_trim, utf16_len
+from .jsjson import trim, utf16_len
 from .jspath import is_absolute, normalize
 from .launch_plan import MODEL_SOURCE, is_model
 from .profiles import MAX_ENTRIES, MAX_PROMPT_CHARS, ConfigError, check_env
@@ -33,7 +33,7 @@ def _is_directory(p: str) -> bool:
 
 def validate_open(given: dict[str, Any], is_directory: Callable[[str], bool] = _is_directory) -> OpenRequest:
     folder = given.get("path")
-    if not isinstance(folder, str) or js_trim(folder) == "":
+    if not isinstance(folder, str) or trim(folder) == "":
         raise ConfigError("path is required")
     if not is_absolute(folder):
         raise ConfigError("path must be absolute")
@@ -58,9 +58,9 @@ def validate_open(given: dict[str, Any], is_directory: Callable[[str], bool] = _
     model = given.get("model")
     via = given.get("via")
     focus = given.get("focus")
-    if agent is not None and js_trim(agent) == "":
+    if agent is not None and trim(agent) == "":
         raise ConfigError("agent must not be blank")
-    if ide is not None and js_trim(ide) == "":
+    if ide is not None and trim(ide) == "":
         raise ConfigError("ide must not be blank")
     if model is not None and not is_model(model):
         raise ConfigError(f"model must match {MODEL_SOURCE}")
@@ -73,7 +73,7 @@ def validate_open(given: dict[str, Any], is_directory: Callable[[str], bool] = _
         args=args,
         env=env,
         agent=agent,
-        prompt=prompt if prompt is not None and js_trim(prompt) != "" else None,
+        prompt=prompt if prompt is not None and trim(prompt) != "" else None,
         ide=ide,
         model=model,
         via=via,

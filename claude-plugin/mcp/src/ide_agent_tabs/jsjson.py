@@ -171,12 +171,7 @@ def well_formed(text: str) -> str:
     return _units(text).decode("utf-16-le", "replace")
 
 
-JS_WHITESPACE = "\t\n\v\f\r                  　﻿"
 CONTROL = re.compile("[\x00-\x1f\x7f-\x9f]")
-
-
-def js_trim(text: str) -> str:
-    return text.strip(JS_WHITESPACE)
 
 
 def is_number(value: Any) -> bool:
@@ -197,10 +192,6 @@ def is_safe_integer(value: Any) -> bool:
 
 def entries(obj: dict[Any, Any]) -> list[tuple[str, Any]]:
     return _ordered_keys(obj)
-
-
-def js_object(obj: dict[Any, Any]) -> dict[str, Any]:
-    return dict(_ordered_keys(obj))
 
 
 def js_string(value: Any) -> str:

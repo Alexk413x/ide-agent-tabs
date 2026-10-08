@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from .jsjson import js_trim
+from .jsjson import trim
 from .jspath import is_absolute
 
 WINDOWS_EXTENSIONS = (".exe", ".cmd", ".bat", ".ps1")
@@ -21,7 +21,7 @@ def exists(file: str) -> bool:
 def _path_dirs(path_var: str) -> list[str]:
     dirs: list[str] = []
     for raw in path_var.split(os.pathsep):
-        folder = js_trim(raw).strip('"')
+        folder = trim(raw).strip('"')
         if folder:
             dirs.append(folder)
     return dirs

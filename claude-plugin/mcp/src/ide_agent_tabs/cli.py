@@ -8,6 +8,7 @@ from .jsjson import stringify
 from .processes import utf8_stdio
 
 COMMANDS: dict[str, str] = {
+    "list-ides": "ide_agent_tabs.list_ides_cli",
     "jev": "ide_agent_tabs.jev.cli",
     "server": "ide_agent_tabs.server_cli",
 }
@@ -23,4 +24,9 @@ def main(argv: Sequence[str]) -> int:
     if not argv or argv[0] not in COMMANDS:
         sys.stderr.write(stringify({"error": usage()}) + "\n")
         return 2
-    return importlib.import_module(COMMANDS[argv[0]]).main(list(argv[1:]))
+    module = importlib.import_module(COMMANDS[argv[0]])
+    if argv[0] == "jev":
+        from .list_ides_cli import agent_profiles
+
+        return module.main(list(argv[1:]), profiles=agent_profiles)
+    return module.main(list(argv[1:]))

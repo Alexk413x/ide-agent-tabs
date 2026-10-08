@@ -6,7 +6,7 @@ import time
 import unicodedata
 from typing import NamedTuple
 
-from ..jsjson import CONTROL, js_trim, stringify, utf16_len
+from ..jsjson import CONTROL, stringify, trim, utf16_len
 
 LAUNCHER_SH = "agent-launch.sh"
 LAUNCHER_FISH = "agent-launch.fish"
@@ -94,8 +94,8 @@ def _without_other(label: str) -> str:
 
 
 def tab_title(label: str) -> str:
-    collapsed = js_trim(_SPACES.sub(" ", _without_other(label)))
-    clean = js_trim(collapsed[:_TITLE_MAX])
+    collapsed = trim(_SPACES.sub(" ", _without_other(label)))
+    clean = trim(collapsed[:_TITLE_MAX])
     return clean or "Agent"
 
 

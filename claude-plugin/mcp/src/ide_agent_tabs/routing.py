@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
-from .jsjson import js_trim
+from .jsjson import trim
 from .jspath import posix_resolve, win32_resolve
 
 
@@ -42,7 +42,7 @@ def _segments(p: str, is_windows: bool) -> list[str]:
 
 
 def project_depth(base: str, target: str, is_windows: bool) -> int | None:
-    if js_trim(base) == "":
+    if trim(base) == "":
         return None
     b = _segments(base, is_windows)
     t = _segments(target, is_windows)

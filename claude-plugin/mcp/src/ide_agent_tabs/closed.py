@@ -7,15 +7,14 @@ from typing import Any, NamedTuple
 
 from .clock import iso, now_ms, parse_iso
 from .files import read_text_if_exists, remove_stale_files, write_atomically
-from .jsjson import is_finite, is_number, is_safe_integer, js_trim, parse, stringify, utf16_len, utf16_slice
+from .jsjson import is_finite, is_number, is_safe_integer, parse, stringify, trim, utf16_len, utf16_slice
+from .messaging.sessions import VIAS, is_session_id
+from .messaging.store import KEEP_MS
 from .profiles import BUILTIN_PROFILES
 from .winapi import open_shared_read
 
 CLOSED_DIR = "history"
-# Same as the message store's KEEP_MS and the presence files' session id rule; P7 imports both from there.
-CLOSED_KEEP_MS = 7 * 24 * 60 * 60 * 1000
-SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
-VIAS = ("ori", "direct")
+CLOSED_KEEP_MS = KEEP_MS
 PREVIEW_CHARS = 120
 _TAIL_BYTES = 2 * 1024 * 1024
 _CODEX_DAYS_SEARCHED = 31
@@ -43,10 +42,6 @@ class Usage(NamedTuple):
 _NO_USAGE = Usage(False, None, None, None)
 
 
-def is_session_id(value: str) -> bool:
-    return SESSION_ID.fullmatch(value) is not None
-
-
 def transcript_dirs(env: Mapping[str, str]) -> TranscriptDirs:
     home = os.path.expanduser("~")
     return TranscriptDirs(
@@ -72,7 +67,7 @@ def label_of(agent: str) -> str:
 
 
 def preview_of(text: str) -> str | None:
-    line = next((t for t in (js_trim(raw) for raw in _LINES.split(text)) if t != ""), None)
+    line = next((t for t in (trim(raw) for raw in _LINES.split(text)) if t != ""), None)
     if line is None:
         return None
     return f"{utf16_slice(line, 0, PREVIEW_CHARS - 1)}…" if utf16_len(line) > PREVIEW_CHARS else line
@@ -89,7 +84,7 @@ def _tail_lines(file: str) -> list[str] | None:
         return None
     if length < size:
         lines.pop(0)
-    return [line for line in lines if js_trim(line) != ""]
+    return [line for line in lines if trim(line) != ""]
 
 
 def _json(line: str) -> dict[str, Any] | None:
