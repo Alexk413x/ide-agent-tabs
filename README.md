@@ -25,7 +25,7 @@ the new plugin as a normal plugin update.
 
 - Windows, macOS or Linux. Windows is tested, Linux is tested in WSL, and macOS is tested with tmux
   only.
-- Claude Code.
+- Claude Code, at a version that speaks MCP 2026-07-28 over HTTP. Tested with 2.1.293.
 - Node.js 22.13 or later. Messaging between sessions uses Node's built-in SQLite.
 - An IDE: IntelliJ IDEA, Android Studio or another JetBrains IDE at build 262.10315 or later (2026.2.2),
   or VS Code 1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium, Antigravity, Kiro,
@@ -47,6 +47,9 @@ The plugin needs a computer with IDEs or a terminal, and agent CLIs, that it can
 | Cowork, local session in the desktop app | The MCP server runs on your computer, so opening, listing and closing tabs, messaging and the Jev tools reach your IDEs and terminals. `delegate`, `setup` and `update` run their shell steps in Cowork's Linux VM, which has no IDE and may lack the agent CLIs. |
 | claude.ai chat, cloud Cowork | Nothing. These surfaces don't run the local MCP server or the hooks, and have no local shell. |
 
+Claude Code sessions share one local MCP server, at `127.0.0.1:47828` by default. If another program
+uses that port, set the plugin's `server_port` option to a free port and restart Claude Code.
+
 Where local Cowork runs a plugin hook is not documented. The `SessionStart` sync always exits 0, and
 the messaging hooks do nothing outside an agent tab, so a hook that runs in the VM changes nothing.
 
@@ -56,7 +59,7 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 |---|---|---|
 | JetBrains plugin | [`jetbrains/`](jetbrains/) | Adds the **New Agent Tab** button and a local HTTP API to IntelliJ IDEA, Android Studio and other JetBrains IDEs. |
 | VS Code extension | [`vscode/`](vscode/) | Adds the same button and API to VS Code and editors built on it. |
-| MCP server | [`mcp/`](mcp/) | Gives an agent tools to list IDEs, to open, list and close tabs, to message other sessions, and to hand its work to a new tab. |
+| MCP server | [`mcp/`](mcp/) | Gives an agent tools to open, list and close tabs, to message other sessions, and to hand its work to a new tab. One shared server serves every Claude Code session; other agent CLIs run it over stdio. |
 | Claude Code plugin | [`claude-plugin/`](claude-plugin/) | Bundles the MCP server, the skills and the IDE extensions. |
 
 ## Models, Ori and handoff

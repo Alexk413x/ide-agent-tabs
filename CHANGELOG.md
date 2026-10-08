@@ -4,6 +4,10 @@ Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/p
 `mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
 `ide-agent-tabs--v<version>`.
 
+## 0.8.0
+
+Plugin and MCP server 0.8.0.
+
 ## 0.7.0
 
 Plugin and MCP server 0.7.0. The IDE packages don't change.

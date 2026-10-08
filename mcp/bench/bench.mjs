@@ -103,9 +103,9 @@ class StdioSession {
 
 const keepAlive = new http.Agent({ keepAlive: true, maxSockets: 256 });
 
-function post(route, headers, body) {
+function post(route, headers, body, agent = keepAlive) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, path: route, method: 'POST', agent: keepAlive, headers: { ...headers, 'content-length': Buffer.byteLength(body) } }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port, path: route, method: 'POST', agent, headers: { ...headers, 'content-length': Buffer.byteLength(body) } }, (res) => {
       let text = '';
       res.setEncoding('utf8');
       res.on('data', (c) => (text += c));
@@ -422,11 +422,9 @@ async function coldstarts() {
     const out = execFileSync(process.execPath, [helper], { env: baseEnv(home, { CLAUDE_CODE_MCP_SERVER_URL: `http://127.0.0.1:${port}/mcp` }), encoding: 'utf8', windowsHide: true });
     const headers = JSON.parse(out);
     if (!headers.Authorization) noToken++;
-    const res = await fetch(`http://127.0.0.1:${port}/mcp`, {
-      method: 'POST',
-      headers: { ...headers, 'content-type': 'application/json', accept: 'application/json', 'mcp-protocol-version': PROTOCOL, 'mcp-method': 'server/discover' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/discover', params: { _meta: { 'io.modelcontextprotocol/protocolVersion': PROTOCOL, 'io.modelcontextprotocol/clientCapabilities': {} } } }),
-    });
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'server/discover', params: { _meta: { 'io.modelcontextprotocol/protocolVersion': PROTOCOL, 'io.modelcontextprotocol/clientCapabilities': {} } } });
+    const res = await post('/mcp', { ...headers, host: `127.0.0.1:${port}`, 'content-type': 'application/json', accept: 'application/json', 'mcp-protocol-version': PROTOCOL, 'mcp-method': 'server/discover' }, body, false);
+    if (res.status !== 200) console.error(`run ${i}: status ${res.status} ${res.body.slice(0, 200)}`);
     if (res.status === 403) forbidden++;
     times.push(performance.now() - t);
     const h = await health();
