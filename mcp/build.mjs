@@ -13,7 +13,8 @@ for (const name of existsSync(dist) ? readdirSync(dist) : []) {
   if (name !== 'ide') rmSync(path.join(dist, name), { recursive: true, force: true });
 }
 mkdirSync(path.join(dist, 'launch'), { recursive: true });
-rmSync(helperDir, { recursive: true, force: true });
+// The Python launchers live next to the bundled headers helper, so only the helper is replaced.
+rmSync(path.join(helperDir, 'headers.mjs'), { force: true });
 mkdirSync(helperDir, { recursive: true });
 
 const common = {
