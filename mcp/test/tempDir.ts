@@ -8,7 +8,12 @@ const dirs: string[] = [];
 
 after(async () => {
   await closeAllDbs();
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  for (const dir of dirs) {
+    // Windows can refuse the delete (EPERM) while a closing handle lingers; a leftover temp folder must not fail the run.
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    } catch {}
+  }
 });
 
 export function tempDir(prefix: string): string {
