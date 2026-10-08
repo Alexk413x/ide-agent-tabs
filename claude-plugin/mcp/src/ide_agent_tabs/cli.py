@@ -11,6 +11,7 @@ COMMANDS: dict[str, str] = {
     "list-ides": "ide_agent_tabs.list_ides_cli",
     "jev": "ide_agent_tabs.jev.cli",
     "server": "ide_agent_tabs.server_cli",
+    "sync-ides": "ide_agent_tabs.sync_cli",
 }
 
 

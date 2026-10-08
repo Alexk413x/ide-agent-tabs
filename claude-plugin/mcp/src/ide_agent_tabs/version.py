@@ -4,17 +4,23 @@ import json
 import os
 import re
 
-_PLUGIN_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".claude-plugin", "plugin.json")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PLUGIN_JSON = os.path.join(_HERE, "..", "..", "..", ".claude-plugin", "plugin.json")
+# The server copy in ~/.ide-agent-tabs/mcp/py/<build>/ has no plugin.json; its version.json records the version.
+_COPY_JSON = os.path.join(_HERE, "..", "..", "version.json")
 _LEADING_INT = re.compile(r"\s*[+-]?\d+")
 
 
 def _read_version() -> str:
-    try:
-        with open(_PLUGIN_JSON, encoding="utf-8") as f:
-            version = json.load(f).get("version")
-    except (OSError, ValueError, AttributeError):
-        return "0"
-    return version if isinstance(version, str) else "0"
+    for file in (_PLUGIN_JSON, _COPY_JSON):
+        try:
+            with open(file, encoding="utf-8") as f:
+                version = json.load(f).get("version")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(version, str):
+            return version
+    return "0"
 
 
 PACKAGE_VERSION = _read_version()

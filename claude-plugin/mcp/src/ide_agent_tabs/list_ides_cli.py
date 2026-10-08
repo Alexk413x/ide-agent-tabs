@@ -24,6 +24,7 @@ def scripts_dir() -> str:
     candidates = [
         os.path.join(_PACKAGE, "launch"),
         os.path.join(os.path.dirname(_PACKAGE), "launch"),
+        os.path.join(os.path.dirname(os.path.dirname(_PACKAGE)), "launch"),
         os.path.join(_PLUGIN, "dist", "launch"),
     ]
     return next((d for d in candidates if os.path.exists(os.path.join(d, LAUNCHER_PS1))), candidates[0])
