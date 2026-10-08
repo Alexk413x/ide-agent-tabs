@@ -12,7 +12,10 @@ const skipTests = process.argv.includes('--skip-tests');
 const skipIde = process.argv.includes('--skip-ide');
 const shell = process.platform === 'win32';
 
-const run = (command, args, cwd) => spawnSync(command, args, { cwd, stdio: 'inherit', shell }).status === 0;
+const run = (command, args, cwd, env = process.env) => spawnSync(command, args, { cwd, stdio: 'inherit', shell, env }).status === 0;
+const RUFF = 'ruff@0.16.10';
+const pythonTests = (version) => () =>
+  run('uv', ['run', '--python', version, '--no-project', 'python', '-I', '-S', 'mcp/tests/run.py'], root, { ...process.env, IDE_AGENT_TABS_INTEROP: '1' });
 
 const hashDist = (dir = dist, prefix = '') => {
   const hashes = new Map();
@@ -56,6 +59,11 @@ const steps = [
   ['typecheck', () => run('npm', ['run', 'typecheck'], path.join(root, 'mcp'))],
   ...(skipTests ? [] : [['test', () => run('npm', ['test'], path.join(root, 'mcp'))]]),
   ['bundle is current', bundleIsCurrent],
+  ['catalog is current', () => run('node', ['--import', 'tsx', 'scripts/write-catalog.ts', '--check'], path.join(root, 'mcp'))],
+  ['python lint', () => run('uvx', [RUFF, 'check'], root) && run('uvx', [RUFF, 'format', '--check'], root)],
+  ['python types', () => run('uv', ['run', '--frozen', 'pyright'], root)],
+  ...(skipTests ? [] : [['python tests (3.13)', pythonTests('3.13')]]),
+  ...(skipTests ? [] : [['python tests (3.9)', pythonTests('3.9')]]),
   ['plugin version', () => run('node', ['scripts/check-plugin-version.mjs'], root)],
   ['ide packages current', idePackagesAreCurrent],
   ['validate plugin', () => run('claude', ['plugin', 'validate', '--strict', 'claude-plugin'], root)],

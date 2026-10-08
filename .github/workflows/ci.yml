@@ -91,6 +91,60 @@ jobs:
             exit 1
           fi
 
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.9', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install ${{ matrix.python }}
+      - run: uv run --python ${{ matrix.python }} --no-project python -I -S mcp/tests/run.py
+      - if: matrix.os == 'macos-latest' && matrix.python == '3.9'
+        shell: bash
+        run: |
+          if [ -x /usr/bin/python3 ]; then
+            /usr/bin/python3 -c 'import sqlite3, sys; print(sys.version, "SQLite", sqlite3.sqlite_version)'
+            /usr/bin/python3 -I -S mcp/tests/run.py
+          fi
+
+  python-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - run: uvx ruff@0.16.10 check
+      - run: uvx ruff@0.16.10 format --check
+      - run: uv run --frozen pyright
+
+  # Runs the Python store and locks against the Node implementation until the Node server is gone.
+  interop:
+    needs: parts
+    if: needs.parts.outputs.mcp == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.9', '3.13']
+    runs-on: ${{ matrix.os }}
+    env:
+      IDE_AGENT_TABS_INTEROP: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.13.0'
+          cache: npm
+          cache-dependency-path: mcp/package-lock.json
+      - run: npm ci
+        working-directory: mcp
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install ${{ matrix.python }}
+      - run: uv run --python ${{ matrix.python }} --no-project python -I -S mcp/tests/run.py -v test_lock_interop test_store_interop test_stress_mixed
+
   vscode:
     needs: parts
     if: needs.parts.outputs.vscode == 'true'

@@ -1,0 +1,13 @@
+import itertools
+import tomllib
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
+itertools.pairwise([])
+zip([], [], strict=True)
+datetime.fromisoformat("2026-10-08T00:00:00Z")
+
+
+@dataclass(slots=True)
+class Point:
+    x: int

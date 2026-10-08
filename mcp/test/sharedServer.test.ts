@@ -174,6 +174,7 @@ test('session keys come from the agent pid and start time, else the client id, a
 });
 
 test('the generated catalog matches the tool registrations', async () => {
-  const { catalogText, CATALOG_FILE } = await import('../scripts/write-catalog.js');
+  const { catalogJson, catalogText, CATALOG_FILE, CATALOG_JSON } = await import('../scripts/write-catalog.js');
   assert.equal(readFileSync(CATALOG_FILE, 'utf8').replace(/\r\n/g, '\n'), await catalogText(), 'run node --import tsx scripts/write-catalog.ts');
+  assert.equal(readFileSync(CATALOG_JSON, 'utf8').replace(/\r\n/g, '\n'), await catalogJson(), 'run node --import tsx scripts/write-catalog.ts');
 });

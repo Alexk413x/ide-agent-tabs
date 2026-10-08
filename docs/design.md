@@ -815,6 +815,56 @@ varies by a factor of two between runs.
 | Failed calls, messages lost or read twice, 16 agents | 0 |
 | `mcp-server.mjs jev status`, Jev on | 1,260-2,051 ms, median 1,362 ms |
 
+## Python port
+
+The MCP server moves from Node to Python in phases, so that end users need no Node.js from 0.9.0. Until
+the cutover, the Node server stays the live implementation, and nothing in the shipped plugin runs the
+Python code.
+
+### Layout and rules
+
+- Sources live in `claude-plugin/mcp/src/ide_agent_tabs/`, entry points in `claude-plugin/mcp/launch/`,
+  and tests in `mcp/tests/`, which doesn't ship.
+- The code imports only the standard library and runs on Python 3.9 or later under `-I -S`. Every
+  module starts with `from __future__ import annotations`. `mcp/tests/test_compat.py` fails on features
+  newer than 3.9, such as `match`, `tomllib`, `datetime.UTC` and `zip(strict=)`.
+- `catalog.json` in the package holds every tool's name, description and input schema, in registration
+  order, with `only` naming the agents that alone see a tool. `mcp/scripts/write-catalog.ts` writes it
+  from the zod registrations, and `npm test` and `scripts/check.mjs` fail when it is stale.
+- `mcp/tests/fixtures/js.json` holds what the Node build returns for pure functions: `JSON.stringify`,
+  the dedupe digest, ISO timestamps, `Date.parse`, UTF-16 lengths and slices, presence parsing and
+  session state. `mcp/scripts/write-fixtures.ts` writes it, and `test/fixtures.test.ts` fails when it is
+  stale. The Python tests compare against it.
+
+### Running the checks
+
+- Tests: `python -I -S mcp/tests/run.py`, or `uv run --python 3.9 --no-project python -I -S
+  mcp/tests/run.py` for 3.9. Add test module names to run only those, and `-v` for one line per test.
+- The interop tests start Node workers through `tsx`, so they need `npm ci` in `mcp/`. Without it they
+  skip, unless `IDE_AGENT_TABS_INTEROP=1` is set, which `scripts/check.mjs` and the CI interop job set.
+- Lint: `uvx ruff@0.16.10 check`, `uvx ruff@0.16.10 format --check` and `uv run --frozen pyright`. The
+  root `pyproject.toml` holds their settings and the pyright dev group; it declares no runtime
+  dependencies.
+
+### Baseline before the port
+
+Measured on 2026-10-08 on the 16-thread i9-9980HK under Windows 11 with Node 24.19.0, at a CPU load of
+about 75%, 20 runs each with `mcp/bench/hook_startup.py` against a temporary home. The hook rows run
+`claude-plugin/dist/agent-hook.mjs` from 0.8.0.
+
+| Measure | Median | Range |
+|---|---|---|
+| `node -e 0` | 200 ms | 127-419 ms |
+| Agent hook, no tab id (the early exit a mod-driven session takes) | 193 ms | 123-484 ms |
+| Agent hook in a tab, `UserPromptSubmit` | 409 ms | 192-637 ms |
+| Agent hook in a tab, `Stop` | 211 ms | 136-419 ms |
+| `python -I -S -c pass`, Python 3.13.5 | 77 ms | 58-236 ms |
+| `python -I -S -c pass`, Python 3.9.25 | 98 ms | 67-362 ms |
+
+The target for the Python hook is half of Node's, so about 100 ms for the early exit and 200 ms for a
+tab's `UserPromptSubmit` at this load. The protocol version each agent CLI sends in `initialize` is
+measured at the cutover, with live sessions of each CLI.
+
 ## Terminals
 
 Standalone terminal apps need no extension. The MCP server drives them directly and shows each one in

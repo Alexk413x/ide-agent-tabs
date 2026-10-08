@@ -1,0 +1,570 @@
+{
+  "stringify": [
+    {
+      "input": "null",
+      "compact": "null",
+      "pretty": "null"
+    },
+    {
+      "input": "true",
+      "compact": "true",
+      "pretty": "true"
+    },
+    {
+      "input": "false",
+      "compact": "false",
+      "pretty": "false"
+    },
+    {
+      "input": "0",
+      "compact": "0",
+      "pretty": "0"
+    },
+    {
+      "input": "-0",
+      "compact": "0",
+      "pretty": "0"
+    },
+    {
+      "input": "1",
+      "compact": "1",
+      "pretty": "1"
+    },
+    {
+      "input": "-1",
+      "compact": "-1",
+      "pretty": "-1"
+    },
+    {
+      "input": "1.0",
+      "compact": "1",
+      "pretty": "1"
+    },
+    {
+      "input": "1.5",
+      "compact": "1.5",
+      "pretty": "1.5"
+    },
+    {
+      "input": "0.1",
+      "compact": "0.1",
+      "pretty": "0.1"
+    },
+    {
+      "input": "100",
+      "compact": "100",
+      "pretty": "100"
+    },
+    {
+      "input": "1e20",
+      "compact": "100000000000000000000",
+      "pretty": "100000000000000000000"
+    },
+    {
+      "input": "1e21",
+      "compact": "1e+21",
+      "pretty": "1e+21"
+    },
+    {
+      "input": "1.5e21",
+      "compact": "1.5e+21",
+      "pretty": "1.5e+21"
+    },
+    {
+      "input": "0.000001",
+      "compact": "0.000001",
+      "pretty": "0.000001"
+    },
+    {
+      "input": "1e-7",
+      "compact": "1e-7",
+      "pretty": "1e-7"
+    },
+    {
+      "input": "-1.25e-10",
+      "compact": "-1.25e-10",
+      "pretty": "-1.25e-10"
+    },
+    {
+      "input": "5e-324",
+      "compact": "5e-324",
+      "pretty": "5e-324"
+    },
+    {
+      "input": "1.7976931348623157e308",
+      "compact": "1.7976931348623157e+308",
+      "pretty": "1.7976931348623157e+308"
+    },
+    {
+      "input": "9007199254740991",
+      "compact": "9007199254740991",
+      "pretty": "9007199254740991"
+    },
+    {
+      "input": "9007199254740993",
+      "compact": "9007199254740992",
+      "pretty": "9007199254740992"
+    },
+    {
+      "input": "12345678901234567890",
+      "compact": "12345678901234567000",
+      "pretty": "12345678901234567000"
+    },
+    {
+      "input": "123456789.125",
+      "compact": "123456789.125",
+      "pretty": "123456789.125"
+    },
+    {
+      "input": "\"\"",
+      "compact": "\"\"",
+      "pretty": "\"\""
+    },
+    {
+      "input": "\"plain\"",
+      "compact": "\"plain\"",
+      "pretty": "\"plain\""
+    },
+    {
+      "input": "\"quote \\\" backslash \\\\ slash /\"",
+      "compact": "\"quote \\\" backslash \\\\ slash /\"",
+      "pretty": "\"quote \\\" backslash \\\\ slash /\""
+    },
+    {
+      "input": "\"\\b\\f\\n\\r\\t\"",
+      "compact": "\"\\b\\f\\n\\r\\t\"",
+      "pretty": "\"\\b\\f\\n\\r\\t\""
+    },
+    {
+      "input": "\"\\u0000\\u0001\\u001f\\u007f\\u0080\"",
+      "compact": "\"\\u0000\\u0001\\u001f\"",
+      "pretty": "\"\\u0000\\u0001\\u001f\""
+    },
+    {
+      "input": "\"\\u2028\\u2029\"",
+      "compact": "\"  \"",
+      "pretty": "\"  \""
+    },
+    {
+      "input": "\"caf\\u00e9 \\u4e2d\\u6587\"",
+      "compact": "\"café 中文\"",
+      "pretty": "\"café 中文\""
+    },
+    {
+      "input": "\"\\ud83d\\ude00 emoji\"",
+      "compact": "\"😀 emoji\"",
+      "pretty": "\"😀 emoji\""
+    },
+    {
+      "input": "\"\\ud800\"",
+      "compact": "\"\\ud800\"",
+      "pretty": "\"\\ud800\""
+    },
+    {
+      "input": "\"\\udc00x\"",
+      "compact": "\"\\udc00x\"",
+      "pretty": "\"\\udc00x\""
+    },
+    {
+      "input": "\"a\\ud83d\"",
+      "compact": "\"a\\ud83d\"",
+      "pretty": "\"a\\ud83d\""
+    },
+    {
+      "input": "\"\\ude00\\ud83d\"",
+      "compact": "\"\\ude00\\ud83d\"",
+      "pretty": "\"\\ude00\\ud83d\""
+    },
+    {
+      "input": "[]",
+      "compact": "[]",
+      "pretty": "[]"
+    },
+    {
+      "input": "{}",
+      "compact": "{}",
+      "pretty": "{}"
+    },
+    {
+      "input": "[[]]",
+      "compact": "[[]]",
+      "pretty": "[\n  []\n]"
+    },
+    {
+      "input": "[{}]",
+      "compact": "[{}]",
+      "pretty": "[\n  {}\n]"
+    },
+    {
+      "input": "[1, \"two\", null, true, [3, {\"four\": 4}]]",
+      "compact": "[1,\"two\",null,true,[3,{\"four\":4}]]",
+      "pretty": "[\n  1,\n  \"two\",\n  null,\n  true,\n  [\n    3,\n    {\n      \"four\": 4\n    }\n  ]\n]"
+    },
+    {
+      "input": "{\"b\": 1, \"a\": 2, \"10\": 3, \"2\": 4, \"-1\": 5, \"01\": 6, \"4294967295\": 7, \"4294967294\": 8, \"1.5\": 9, \"0\": 10}",
+      "compact": "{\"0\":10,\"2\":4,\"10\":3,\"4294967294\":8,\"b\":1,\"a\":2,\"-1\":5,\"01\":6,\"4294967295\":7,\"1.5\":9}",
+      "pretty": "{\n  \"0\": 10,\n  \"2\": 4,\n  \"10\": 3,\n  \"4294967294\": 8,\n  \"b\": 1,\n  \"a\": 2,\n  \"-1\": 5,\n  \"01\": 6,\n  \"4294967295\": 7,\n  \"1.5\": 9\n}"
+    },
+    {
+      "input": "{\"nested\": {\"empty\": {}, \"list\": [], \"deep\": [[1, [2]], {\"x\": null}]}}",
+      "compact": "{\"nested\":{\"empty\":{},\"list\":[],\"deep\":[[1,[2]],{\"x\":null}]}}",
+      "pretty": "{\n  \"nested\": {\n    \"empty\": {},\n    \"list\": [],\n    \"deep\": [\n      [\n        1,\n        [\n          2\n        ]\n      ],\n      {\n        \"x\": null\n      }\n    ]\n  }\n}"
+    },
+    {
+      "input": "{\"id\": \"tab-1\", \"pid\": 42, \"startedAt\": \"2026-10-08T12:00:00.000Z\", \"reminded\": [\"m-0123456789abcdef\"]}",
+      "compact": "{\"id\":\"tab-1\",\"pid\":42,\"startedAt\":\"2026-10-08T12:00:00.000Z\",\"reminded\":[\"m-0123456789abcdef\"]}",
+      "pretty": "{\n  \"id\": \"tab-1\",\n  \"pid\": 42,\n  \"startedAt\": \"2026-10-08T12:00:00.000Z\",\n  \"reminded\": [\n    \"m-0123456789abcdef\"\n  ]\n}"
+    }
+  ],
+  "digests": [
+    {
+      "to": "tab-b",
+      "text": "hello",
+      "digest": "f7c45b1d4a4045affc3ee82e4c4d3e231fdd91d55053ae3bb74c3123920898fc"
+    },
+    {
+      "to": "tab-b",
+      "text": "hello",
+      "replyTo": "m-0123456789abcdef",
+      "digest": "af689d0fac704ea0abab08d8cc40fe02540435d3d200764d2de42edde80e59a3"
+    },
+    {
+      "to": "tab-b",
+      "text": "",
+      "replyTo": "",
+      "digest": "68a93d78a67d00a8586c2906246d832aa0dcdda50ab4d011d4ca1f1ac601dc87"
+    },
+    {
+      "to": "tab-c",
+      "text": "line\nbreak \"quoted\" café 😀",
+      "digest": "9b2c7b24d08785ff0f47a869c76f22f094383b690a4973161110b41242a53079"
+    },
+    {
+      "to": "tab-c",
+      "text": "lone \ud800 surrogate",
+      "digest": "38ee571acb0908c990f77e7d178eae2fe44557a820ffefce0f68c9a90f531370"
+    },
+    {
+      "to": "tab-c",
+      "text": "\u0000\u001f ",
+      "digest": "deee418017c8329899ee80ec2a735603ca6f105578b44884d116fc11f97b310d"
+    }
+  ],
+  "isoTimes": [
+    {
+      "ms": 0,
+      "iso": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "ms": 1,
+      "iso": "1970-01-01T00:00:00.001Z"
+    },
+    {
+      "ms": 999,
+      "iso": "1970-01-01T00:00:00.999Z"
+    },
+    {
+      "ms": 1000,
+      "iso": "1970-01-01T00:00:01.000Z"
+    },
+    {
+      "ms": 1759900000123,
+      "iso": "2025-10-08T05:06:40.123Z"
+    },
+    {
+      "ms": 1791460800000,
+      "iso": "2026-10-08T12:00:00.000Z"
+    },
+    {
+      "ms": -1,
+      "iso": "1969-12-31T23:59:59.999Z"
+    },
+    {
+      "ms": 253402300799999,
+      "iso": "9999-12-31T23:59:59.999Z"
+    }
+  ],
+  "dateParse": [
+    {
+      "text": "2026-10-08T12:34:56.789Z",
+      "ms": 1791462896789
+    },
+    {
+      "text": "2026-10-08T12:34:56Z",
+      "ms": 1791462896000
+    },
+    {
+      "text": "2026-10-08T12:34Z",
+      "ms": 1791462840000
+    },
+    {
+      "text": "2026-10-08T12:34:56.7Z",
+      "ms": 1791462896700
+    },
+    {
+      "text": "2026-10-08T12:34:56.78912Z",
+      "ms": 1791462896789
+    },
+    {
+      "text": "2026-10-08",
+      "ms": 1791417600000
+    },
+    {
+      "text": "2026-10",
+      "ms": 1790812800000
+    },
+    {
+      "text": "2026",
+      "ms": 1767225600000
+    },
+    {
+      "text": "2026-10-08T12:34:56.789+02:00",
+      "ms": 1791455696789
+    },
+    {
+      "text": "2026-10-08T12:34:56.789-05:30",
+      "ms": 1791482696789
+    },
+    {
+      "text": "1970-01-01T00:00:00.000Z",
+      "ms": 0
+    },
+    {
+      "text": "2026-02-30T00:00:00Z",
+      "ms": 1772409600000
+    },
+    {
+      "text": "2026-10-08T24:00:00Z",
+      "ms": 1791504000000
+    },
+    {
+      "text": "2026-10-08T25:00:00Z",
+      "ms": null
+    },
+    {
+      "text": "garbage",
+      "ms": null
+    },
+    {
+      "text": "",
+      "ms": null
+    }
+  ],
+  "utf16Length": [
+    {
+      "text": "",
+      "length": 0
+    },
+    {
+      "text": "abc",
+      "length": 3
+    },
+    {
+      "text": "café",
+      "length": 4
+    },
+    {
+      "text": "😀",
+      "length": 2
+    },
+    {
+      "text": "a😀b",
+      "length": 4
+    },
+    {
+      "text": "\ud800",
+      "length": 1
+    },
+    {
+      "text": "中文😀😀",
+      "length": 6
+    }
+  ],
+  "utf16Slice": [
+    {
+      "text": "a😀b",
+      "start": 0,
+      "end": 2,
+      "slice": "a\ud83d"
+    },
+    {
+      "text": "a😀b",
+      "start": 2,
+      "end": 4,
+      "slice": "\ude00b"
+    },
+    {
+      "text": "a😀b",
+      "start": 1,
+      "end": 3,
+      "slice": "😀"
+    },
+    {
+      "text": "😀😀",
+      "start": 1,
+      "end": 3,
+      "slice": "\ude00\ud83d"
+    },
+    {
+      "text": "abc",
+      "start": 0,
+      "end": 200,
+      "slice": "abc"
+    },
+    {
+      "text": "abc",
+      "start": 5,
+      "end": 9,
+      "slice": ""
+    }
+  ],
+  "presence": [
+    {
+      "text": "{\"id\": \"tab-1\", \"agent\": \"codex\", \"path\": \"/w\", \"pid\": 42, \"startedAt\": \"2026-10-08T12:00:00.000Z\"}",
+      "parsed": {
+        "id": "tab-1",
+        "agent": "codex",
+        "path": "/w",
+        "pid": 42,
+        "startedAt": "2026-10-08T12:00:00.000Z"
+      }
+    },
+    {
+      "text": "{\"id\": \"tab-1\", \"pid\": 42.0, \"nudges\": 1.5, \"beatMs\": 0, \"modBeat\": 1759900000123, \"state\": \"busy\", \"driver\": \"mod\", \"via\": \"ori\"}",
+      "parsed": {
+        "id": "tab-1",
+        "pid": 42,
+        "state": "busy",
+        "driver": "mod",
+        "modBeat": 1759900000123,
+        "via": "ori"
+      }
+    },
+    {
+      "text": "{\"id\": \"tab-1\", \"pid\": -3, \"state\": \"asleep\", \"driver\": \"hooks\", \"inputIdle\": true, \"reminded\": [\"a\", 1]}",
+      "parsed": {
+        "id": "tab-1",
+        "inputIdle": true
+      }
+    },
+    {
+      "text": "{\"id\": \"tab-1\", \"pid\": true, \"pidStart\": 0, \"agentType\": \"bad type\", \"agentColor\": \"teal\", \"mail\": 2}",
+      "parsed": {
+        "id": "tab-1",
+        "pidStart": 0,
+        "mail": 2
+      }
+    },
+    {
+      "text": "{\"id\": \"tab-1\", \"agentType\": \"general-purpose\", \"agentColor\": \"cyan\", \"reminded\": [], \"unknown\": 1}",
+      "parsed": {
+        "id": "tab-1",
+        "reminded": [],
+        "agentType": "general-purpose",
+        "agentColor": "cyan"
+      }
+    },
+    {
+      "text": "{\"id\": \"-bad\"}",
+      "parsed": null
+    },
+    {
+      "text": "{\"agent\": \"codex\"}",
+      "parsed": null
+    },
+    {
+      "text": "[1]",
+      "parsed": null
+    },
+    {
+      "text": "null",
+      "parsed": null
+    },
+    {
+      "text": "not json",
+      "parsed": null
+    },
+    {
+      "text": "{\"id\": \"tab-1\", \"pid\": 9007199254740992}",
+      "parsed": {
+        "id": "tab-1"
+      }
+    }
+  ],
+  "effectiveState": [
+    {
+      "presence": {},
+      "now": 0,
+      "state": "unknown"
+    },
+    {
+      "presence": {
+        "state": "idle"
+      },
+      "now": 0,
+      "state": "idle"
+    },
+    {
+      "presence": {
+        "state": "busy"
+      },
+      "now": 1000,
+      "state": "busy"
+    },
+    {
+      "presence": {
+        "state": "busy",
+        "stateAt": "never"
+      },
+      "now": 1000,
+      "state": "busy"
+    },
+    {
+      "presence": {
+        "state": "busy",
+        "stateAt": "1970-01-01T00:00:00.000Z"
+      },
+      "now": 899999,
+      "state": "busy"
+    },
+    {
+      "presence": {
+        "state": "busy",
+        "stateAt": "1970-01-01T00:00:00.000Z"
+      },
+      "now": 900000,
+      "state": "idle"
+    },
+    {
+      "presence": {
+        "state": "waking",
+        "stateAt": "1970-01-01T00:00:00.000Z"
+      },
+      "now": 19999,
+      "state": "waking"
+    },
+    {
+      "presence": {
+        "state": "waking",
+        "stateAt": "1970-01-01T00:00:00.000Z"
+      },
+      "now": 20000,
+      "state": "idle"
+    },
+    {
+      "presence": {
+        "state": "waking",
+        "stateAt": "1970-01-01T00:00:01.000Z"
+      },
+      "now": 0,
+      "state": "idle"
+    },
+    {
+      "presence": {
+        "state": "waking"
+      },
+      "now": 0,
+      "state": "idle"
+    }
+  ]
+}
