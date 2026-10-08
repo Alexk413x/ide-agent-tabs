@@ -96,6 +96,10 @@ def old_server_path(home: str, platform: str) -> str:
     return slashes(os.path.join(copy_root(home), OLD_SERVER_FILE), platform)
 
 
+def old_hook_path(home: str, platform: str) -> str:
+    return slashes(os.path.join(copy_root(home), OLD_HOOK_FILE), platform)
+
+
 def old_copy_exists(home: str) -> bool:
     root = copy_root(home)
     return any(os.path.exists(os.path.join(root, name)) for name in (*OLD_FILES, LAUNCH_DIR))

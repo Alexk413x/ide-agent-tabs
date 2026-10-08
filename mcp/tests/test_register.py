@@ -404,6 +404,19 @@ class Migration(unittest.TestCase):
         self.assertEqual(migrate_registrations(s.ctx), ([], []))
         self.assertEqual(read_text(s.file("pi")), text)
 
+    def test_hooks_that_run_another_homes_copy_stay_as_they_are(self) -> None:
+        s = Setup(self, installed=("gemini", "copilot"))
+        other = os.path.join(s.root, "other home", "mcp", "agent-hook.mjs").replace("\\", "/")
+        gemini = json.dumps({"hooks": {"AfterAgent": [{"hooks": [{"type": "command", "command": f'node "{other}" gemini AfterAgent'}]}]}})
+        copilot = json.dumps(
+            {"version": 1, "hooks": {"agentStop": [{"type": "command", "exec": "node", "args": [other, "copilot", "agentStop"]}]}}
+        )
+        write(s.hooks("gemini"), gemini)
+        write(s.hooks("copilot"), copilot)
+        refresh_copy(s.ctx)
+        self.assertEqual(migrate_registrations(s.ctx), ([], []))
+        self.assertEqual((read_text(s.hooks("gemini")), read_text(s.hooks("copilot"))), (gemini, copilot))
+
     @unittest.skipIf(WINDOWS, "Codex is not registered on Windows")
     def test_a_node_codex_registration_moves_through_the_codex_cli(self) -> None:
         s = Setup(self, installed=("codex",))
