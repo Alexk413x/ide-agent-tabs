@@ -389,10 +389,7 @@ class HookScriptTest(unittest.TestCase):
         out = self.run_script(home, ["claude", "UserPromptSubmit"], "{}", {"IDE_AGENT_TABS_ID": ID})
         self.assertEqual([out.returncode, out.stdout], [0, b""])
 
-    def test_the_hook_commands_in_hooks_json_run_the_python_hook_through_the_shell(self) -> None:
-        shell = git_bash() if sys.platform == "win32" else "/bin/sh"
-        if shell is None or not os.path.exists(shell):
-            self.skipTest("no POSIX shell")
+    def hook_commands(self) -> dict[str, str]:
         with open(os.path.join(ROOT, "claude-plugin", "hooks", "hooks.json"), encoding="utf-8") as f:
             hooks = json.load(f)["hooks"]
         commands = {
@@ -400,33 +397,56 @@ class HookScriptTest(unittest.TestCase):
             for event, groups in hooks.items()
             for g in groups
             for h in g["hooks"]
-            if "agent-hook.sh" in h.get("command", "")
+            if "agent-hook.ps1" in h.get("command", "")
         }
         self.assertEqual(sorted(commands), sorted(HOOK_EVENTS["claude"]))
         for event, command in commands.items():
             self.assertNotIn("args", command)
-            self.assertIn(f"set -- claude {event};", command)
+            self.assertEqual(command, f'set -- claude {event}; . "${{CLAUDE_PLUGIN_ROOT}}/mcp/launch/agent-hook.ps1"')
+        return commands
+
+    def check_hook_commands(self, shell: list[str]) -> None:
+        commands = self.hook_commands()
         home = temp_home(self, "iat-hook-")
         mail(home)
+        root = os.path.join(ROOT, "claude-plugin").replace("\\", "/")
         clean = {k: v for k, v in os.environ.items() if not k.startswith(("IDE_AGENT_TABS", "CLAUDE_PLUGIN"))}
-        env = {**clean, "IDE_AGENT_TABS_HOME": home, "CLAUDE_PLUGIN_ROOT": os.path.join(ROOT, "claude-plugin").replace("\\", "/")}
+        env = {**clean, "IDE_AGENT_TABS_HOME": home, "CLAUDE_PLUGIN_ROOT": root}
 
         def run(event: str, extra: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
+            command = commands[event].replace("${CLAUDE_PLUGIN_ROOT}", root)
             return subprocess.run(
-                [shell, "-c", commands[event]],
-                input=b'{"session_id":"s"}',
-                capture_output=True,
-                env={**env, **extra},
-                timeout=60,
-                check=False,
+                [*shell, command], input=b'{"session_id":"s"}', capture_output=True, env={**env, **extra}, timeout=60, check=False
             )
 
-        blocked = run("Stop", {"IDE_AGENT_TABS_ID": ID})
-        self.assertEqual(blocked.returncode, 0, blocked.stderr)
-        self.assertEqual(json.loads(blocked.stdout)["decision"], "block")
+        cache = os.path.join(home, "mcp", "hook-python")
+        for attempt in range(2):
+            blocked = run("Stop", {"IDE_AGENT_TABS_ID": ID})
+            self.assertEqual([blocked.returncode, blocked.stderr], [0, b""])
+            self.assertEqual(json.loads(blocked.stdout)["decision"], "block", attempt)
+            with open(cache, encoding="utf-8") as f:
+                self.assertTrue(os.path.isfile(f.read().strip()))
+        with open(cache, "w", encoding="utf-8") as f:
+            f.write(os.path.join(home, "missing-python") + "\n")
+        self.assertEqual(json.loads(run("Stop", {"IDE_AGENT_TABS_ID": ID}).stdout)["decision"], "block")
         for extra in ({}, {"IDE_AGENT_TABS_ID": ID, "IDE_AGENT_TABS_MOD": ID}):
             quiet = run("Stop", extra)
-            self.assertEqual([quiet.returncode, quiet.stdout, quiet.stderr], [0, b"", b""])
+            self.assertEqual([quiet.returncode, quiet.stdout.strip(), quiet.stderr], [0, b"", b""])
+
+    def test_the_hook_commands_in_hooks_json_run_the_python_hook_through_sh(self) -> None:
+        shell = git_bash() if sys.platform == "win32" else "/bin/sh"
+        if shell is None or not os.path.exists(shell):
+            self.skipTest("no POSIX shell")
+        self.check_hook_commands([shell, "-c"])
+
+    @unittest.skipUnless(sys.platform == "win32", "Claude Code runs hooks in PowerShell only on Windows without Git Bash")
+    def test_the_hook_commands_in_hooks_json_run_the_python_hook_through_powershell(self) -> None:
+        for name in ("powershell", "pwsh"):
+            shell = shutil.which(name)
+            if shell is None:
+                continue
+            with self.subTest(shell=name):
+                self.check_hook_commands([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"])
 
     def test_the_hook_imports_no_heavy_modules(self) -> None:
         code = (

@@ -104,9 +104,9 @@ class Int(Schema):
             return INVALID
         whole = int(value)
         if whole > MAX_SAFE_INTEGER:
-            issues.append(Issue(path, f"Too big: expected number to be <={MAX_SAFE_INTEGER}"))
+            issues.append(Issue(path, f"Too big: expected int to be <={MAX_SAFE_INTEGER}"))
         elif whole < -MAX_SAFE_INTEGER:
-            issues.append(Issue(path, f"Too small: expected number to be >=-{MAX_SAFE_INTEGER}"))
+            issues.append(Issue(path, f"Too small: expected int to be >=-{MAX_SAFE_INTEGER}"))
         if self.min_value is not None and whole < self.min_value:
             issues.append(Issue(path, f"Too small: expected number to be >={number(self.min_value)}"))
         return whole

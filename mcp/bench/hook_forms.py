@@ -14,11 +14,10 @@ PLUGIN = os.path.join(ROOT, "claude-plugin")
 NODE_HOOK = os.path.join(PLUGIN, "dist", "agent-hook.mjs")
 PY_HOOK = os.path.join(PLUGIN, "mcp", "launch", "agent_hook.py")
 RUNS = int(os.environ.get("RUNS", "20"))
-GUARD = '[ -n "$IDE_AGENT_TABS_ID" ] && [ "$IDE_AGENT_TABS_ID" != "$IDE_AGENT_TABS_MOD" ] || exit 0; '
 
 
 def shell_command(event: str) -> str:
-    return GUARD + f'set -- claude {event}; . "${{CLAUDE_PLUGIN_ROOT}}/mcp/launch/agent-hook.sh"'
+    return f'set -- claude {event}; . "{PLUGIN.replace(os.sep, "/")}/mcp/launch/agent-hook.ps1"'
 
 
 def bash() -> str:
@@ -27,7 +26,7 @@ def bash() -> str:
             if candidate and os.path.exists(candidate):
                 return candidate
         sys.exit("Git Bash not found")
-    return shutil.which("bash") or "/bin/sh"
+    return "/bin/sh"
 
 
 def timed(command: list[str], env: dict[str, str], stdin: bytes) -> tuple[float, bytes]:
@@ -36,9 +35,13 @@ def timed(command: list[str], env: dict[str, str], stdin: bytes) -> tuple[float,
     return (time.perf_counter() - started) * 1000, done.stdout
 
 
-def measure(label: str, command: list[str], env: dict[str, str], stdin: bytes) -> None:
+def measure(label: str, command: list[str], env: dict[str, str], stdin: bytes, before: object = None) -> None:
     timed(command, env, stdin)
-    runs = [timed(command, env, stdin) for _ in range(RUNS)]
+    runs = []
+    for _ in range(RUNS):
+        if callable(before):
+            before()
+        runs.append(timed(command, env, stdin))
     samples = sorted(ms for ms, _ in runs)
     row = {
         "case": label,
@@ -52,23 +55,31 @@ def measure(label: str, command: list[str], env: dict[str, str], stdin: bytes) -
 
 def main() -> None:
     node = shutil.which("node") or "node"
-    python = [shutil.which("py") or "py", "-3"] if sys.platform == "win32" else [sys.executable]
-    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     home = tempfile.mkdtemp(prefix="iat-hook-forms-")
+    cache = os.path.join(home, "mcp", "hook-python")
     try:
         base = {k: v for k, v in os.environ.items() if not k.startswith(("IDE_AGENT_TABS", "CLAUDE_PLUGIN"))}
-        base.update({"IDE_AGENT_TABS_HOME": home, "CLAUDE_PLUGIN_ROOT": PLUGIN})
+        base.update({"IDE_AGENT_TABS_HOME": home, "CLAUDE_PLUGIN_ROOT": PLUGIN.replace(os.sep, "/")})
         tab = {**base, "IDE_AGENT_TABS_ID": "tab-forms-0001"}
         mod = {**tab, "IDE_AGENT_TABS_MOD": "tab-forms-0001"}
         prompt = json.dumps({"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "hi"}).encode()
-        sh = bash()
-        for label, env in (("mod-driven tab", mod), ("tab", tab)):
-            measure(f"{label}: node exec form (0.8.0)", [node, NODE_HOOK, "claude", "UserPromptSubmit"], env, prompt)
-            measure(f"{label}: python exec form, py -3", [*python, "-I", "-S", PY_HOOK, "claude", "UserPromptSubmit"], env, prompt)
-            measure(f"{label}: python exec form, python.exe", [sys.executable, "-I", "-S", PY_HOOK, "claude", "UserPromptSubmit"], env, prompt)
-            if sys.platform == "win32" and os.path.exists(pythonw):
-                measure(f"{label}: python exec form, pythonw.exe", [pythonw, "-I", "-S", PY_HOOK, "claude", "UserPromptSubmit"], env, prompt)
-            measure(f"{label}: shell string with guard", [sh, "-c", shell_command("UserPromptSubmit")], env, prompt)
+        shells = [("sh", [bash(), "-c"])]
+        if sys.platform == "win32":
+            shells += [(name, [path, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]) for name in ("powershell", "pwsh") if (path := shutil.which(name))]
+
+        def forget() -> None:
+            if os.path.exists(cache):
+                os.remove(cache)
+
+        for label, env in (("no tab", base), ("mod-driven tab", mod), ("tab", tab)):
+            if os.path.exists(NODE_HOOK):
+                measure(f"{label}: node exec form (0.8.0)", [node, NODE_HOOK, "claude", "UserPromptSubmit"], env, prompt)
+            measure(f"{label}: python.exe exec form", [sys.executable, "-I", "-S", PY_HOOK, "claude", "UserPromptSubmit"], env, prompt)
+            for name, shell in shells:
+                command = [*shell, shell_command("UserPromptSubmit")]
+                measure(f"{label}: {name}, interpreter not yet recorded", command, env, prompt, forget)
+                timed(command, env, prompt)
+                measure(f"{label}: {name}, recorded interpreter", command, env, prompt)
     finally:
         shutil.rmtree(home, ignore_errors=True)
 

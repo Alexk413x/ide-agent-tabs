@@ -60,6 +60,7 @@ const steps = [
   ...(skipTests ? [] : [['test', () => run('npm', ['test'], path.join(root, 'mcp'))]]),
   ['bundle is current', bundleIsCurrent],
   ['catalog is current', () => run('node', ['--import', 'tsx', 'scripts/write-catalog.ts', '--check'], path.join(root, 'mcp'))],
+  ['ide fixtures are current', () => run('node', ['--import', 'tsx', 'scripts/write-ide-fixtures.ts', '--check'], path.join(root, 'mcp'))],
   ['python lint', () => run('uvx', [RUFF, 'check'], root) && run('uvx', [RUFF, 'format', '--check'], root)],
   ['python types', () => run('uv', ['run', '--frozen', 'pyright'], root)],
   ...(skipTests ? [] : [['python tests (3.13)', pythonTests('3.13')]]),
