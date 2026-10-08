@@ -9,7 +9,7 @@ import unittest
 
 from ide_agent_tabs.shared.client import probe, stop_server
 from ide_agent_tabs.shared.state import read_token
-from shared_support import free_port, serve
+from shared_support import free_port, reset_store_mode, serve
 from store_host import StoreHost
 from support import ROOT, temp_home
 from test_hook import git_bash
@@ -68,6 +68,10 @@ class ServerHookShellTest(unittest.TestCase):
         self.assertEqual((done.returncode, done.stdout), (0, b""))
         self.assertEqual(probe(port).kind, "ours")
         self.assertIsNotNone(read_token(home))
+
+
+def tearDownModule() -> None:
+    reset_store_mode()
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ from ide_agent_tabs.shared.handover import claim_port
 from ide_agent_tabs.shared.headers import helper_headers, launcher_path
 from ide_agent_tabs.shared.start_hook import run as run_hook
 from ide_agent_tabs.shared.state import ServerState, read_state, read_token, state_path, write_state
-from shared_support import McpHttp, free_port, pid_headers, serve
+from shared_support import McpHttp, free_port, pid_headers, reset_store_mode, serve
 from store_host import StoreHost
 from support import MCP, ROOT, TESTS, require_node, temp_home
 
@@ -324,6 +324,10 @@ class StartHookTest(unittest.TestCase):
         home = temp_home(self, "iat-hook-")
         write_state(home, ServerState(123, 4567, "1.2.3", "2026-01-01T00:00:00.000Z", "t" * 64))
         self.assertEqual(read_state(home, 4567), ServerState(123, 4567, "1.2.3", "2026-01-01T00:00:00.000Z", "t" * 64))
+
+
+def tearDownModule() -> None:
+    reset_store_mode()
 
 
 if __name__ == "__main__":

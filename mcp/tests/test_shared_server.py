@@ -15,7 +15,7 @@ from ide_agent_tabs.shared.host import Binding, BoundSession, Catalog, Progress
 from ide_agent_tabs.shared.hub import Identity, derived_id, root_path, session_key
 from ide_agent_tabs.shared.server import IDLE_EXIT_MS, SharedServer
 from ide_agent_tabs.shared.state import port_from_url, read_state, state_path
-from shared_support import PROTOCOL, McpHttp, free_port, pid_headers, request, serve
+from shared_support import PROTOCOL, McpHttp, free_port, pid_headers, request, reset_store_mode, serve
 from store_host import StoreHost
 from support import temp_home
 
@@ -346,6 +346,10 @@ class UnitTest(unittest.TestCase):
         self.addCleanup(holder.close)
         server = SharedServer(home, port, StoreHost(home), version="9.9.9", log=lambda _m: None)
         self.assertFalse(server.claim(wait_ms=200))
+
+
+def tearDownModule() -> None:
+    reset_store_mode()
 
 
 if __name__ == "__main__":

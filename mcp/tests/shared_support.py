@@ -16,6 +16,16 @@ PROTOCOL = "2026-07-28"
 RESERVED_PORTS = range(47821, 47830)
 
 
+# The shared server sets the message store's process-wide shared mode on its first bind; tests that run
+# servers in this process turn it back off so later store tests see the stdio defaults.
+def reset_store_mode() -> None:
+    from ide_agent_tabs.messaging.db import BUSY_TIMEOUT_MS, set_busy_timeout
+    from ide_agent_tabs.messaging.wake import skip_wake_files_for_local_waiters
+
+    set_busy_timeout(BUSY_TIMEOUT_MS)
+    skip_wake_files_for_local_waiters(False)
+
+
 def free_port() -> int:
     while True:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -123,5 +133,6 @@ def serve(
         server.stop("test over")
         thread.join(10)
 
+    test.addCleanup(reset_store_mode)
     test.addCleanup(stop)
     return server
