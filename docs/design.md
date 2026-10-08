@@ -566,6 +566,84 @@ The server's instructions start with one sentence that names the tab tools, then
 then the Jev rules when Jev is on. Claude Code cuts each server's instructions at 2,048 characters, so
 `instructions.test.ts` fails when the joined text passes that.
 
+## Shared server
+
+Claude Code sessions share one Node server per machine over Streamable HTTP. The other agent CLIs keep
+their stdio servers. This section records what Claude Code does over HTTP, measured before the server was
+built, and the numbers it was built against.
+
+### What Claude Code does over HTTP
+
+Measured 2026-10-07 on Windows 11 with Claude Code 2.1.293, Node 24.19.0 and `@modelcontextprotocol/sdk`
+1.30.1, with throwaway servers on test ports and `claude -p --strict-mcp-config --mcp-config <file>
+--model haiku`.
+
+**The MCP SDK can't serve MCP 2026-07-28.** SDK 1.30.1, and 1.32.1, the newest release, know protocol
+versions up to 2025-11-25 and have no `server/discover`. Against the SDK's own Streamable HTTP transport
+(stateless, JSON responses), Claude Code sent `server/discover` with `mcp-protocol-version: 2026-07-28`,
+got a 400, then fell back to `initialize` with 2025-11-25 and called the tool. So Claude Code still
+reaches an SDK server, but each connect costs a failed request, and a stateless classic server has no way
+to ask the client for its roots. The shared server therefore speaks 2026-07-28 on `node:http`, and keeps
+the SDK for the stdio server and for running the tools.
+
+**The headers helper and the session start hook find the same Claude Code process.** Claude Code runs
+the `headersHelper` through `cmd.exe /d /s /c` and a hook command string through Git Bash. The helper's
+ancestors were `node`, `cmd.exe`, then `claude.exe`; the hook's were `node`, `bash`, `bash`, then the same
+`claude.exe`. The hook's `CLAUDE_PID` named that process too. The helper gets no `CLAUDE_PID` or
+`CLAUDE_CODE_SESSION_ID` of its own: in a nested session it inherits the outer session's values, so the
+helper must not trust them. One CIM query for the whole process table takes 515-560 ms through
+`powershell.exe` (0.8-1.2 s with command lines, 1.1-1.3 s when it walks one pid at a time). The rule is
+the nearest ancestor that isn't a shell: a check for the name `claude` picked the outer session when the
+inner one ran as `node`. A unit test runs the lookup against a real chain of Node processes and a shell,
+so CI checks it on Windows, macOS and Linux; the check against a real Claude Code connect is manual and
+was done only on Windows.
+
+**A 600 s tool call completes over HTTP when the server entry sets `timeout`.** Node's
+`http.Server.requestTimeout` covers receiving a request, not a response that takes long: with a 3 s
+`requestTimeout` a response sent after 6 s arrived. Claude Code is what cuts long calls. On this machine,
+whose settings set `MCP_TIMEOUT=60000`, a call ended at exactly 60 s with "The operation timed out".
+With `MCP_TOOL_TIMEOUT=700000` it ended at 300 s with "sent no response or progress for 300s". With
+`"timeout": 660000` in the server's entry, a 600 s call completed. The decision to cap an HTTP wait at
+240 s stands; the plugin's entry sets `"timeout": 300000` so that a 240 s wait, and a 60 s default wait,
+both finish.
+
+**The mod's `$.mcp.call` binds to the same session.** A test mod called the server at `session.start`
+and `turn.start`. Its calls carried the same client header as the model's call in that session, and
+`$.mcp.call` answered the server's `input_required` roots request itself. The mod needs no session id in
+its arguments.
+
+**A `--bg` role session connects, and the lookup finds the session process.** A `claude --bg
+--strict-mcp-config --mcp-config` session reached the server. The helper's ancestors were `node`,
+`cmd.exe`, then `claude.exe --session-id …`, then `claude.exe --bg-pty-host`, then `claude.exe daemon
+run`; the lookup stops at the session process, and the hook's `CLAUDE_PID` named the same one.
+`claude agents --json` printed no pid for it. A `--bg` session needs a trusted folder.
+
+**A start hook that waits 3 s fits the connect window.** Claude Code runs the `SessionStart` hooks in
+parallel, so `sync-ides.mjs` doesn't delay the start hook, and their order in the list doesn't matter.
+It retries the connect until about 7-8 s after launch, whether or not hooks still run: a server that
+listened 5.0 s after launch was reached at 7.5 s; one that listened at 8.9 s was never reached, although
+a hook ran until 15.8 s. The helper ran 1.2 s before the first hook, so the helper also starts the server
+when nothing listens, and both wait up to 3 s.
+
+### Numbers before the shared server
+
+`mcp/bench/bench.mjs` measures memory, start-up, tool latency and the CLI. These are the stdio numbers
+before the shared server, on a 16-thread i9-9980HK under Windows 11 with Node 24.19.0. The machine ran
+IDEs and other Claude Code sessions at the same time: its CPU load was 35-70% before a run, so latency
+varies by a factor of two between runs.
+
+| Measure | stdio |
+|---|---|
+| Memory, 1 session | 79.8 MB, 1 process |
+| Memory, 8 sessions | 639.5 MB, 8 processes |
+| Start to `initialize` reply | 221-281 ms, median 222 ms |
+| Median `list_sessions` / `send_message` / `read_messages`, 1 agent | 3.4 / 4.5 / 4.3 ms |
+| Same, 4 agents | 6.4 / 7.9 / 5.3 ms |
+| Same, 8 agents | 12.7 / 14.8 / 5.9 ms |
+| Same, 16 agents | 35.7 / 45.2 / 8.0 ms |
+| Failed calls, messages lost or read twice, 16 agents | 0 |
+| `mcp-server.mjs jev status`, Jev on | 1,260-2,051 ms, median 1,362 ms |
+
 ## Terminals
 
 Standalone terminal apps need no extension. The MCP server drives them directly and shows each one in
