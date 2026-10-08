@@ -37,6 +37,7 @@ from .sessions import (
     is_model,
     is_session_id,
     join_live_sessions,
+    live_session,
     live_sessions,
     parse_presence,
     presence_path,
@@ -578,14 +579,16 @@ class Messaging:
         if reply_to is not None:
             check_message_id(reply_to, "replyTo")
         now = self._now()
-        live = join_live_sessions(self.deps.home, self._alive, now, self._ended)
-        named = session_names(live)
-        legacy = short_names(live)
-        recipient = (
-            next((s for s in live if s["id"] == to), None)
-            or next((s for s in live if named.get(s["id"]) == to), None)
-            or next((s for s in live if legacy.get(s["id"]) == to), None)
-        )
+        recipient = live_session(self.deps.home, to, self._alive, now)
+        if recipient is None:
+            live = join_live_sessions(self.deps.home, self._alive, now, self._ended)
+            named = session_names(live)
+            legacy = short_names(live)
+            recipient = (
+                next((s for s in live if s["id"] == to), None)
+                or next((s for s in live if named.get(s["id"]) == to), None)
+                or next((s for s in live if legacy.get(s["id"]) == to), None)
+            )
         if recipient is None and not is_session_id(to):
             raise MailError(f"not a session id: {to}")
         if recipient is None:
@@ -603,7 +606,8 @@ class Messaging:
         out["text"] = text
         if reply_to is not None:
             out["replyTo"] = reply_to
-        sent = send_message(self.deps.home, out, now)
+        queued = self._queued_without_wake(recipient, now)
+        sent = send_message(self.deps.home, out, now, delivery=None if queued is None else queued["delivery"])
         if sent.get("duplicate"):
             return {
                 "id": sent["id"],
@@ -612,22 +616,31 @@ class Messaging:
                 "duplicate": True,
                 "note": "an identical message went to this session less than a minute ago; it was not sent again",
             }
-        try:
-            wake = self._wake(recipient, now)
-        except Exception as e:  # noqa: BLE001
-            wake = {"delivery": "queued", "note": f"Error: {e}"}
-        with contextlib.suppress(Exception):
-            set_delivery(self.deps.home, sent["id"], wake["delivery"])
+        if queued is not None:
+            wake = queued
+        else:
+            try:
+                wake = self._wake(recipient, now)
+            except Exception as e:  # noqa: BLE001
+                wake = {"delivery": "queued", "note": f"Error: {e}"}
+            with contextlib.suppress(Exception):
+                set_delivery(self.deps.home, sent["id"], wake["delivery"])
         self._follow_up(to)
         self._clean_later()
         return {"id": sent["id"], "to": to, **wake, **self._warnings()}
 
-    def _wake(self, recipient: Presence, now: float) -> dict[str, Any]:
+    def _queued_without_wake(self, recipient: Presence, now: float) -> dict[str, Any] | None:
         if is_mod_driven(recipient, now):
             return {"delivery": "queued", "note": MOD_DELIVERY_NOTE}
         # A line typed while the user writes a prompt lands in that prompt; see _input_idle_after in hook.py.
         if effective_state(recipient, now) != "idle" or recipient.get("inputIdle") is False:
             return {"delivery": "queued"}
+        return None
+
+    def _wake(self, recipient: Presence, now: float) -> dict[str, Any]:
+        queued = self._queued_without_wake(recipient, now)
+        if queued is not None:
+            return queued
         # An agent reports idle when its turn-end hook runs, but it can still be finishing the turn, and a
         # line typed then is lost; typing only after the session stays idle for IDLE_SETTLE_MS avoids that.
         settle = IDLE_SETTLE_MS - (now - _ms(recipient.get("stateAt")))
@@ -701,7 +714,7 @@ class Messaging:
         if not has_unread(self.deps.home, peer, {"from": self._session_id}, self._now()):
             return False
         now = self._now()
-        recipient = next((s for s in join_live_sessions(self.deps.home, self._alive, now, self._ended) if s["id"] == peer), None)
+        recipient = live_session(self.deps.home, peer, self._alive, now)
         if recipient is None:
             return False
         self._wake(recipient, now)
@@ -750,6 +763,9 @@ class Messaging:
             job.cancel()
 
     def _reset_nudges(self) -> None:
+        own = read_presence(self.deps.home, self._session_id)
+        if own is not None and own.get("pid") == self.deps.pid and not own.get("nudges"):
+            return
         with contextlib.suppress(Exception):
             self._update_own(lambda p: {**p, "nudges": 0} if p.get("nudges") else p)
 

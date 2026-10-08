@@ -131,7 +131,7 @@ def _count(db: Db, text: str, *args: object) -> int:
     return int(row["n"]) if row is not None else 0
 
 
-def _insert_checked(db: Db, out: Message, message_id: str, digest: str, now: int) -> Message:
+def _insert_checked(db: Db, out: Message, message_id: str, digest: str, now: int, delivery: str | None) -> Message:
     sender = out["from"]
     dup = db.one(
         "SELECT id FROM messages WHERE route = 'agent-tabs' AND from_id = ? AND to_id = ? AND digest = ? AND sent_ms > ? "
@@ -153,7 +153,7 @@ def _insert_checked(db: Db, out: Message, message_id: str, digest: str, now: int
         raise MailError(f"session {out['to']} already has {MAX_UNREAD} unread messages; wait until it reads them")
     db.run(
         "INSERT INTO messages (id, route, from_id, from_name, from_agent, from_path, to_id, to_name, text, reply_to, sent_at, sent_ms, "
-        "digest, state, state_ms) VALUES (?, 'agent-tabs', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?)",
+        "digest, delivery, state, state_ms) VALUES (?, 'agent-tabs', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unread', ?)",
         *[
             _bind(v)
             for v in (
@@ -169,6 +169,7 @@ def _insert_checked(db: Db, out: Message, message_id: str, digest: str, now: int
                 iso(now),
                 now,
                 digest,
+                delivery,
                 now,
             )
         ],
@@ -177,7 +178,12 @@ def _insert_checked(db: Db, out: Message, message_id: str, digest: str, now: int
 
 
 def send_message(
-    home: str, out: Message, now: float | None = None, deadline_ms: float = TOOL_DEADLINE_MS, label: str | None = "send"
+    home: str,
+    out: Message,
+    now: float | None = None,
+    deadline_ms: float = TOOL_DEADLINE_MS,
+    label: str | None = "send",
+    delivery: str | None = None,
 ) -> Message:
     if utf16_len(out["text"]) > MAX_TEXT_CHARS:
         raise MailError(f"text exceeds {MAX_TEXT_CHARS} characters")
@@ -189,7 +195,9 @@ def send_message(
     while True:
         message_id = new_message_id()
         try:
-            sent = tx(home, lambda db, message_id=message_id: _insert_checked(db, out, message_id, digest, at), deadline_ms, label)
+            sent = tx(
+                home, lambda db, message_id=message_id: _insert_checked(db, out, message_id, digest, at, delivery), deadline_ms, label
+            )
         except sqlite3.Error as e:
             if is_constraint(e) and attempt == 0:
                 attempt += 1
