@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(root, '..', 'claude-plugin', 'dist');
+const helperDir = path.join(root, '..', 'claude-plugin', 'mcp', 'launch');
 const { version } = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 // dist/ide holds the IDE builds from scripts/pack-ides.mjs, which this build doesn't make, so it stays.
@@ -12,14 +13,10 @@ for (const name of existsSync(dist) ? readdirSync(dist) : []) {
   if (name !== 'ide') rmSync(path.join(dist, name), { recursive: true, force: true });
 }
 mkdirSync(path.join(dist, 'launch'), { recursive: true });
+rmSync(helperDir, { recursive: true, force: true });
+mkdirSync(helperDir, { recursive: true });
 
-const result = await build({
-  entryPoints: {
-    'mcp-server': path.join(root, 'src', 'main.ts'),
-    'sync-ides': path.join(root, 'src', 'syncMain.ts'),
-    'agent-hook': path.join(root, 'src', 'agentHook.ts'),
-  },
-  outdir: dist,
+const common = {
   outExtension: { '.js': '.mjs' },
   bundle: true,
   platform: 'node',
@@ -31,7 +28,20 @@ const result = await build({
   define: { BUNDLED_VERSION: JSON.stringify(version) },
   // Bundled CommonJS dependencies call require(); an ES module has none unless one is made.
   banner: { js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);" },
+};
+
+const result = await build({
+  ...common,
+  entryPoints: {
+    'mcp-server': path.join(root, 'src', 'main.ts'),
+    'sync-ides': path.join(root, 'src', 'syncMain.ts'),
+    'agent-hook': path.join(root, 'src', 'agentHook.ts'),
+    'shared-server': path.join(root, 'src', 'serverMain.ts'),
+    'server-start': path.join(root, 'src', 'serverHook.ts'),
+  },
+  outdir: dist,
 });
+await build({ ...common, entryPoints: { headers: path.join(root, 'src', 'headersMain.ts') }, outdir: helperDir, metafile: false });
 
 for (const name of readdirSync(path.join(root, 'launch'))) {
   cpSync(path.join(root, 'launch', name), path.join(dist, 'launch', name));

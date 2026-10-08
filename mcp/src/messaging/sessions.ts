@@ -25,6 +25,7 @@ export interface PresenceFile {
   agent?: string;
   path?: string;
   pid?: number;
+  pidStart?: number;
   host?: string;
   startedAt?: string;
   state?: SessionState;
@@ -115,6 +116,7 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...str('agent'),
     ...str('path'),
     ...pid,
+    ...(typeof o.pidStart === 'number' && Number.isSafeInteger(o.pidStart) && o.pidStart >= 0 ? { pidStart: o.pidStart } : {}),
     ...str('host'),
     ...str('startedAt'),
     ...state,

@@ -8,7 +8,7 @@ export const WAKE_DIR = 'wake';
 export const FILE_MAILBOX_DIR = 'mail';
 export const SCHEMA_VERSION = 1;
 export const BUSY_TIMEOUT_MS = 200;
-export const SHARED_BUSY_TIMEOUT_MS = 25;
+export const SHARED_BUSY_TIMEOUT_MS = 0;
 export const TOOL_DEADLINE_MS = 5_000;
 export const HOOK_DEADLINE_MS = 1_000;
 export const CLEAN_DEADLINE_MS = 1_000;
@@ -288,9 +288,8 @@ export interface StoreOptions {
 
 const writeTurns = new WeakMap<Db, Promise<unknown>>();
 
-// Each busy wait blocks the event loop for the busy timeout (65 ms for 25 ms on Windows, whose sleeps round
-// up), so a process that serves many sessions takes write transactions one at a time instead of letting
-// every waiting session block in turn.
+// A busy wait blocks the event loop for the busy timeout (Windows rounds each sleep up to about 65 ms), so a
+// process takes its write transactions one at a time, and its sessions never wait on each other's lock.
 function inWriteTurn<T>(db: Db, deadline: number, work: () => Promise<T>): Promise<T> {
   const turn = (writeTurns.get(db) ?? Promise.resolve()).then(() => (Date.now() >= deadline ? Promise.reject(new StoreBusyError()) : work()));
   writeTurns.set(db, turn.catch(() => undefined));

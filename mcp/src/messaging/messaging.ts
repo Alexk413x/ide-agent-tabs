@@ -70,8 +70,10 @@ export interface MessagingDeps {
   home: string;
   env: NodeJS.ProcessEnv;
   pid: number;
+  pidStart?: number;
   cwd: string;
   hosts: Hosts;
+  maxWaitS?: number;
   isAlive?: (pid: number) => boolean;
   randomId?: () => string;
   now?: () => number;
@@ -256,6 +258,7 @@ export class Messaging {
       agent: this.agent,
       path: this.deps.cwd,
       pid: this.deps.pid,
+      ...(this.deps.pidStart !== undefined ? { pidStart: this.deps.pidStart } : {}),
       ...(host !== undefined ? { host } : {}),
       startedAt: this.startedAt,
       state: current?.state ?? 'unknown',
@@ -771,7 +774,8 @@ export class Messaging {
   async wait(input: WaitInput, signal?: AbortSignal) {
     if (input.from !== undefined && !isSessionId(input.from)) throw new MailError(`from is not a session id: ${input.from}`);
     if (input.replyTo !== undefined) checkMessageId(input.replyTo, 'replyTo');
-    const seconds = Math.min(Math.max(input.timeout ?? DEFAULT_WAIT_S, 0), this.agent === 'agy' ? AGY_MAX_WAIT_S : MAX_WAIT_S);
+    const cap = Math.min(this.deps.maxWaitS ?? MAX_WAIT_S, this.agent === 'agy' ? AGY_MAX_WAIT_S : MAX_WAIT_S);
+    const seconds = Math.min(Math.max(input.timeout ?? DEFAULT_WAIT_S, 0), cap);
     const filter = { ...(input.from !== undefined ? { from: input.from } : {}), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}) };
     const peer = input.from;
     const retry = peer === undefined ? undefined : setInterval(() => void this.rewake(peer).catch(() => undefined), this.deps.rewakeEveryMs ?? REWAKE_EVERY_MS);

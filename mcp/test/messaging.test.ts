@@ -523,6 +523,20 @@ test('an Antigravity CLI session waits at most AGY_MAX_WAIT_S, inside its 3-minu
   agy.stopHeartbeat();
 });
 
+test('a session served over HTTP waits at most its cap, and writes its agent pid and start time into presence', async () => {
+  const home = tempDir('iat-cap-');
+  const env = { IDE_AGENT_TABS_ID: 'tab-http', IDE_AGENT_TABS_AGENT: 'claude' };
+  const session = new Messaging({ home, env, pid: 4, pidStart: 1_700_000_000_000, cwd: '/a', hosts: hosts([]), isAlive: () => true, maxWaitS: 240 });
+  await session.start();
+  const cancel = new AbortController();
+  cancel.abort();
+  assert.equal((await session.wait({ timeout: 600 }, cancel.signal)).waitedSeconds, 240);
+  const presence = await readPresence(home, 'tab-http');
+  assert.equal(presence?.pid, 4);
+  assert.equal(presence?.pidStart, 1_700_000_000_000);
+  session.stopHeartbeat();
+});
+
 test('a Claude tab whose turn just ended is not typed into until its prompt has sat idle', async () => {
   const typed: Typed[] = [];
   const home = tempDir('iat-pair-');

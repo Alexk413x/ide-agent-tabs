@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { openDb, setBusyTimeout, SHARED_BUSY_TIMEOUT_MS } from '../src/messaging/db.js';
+import { pollInsteadOfWatch, SHARED_POLL_MS } from '../src/messaging/wake.js';
 import { claimBatch, newMessageId, sendMessage, settleClaim, takeBatch, waitForMessage, type Outgoing } from '../src/messaging/store.js';
 
 const [mode = '', json = '{}'] = process.argv.slice(2);
@@ -138,6 +139,7 @@ async function wakeSend() {
 
 async function shared() {
   setBusyTimeout(SHARED_BUSY_TIMEOUT_MS);
+  pollInsteadOfWatch(SHARED_POLL_MS);
   const ids = args.sessions as string[];
   const internal = Number(args.internal);
   const expected = Number(args.expected);

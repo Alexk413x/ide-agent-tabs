@@ -10,11 +10,11 @@ import { tempDir } from './tempDir.js';
 
 const WORKER = fileURLToPath(new URL('./stressWorker.ts', import.meta.url));
 const LONG = { timeout: 180_000 };
-// The shared-server case sends every message in one burst, far above the 20-a-minute cap. On a Windows
-// laptop it measured a 130 ms median send and a 200-300 ms event-loop p99; these bounds only catch a
-// regression and leave room for slower CI runners.
-const BURST_SEND_MS = 1_000;
-const BURST_LOOP_DELAY_MS = 1_500;
+// The shared-server case sends every message in one burst, far above the 20-a-minute cap. On a loaded Windows
+// laptop it measured a 40-250 ms median send and a 50-130 ms event-loop p99 (one run of eight 590 ms); these
+// bounds catch a regression and leave room for slower CI runners.
+const BURST_SEND_MS = 600;
+const BURST_LOOP_DELAY_MS = 750;
 
 interface Worker {
   child: ChildProcess;
