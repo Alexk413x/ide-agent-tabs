@@ -107,9 +107,34 @@ class SyncHook(unittest.TestCase):
         state = read_sync_state(h.ctx.home)
         assert state is not None
         self.assertEqual((state["server"], state["python"]), (build, sys.executable))
+        self.assertFalse(os.path.exists(old))
+        self.assertEqual(read_json(os.path.join(h.ctx.home, "mcp", "version.json")), {"version": h.ctx.source.version})
         before = read_text(os.path.join(h.ctx.home, "synced.json"))
         self.assertIsNone(sync_hook(h.ctx, h.bundle))
         self.assertEqual(read_text(os.path.join(h.ctx.home, "synced.json")), before, "nothing to do writes nothing")
+
+    def test_the_node_copy_stays_until_every_registration_moved_off_it(self) -> None:
+        h = Home(self)
+        fake_cli(h.bin, "pi")
+        folder = os.path.join(h.ctx.home, "mcp")
+        old = [
+            os.path.join(folder, *n.split("/"))
+            for n in ("mcp-server.mjs", "agent-hook.mjs", "THIRD_PARTY_NOTICES.txt", "launch/agent-launch.sh")
+        ]
+        for file in old:
+            write(file, "0.8.0\n")
+        write(os.path.join(folder, "version.json"), '{"version":"0.8.0"}\n')
+        pi = config_file("pi", h.env, h.user)
+        write(pi, "{")
+        self.assertIsNone(sync_hook(h.ctx, h.bundle))
+        self.assertTrue(all(os.path.exists(f) for f in old))
+        self.assertIn("migration: pi: ", read_text(os.path.join(h.ctx.home, "sync.log")))
+        write(pi, json.dumps({"mcpServers": {"ide-agent-tabs": {"command": "node", "args": [old[0].replace("\\", "/")]}}}))
+        self.assertIsNone(sync_hook(h.ctx, h.bundle))
+        self.assertEqual([f for f in old if os.path.exists(f)], [])
+        self.assertFalse(os.path.exists(os.path.join(folder, "launch")))
+        self.assertEqual(read_json(os.path.join(folder, "version.json")), {"version": h.ctx.source.version})
+        self.assertIsNotNone(current_build(h.ctx.home))
 
     def test_a_fresh_lock_blocks_a_second_sync_and_a_stale_one_is_taken_over(self) -> None:
         h = Home(self)

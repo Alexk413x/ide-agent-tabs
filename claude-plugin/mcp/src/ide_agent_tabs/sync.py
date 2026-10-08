@@ -13,7 +13,7 @@ from .files import ensure_private_dir, mtime_ms, read_text_if_exists, remove_fil
 from .jsjson import parse, stringify
 from .parallel import run_all
 from .register import RegisterContext, migrate_registrations, refresh_copy
-from .server_copy import bundled_build, copy_root, read_python
+from .server_copy import bundled_build, copy_root, old_copy_exists, read_python, remove_old_copy
 from .version import compare_versions
 
 EXTENSION_ID = "alexk413x.ide-agent-tabs"
@@ -232,7 +232,7 @@ def _copy_needs(ctx: RegisterContext, previous: dict[str, Any] | None) -> tuple[
     if not os.path.isdir(copy_root(ctx.home)):
         return None, False
     build = bundled_build(ctx.source)
-    server = None if previous is not None and previous.get("server") == build else build
+    server = None if previous is not None and previous.get("server") == build and not old_copy_exists(ctx.home) else build
     python_changed = (previous or {}).get("python") != ctx.python or read_python(ctx.home) != ctx.python
     return server, python_changed
 
@@ -259,6 +259,8 @@ def sync_hook(ctx: RegisterContext, bundle_dir: str, now: int | None = None) -> 
                 synced["python"] = ctx.python
                 _, failures = migrate_registrations(ctx)
                 errors.extend(f"migration: {f}" for f in failures)
+                if not failures and old_copy_exists(ctx.home):
+                    remove_old_copy(ctx.home, ctx.source.version)
             except (OSError, ValueError, TimeoutError) as e:
                 errors.append(f"server copy: {e}")
         ide_errors: list[str] = []

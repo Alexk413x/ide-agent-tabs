@@ -737,12 +737,18 @@ def migrate_registrations(ctx: RegisterContext) -> tuple[list[str], list[str]]:
     migrated: list[str] = []
     errors: list[str] = []
     for agent in AGENTS:
-        if agent == "codex" and ctx.platform == "win32":
-            continue
         try:
             status = agent_status(ctx, agent)
             if status.get("error"):
                 errors.append(f"{agent}: {status['error']}")
+                continue
+            if agent == "codex" and ctx.platform == "win32":
+                if (
+                    status["registered"]
+                    and status["path"] is not None
+                    and same_path(status["path"], old_server_path(ctx.home, ctx.platform), ctx.platform)
+                ):
+                    errors.append(f"codex: registered with {status['path']}; run sync-ides --unregister codex")
                 continue
             if status["registered"] and _is_our_server(status["path"], ctx) and not status["stable"]:
                 register(ctx, agent, status["config"])
