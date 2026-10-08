@@ -2,11 +2,12 @@
 name: new-tab
 description: Open a new agent session (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose, Codex (local), or a custom profile) in an IDE editor tab or a terminal tab, optionally in another folder and with a first message. Also lists and closes those tabs, and reopens a closed session. Use when the user asks to open a new tab, session or agent somewhere, to see which agent tabs are open, to close one, or to reopen or resume a session that ended. Not for opening a file or a web page in a tab.
 argument-hint: "[agent] [folder] [-- first message]"
+allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" list-ides)
 ---
 
 Open, list or close agent tabs through the `ide-agent-tabs` MCP server. The tab can be in any running IDE
 (JetBrains IDEs, VS Code and VS Code-based editors) or in a terminal app. The tools are
-`mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_ides`, `mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_agents`,
+`mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_agents`,
 `mcp__plugin_ide-agent-tabs_ide-agent-tabs__open_tab`, `mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_tabs`,
 `mcp__plugin_ide-agent-tabs_ide-agent-tabs__close_tab`, `mcp__plugin_ide-agent-tabs_ide-agent-tabs__closed_sessions` and
 `mcp__plugin_ide-agent-tabs_ide-agent-tabs__resume_tab`; below they go by their short names.
@@ -29,7 +30,14 @@ Arguments: `$ARGUMENTS`
 Call `open_tab` with `path`, and `agent` and `prompt` when given. Pass `ide` only when the user names an
 IDE or terminal. For an IDE, pass the name the user said, such as `Android Studio`, `vscode` or
 `pycharm`; the server finds it, starts it when it isn't running, and opens the tab there. For a
-terminal, or one of several windows of the same IDE, pass its id from `list_ides`. Pass `args` or `env`
+terminal, or one of several windows of the same IDE, pass its id. To list the running IDEs and the
+terminals with their ids, run:
+
+```sh
+node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" list-ides
+```
+
+It prints JSON: `ides` (id, product and open projects), `installed`, `terminals` and `shells`. Pass `args` or `env`
 only when the user asks for extra agent flags or variables.
 
 If the result has `pending: true`, the IDE is still starting: tell the user the tab opens there once it

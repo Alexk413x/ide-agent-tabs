@@ -413,7 +413,7 @@ test('the OpenCode entry sets a tool timeout above the longest wait_for_message'
 });
 
 test('the Antigravity CLI allow rules cover only tools that read or message, and drop the old wildcard', () => {
-  assert.ok(AGY_ALLOW_RULES.every((r) => /^mcp\(ide-agent-tabs\/(send_message|read_messages|wait_for_message|list_sessions|list_agents|list_ides|list_tabs)\)$/.test(r)));
+  assert.ok(AGY_ALLOW_RULES.every((r) => /^mcp\(ide-agent-tabs\/(send_message|read_messages|wait_for_message|list_sessions|list_agents|list_tabs)\)$/.test(r)));
   for (const tool of ['open_tab', 'close_tab', 'handoff', 'jev_ask']) assert.ok(!AGY_ALLOW_RULES.some((r) => r.includes(tool)), tool);
   const old = { permissions: { allow: ['command(git)', 'mcp(ide-agent-tabs/*)'] } };
   assert.deepEqual((withAgyAllowRule(old, 'f', true).permissions as { allow: string[] }).allow, ['command(git)', ...AGY_ALLOW_RULES]);

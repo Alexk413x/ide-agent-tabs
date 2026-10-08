@@ -10,7 +10,7 @@ type SettingsAgent = 'codex' | 'gemini' | 'qwen';
 export const AGY_HOOK_GROUP = 'ide-agent-tabs';
 // Only tools that read or message: open_tab, close_tab and handoff start or stop agents, and jev_ sends text
 // off the machine, so those keep Antigravity CLI's own per-call confirmation.
-export const AGY_ALLOW_RULES: readonly string[] = ['send_message', 'read_messages', 'wait_for_message', 'list_sessions', 'list_agents', 'list_ides', 'list_tabs'].map(
+export const AGY_ALLOW_RULES: readonly string[] = ['send_message', 'read_messages', 'wait_for_message', 'list_sessions', 'list_agents', 'list_tabs'].map(
   (tool) => `mcp(ide-agent-tabs/${tool})`,
 );
 const AGY_WILDCARD_RULE = 'mcp(ide-agent-tabs/*)';

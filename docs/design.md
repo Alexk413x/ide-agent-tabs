@@ -18,6 +18,7 @@ This document is the contract every part builds against. Change it before you ch
 | VS Code extension (VS Code and editors built on it) | Built | `vscode/` |
 | Messaging between agent sessions: MCP tools, hooks and the `message` skill | Built | `mcp/src/messaging/`, `mcp/src/agentHook.ts`, `claude-plugin/hooks/`, `claude-plugin/skills/message/` |
 | Handoff to a new tab: the `handoff` tool and skill | Built | `mcp/src/handoff.ts`, `claude-plugin/skills/handoff/` |
+| Shared HTTP server for Claude Code sessions, its headers helper and start hook | Built | `mcp/src/shared/`, `mcp/src/serverMain.ts`, `claude-plugin/mcp/launch/` |
 | Jev judgment tools in the MCP server, and the `jev` skill (optional) | Built | `mcp/src/jev/`, `claude-plugin/skills/jev/`; later steps in [jev-integration.md](jev-integration.md) |
 
 Claude Code sessions message each other with Claude Code's own `ListAgents` and `SendMessage`. Sessions
@@ -419,14 +420,14 @@ The default lives in `~/.ide-agent-tabs/config.json`, so all IDEs and the MCP se
 
 ## MCP server
 
-A stdio MCP server, written in TypeScript and bundled into one file for Node 22.13 or later. It reads the
-registry and calls the HTTP API. Messaging needs `node:sqlite`, which Node 22.13 is the first release
+An MCP server, written in TypeScript and bundled for Node 22.13 or later. It reads the registry and calls
+the HTTP API. Claude Code sessions reach it through the shared HTTP server (see
+[Shared server](#shared-server)); every other agent CLI starts it over stdio. Messaging needs `node:sqlite`, which Node 22.13 is the first release
 to offer without a flag; on an older Node the tab tools work and the messaging tools fail with a message
 that names the Node version.
 
 | Tool | Does |
 |---|---|
-| `list_ides` | Lists running IDEs with their projects, from the registry and each IDE's `info`, and under `installed` the IDEs found on disk that aren't running (`name`, `product`, `kind`, `version`). |
 | `list_agents` | Lists profiles, which are installed, which take a model (`model`), which Ori can launch (`ori`), and the `launchVia` setting. |
 | `list_tabs` | Lists tabs across all IDEs, or in one. |
 | `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus`. Returns `via: "ori"` for a tab started through Ori. |
@@ -435,9 +436,17 @@ that names the Node version.
 | `closed_sessions` | Lists the sessions that ended in the last 7 days, newest first, grouped by folder (see [Resume](#resume)). |
 | `resume_tab` | Reopens a closed session with the agent's resume option, behind a cost guard (see [Resume](#resume)). |
 
+Two diagnostics run on the command line instead of as tools, from the same bundle:
+`node mcp-server.mjs list-ides` and `node mcp-server.mjs jev status` (see [Command line](#command-line)).
+`list-ides` prints the running IDEs with their projects, from the registry and each IDE's `info`, the
+terminals, the PowerShell installs, and under `installed` the IDEs found on disk that aren't running
+(`name`, `product`, `kind`, `version`). It reuses a detection file less than an hour old. It exits 1
+with `{"error": ...}` on stderr when it fails. `server status` and `server stop` control the shared
+server. Each command loads only the modules it needs.
+
 `open_tab` routing, first match wins:
 
-1. The IDE or terminal named by `ide`, using its id from `list_ides`, or an IDE name (see below).
+1. The IDE or terminal named by `ide`, using its id from `list-ides`, or an IDE name (see below).
 2. With `"tabRouting": "caller"`, where the caller runs: the caller's own IDE, even when another IDE has
    the project open, or a new tab in the caller's terminal window when the caller runs in an Agent Tabs
    terminal tab. A caller outside an Agent Tabs tab goes on to rule 3.
@@ -459,7 +468,7 @@ or a short key: `vscode` (or `code`), `code-insiders`, `cursor`, `windsurf`, `vs
 
 1. A running copy of that IDE: the one with an open project that contains `path`, else the most recently
    started one.
-2. An installed copy, found on disk the way `list_ides` lists it under `installed`. The server starts it
+2. An installed copy, found on disk the way `list-ides` lists it under `installed`. The server starts it
    with `path` as the folder to open, polls the endpoint registry every 500 ms until a new endpoint of
    that product answers `info` with an open project, and opens the tab there. A VS Code-family editor
    starts through its command-line tool; a JetBrains IDE through the launcher its `product-info.json`
@@ -533,7 +542,8 @@ The VS Code settings have machine scope, so only the user-level value reaches `c
 
 `~/.ide-agent-tabs/detected.json` is the single source for the terminal and shell lists in the IDE
 settings. An IDE doesn't run its own detection. The MCP server writes the file atomically at server start,
-in the background; on every `list_ides` call; and from the Claude Code session start hook.
+in the background; from `list-ides` when the file is more than an hour old; and from the Claude Code
+session start hook.
 
 ```json
 {
@@ -552,8 +562,8 @@ in the background; on every `list_ides` call; and from the Claude Code session s
 agents that `ori harness list --json` reports as installed. Detection runs `ori` only here, never when a
 tab opens.
 
-`source` is `path`, `msi`, `store`, `preview` or `windows`. `shells` is empty off Windows. `list_ides`
-returns `shells` next to `terminals`. An IDE whose detection file is missing lists only **Automatic**
+`source` is `path`, `msi`, `store`, `preview` or `windows`. `shells` is empty off Windows. `list-ides`
+prints `shells` next to `terminals`. An IDE whose detection file is missing lists only **Automatic**
 (and **Custom path…** for the shell), and keeps a value already in `config.json` visible.
 
 Results are compact JSON. An IDE error keeps the HTTP status and the IDE's `error` text and adds the
@@ -566,14 +576,253 @@ The server's instructions start with one sentence that names the tab tools, then
 then the Jev rules when Jev is on. Claude Code cuts each server's instructions at 2,048 characters, so
 `instructions.test.ts` fails when the joined text passes that.
 
+## Shared server
+
+Claude Code sessions share one Node server per machine over Streamable HTTP. The other agent CLIs keep
+their stdio servers. This section records what Claude Code does over HTTP, measured before the server was
+built, and the numbers it was built against.
+
+### What Claude Code does over HTTP
+
+Measured 2026-10-07 on Windows 11 with Claude Code 2.1.293, Node 24.19.0 and `@modelcontextprotocol/sdk`
+1.30.1, with throwaway servers on test ports and `claude -p --strict-mcp-config --mcp-config <file>
+--model haiku`.
+
+**The MCP SDK can't serve MCP 2026-07-28.** SDK 1.30.1, and 1.32.1, the newest release, know protocol
+versions up to 2025-11-25 and have no `server/discover`. Against the SDK's own Streamable HTTP transport
+(stateless, JSON responses), Claude Code sent `server/discover` with `mcp-protocol-version: 2026-07-28`,
+got a 400, then fell back to `initialize` with 2025-11-25 and called the tool. So Claude Code still
+reaches an SDK server, but each connect costs a failed request, and a stateless classic server has no way
+to ask the client for its roots. The shared server therefore speaks 2026-07-28 on `node:http`, and keeps
+the SDK for the stdio server and for running the tools.
+
+**The headers helper and the session start hook find the same Claude Code process.** Claude Code runs
+the `headersHelper` through `cmd.exe /d /s /c` and a hook command string through Git Bash. The helper's
+ancestors were `node`, `cmd.exe`, then `claude.exe`; the hook's were `node`, `bash`, `bash`, then the same
+`claude.exe`. The hook's `CLAUDE_PID` named that process too. The helper gets no `CLAUDE_PID` or
+`CLAUDE_CODE_SESSION_ID` of its own: in a nested session it inherits the outer session's values, so the
+helper must not trust them. One CIM query for the whole process table takes 515-560 ms through
+`powershell.exe` (0.8-1.2 s with command lines, 1.1-1.3 s when it walks one pid at a time). The rule is
+the nearest ancestor that isn't a shell: a check for the name `claude` picked the outer session when the
+inner one ran as `node`. A unit test runs the lookup against a real chain of Node processes and a shell,
+so CI checks it on Windows, macOS and Linux; the check against a real Claude Code connect is manual and
+was done only on Windows.
+
+**A 600 s tool call completes over HTTP when the server entry sets `timeout`.** Node's
+`http.Server.requestTimeout` covers receiving a request, not a response that takes long: with a 3 s
+`requestTimeout` a response sent after 6 s arrived. Claude Code is what cuts long calls. On this machine,
+whose settings set `MCP_TIMEOUT=60000`, a call ended at exactly 60 s with "The operation timed out".
+With `MCP_TOOL_TIMEOUT=700000` it ended at 300 s with "sent no response or progress for 300s". With
+`"timeout": 660000` in the server's entry, a 600 s call completed. The decision to cap an HTTP wait at
+240 s stands; the plugin's entry sets `"timeout": 300000` so that a 240 s wait, and a 60 s default wait,
+both finish.
+
+**The mod's `$.mcp.call` binds to the same session.** A test mod called the server at `session.start`
+and `turn.start`. Its calls carried the same client header as the model's call in that session, and
+`$.mcp.call` answered the server's `input_required` roots request itself. The mod needs no session id in
+its arguments.
+
+**A `--bg` role session connects, and the lookup finds the session process.** A `claude --bg
+--strict-mcp-config --mcp-config` session reached the server. The helper's ancestors were `node`,
+`cmd.exe`, then `claude.exe --session-id …`, then `claude.exe --bg-pty-host`, then `claude.exe daemon
+run`; the lookup stops at the session process, and the hook's `CLAUDE_PID` named the same one.
+`claude agents --json` printed no pid for it. A `--bg` session needs a trusted folder.
+
+**A start hook that waits 3 s fits the connect window.** Claude Code runs the `SessionStart` hooks in
+parallel, so `sync-ides.mjs` doesn't delay the start hook, and their order in the list doesn't matter.
+It retries the connect until about 7-8 s after launch, whether or not hooks still run: a server that
+listened 5.0 s after launch was reached at 7.5 s; one that listened at 8.9 s was never reached, although
+a hook ran until 15.8 s. The helper ran 1.2 s before the first hook, so the helper also starts the server
+when nothing listens, and both wait up to 3 s.
+
+### Process and transport
+
+One Node process serves every Claude Code session on the machine at `http://127.0.0.1:<port>/mcp`.
+The port is the plugin option `server_port`, 47828 by default, in the 47821-47829 block where each of
+the author's plugins takes one slot. Codex, Antigravity CLI, Copilot CLI, Gemini CLI and the other agent
+CLIs keep their stdio server, because a Node shim per session would cost almost as much memory as the
+server it forwards to.
+
+`claude-plugin/.mcp.json` declares the server as `"type": "http"` with that URL, a `headersHelper`, and
+`"timeout": 300000`. The helper is `node "${CLAUDE_PLUGIN_ROOT}/mcp/launch/headers.mjs"`, and the URL's
+port comes only from `${user_config.server_port}`. sentinel-swarm copies this entry into its role
+sessions and refuses an entry whose helper uses anything else, or whose URL host differs.
+
+The process has two parts, built as `dist/shared-server.mjs` and the chunks beside it:
+
+- **The front** (`mcp/src/shared/front.ts`) speaks MCP 2026-07-28 on `node:http`: `server/discover`,
+  `tools/list`, `tools/call`, `ping` and empty prompt and resource lists. It answers a notification
+  with 202 and an older protocol version with error -32022. It answers discovery and `tools/list` from
+  `mcp/src/shared/catalog.generated.ts`, which `scripts/write-catalog.ts` writes from the tool
+  registrations in `server.ts`; a test fails when the two differ. The Jev tools appear only while
+  `config.json` turns Jev on.
+- **The engine** (`mcp/src/shared/engine.ts`) loads on the first tool call, with the MCP SDK, zod and
+  the tool code. It runs each session's tools on its own `McpServer` from `createServer`, connected
+  through an in-memory transport, so stdio and HTTP sessions run the same tool code and argument checks.
+
+A tool call that the client drops is cancelled. The front sends no progress notifications, because
+2026-07-28 has no channel for them in a plain JSON reply.
+
+### Server security
+
+- The server binds to `127.0.0.1` only.
+- It refuses, with 403, a request whose `Host` isn't `127.0.0.1:<port>` or `localhost:<port>`, or whose
+  `Origin` is set to anything else. That blocks DNS rebinding from a browser.
+- Every route but `GET /health` needs a bearer token. `/mcp` and `/end` take the per-user token in
+  `~/.ide-agent-tabs/server/token` (mode 0600); `/shutdown` takes the token in that server's own state
+  file, `server/state-<port>.json`. A missing or wrong token gets 403, never 401: a 401 starts Claude
+  Code's OAuth flow.
+- The token is one per user and outlives each server, because Claude Code sends the headers it got at
+  connect to a server that restarted since.
+- The helper and the hook send the token only to a server whose pid and port match the state file, so a
+  program squatting on the port never receives it.
+
+### Server start
+
+Claude Code runs the helper on each connect, then retries the connect until about 7-8 s after launch,
+and never again for that session. So two things start the server, and both wait up to 3 s for it:
+
+- **The headers helper**, which runs first. When nothing answers `GET /health`, or an older build does,
+  it starts `dist/shared-server.mjs` detached, without the session's environment variables. A request
+  without the token gets 403, which Claude Code caches in `~/.claude/mcp-needs-auth-cache.json` as
+  "needs auth" and stops connecting, for later sessions too. So the helper waits for a server it can
+  verify before it prints any headers.
+- **The `SessionStart` hook**, `dist/server-start.mjs SessionStart`, first in the hook list. It reads
+  the port from `CLAUDE_PLUGIN_OPTION_SERVER_PORT`. It exits 0, and prints one line only when the port
+  belongs to another program or the server doesn't come up.
+
+### Session identity
+
+MCP 2026-07-28 has no sessions, and Claude Code runs the helper in the plugin folder, without the
+session id or the cwd. So the helper sends:
+
+| Header | Value |
+|---|---|
+| `X-Agent-Tabs-Client` | A random id per connect |
+| `X-Agent-Tabs-Pid`, `X-Agent-Tabs-Pid-Start` | The pid and start time of the nearest ancestor process that isn't a shell: the Claude Code process |
+| `X-Agent-Tabs-Tab` | `IDE_AGENT_TABS_ID`, when it has the tab id format |
+| `X-Agent-Tabs-Agent` | `IDE_AGENT_TABS_AGENT`, when it is a plain name |
+| `Authorization` | `Bearer <token>` |
+
+The server keys a session on the pid and start time, so a reconnect, a restarted server and the mod's
+own `$.mcp.call` all reach the same session, and a reused pid never inherits a mailbox. A session
+without a pid header, when the lookup failed, is keyed on its client id, and its presence starts over
+on the next connect.
+
+A tab session takes its tab id as the session id. A project's `.claude/settings.json` can set
+`IDE_AGENT_TABS_ID`, and a nested `claude -p` inherits it, so the id is only a claim: the server binds it
+only when no presence file names another live process for that id, the rule the stdio server applies.
+Any other session gets `s-` and 12 hex characters of a hash of its key.
+
+The first tool call of a client gets an `input_required` result that asks for its roots. Claude Code
+answers with the session's folder, which becomes the session's `path`, and the mod's `$.mcp.call` answers
+it the same way. The folder is cached per client id.
+
+The process lookup takes one CIM query through `powershell.exe` on Windows (0.5-1.6 s, depending on load),
+one `ps` call on macOS, and reads `/proc` on Linux. It runs while the helper waits for the server.
+
+### Presence, timers and session end
+
+The server keeps one `Messaging` per bound session. Its presence file names the Claude Code process's pid
+and start time (`pidStart`), not the server's, and the server beats for it every 60 s. Follow-up wake-up
+timers run in the server, so they outlive the sender's turn.
+
+A session ends when its Claude Code process exits, which the server checks every 15 s, or when the
+`SessionEnd` hook, `dist/server-start.mjs SessionEnd`, posts its `CLAUDE_PID` to `/end`. The hook skips
+a `/clear`, which keeps the process. Either way the server records the closed session and removes its
+presence.
+
+An HTTP `wait_for_message` waits at most 240 s per call, below Claude Code's 300 s limit for a call that
+sends nothing; the skill calls again when a wait times out. stdio clients keep 600 s.
+
+### Message store in the shared server
+
+The shared server is one writer for every Claude Code session, so a synchronous step blocks all of them.
+It sets `busy_timeout` to 0: a busy database returns at once, and the async retry with jitter waits
+without blocking the event loop. It takes its write transactions one at a time, so its own sessions never
+wait on each other's lock.
+
+Its waiters don't watch `~/.ide-agent-tabs/wake/`. On Windows, a folder watch that many sessions signal
+stalled the event loop for 50-150 ms at a time. Instead one timer reads the store's `data_version` every
+100 ms for all waiters in the process, and a send to a session waiting in the same process wakes it
+directly, without a wake file. A stdio server still watches the folder.
+
+Calls that list sessions and overlap share one read of the presence files.
+
+### Build handover, idle exit and control
+
+- `GET /health` returns the service name, version, pid, port and session count.
+- A newer build that finds an older one on the port asks it to stop with `POST /shutdown` and the token
+  from the older one's state file, after it checks that the state file names that pid and port, and
+  then takes the port. An older build leaves a newer one running. Claude Code sends the next call to the
+  newer server, with its old headers.
+- A server whose state file is gone or names another pid exits within 5 s.
+- A server exits after 8 hours with no request and no live session. A stopped server isn't restarted
+  mid-session, so a short idle timeout would strand sessions.
+- `node dist/mcp-server.mjs server status` and `server stop` report on and stop the server on
+  `--port`, else `CLAUDE_PLUGIN_OPTION_SERVER_PORT`, else 47828.
+- The server logs to `~/.ide-agent-tabs/server/server-<port>.log`, cut at 1 MB.
+
+One `IDE_AGENT_TABS_HOME` per port: a session whose home differs from the server's on that port finds no
+state file it can verify, gets no token, and Claude Code marks the server "needs auth". Give each home its
+own `server_port`.
+
+### Success numbers
+
+Measured with `mcp/bench/bench.mjs` on the same machine as the stdio numbers, after the shared server.
+The machine also ran an Android emulator, Android Studio, several IDEs and other Claude Code sessions,
+and its CPU load was 90-100% during the latency runs, against 35-70% for the stdio baseline. Latency
+numbers are therefore upper bounds; memory and start-up don't depend on load.
+
+| Measure | stdio, before | Shared server, after | Target | Met |
+|---|---|---|---|---|
+| Memory, 1 Claude Code session | 79.8 MB | 81.3 MB | 85 MB or less | Yes |
+| Memory, 8 Claude Code sessions | 639.5 MB, 8 processes | 83.9 MB, 1 process | 100 MB or less, 1 process | Yes |
+| Memory, server idle | 79.8 MB per process | 69.3 MB before the first tool call, 81.8 MB after | 80 MB or less; 60 MB with the lean front | Before the first call; not the 60 MB |
+| Server start to first answer | 221-281 ms per session | 209-358 ms, median 237 ms, once per machine | 500 ms or less | Yes |
+| Median `send_message` / `read_messages`, 1 agent | 6.9 / 6.6 ms | 8.7 / 8.4 ms | No more than 10 ms above stdio | Yes |
+| Same, 4 agents | 10.8 / 7.0 ms | 15.5 / 12.0 ms | | |
+| Same, 8 agents | 41.8 / 16.0 ms | 49.2 / 23.3 ms | | |
+| Same, 16 agents | 171.6 / 38.0 ms | 85.9-111.1 / 37.5-71.9 ms | Under 100 ms | Read yes; send in one run of two |
+| Failed calls in the 16-agent run | 0 | 0 | 0 | Yes |
+| Median `send_message` / `read_messages`, 32 HTTP sessions and 8 stdio processes | Not measurable before | 296-1,588 / 79-256 ms; 0 failed, lost or read twice | Under 150 ms, 0 failed, lost or read twice | Correctness yes; latency no |
+| `list-ides` and `jev status` on the command line | `jev status` 1,260-2,051 ms; `list-ides` didn't exist | `list-ides` 485-924 ms (median 639 ms); `jev status` 380-552 ms with the key in the environment, 2.0-3.4 s from the Windows credential store | 300 ms or less | No |
+| Sessions marked "needs auth" after 20 cold starts | | 0 of 20 (helper started the server and got the token each time; median 3.6 s, max 6.5 s at full CPU load) | 0 | Yes |
+
+The stdio and shared-server latency in the rows for 1 to 16 agents come from back-to-back runs at a CPU
+load of 65-95%; the 16-agent send of 85.9 ms is a later run at 95%. The 32-plus-8 run saturates the
+machine on its own, and its latency is mostly presence reads: every `list_sessions` and `send_message`
+reads all 40 presence files. Below 300 ms the command line is bounded by Node's own start (150-320 ms for
+`node -e 0` on this machine during the runs) and the 1 MB bundle; `jev status` from the credential store
+spends most of its time starting PowerShell, and `list-ides` reaches the IDEs and terminals.
+
+### Numbers before the shared server
+
+`mcp/bench/bench.mjs` measures memory, start-up, tool latency and the CLI. These are the stdio numbers
+before the shared server, on a 16-thread i9-9980HK under Windows 11 with Node 24.19.0. The machine ran
+IDEs and other Claude Code sessions at the same time: its CPU load was 35-70% before a run, so latency
+varies by a factor of two between runs.
+
+| Measure | stdio |
+|---|---|
+| Memory, 1 session | 79.8 MB, 1 process |
+| Memory, 8 sessions | 639.5 MB, 8 processes |
+| Start to `initialize` reply | 221-281 ms, median 222 ms |
+| Median `list_sessions` / `send_message` / `read_messages`, 1 agent | 3.4 / 4.5 / 4.3 ms |
+| Same, 4 agents | 6.4 / 7.9 / 5.3 ms |
+| Same, 8 agents | 12.7 / 14.8 / 5.9 ms |
+| Same, 16 agents | 35.7 / 45.2 / 8.0 ms |
+| Failed calls, messages lost or read twice, 16 agents | 0 |
+| `mcp-server.mjs jev status`, Jev on | 1,260-2,051 ms, median 1,362 ms |
+
 ## Terminals
 
 Standalone terminal apps need no extension. The MCP server drives them directly and shows each one in
-`list_ides` next to the IDEs, with `ide` set to the terminal's name, such as `windows-terminal` or
+`list-ides` next to the IDEs, with `ide` set to the terminal's name, such as `windows-terminal` or
 `ghostty`. A terminal tab starts the agent with the same profiles and argument order as an IDE tab, but
 through a launch spec file (see [How a tab starts the agent](#how-a-tab-starts-the-agent)).
 
-What each terminal allows differs. `list_ides` reports each terminal's capabilities, and `list_tabs` and
+What each terminal allows differs. `list-ides` reports each terminal's capabilities, and `list_tabs` and
 `close_tab` answer only for terminals that can list or close tabs.
 
 | Terminal | OS | Open | List | Close | How |
@@ -627,7 +876,7 @@ What each terminal allows differs. `list_ides` reports each terminal's capabilit
   - macOS: `allow_remote_control socket-only` and `listen_on unix:${TMPDIR}/kitty-agent-tabs`
 
   kitty appends `-<pid>` to the socket path. The server uses `KITTY_LISTEN_ON` when it's set, and
-  otherwise the newest `kitty-agent-tabs-*` socket that answers `kitten @ ls`. `list_ides` reports kitty's
+  otherwise the newest `kitty-agent-tabs-*` socket that answers `kitten @ ls`. `list-ides` reports kitty's
   capabilities for the mode a new tab would use.
 - WezTerm's most recent stable release is 20240203, and most users run nightly builds. The driver uses only
   `cli spawn`, `cli list`, `cli kill-pane` and `start`, which both have. It records the GUI socket with
@@ -907,7 +1156,7 @@ Pi and OpenCode set no state, and send no reminder or nudge.
     to `~/.gemini/config/mcp_config.json`, the `ide-agent-tabs` hook group to `~/.gemini/config/hooks.json`
     (`PreInvocation`, `PostToolUse` with matcher `*`, and `Stop`, each with `timeout` 5), and allow rules
     to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` for the tools that read or message
-    (`send_message`, `read_messages`, `wait_for_message`, `list_sessions`, `list_agents`, `list_ides`,
+    (`send_message`, `read_messages`, `wait_for_message`, `list_sessions`, `list_agents` and
     `list_tabs`). Without them, Antigravity CLI asks before each tool call and denies it in a `-p` run.
     `open_tab`, `close_tab` and `handoff` start or stop agents and `jev_` sends text off the machine, so
     those keep Antigravity CLI's confirmation, and a peer message can't drive them unattended.
@@ -1549,7 +1798,10 @@ so no IDE downloads anything.
 
 | File | Holds | Built by |
 |---|---|---|
-| `mcp-server.mjs`, `launch/`, `THIRD_PARTY_NOTICES.txt` | The MCP server, the terminal launch scripts and bundled licenses | `mcp/build.mjs` |
+| `mcp-server.mjs`, `launch/`, `THIRD_PARTY_NOTICES.txt` | The MCP server and command line, the terminal launch scripts and bundled licenses | `mcp/build.mjs` |
+| `shared-server.mjs`, `server-*.mjs` | The shared HTTP server for Claude Code, split so the tool code loads on the first call | `mcp/build.mjs` |
+| `server-start.mjs` | The hook that starts the shared server and reports a session's end | `mcp/build.mjs` |
+| `../mcp/launch/headers.mjs` | The `headersHelper` of `.mcp.json` | `mcp/build.mjs` |
 | `sync-ides.mjs` | The IDE sync script, from `mcp/src/sync.ts` | `mcp/build.mjs` |
 | `agent-hook.mjs` | The messaging hook script, from `mcp/src/agentHook.ts` | `mcp/build.mjs` |
 | `ide/ide-agent-tabs.vsix` | The VS Code extension | `scripts/pack-ides.mjs` |
@@ -1584,8 +1836,9 @@ in `vscode/package.json`.
 
 ### Session start hook
 
-`claude-plugin/hooks/hooks.json` runs `node dist/sync-ides.mjs --hook` when a Claude Code session starts,
-with a 60-second timeout. The hook:
+`claude-plugin/hooks/hooks.json` first runs `node dist/server-start.mjs SessionStart`, which starts the
+shared server (see [Server start](#server-start)). It also runs `node dist/sync-ides.mjs --hook` when a Claude Code
+session starts, with a 60-second timeout. Claude Code runs the two at once. The sync hook:
 
 1. Compares `dist/ide/versions.json` with `~/.ide-agent-tabs/synced.json`, and stops when the versions
    match the last sync and the server copy needs no refresh (step 5). After a failed IDE sync, it tries
@@ -1703,7 +1956,6 @@ Listed only when `jev.enabled` is `true`.
 
 | Tool | Takes | Returns |
 |---|---|---|
-| `jev_status` | nothing | Where the key came from (`env`, `credential-store` or `missing`), the last model id seen, and today's calls, input tokens and estimated cost from the ledger |
 | `jev_ask` | `state`, and `questions` in the API's own form | `model`, `answers`, `usage`, `cost_usd` |
 | `jev_choose` | `instruction`, `options` (`id`, `description`), optional `state` and `no_match` | `choice`, `probabilities`, `confidence`, `band` (`sure`, `unsure` or `no-match`), `runner_up` |
 | `jev_check` | `state`, and `conditions` (`id`, `question`) | The probability of yes for each condition |
@@ -1720,9 +1972,7 @@ Listed only when `jev.enabled` is `true`.
 - `jev_route` offers the configured tiers whose profile is installed, sorted by name, and lists the
   others in `skipped`. When only one tier is usable, it returns that tier with no call, because a
   Choice needs two options.
-- Every reply that comes from a Jev call also carries `model` and `cost_usd`. `jev_status` also
-  returns `sure`, the tier names and the ledger path, and `key_error` when the key is missing. It makes
-  no network call, so its `openWorldHint` is `false`.
+- Every reply that comes from a Jev call also carries `model` and `cost_usd`.
 - The server refuses a Choice with more than 255 options, a Score with fewer than 2 or more than 10
   levels, and a request whose text is over 200,000 characters, before it calls the API.
 - Every call is one request. The SDK retries 408, 429 and 5xx with backoff. Jev answers in well under a
@@ -1750,8 +2000,11 @@ never holds state, questions, answers or the key.
 
 ### Command line
 
-`node mcp-server.mjs jev <status|ask|choose|check|rank|route>` reads one JSON request on stdin, in the
-same form as the tool's input, and prints the tool's reply as JSON. It exits 1 on an error. It needs
+`node mcp-server.mjs jev <status|ask|choose|check|rank|route>` prints the reply as JSON. Every command
+but `status` reads one JSON request on stdin, in the same form as the tool's input. `jev status` reports
+where the key came from (`env`, `credential-store` or `missing`), the last model id seen, today's calls,
+input tokens and estimated cost from the ledger, `sure`, the tier names and the ledger path, and
+`key_error` when the key is missing. It makes no network call, and it is not an MCP tool. It exits 1 on an error. It needs
 `jev.enabled`, like the tools. An agent with no MCP support can use Jev this way, through the same copy
 in `~/.ide-agent-tabs/mcp/` that other agents register.
 

@@ -57,8 +57,8 @@ export function ideCaller(timeoutMs = IDE_TIMEOUT_MS): IdeCall {
 }
 
 function nextStep(endpoint: Endpoint, route: Route, status: number, error: string): string | undefined {
-  if (status === 401) return `${endpoint.product} refused the token in ${endpoint.id}, so that endpoint is stale. Call list_ides for the current ids`;
-  if (status === 409 && route === 'open') return 'To open the tab in a terminal instead, pass ide set to a terminal id from list_ides';
+  if (status === 401) return `${endpoint.product} refused the token in ${endpoint.id}, so that endpoint is stale. Run the Agent Tabs command line's list-ides for the current ids`;
+  if (status === 409 && route === 'open') return 'To open the tab in a terminal instead, pass ide set to a terminal id such as windows-terminal, ghostty, kitty, wezterm or tmux';
   if (status === 503) return `A modal dialog is likely open in ${endpoint.product}. Ask the user to close it, then retry once`;
   if (error.startsWith('unknown agent')) return 'Call list_agents for the profile names';
   return undefined;

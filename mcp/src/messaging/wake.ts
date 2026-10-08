@@ -6,10 +6,19 @@ type Listener = () => void;
 
 interface Folder {
   watcher?: FSWatcher;
+  poller?: ReturnType<typeof setInterval>;
   listeners: Map<string, Set<Listener>>;
 }
 
 const folders = new Map<string, Folder>();
+export const SHARED_POLL_MS = 100;
+let sharedPollMs: number | undefined;
+
+// On Windows, fs.watch on a folder that many sessions signal stalls a process's event loop for 50-150 ms at a
+// time, so the shared server polls the store's data_version once for all its waiters instead.
+export function pollInsteadOfWatch(pollMs: number | undefined): void {
+  sharedPollMs = pollMs;
+}
 
 export const wakePath = (home: string, id: string) => path.join(wakeDir(home), id);
 
@@ -26,7 +35,9 @@ export function notifyLocal(home: string, id: string): void {
 }
 
 export async function signalWake(home: string, id: string): Promise<void> {
+  const local = folders.get(folderKey(home))?.listeners.has(id) === true;
   notifyLocal(home, id);
+  if (local && sharedPollMs !== undefined) return;
   await fs.writeFile(wakePath(home, id), String(Date.now()), { mode: 0o600 }).catch(() => undefined);
 }
 
@@ -44,6 +55,23 @@ function startWatch(key: string, folder: Folder): void {
   }
 }
 
+function startPoll(home: string, folder: Folder, pollMs: number): void {
+  let version: number | undefined;
+  let busy = false;
+  folder.poller = setInterval(() => {
+    if (busy) return;
+    busy = true;
+    void dataVersion(home)
+      .then((current) => {
+        if (version !== undefined && current !== version) dispatch(folder, null);
+        version = current;
+      })
+      .catch(() => undefined)
+      .finally(() => (busy = false));
+  }, pollMs);
+  folder.poller.unref();
+}
+
 export function onWake(home: string, id: string, listener: Listener): () => void {
   const key = folderKey(home);
   let folder = folders.get(key);
@@ -51,7 +79,9 @@ export function onWake(home: string, id: string, listener: Listener): () => void
     folder = { listeners: new Map() };
     folders.set(key, folder);
   }
-  if (folder.watcher === undefined) startWatch(key, folder);
+  if (sharedPollMs !== undefined) {
+    if (folder.poller === undefined) startPoll(home, folder, sharedPollMs);
+  } else if (folder.watcher === undefined) startWatch(key, folder);
   let set = folder.listeners.get(id);
   if (set === undefined) {
     set = new Set();
@@ -64,6 +94,7 @@ export function onWake(home: string, id: string, listener: Listener): () => void
     if (set.size === 0) own.listeners.delete(id);
     if (own.listeners.size === 0) {
       own.watcher?.close();
+      if (own.poller !== undefined) clearInterval(own.poller);
       if (folders.get(key) === own) folders.delete(key);
     }
   };

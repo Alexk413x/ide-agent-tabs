@@ -1,8 +1,10 @@
 {
   "mcpServers": {
     "ide-agent-tabs": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs"]
+      "type": "http",
+      "url": "http://127.0.0.1:${user_config.server_port}/mcp",
+      "headersHelper": "node \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/headers.mjs\"",
+      "timeout": 300000
     }
   }
 }

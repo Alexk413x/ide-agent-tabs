@@ -7,6 +7,7 @@ import { hashAllIdeSources } from './ide-sources.mjs';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'claude-plugin', 'dist');
+const helperDir = path.join(root, 'claude-plugin', 'mcp', 'launch');
 const skipTests = process.argv.includes('--skip-tests');
 const skipIde = process.argv.includes('--skip-ide');
 const shell = process.platform === 'win32';
@@ -26,10 +27,12 @@ const hashDist = (dir = dist, prefix = '') => {
   return hashes;
 };
 
+const hashBuilt = () => new Map([...hashDist(), ...[...hashDist(helperDir)].map(([file, hash]) => [`../mcp/launch/${file}`, hash])]);
+
 const bundleIsCurrent = () => {
-  const before = hashDist();
+  const before = hashBuilt();
   if (!run('npm', ['run', 'bundle'], path.join(root, 'mcp'))) return false;
-  const after = hashDist();
+  const after = hashBuilt();
   const changed = [...new Set([...before.keys(), ...after.keys()])].filter((file) => before.get(file) !== after.get(file)).sort();
   if (!changed.length) return true;
   console.error('claude-plugin/dist was stale; it is now rebuilt. Review and stage it. Changed:');

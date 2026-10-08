@@ -36,7 +36,8 @@ export async function runJevCli(args: string[], jev: Jev | undefined, offMessage
       throw new Error(`Usage: node mcp-server.mjs jev <${SUBCOMMANDS.join('|')}>, with one JSON request on stdin.`);
     }
     if (!jev) throw new Error(offMessage);
-    const parsed = z.object(tool.inputSchema).safeParse(parseRequest(await io.readStdin()));
+    const takesInput = Object.keys(tool.inputSchema).length > 0;
+    const parsed = z.object(tool.inputSchema).safeParse(takesInput ? parseRequest(await io.readStdin()) : {});
     if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
     io.stdout(`${JSON.stringify(await tool.run(jev, parsed.data), null, 2)}\n`);
     return 0;

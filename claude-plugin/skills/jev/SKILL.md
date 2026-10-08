@@ -1,6 +1,7 @@
 ---
 name: jev
 description: When jev_ tools are listed, use them for a judgment step instead of a model turn - a pick from options you list, a yes or no about text you hold, a grade on described levels, or a ranking - and when the user asks for Jev. Not for text, code, counts or a final verdict.
+allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status)
 ---
 
 Jev is TypeSafe's "System One" model. It reads text and returns a typed judgment in under a second:
@@ -43,7 +44,7 @@ Typical steps:
 | Order candidates by relevance, or keep the top few | `jev_rank` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_rank`) with `query`, `items` and `top` |
 | Which agent or model tier takes a task | `jev_route` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_route`) with `task` |
 | A score on described levels, or a mix of question kinds | `jev_ask` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_ask`) with `state` and `questions` in the API's form |
-| Whether a key is found, and today's calls and cost | `jev_status` (`mcp__plugin_ide-agent-tabs_ide-agent-tabs__jev_status`) |
+| Whether a key is found, and today's calls and cost | `node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status` on the command line |
 
 ## Write questions Jev answers well
 
@@ -71,11 +72,11 @@ These rules come from tests on real app screens and code:
 
 ## Without the MCP tools
 
-The same server answers on the command line. It reads one JSON request on stdin, in the same form as
-the tool's input, and prints the reply as JSON:
+The same server answers on the command line. `jev status` takes no input. The other commands read one
+JSON request on stdin, in the same form as the tool's input. Each prints the reply as JSON:
 
 ```sh
-echo '{}' | node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status
+node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status
 node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev choose < request.json
 ```
 

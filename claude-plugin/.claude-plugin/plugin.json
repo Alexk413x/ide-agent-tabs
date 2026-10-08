@@ -1,11 +1,19 @@
 {
   "name": "ide-agent-tabs",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Open agent sessions in IDE tabs and delegate work to other agent CLIs.",
   "author": {
     "name": "Alexk413x"
   },
   "repository": "https://github.com/Alexk413x/ide-agent-tabs",
   "license": "LicenseRef-No-Resale-1.0",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "server_port": {
+      "type": "number",
+      "title": "Server port",
+      "description": "Loopback port of the shared Agent Tabs server that every Claude Code session on this machine uses. Change it only when another program uses 47828, then restart Claude Code.",
+      "default": 47828
+    }
+  }
 }

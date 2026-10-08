@@ -25,6 +25,7 @@ export interface PresenceFile {
   agent?: string;
   path?: string;
   pid?: number;
+  pidStart?: number;
   host?: string;
   startedAt?: string;
   state?: SessionState;
@@ -115,6 +116,7 @@ export function parsePresence(text: string | undefined): PresenceFile | undefine
     ...str('agent'),
     ...str('path'),
     ...pid,
+    ...(typeof o.pidStart === 'number' && Number.isSafeInteger(o.pidStart) && o.pidStart >= 0 ? { pidStart: o.pidStart } : {}),
     ...str('host'),
     ...str('startedAt'),
     ...state,
@@ -210,6 +212,29 @@ export async function liveSessions(
     }
   }
   return sessions;
+}
+
+const pending = new WeakMap<(pid: number) => boolean, Map<string, Promise<Presence[]>>>();
+
+// The shared server answers many sessions at once, and each call that lists sessions reads every presence
+// file; calls that overlap share one read instead of queueing their own on the file system thread pool.
+export function joinLiveSessions(
+  home: string,
+  alive: (pid: number) => boolean,
+  now: number,
+  ended?: (p: PresenceFile, at: number) => Promise<unknown>,
+): Promise<Presence[]> {
+  let byHome = pending.get(alive);
+  if (byHome === undefined) {
+    byHome = new Map();
+    pending.set(alive, byHome);
+  }
+  const key = path.resolve(home);
+  const known = byHome.get(key);
+  if (known !== undefined) return known;
+  const read = liveSessions(home, alive, now, ended).finally(() => byHome.delete(key));
+  byHome.set(key, read);
+  return read;
 }
 
 // A wake line that never starts a turn, such as one typed while the agent was still finishing, leaves the

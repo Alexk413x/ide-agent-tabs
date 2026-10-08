@@ -102,6 +102,7 @@ const fakeTerminal: TerminalDriver = {
 let ids = 0;
 const env: NodeJS.ProcessEnv = { PATH: '' };
 let client: Client;
+let service: Service;
 
 async function call(name: string, args: Record<string, unknown> = {}) {
   const result = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content: { text: string }[] };
@@ -123,7 +124,7 @@ before(async () => {
   writeEndpoint(`jetbrains-${dead}.json`, { ...base, pid: dead });
   writeEndpoint('future-1.json', { ...base, protocol: 2, pid: process.pid });
 
-  const service = new Service({
+  service = new Service({
     home,
     scriptsDir: path.join(home, 'scripts'),
     platform: 'linux',
@@ -144,16 +145,16 @@ after(async () => {
   await new Promise((r) => ideServer.close(r));
 });
 
-test('the server offers exactly the five tools, each with a description', async () => {
+test('the server offers exactly the four tab tools, each with a description', async () => {
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['close_tab', 'list_agents', 'list_ides', 'list_tabs', 'open_tab']);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['close_tab', 'list_agents', 'list_tabs', 'open_tab']);
   for (const t of tools) assert.ok((t.description ?? '').length > 20, t.name);
   const open = tools.find((t) => t.name === 'open_tab')!;
   assert.deepEqual((open.inputSchema as { required?: string[] }).required, ['path']);
 });
 
-test('list_ides reads the registry, drops dead entries and shows terminals', async () => {
-  const { json } = await call('list_ides');
+test('list-ides reads the registry, drops dead entries and shows terminals', async () => {
+  const json = await service.listIdes();
   assert.equal(json.ides.length, 1);
   assert.deepEqual(
     json.ides[0],
@@ -224,7 +225,7 @@ test('open_tab falls back to the most recently started IDE and adds the next ste
   const dialog = await call('open_tab', { path: outside, agent: 'dialog' });
   assert.match(dialog.text, /answered HTTP 503: .*modal dialog.*\. A modal dialog is likely open in Fake Studio\. Ask the user to close it/);
   const noProject = await call('open_tab', { path: outside, agent: 'no-project' });
-  assert.match(noProject.text, /answered HTTP 409: no open project to host the tab\. .*pass ide set to a terminal id from list_ides/);
+  assert.match(noProject.text, /answered HTTP 409: no open project to host the tab\. .*pass ide set to a terminal id such as windows-terminal/);
 });
 
 test('open_tab rereads the registry and retries once when the IDE rotated its token', async () => {
@@ -238,7 +239,7 @@ test('open_tab rereads the registry and retries once when the IDE rotated its to
 
     writeFileSync(file, saved.replace(TOKEN, 'd'.repeat(64)));
     const stale = await call('open_tab', { path: outside, agent: 'codex' });
-    assert.match(stale.text, /answered HTTP 401: missing or wrong token\. Fake Studio refused the token in jetbrains-\d+, so that endpoint is stale\. Call list_ides/);
+    assert.match(stale.text, /answered HTTP 401: missing or wrong token\. Fake Studio refused the token in jetbrains-\d+, so that endpoint is stale\. Run the Agent Tabs command line's list-ides/);
   } finally {
     ideToken = TOKEN;
     writeFileSync(file, saved);

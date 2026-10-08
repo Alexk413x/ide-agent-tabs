@@ -237,8 +237,8 @@ To change a setting, use the IDE settings or edit `config.json` and keep every o
   when Ori is detected.
 
 The lists of terminals and PowerShell installs come from `~/.ide-agent-tabs/detected.json`, which the
-MCP server writes. `mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_ides` shows the same `terminals`, and
-on Windows the `shells`.
+MCP server writes. `node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" list-ides` prints the same `terminals`, and on
+Windows the `shells`.
 
 Ask whether the user wants to change any of them. Write only the keys they change. Ask whether they want agent tabs outside IDEs, in a
 terminal app. If not, skip the rest of this step. Otherwise ask which terminal `open_tab` uses when no
@@ -305,7 +305,7 @@ skip this step.
 3. Check that the server finds a key:
 
    ```sh
-   echo '{}' | node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status
+   node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" jev status
    ```
 
    The reply's `key` is `env`, `credential-store` or `missing`. This check sends nothing to TypeSafe.
@@ -319,7 +319,8 @@ skip this step.
 
 ## 10. Check it works
 
-1. Call `mcp__plugin_ide-agent-tabs_ide-agent-tabs__list_ides`. Every IDE with the extension installed and a window open appears.
+1. Run `node "${CLAUDE_PLUGIN_ROOT}/dist/mcp-server.mjs" list-ides`. Every IDE with the extension installed and a window
+   open appears under `ides`.
 2. Offer to open a test tab with `mcp__plugin_ide-agent-tabs_ide-agent-tabs__open_tab` in the current folder, then close it with
    `mcp__plugin_ide-agent-tabs_ide-agent-tabs__close_tab`.
 

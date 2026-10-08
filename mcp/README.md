@@ -4,19 +4,36 @@ This MCP server lets an agent open, list and close agent tabs, and message other
 runs an interactive agent CLI session, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build,
 Pi, Hermes, OpenCode, Qwen Code or Goose. The tab opens in a running IDE that has the Agent Tabs extension, or in a terminal app when no IDE is running.
 
-The server speaks MCP over stdio. It reads the registry and calls each IDE's HTTP API, as described in
-[docs/design.md](../docs/design.md). The Claude Code plugin registers it as `ide-agent-tabs` in
-[claude-plugin/.mcp.json](../claude-plugin/.mcp.json). Other agent CLIs can use it too; see
-[Other agents](#other-agents).
+The server reads the registry and calls each IDE's HTTP API, as described in
+[docs/design.md](../docs/design.md). Claude Code sessions share one server per machine over HTTP; see
+[Shared server](#shared-server). Other agent CLIs start it over stdio; see [Other agents](#other-agents).
+
+## Shared server
+
+The Claude Code plugin registers `ide-agent-tabs` in [claude-plugin/.mcp.json](../claude-plugin/.mcp.json)
+as an HTTP server at `http://127.0.0.1:47828/mcp`. One Node process, `dist/shared-server.mjs`, serves
+every Claude Code session on the machine, in place of one process per session.
+
+- The `server_port` plugin option sets the port. Change it only when another program uses 47828, then
+  restart Claude Code.
+- A headers helper, `claude-plugin/mcp/launch/headers.mjs`, and the plugin's `SessionStart` hook start
+  the server when nothing listens. The server exits after 8 hours with no request and no live session.
+- It accepts requests only from `127.0.0.1` with this user's token from
+  `~/.ide-agent-tabs/server/token`.
+- `node dist/mcp-server.mjs server status` shows the running server; `server stop` stops it. Both take
+  `--port <port>`.
+- `~/.ide-agent-tabs/server/server-47828.log` holds its log.
+
+See [Shared server](../docs/design.md#shared-server) for the protocol, session identity and build
+handover.
 
 ## Tools
 
 | Tool | Input | Returns |
 |---|---|---|
-| `list_ides` | none | Running IDEs (`id`, `product`, `version`, `projects` with `focused`), `installed`: the IDEs found on disk that aren't running (`name` to pass as `ide`, `product`, `kind`: `vscode` or `jetbrains`, `version` when known), the terminals this machine supports with their capabilities, and `shells`: the PowerShell installs a Windows terminal tab can use |
 | `list_agents` | none | Profiles (`name`, `label`, `command`, `installed`, `model`: `true` when the profile takes a model, and `ori: true` when Ori can launch it), the `default` agent, `launchVia`, and any warnings about your config files |
 | `list_tabs` | `ide` (optional) | Open tabs across all IDEs and terminals, or in one |
-| `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide` (an id from `list_ides` or an IDE name), `model`, `via`, `focus` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux, or when the tab opened somewhere other than the named IDE. While a named IDE is still starting: `pending: true`, the `product` and a `note`, with no `id`. See [IDE names](#ide-names). |
+| `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide` (an id from `list-ides` or an IDE name), `model`, `via`, `focus` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux, or when the tab opened somewhere other than the named IDE. While a named IDE is still starting: `pending: true`, the `product` and a `note`, with no `id`. See [IDE names](#ide-names). |
 | `close_tab` | `id` (optional) | The closed tab. With no `id`, it closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
 | `list_sessions` | none | Live agent sessions in a fixed agent order: `name` and `shortName` (what Claude Code's `SendMessage` takes, in its native style: a Claude session's native name, else `<folder>-<id hex>`, such as `the-index-34`), `legacyName` (the older form, such as `codex-f99f`, which `send_message` still takes), `id`, `session` (the first 8 characters of `id`), `agent`, `harness` (the agent CLI, with ` via OpenRouter` for an Ori launch), `model` and `effort` (`null` when unknown), `route` (`native` or `agent-tabs`), `state`, `tab`, `where` (the IDE product or terminal app, from the live endpoint or the label stored when the tab opened; `null` when neither is known, never a raw host id), `host` (IDE and project, or terminal), `ide` (the host's id), `path` and `folder`, `nativeName` for a Claude session that has one, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
 | `send_message` | `to` (an `id`, `name` or `legacyName`), `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
@@ -137,7 +154,7 @@ such as `"Android Studio"`, or a key: `vscode`, `code-insiders`, `cursor`, `wind
 1. A running copy takes the tab: the one with a project that contains `path`, else the most recently
    started one.
 2. Otherwise the server starts an installed copy with `path` as its folder, waits for it to register, and
-   opens the tab there. `list_ides` shows the installed IDEs under `installed`.
+   opens the tab there. `list-ides` shows the installed IDEs under `installed`.
 3. If the IDE isn't installed, can't start, or doesn't register within `ideStartTimeoutSec`, the tab
    opens in the caller's IDE, else the caller's terminal, else the usual route. The `note` says why. An
    IDE that never registers usually lacks the Agent Tabs extension or plugin; run `/ide-agent-tabs:setup`.
@@ -155,7 +172,6 @@ TypeSafe's API.
 
 | Tool | Input | Returns |
 |---|---|---|
-| `jev_status` | none | Where the key came from (`env`, `credential-store` or `missing`), the last model seen, and today's calls, input tokens and estimated cost |
 | `jev_ask` | `state`, `questions` in the API's form | `model`, `answers`, `usage`, `cost_usd` |
 | `jev_choose` | `instruction`, `options`, and optional `state`, `no_match` | `choice`, `probabilities`, `confidence`, `band` (`sure`, `unsure` or `no-match`), `runner_up` |
 | `jev_check` | `state`, `conditions` | The probability of yes for each condition |
@@ -164,8 +180,10 @@ TypeSafe's API.
 
 The server reads the API key from `TYPESAFE_API_KEY`, or from the operating system's credential store
 under service `typesafe`, account `api_key`. Each call appends a line without request contents to
-`jev/ledger.jsonl`. `node mcp-server.mjs jev <status|ask|choose|check|rank|route>` takes the same
-request as JSON on stdin. See [Jev judgments](../docs/design.md#jev-judgments-optional) for
+`jev/ledger.jsonl`. `node mcp-server.mjs jev status` reports where the key came from (`env`,
+`credential-store` or `missing`), the last model seen, and today's calls, input tokens and estimated
+cost. `node mcp-server.mjs jev <ask|choose|check|rank|route>` takes the same request as the tool, as
+JSON on stdin. See [Jev judgments](../docs/design.md#jev-judgments-optional) for
 the settings, the key lookup and the ledger.
 
 ## Agent support
@@ -417,7 +435,7 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `endpoints/*.json` | One registry entry per running IDE. The server skips entries with an unknown `protocol` or a URL that isn't on the loopback address, and deletes entries whose process has ended or whose `beatMs` heartbeat (file modification time) stopped for more than 5 beats. |
 | `agents.json` | Your own agent profiles. The rules match the JetBrains plugin exactly. |
 | `config.json` | `defaultAgent`, `jev` (the Jev settings), `launchVia`, `closeAfterHandoff`, `allowResume` and the tab settings below. The JetBrains plugin and the VS Code extension edit the same keys. |
-| `detected.json` | The terminals, on Windows the PowerShell installs, and `ori` (`path`, `version`, and the `agents` Ori lists as installed; `null` without Ori) that this machine has, for the IDE settings. The server writes it at start, on each `list_ides` and from the Claude Code session start hook; don't edit it. |
+| `detected.json` | The terminals, on Windows the PowerShell installs, and `ori` (`path`, `version`, and the `agents` Ori lists as installed; `null` without Ori) that this machine has, for the IDE settings. The server writes it at start, `list-ides` when it is more than an hour old, and the Claude Code session start hook; don't edit it. |
 | `handoffs/` | The brief (`<id>.md`) and the record (`<id>.json`) of each handoff. |
 | `history/` | One record per ended session, named by the agent's session id, kept 7 days. See [Resume](#resume). |
 | `terminal-windows.json` | The windows kept for Agent Tabs with `"terminalWindow": "dedicated"`. The server writes it; don't edit it. |
@@ -528,7 +546,7 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
 - Antigravity CLI notes:
   - `--register agy` also adds allow rules to `permissions.allow` in
     `~/.gemini/antigravity-cli/settings.json` for the tools that read or message (`send_message`,
-    `read_messages`, `wait_for_message`, `list_sessions`, `list_agents`, `list_ides`, `list_tabs`), because
+    `read_messages`, `wait_for_message`, `list_sessions`, `list_agents`, `list_tabs`), because
     Antigravity CLI asks before each call to an MCP tool that has no rule. `open_tab`, `close_tab`, `handoff`
     and the `jev_` tools still ask. Registering replaces the broader `mcp(ide-agent-tabs/*)` rule of
     earlier builds. `--unregister agy` removes only these rules and keeps your other settings.
@@ -724,7 +742,7 @@ identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 - With remote control, the server runs `kitten @ launch --type=tab`, `kitten @ ls` and
   `kitten @ close-window`.
 - Without it, each agent gets a new kitty process with one window, tracked like Ghostty on Linux.
-  `list_ides` reports the capabilities of the mode a new tab would use.
+  `list-ides` reports the capabilities of the mode a new tab would use.
 - The server finds `kitty` on `PATH`, then in `/Applications/kitty.app`, `~/Applications/kitty.app` and
   `~/.local/kitty.app/bin`. It uses the `kitten` next to it.
 
@@ -777,10 +795,21 @@ npm run build
 ```
 
 `npm run build` type-checks the code and bundles it into `claude-plugin/dist/mcp-server.mjs`,
-`claude-plugin/dist/sync-ides.mjs` and `claude-plugin/dist/agent-hook.mjs`. It copies the launch scripts to `claude-plugin/dist/launch/` and
+`claude-plugin/dist/sync-ides.mjs`, `claude-plugin/dist/agent-hook.mjs`,
+`claude-plugin/dist/shared-server.mjs` with its `server-*.mjs` chunks, `claude-plugin/dist/server-start.mjs`
+and `claude-plugin/mcp/launch/headers.mjs`. It copies the launch scripts to `claude-plugin/dist/launch/` and
 writes the bundled packages' licenses to `claude-plugin/dist/THIRD_PARTY_NOTICES.txt`. It leaves the IDE
 builds in `claude-plugin/dist/ide/` in place. Commit the `dist/` folder: the plugin runs it without
 `node_modules`.
 
 The launcher tests run the real launch scripts with `pwsh`, Windows PowerShell and bash when they're
 installed, and skip the rest.
+
+After you change a tool's registration in `src/server.ts`, run `node --import tsx scripts/write-catalog.ts`.
+The shared server answers `tools/list` from the catalog it writes, and a test fails when the catalog is
+stale.
+
+`bench/bench.mjs` measures the server: `memory`, `idle`, `startup`, `latency` (1, 4, 8 and 16 agents),
+`mixed` (32 HTTP sessions and 8 stdio processes), `cli` and `coldstarts`. Pass `--mode stdio` or
+`--mode http`. It runs in a temporary `IDE_AGENT_TABS_HOME` on port 47911, and builds nothing, so run
+`npm run bundle` first.

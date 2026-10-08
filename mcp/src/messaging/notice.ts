@@ -19,7 +19,7 @@ export function unreadReminder(messages: Message[]): string | undefined {
 }
 
 export const TAB_INSTRUCTIONS =
-  "Open, list and close interactive agent CLI tabs (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and the other profiles in list_agents) in JetBrains IDEs, VS Code-family editors or a terminal with list_ides, list_agents, open_tab, list_tabs and close_tab. A tab doesn't return the agent's output.";
+  "Open, list and close interactive agent CLI tabs (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and the other profiles in list_agents) in JetBrains IDEs, VS Code-family editors or a terminal with list_agents, open_tab, list_tabs and close_tab. A tab doesn't return the agent's output.";
 
 export const MESSAGING_INSTRUCTIONS = `Message other agent sessions on this machine with list_sessions, send_message, read_messages and wait_for_message.
 - Take ids from list_sessions. Don't guess them.

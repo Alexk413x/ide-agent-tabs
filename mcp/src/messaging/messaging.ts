@@ -37,7 +37,7 @@ import {
   isModDriven,
   isModel,
   isSessionId,
-  liveSessions,
+  joinLiveSessions,
   MAIL_VERSION,
   parsePresence,
   presencePath,
@@ -70,8 +70,10 @@ export interface MessagingDeps {
   home: string;
   env: NodeJS.ProcessEnv;
   pid: number;
+  pidStart?: number;
   cwd: string;
   hosts: Hosts;
+  maxWaitS?: number;
   isAlive?: (pid: number) => boolean;
   randomId?: () => string;
   now?: () => number;
@@ -172,9 +174,10 @@ export function sessionNames(sessions: readonly { id: string; agent: string; pat
 
 export function shortNames(sessions: readonly { id: string; agent: string }[]): Map<string, string> {
   const names = new Map<string, string>();
+  const cores = new Map(sessions.map((s) => [s, idCore(s.id)]));
   for (const s of sessions) {
-    const core = idCore(s.id);
-    const rivals = sessions.filter((o) => o !== s && o.agent === s.agent).map((o) => idCore(o.id));
+    const core = cores.get(s)!;
+    const rivals = sessions.filter((o) => o !== s && o.agent === s.agent).map((o) => cores.get(o)!);
     let n = Math.min(SHORT_ID_CHARS, core.length);
     while (n < core.length && rivals.some((r) => r.slice(0, n) === core.slice(0, n))) n++;
     const name = `${s.agent}-${core.slice(0, n)}`;
@@ -242,7 +245,7 @@ export class Messaging {
   private readonly ended = (p: PresenceFile, at: number) => recordEnded(this.deps.home, p, at, this.deps.transcripts ?? transcriptDirs(this.deps.env));
 
   live(): Promise<Presence[]> {
-    return liveSessions(this.deps.home, this.alive, this.now(), this.ended);
+    return joinLiveSessions(this.deps.home, this.alive, this.now(), this.ended);
   }
 
   async recordEnd(): Promise<void> {
@@ -256,6 +259,7 @@ export class Messaging {
       agent: this.agent,
       path: this.deps.cwd,
       pid: this.deps.pid,
+      ...(this.deps.pidStart !== undefined ? { pidStart: this.deps.pidStart } : {}),
       ...(host !== undefined ? { host } : {}),
       startedAt: this.startedAt,
       state: current?.state ?? 'unknown',
@@ -458,13 +462,13 @@ export class Messaging {
     const now = this.now();
     if (now - this.lastClean < CLEAN_EVERY_MS) return;
     this.lastClean = now;
-    const live = await liveSessions(this.deps.home, this.alive, now, this.ended);
+    const live = await joinLiveSessions(this.deps.home, this.alive, now, this.ended);
     await cleanStore(this.deps.home, new Set(live.map((s) => s.id)), now);
   }
 
   async listSessions() {
     const now = this.now();
-    const sessions = await liveSessions(this.deps.home, this.alive, now, this.ended);
+    const sessions = await joinLiveSessions(this.deps.home, this.alive, now, this.ended);
     const labels = new Map<string, string | undefined>();
     for (const host of new Set(sessions.flatMap((s) => (s.host !== undefined ? [s.host] : [])))) {
       labels.set(host, await this.deps.hosts.describeHost?.(host).catch(() => undefined));
@@ -516,7 +520,7 @@ export class Messaging {
     if (text.length > MAX_TEXT_CHARS) throw new MailError(`text exceeds ${MAX_TEXT_CHARS} characters`);
     if (replyTo !== undefined) checkMessageId(replyTo, 'replyTo');
     const now = this.now();
-    const live = await liveSessions(this.deps.home, this.alive, now, this.ended);
+    const live = await joinLiveSessions(this.deps.home, this.alive, now, this.ended);
     const named = sessionNames(live);
     const legacy = shortNames(live);
     const recipient =
@@ -608,7 +612,7 @@ export class Messaging {
     const pending = await hasUnread(this.deps.home, peer, { from: this.sessionId }, this.now());
     if (!pending) return false;
     const now = this.now();
-    const recipient = (await liveSessions(this.deps.home, this.alive, now, this.ended)).find((s) => s.id === peer);
+    const recipient = (await joinLiveSessions(this.deps.home, this.alive, now, this.ended)).find((s) => s.id === peer);
     if (!recipient) return false;
     await this.wake(recipient, now);
     return true;
@@ -685,7 +689,7 @@ export class Messaging {
   }
 
   async sessionFolders(): Promise<string[]> {
-    const live = await liveSessions(this.deps.home, this.alive, this.now(), this.ended);
+    const live = await joinLiveSessions(this.deps.home, this.alive, this.now(), this.ended);
     return [...new Set(live.map((s) => s.path))];
   }
 
@@ -771,7 +775,8 @@ export class Messaging {
   async wait(input: WaitInput, signal?: AbortSignal) {
     if (input.from !== undefined && !isSessionId(input.from)) throw new MailError(`from is not a session id: ${input.from}`);
     if (input.replyTo !== undefined) checkMessageId(input.replyTo, 'replyTo');
-    const seconds = Math.min(Math.max(input.timeout ?? DEFAULT_WAIT_S, 0), this.agent === 'agy' ? AGY_MAX_WAIT_S : MAX_WAIT_S);
+    const cap = Math.min(this.deps.maxWaitS ?? MAX_WAIT_S, this.agent === 'agy' ? AGY_MAX_WAIT_S : MAX_WAIT_S);
+    const seconds = Math.min(Math.max(input.timeout ?? DEFAULT_WAIT_S, 0), cap);
     const filter = { ...(input.from !== undefined ? { from: input.from } : {}), ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}) };
     const peer = input.from;
     const retry = peer === undefined ? undefined : setInterval(() => void this.rewake(peer).catch(() => undefined), this.deps.rewakeEveryMs ?? REWAKE_EVERY_MS);
