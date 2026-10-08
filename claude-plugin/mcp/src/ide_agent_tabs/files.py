@@ -19,7 +19,9 @@ _RENAME_ATTEMPTS = 20
 
 
 def ensure_private_dir(path: str) -> None:
-    os.makedirs(path, mode=0o700, exist_ok=True)
+    # A failed mkdir of an existing folder costs about 5 ms on Windows, more than the check.
+    if not os.path.isdir(path):
+        os.makedirs(path, mode=0o700, exist_ok=True)
     if sys.platform != "win32":
         os.chmod(path, 0o700)
 

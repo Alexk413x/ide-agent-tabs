@@ -66,6 +66,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - run: node --import tsx scripts/write-ide-fixtures.ts --check
       - if: matrix.os == 'ubuntu-latest' && matrix.node == '24'
         working-directory: .
         shell: bash
@@ -143,7 +144,7 @@ jobs:
         working-directory: mcp
       - uses: astral-sh/setup-uv@v7
       - run: uv python install ${{ matrix.python }}
-      - run: uv run --python ${{ matrix.python }} --no-project python -I -S mcp/tests/run.py -v test_lock_interop test_store_interop test_stress_mixed test_hook_interop
+      - run: uv run --python ${{ matrix.python }} --no-project python -I -S mcp/tests/run.py -v test_lock_interop test_store_interop test_stress_mixed test_hook_interop test_mcp_parity
 
   vscode:
     needs: parts

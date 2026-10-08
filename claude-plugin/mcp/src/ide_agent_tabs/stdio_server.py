@@ -5,7 +5,7 @@ import os
 import sys
 import threading
 from collections.abc import Mapping
-from typing import Any, BinaryIO, Callable
+from typing import Any, Callable, Protocol
 
 from .jsjson import parse, stringify
 from .mcp_tools import SERVER_NAME, Call, ToolDeps, Tools
@@ -56,8 +56,14 @@ def _call_problems(params: Any) -> list[dict[str, Any]]:
     return problems
 
 
+class Stream(Protocol):
+    def write(self, data: bytes, /) -> object: ...
+
+    def flush(self) -> object: ...
+
+
 class Output:
-    def __init__(self, stream: BinaryIO) -> None:
+    def __init__(self, stream: Stream) -> None:
         self._stream = stream
         self._lock = threading.Lock()
 
