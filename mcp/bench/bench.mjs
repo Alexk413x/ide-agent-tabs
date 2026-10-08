@@ -23,6 +23,7 @@ const { values: opts, positionals } = parseArgs({
     http: { type: 'string', default: '32' },
     stdio: { type: 'string', default: '8' },
     json: { type: 'boolean', default: false },
+    key: { type: 'boolean', default: false },
   },
 });
 const command = positionals[0] ?? 'help';
@@ -391,17 +392,17 @@ async function cli() {
   for (const args of [['jev', 'status'], ['list-ides']]) {
     const times = [];
     let code = 0;
-    for (let i = 0; i < Number(opts.runs); i++) {
-      const home = freshHome();
-      writeFileSync(path.join(home, 'config.json'), JSON.stringify({ jev: { enabled: true } }));
+    const home = freshHome();
+    writeFileSync(path.join(home, 'config.json'), JSON.stringify({ jev: { enabled: true } }));
+    for (let i = 0; i <= Number(opts.runs); i++) {
       const t = performance.now();
-      const child = spawn(process.execPath, [path.join(dist, 'mcp-server.mjs'), ...args], { env: baseEnv(home), stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+      const child = spawn(process.execPath, [path.join(dist, 'mcp-server.mjs'), ...args], { env: baseEnv(home, opts.key ? { TYPESAFE_API_KEY: 'bench-key' } : {}), stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
       child.stdin.end('');
       code = await new Promise((r) => child.once('exit', r));
-      times.push(performance.now() - t);
-      rmSync(home, { recursive: true, force: true, maxRetries: 5 });
+      if (i > 0) times.push(performance.now() - t);
     }
-    record({ bench: 'cli', command: args.join(' '), exit: code, minMs: Math.min(...times), medianMs: median(times), maxMs: Math.max(...times) });
+    rmSync(home, { recursive: true, force: true, maxRetries: 5 });
+    record({ bench: 'cli', command: args.join(' '), key: opts.key ? 'env' : 'store', exit: code, minMs: Math.min(...times), medianMs: median(times), maxMs: Math.max(...times) });
   }
 }
 

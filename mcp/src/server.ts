@@ -19,6 +19,8 @@ export const SERVER_NAME = 'ide-agent-tabs';
 export const SERVER_VERSION = PACKAGE_VERSION;
 export const HOOK_TOOL = 'agent_tabs_hook';
 export const MOD_TOOL = 'agent_tabs_mod';
+// list-ides and jev status run from the command line (mcp-server.mjs list-ides, jev status); one catalog serves every client.
+export const CLI_ONLY_TOOLS: ReadonlySet<string> = new Set(['jev_status']);
 export const MOD_OPS = ['presence', 'unread', 'send', 'take', 'ack', 'release', 'sessions', 'log', 'history', 'message', 'counts', 'reveal', 'settings'] as const;
 
 type Extra = RequestHandlerExtra<ServerRequest, ServerNotification>;
@@ -33,8 +35,8 @@ async function answer(work: () => Promise<unknown>): Promise<CallToolResult> {
 }
 
 const IDE_ID =
-  'An id from list_ides: an IDE such as jetbrains-12345, or a terminal: windows-terminal, ghostty, iterm2, kitty, wezterm or tmux. ' +
-  'Or an IDE name, case-insensitive: a product name or a short key such as vscode, cursor, windsurf, antigravity, idea, pycharm or android-studio (installed in list_ides). ' +
+  "An IDE id such as jetbrains-12345, which the Agent Tabs command line's list-ides prints, or a terminal: windows-terminal, ghostty, iterm2, kitty, wezterm or tmux. " +
+  'Or an IDE name, case-insensitive: a product name or a short key such as vscode, cursor, windsurf, antigravity, idea, pycharm or android-studio. ' +
   "A named IDE that isn't running is started with path as its folder, and the tab opens there once it loads; if it isn't installed or doesn't load in time, the tab opens in the caller's IDE or terminal and note says why.";
 
 function progress(extra: Extra): OpenTabOptions['onProgress'] {
@@ -62,19 +64,6 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging,
       await messaging?.noteThread(extra._meta?.threadId);
       return work();
     });
-
-  server.registerTool(
-    'list_ides',
-    {
-      title: 'List IDEs and terminals',
-      description:
-        'List the running IDEs that can host agent tabs and the terminal apps open_tab can use. ' +
-        'Returns ides (id, ide, product, version, and the open projects with the focused one marked), installed (IDEs found on disk that are not running: name, product, kind vscode or jetbrains, version when known), terminals (id, name, capabilities, preferred), shells (the PowerShell installs a Windows terminal tab can use), and errors for IDEs that did not answer. ' +
-        'Call it for an id to pass as ide to open_tab or list_tabs. It does not list agent tabs; list_tabs does.',
-      annotations: { readOnlyHint: true, openWorldHint: false },
-    },
-    (extra) => reply(extra, () => service.listIdes()),
-  );
 
   server.registerTool(
     'list_agents',
@@ -171,7 +160,7 @@ export function createServer(service: Service, jev?: Jev, messaging?: Messaging,
   if (messaging && handoffs) registerHandoff(server, handoffs, reply);
   if (resumes) registerResume(server, resumes, reply);
 
-  for (const t of jev ? JEV_TOOLS : []) {
+  for (const t of jev ? JEV_TOOLS.filter((tool) => !CLI_ONLY_TOOLS.has(tool.name)) : []) {
     server.registerTool(
       t.name,
       {

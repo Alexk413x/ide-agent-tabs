@@ -173,12 +173,23 @@ export class Service {
     return detection;
   }
 
-  async listIdes() {
+  // Detection probes every shell and takes seconds on Windows, so a caller that can live with a recent result
+  // passes the age it accepts; the session start hook and the shared server refresh the file.
+  private async detection(drivers: TerminalDriver[], maxAgeMs?: number): Promise<Detection | undefined> {
+    if (maxAgeMs !== undefined) {
+      const known = await readDetection(this.deps.home).catch(() => undefined);
+      const age = Date.now() - Date.parse(known?.detectedAt ?? '');
+      if (known !== undefined && age >= 0 && age < maxAgeMs) return known;
+    }
+    return this.refreshDetection(drivers).catch(() => undefined);
+  }
+
+  async listIdes(options: { detectionMaxAgeMs?: number } = {}) {
     const [{ endpoints, warnings }, settings, drivers] = await Promise.all([this.registry(), this.settings(), this.availableDrivers()]);
     const [{ infos, errors }, capabilities, detection] = await Promise.all([
       this.infos(endpoints),
       Promise.all(drivers.map((d) => d.currentCapabilities?.(this.ctx).catch(() => d.capabilities) ?? d.capabilities)),
-      this.refreshDetection(drivers).catch(() => undefined),
+      this.detection(drivers, options.detectionMaxAgeMs),
     ]);
     const running = infos.map((i) => i.product);
     const listed = new Set<string>();
@@ -302,7 +313,7 @@ export class Service {
     }
     if (!entry) {
       throw new ToolError(
-        `no running IDE or terminal with id ${name}, and no IDE by that name; call list_ides for the ids, or pass an IDE name such as vscode, idea or android-studio`,
+        `no running IDE or terminal with id ${name}, and no IDE by that name; pass an IDE name such as vscode, idea or android-studio, or an id that the Agent Tabs command line's list-ides prints`,
       );
     }
     const install = this.discover().find((i) => i.key === entry.key);
@@ -558,7 +569,7 @@ export class Service {
     const driver = ide === undefined ? undefined : this.deps.drivers.find((d) => d.name === ide);
     const chosen = ide === undefined ? endpoints : endpoints.filter((e) => e.id === ide);
     if (ide !== undefined && !driver && chosen.length === 0) {
-      throw new ToolError(`no running IDE or terminal with id ${ide}; call list_ides for the ids`);
+      throw new ToolError(`no running IDE or terminal with id ${ide}; the Agent Tabs command line's list-ides prints the ids`);
     }
     const tabs: Record<string, unknown>[] = [];
     const errors: { id: string; error: string }[] = [];

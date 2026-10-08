@@ -292,7 +292,7 @@ test('the Jev tools and instructions appear only when jev.enabled is true', asyn
   assert.equal(off.jev, undefined);
   assert.match(off.off, /Jev is off\. Set "jev": \{"enabled": true\} in .*config\.json/);
   const plain = await connect(service, off.jev);
-  assert.deepEqual((await plain.listTools()).tools.map((t) => t.name).sort(), ['close_tab', 'list_agents', 'list_ides', 'list_tabs', 'open_tab']);
+  assert.deepEqual((await plain.listTools()).tools.map((t) => t.name).sort(), ['close_tab', 'list_agents', 'list_tabs', 'open_tab']);
   assert.match(plain.getInstructions()!, /open_tab/);
   assert.doesNotMatch(plain.getInstructions()!, /jev_/);
   await plain.close();
@@ -303,10 +303,10 @@ test('the Jev tools and instructions appear only when jev.enabled is true', asyn
   const client = await connect(service, on.jev);
   const { tools } = await client.listTools();
   const jevTools = tools.filter((t) => t.name.startsWith('jev_'));
-  assert.deepEqual(jevTools.map((t) => t.name), ['jev_status', 'jev_ask', 'jev_choose', 'jev_check', 'jev_rank', 'jev_route']);
+  assert.deepEqual(jevTools.map((t) => t.name), ['jev_ask', 'jev_choose', 'jev_check', 'jev_rank', 'jev_route']);
   for (const t of jevTools) {
     assert.equal(t.annotations?.readOnlyHint, true, t.name);
-    assert.equal(t.annotations?.openWorldHint, t.name !== 'jev_status', t.name);
+    assert.equal(t.annotations?.openWorldHint, true, t.name);
     assert.match(t.description!, /TypeSafe's API/, t.name);
   }
   assert.match(client.getInstructions()!, /isn't proof/);

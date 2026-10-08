@@ -1,74 +1,17 @@
-import { existsSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { Handoffs } from './handoff.js';
-import { agentTabsHome } from './home.js';
-import { ideCaller } from './ideClient.js';
-import { runJevCli } from './jev/cli.js';
-import { startJev } from './jev/service.js';
-import { Messaging } from './messaging/messaging.js';
-import { Resumes } from './resume.js';
-import { createServer } from './server.js';
-import { Service } from './service.js';
-import { TERMINAL_DRIVERS } from './terminals/index.js';
-import { LAUNCHER_PS1 } from './terminals/windowsTerminal.js';
-
-function scriptsDir(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const candidates = [path.join(here, 'launch'), path.join(here, '..', 'launch')];
-  return candidates.find((dir) => existsSync(path.join(dir, LAUNCHER_PS1))) ?? candidates[0]!;
-}
-
-const END_RECORD_MS = 2_000;
-const home = agentTabsHome();
-const service = new Service({
-  home,
-  scriptsDir: scriptsDir(),
-  platform: process.platform,
-  env: process.env,
-  callIde: ideCaller(),
-  drivers: TERMINAL_DRIVERS,
-  log: (message) => console.error(`ide-agent-tabs: ${message}`),
-});
-const { jev, off } = await startJev(service, { home, env: process.env, platform: process.platform });
 const [command, ...args] = process.argv.slice(2);
 
-if (command === 'jev') {
-  process.exitCode = await runJevCli(args, jev, off);
+async function exitWith(code: Promise<number>): Promise<never> {
+  const status = await code;
+  await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+  process.exit(status);
+}
+
+if (command === 'jev' || command === 'list-ides') {
+  const { runCli } = await import('./cli.js');
+  await exitWith(runCli(command, args));
+} else if (command === 'server') {
+  const { runServerCli } = await import('./serverCli.js');
+  await exitWith(runServerCli(args));
 } else {
-  const messaging = new Messaging({ home, env: process.env, pid: process.pid, cwd: process.cwd(), hosts: service });
-  await messaging.startRegistered({ log: (message) => console.error(`ide-agent-tabs: ${message}`) });
-  let stopping = false;
-  const stop = () => {
-    if (stopping) return;
-    stopping = true;
-    const exit = () => {
-      messaging.stopSync();
-      process.exit(0);
-    };
-    setTimeout(exit, END_RECORD_MS).unref();
-    void messaging.recordEnd().catch(() => undefined).finally(exit);
-  };
-  process.on('exit', () => messaging.stopSync());
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => stop());
-  // Windows sends no SIGTERM to a child; a client ends the server by closing its stdin.
-  process.stdin.on('end', () => stop());
-  process.stdin.on('close', () => stop());
-  const handoffs = new Handoffs({
-    home,
-    env: process.env,
-    sessionId: () => messaging.id,
-    openTab: (input) => service.openTab(input),
-    findHost: (id) => service.findHost(id),
-  });
-  const resumes = new Resumes({
-    home,
-    settings: () => service.settings(),
-    openTab: (input) => service.openTab(input),
-    liveHost: (host, product) => service.liveHost(host, product),
-    live: () => messaging.live(),
-  });
-  await createServer(service, jev, messaging, handoffs, resumes).connect(new StdioServerTransport());
-  void service.refreshDetection().catch(() => undefined);
+  await import('./stdioMain.js');
 }

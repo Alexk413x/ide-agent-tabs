@@ -203,7 +203,7 @@ test('a launch that fails falls back at once', async () => {
   assert.match(String(result.note), /^Android Studio couldn't start: spawn EACCES, so the tab opened in Fake Terminal instead\./);
 });
 
-test('list_ides lists installed IDEs that are not running', async () => {
+test('list-ides lists installed IDEs that are not running', async () => {
   const t = setup({ installs: [CODE, STUDIO, { ...STUDIO, version: '2025.3', launcher: '/opt/old/bin/studio.sh' }] });
   t.addIde('vscode-1', 'Visual Studio Code', [t.work]);
   const listed = await t.service.listIdes();
