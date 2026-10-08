@@ -18,7 +18,7 @@ from .installed import is_cmd_shim, is_installed
 from .jsjson import js_round, js_string
 from .launch_plan import ORI_AGENTS, LaunchRequest, plan_launch
 from .parallel import Task, run_all
-from .profiles import AGENTS_FILE, CONFIG_FILE, TAB_ID_ENV, AgentSettings, resolve_focus, resolve_settings
+from .profiles import AGENTS_FILE, CONFIG_FILE, TAB_ID_ENV, AgentSettings, codex_python, resolve_focus, resolve_settings
 from .registry import Endpoint, Registry, read_registry
 from .request import OpenRequest, validate_open
 from .reveal import RevealDeps, check_reveal_target, file_manager_command, system_reveal
@@ -623,6 +623,7 @@ class Service:
                     model=request.model,
                     via=request.via,
                     cmd_shim=self.is_windows and is_cmd_shim(profile.command, self.ctx.path_var),
+                    python=codex_python(self.deps.home, self.is_windows),
                 ),
             )
         except ValueError as e:
