@@ -1,0 +1,24 @@
+#!/bin/sh
+case $0 in
+  */*) main="${0%/*}/agent_tabs.py" ;;
+  *\\*) main="${0%\\*}\\agent_tabs.py" ;;
+  *) main="./agent_tabs.py" ;;
+esac
+if [ "$OS" = Windows_NT ] && command -v py >/dev/null 2>&1; then
+  exec py -3 -I -S "$main" "$@"
+fi
+set -f
+saved_ifs=$IFS
+IFS=:
+for name in python3 python; do
+  for dir in $PATH; do
+    # The Microsoft Store puts python3 and python stubs on PATH that open the Store instead of running Python.
+    case $dir in *WindowsApps*) continue ;; esac
+    if [ -f "${dir:-.}/$name" ] && [ -x "${dir:-.}/$name" ]; then
+      IFS=$saved_ifs
+      exec "${dir:-.}/$name" -I -S "$main" "$@"
+    fi
+  done
+done
+echo '{"error":"Agent Tabs needs Python 3.9 or later. Install it from https://www.python.org/downloads/ and run the command again."}' >&2
+exit 127

@@ -70,6 +70,21 @@ def _ordered_keys(obj: dict[Any, Any]) -> list[tuple[str, Any]]:
     return indices + [item for item in items if not _is_index(item[0])]
 
 
+def js_ordered(obj: dict[str, Any]) -> dict[str, Any]:
+    return dict(_ordered_keys(obj))
+
+
+def code_units(text: str) -> bytes:
+    return text.encode("utf-16-be", "surrogatepass")
+
+
+JS_SPACE = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+
+
+def trim(text: str) -> str:
+    return text.strip(JS_SPACE)
+
+
 def _write(value: Any, indent: str, step: str, out: list[str]) -> None:
     if value is None:
         out.append("null")
