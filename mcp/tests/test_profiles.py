@@ -18,7 +18,6 @@ from ide_agent_tabs.profiles import (
     launch_of,
 )
 from ide_agent_tabs.request import validate_open
-from ide_agent_tabs.terminals.processes import terminal_environment
 from support import temp_home
 
 DIR = os.path.realpath(tempfile.gettempdir())
@@ -66,16 +65,71 @@ class ClaudeTabSettingsTest(unittest.TestCase):
         ori = plan_launch(claude, base._replace(launch_via="ori", ori={"agents": ["claude"]}))
         self.assertEqual((ori.via, ori.launch.args), ("ori", ["claude", "--settings", "/h/s.json"]))
 
-    def test_other_agents_a_profile_with_its_own_settings_and_a_missing_file_get_none(self) -> None:
+    def test_other_agents_and_a_missing_settings_file_get_no_flag(self) -> None:
         base = LaunchRequest(args=[], env={}, launch_via="direct", ori=None, platform="linux", claude_settings="/h/s.json")
         claude = next(p for p in BUILTIN_PROFILES if p.name == "claude")
         for name in ("gemini", "copilot", "pi"):
             profile = next(p for p in BUILTIN_PROFILES if p.name == name)
             self.assertNotIn("--settings", plan_launch(profile, base).launch.args, name)
         self.assertEqual(plan_launch(claude._replace(command="claude-wrapper"), base).launch.args, [])
-        self.assertEqual(plan_launch(claude._replace(args=("--settings=x.json",)), base).launch.args, ["--settings=x.json"])
-        self.assertEqual(plan_launch(claude, base._replace(args=["--settings", "y"])).launch.args, ["--settings", "y"])
         self.assertEqual(plan_launch(claude, base._replace(claude_settings=None)).launch.args, [])
+
+    def tab_settings(self) -> tuple[str, dict[str, Any]]:
+        home = temp_home(self)
+        ours = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "/py", "args": ["hook", "claude", "Stop"]}]}]}}
+        path = os.path.join(home, "mcp", CLAUDE_TAB_SETTINGS_FILE)
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(ours, f)
+        return path, ours
+
+    def merged(self, args: list[str]) -> tuple[list[str], dict[str, Any]]:
+        i = args.index("--settings")
+        with open(args[i + 1], encoding="utf-8") as f:
+            return args[:i] + args[i + 2 :], json.load(f)
+
+    def test_the_agents_json_override_with_its_own_settings_file_gets_one_merged_file(self) -> None:
+        settings, ours = self.tab_settings()
+        work = temp_home(self)
+        user = {
+            "permissions": {"allow": ["Bash(git *)"]},
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "mine"}]}], "PreToolUse": [{"hooks": []}]},
+        }
+        with open(os.path.join(work, "mine.json"), "w", encoding="utf-8") as f:
+            json.dump(user, f)
+        claude = next(p for p in BUILTIN_PROFILES if p.name == "claude")
+        override = claude._replace(args=("--permission-mode", "bypassPermissions", "--settings", os.path.join(work, "mine.json")))
+        base = LaunchRequest(args=[], env={}, launch_via="direct", ori=None, platform="linux", prompt="hi", claude_settings=settings)
+        args = plan_launch(override, base._replace(model="opus")).launch.args
+        self.assertEqual(args.count("--settings"), 1)
+        rest, merged = self.merged(args)
+        self.assertEqual(rest, ["--permission-mode", "bypassPermissions", "--model", "opus"])
+        self.assertEqual(merged["permissions"], user["permissions"])
+        self.assertEqual(merged["hooks"]["Stop"], [*user["hooks"]["Stop"], *ours["hooks"]["Stop"]])
+        self.assertEqual(merged["hooks"]["PreToolUse"], user["hooks"]["PreToolUse"])
+        again = plan_launch(override, base._replace(model="opus")).launch.args
+        self.assertEqual(again, args, "the same settings give the same file")
+        relative = claude._replace(args=("--settings=mine.json",))
+        rest, merged = self.merged(plan_launch(relative, base._replace(cwd=work)).launch.args)
+        self.assertEqual((rest, merged["permissions"]), ([], user["permissions"]))
+
+    def test_inline_json_in_the_request_merges_and_the_request_wins_over_the_profile(self) -> None:
+        settings, ours = self.tab_settings()
+        claude = next(p for p in BUILTIN_PROFILES if p.name == "claude")
+        profile = claude._replace(args=("--settings", '{"model": "profile"}'))
+        base = LaunchRequest(
+            args=["--settings", '{"model": "request"}'], env={}, launch_via="direct", ori=None, platform="linux", claude_settings=settings
+        )
+        rest, merged = self.merged(plan_launch(profile, base).launch.args)
+        self.assertEqual((rest, merged), ([], {"model": "request", "hooks": ours["hooks"]}))
+
+    def test_settings_that_cannot_be_merged_stay_as_given(self) -> None:
+        settings, _ = self.tab_settings()
+        claude = next(p for p in BUILTIN_PROFILES if p.name == "claude")
+        base = LaunchRequest(args=[], env={}, launch_via="direct", ori=None, platform="linux", claude_settings=settings)
+        for value in ("/missing/x.json", "relative.json", "{not json", '{"hooks": []}', '{"hooks": {"Stop": {}}}', "[]"):
+            with self.subTest(value=value):
+                self.assertEqual(plan_launch(claude, base._replace(args=["--settings", value])).launch.args, ["--settings", value])
 
     def test_the_settings_path_needs_a_recorded_interpreter_and_the_file(self) -> None:
         home = temp_home(self)
@@ -91,9 +145,6 @@ class ClaudeTabSettingsTest(unittest.TestCase):
         self.assertEqual(claude_tab_settings(home, windows), settings)
         os.remove(settings)
         self.assertIsNone(claude_tab_settings(home, windows))
-
-    def test_a_terminal_started_from_a_tab_drops_the_variable_that_quiets_the_plugin_hooks(self) -> None:
-        self.assertEqual(terminal_environment({"IDE_AGENT_TABS_HOOKS": "1", "KEEP": "1"}), {"KEEP": "1"})
 
 
 class OpenRequestTest(unittest.TestCase):

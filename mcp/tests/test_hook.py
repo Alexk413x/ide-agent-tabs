@@ -390,92 +390,37 @@ class HookScriptTest(unittest.TestCase):
         out = self.run_script(home, ["claude", "UserPromptSubmit"], "{}", {"IDE_AGENT_TABS_ID": ID})
         self.assertEqual([out.returncode, out.stdout], [0, b""])
 
-    def hook_commands(self) -> dict[str, str]:
-        with open(os.path.join(ROOT, "claude-plugin", "hooks", "hooks.json"), encoding="utf-8") as f:
-            hooks = json.load(f)["hooks"]
-        commands = {
-            event: h["command"]
-            for event, groups in hooks.items()
-            for g in groups
-            for h in g["hooks"]
-            if "agent-hook.ps1" in h.get("command", "")
-        }
-        self.assertEqual(sorted(commands), sorted(HOOK_EVENTS["claude"]))
-        for event, command in commands.items():
-            self.assertNotIn("args", command)
-            self.assertEqual(command, f'set -- claude {event}; . "${{CLAUDE_PLUGIN_ROOT}}/mcp/launch/agent-hook.ps1"')
-        return commands
-
-    def check_hook_commands(self, shell: list[str]) -> None:
-        commands = self.hook_commands()
-        home = temp_home(self, "iat-hook-")
-        mail(home)
-        root = os.path.join(ROOT, "claude-plugin").replace("\\", "/")
-        clean = {k: v for k, v in os.environ.items() if not k.startswith(("IDE_AGENT_TABS", "CLAUDE_PLUGIN"))}
-        env = {**clean, "IDE_AGENT_TABS_HOME": home, "CLAUDE_PLUGIN_ROOT": root}
-
-        def run(event: str, extra: dict[str, str]) -> subprocess.CompletedProcess[bytes]:
-            command = commands[event].replace("${CLAUDE_PLUGIN_ROOT}", root)
-            return subprocess.run(
-                [*shell, command], input=b'{"session_id":"s"}', capture_output=True, env={**env, **extra}, timeout=60, check=False
-            )
-
-        cache = os.path.join(home, "mcp", "hook-python")
-        for attempt in range(2):
-            blocked = run("Stop", {"IDE_AGENT_TABS_ID": ID})
-            self.assertEqual([blocked.returncode, blocked.stderr], [0, b""])
-            self.assertEqual(json.loads(blocked.stdout)["decision"], "block", attempt)
-            with open(cache, encoding="utf-8") as f:
-                self.assertTrue(os.path.isfile(f.read().strip()))
-        with open(cache, "w", encoding="utf-8") as f:
-            f.write(os.path.join(home, "missing-python") + "\n")
-        self.assertEqual(json.loads(run("Stop", {"IDE_AGENT_TABS_ID": ID}).stdout)["decision"], "block")
-        for extra in ({}, {"IDE_AGENT_TABS_ID": ID, "IDE_AGENT_TABS_MOD": ID}, {"IDE_AGENT_TABS_ID": ID, "IDE_AGENT_TABS_HOOKS": "1"}):
-            quiet = run("Stop", extra)
-            self.assertEqual([quiet.returncode, quiet.stdout.strip(), quiet.stderr], [0, b"", b""])
-
-    def test_the_hook_commands_in_hooks_json_run_the_python_hook_through_sh(self) -> None:
-        shell = git_bash() if sys.platform == "win32" else "/bin/sh"
-        if shell is None or not os.path.exists(shell):
-            self.skipTest("no POSIX shell")
-        self.check_hook_commands([shell, "-c"])
-
-    @unittest.skipUnless(sys.platform == "win32", "Claude Code runs hooks in PowerShell only on Windows without Git Bash")
-    def test_the_hook_commands_in_hooks_json_run_the_python_hook_through_powershell(self) -> None:
-        for name in ("powershell", "pwsh"):
-            shell = shutil.which(name)
-            if shell is None:
-                continue
-            with self.subTest(shell=name):
-                self.check_hook_commands([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"])
-
-    def test_the_tab_settings_run_the_plugin_hooks_in_exec_form_and_set_the_variable_that_quiets_them(self) -> None:
+    def test_the_plugin_has_no_agent_hooks_and_the_tab_settings_run_them_in_exec_form(self) -> None:
         with open(os.path.join(ROOT, "claude-plugin", "hooks", "hooks.json"), encoding="utf-8") as f:
             plugin = json.load(f)["hooks"]
-        ours = {
-            event: (g.get("matcher"), h["timeout"])
-            for event, groups in plugin.items()
-            for g in groups
-            for h in g["hooks"]
-            if "agent-hook.ps1" in h.get("command", "")
-        }
+        commands = [h.get("command", "") for groups in plugin.values() for g in groups for h in g["hooks"]]
+        self.assertEqual([c for c in commands if "agent_hook" in c or "agent-hook" in c or "set -- claude" in c], [])
+        self.assertEqual(sorted(plugin), ["SessionEnd", "SessionStart"])
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "claude-plugin", "mcp", "launch", "agent-hook.ps1")))
         settings = claude_tab_settings(HookTarget(sys.executable, HOOK_SCRIPT, sys.platform))
-        self.assertEqual(settings["env"], {"IDE_AGENT_TABS_HOOKS": "1"})
-        tab = {event: (groups[0].get("matcher"), groups[0]["hooks"][0]["timeout"]) for event, groups in settings["hooks"].items()}
-        self.assertEqual(tab, ours)
+        self.assertEqual(sorted(settings), ["hooks"])
+        self.assertEqual(sorted(settings["hooks"]), sorted(HOOK_EVENTS["claude"]))
+        matchers = {event: groups[0].get("matcher") for event, groups in settings["hooks"].items()}
+        self.assertEqual(matchers["SessionStart"], "startup|resume|clear")
+        self.assertEqual(matchers["Notification"], "permission_prompt|idle_prompt")
         home = temp_home(self, "iat-hook-")
         mail(home)
         clean = {k: v for k, v in os.environ.items() if not k.startswith("IDE_AGENT_TABS")}
-        env = {**clean, "IDE_AGENT_TABS_HOME": home, **settings["env"], "IDE_AGENT_TABS_ID": ID}
+        env = {**clean, "IDE_AGENT_TABS_HOME": home, "IDE_AGENT_TABS_ID": ID}
+        for event, groups in settings["hooks"].items():
+            handler = groups[0]["hooks"][0]
+            self.assertEqual(
+                (handler["command"], handler["args"], handler["timeout"]), (sys.executable, ["-I", "-S", HOOK_SCRIPT, "claude", event], 5)
+            )
         handler = settings["hooks"]["Stop"][0]["hooks"][0]
-        self.assertEqual(handler["args"], ["-I", "-S", HOOK_SCRIPT, "claude", "Stop"])
         out = subprocess.run([handler["command"], *handler["args"]], input=b"{}", capture_output=True, env=env, timeout=30, check=False)
         self.assertEqual(json.loads(out.stdout)["decision"], "block")
 
     def test_the_hook_imports_no_heavy_modules(self) -> None:
         code = (
             "import sys; sys.path.insert(0, sys.argv[1]); import ide_agent_tabs.messaging.hook; "
-            "print(sorted(m for m in ('shutil', 'subprocess', 'secrets', 'hashlib', 'ctypes', 'random', 'asyncio') if m in sys.modules))"
+            "print(sorted(m for m in ('shutil', 'subprocess', 'secrets', 'hashlib', 'ctypes', 'random', 'asyncio', "
+            "'ide_agent_tabs.processes', 'ide_agent_tabs.messaging.wake') if m in sys.modules))"
         )
         out = subprocess.run(
             [sys.executable, "-I", "-S", "-c", code, os.path.join(ROOT, "claude-plugin", "mcp", "src")], capture_output=True, check=True

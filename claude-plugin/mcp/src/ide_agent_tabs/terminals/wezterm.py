@@ -13,7 +13,8 @@ from typing import Callable, NamedTuple, Union
 from ..clock import now_ms
 from ..files import write_new_private_file
 from ..jsjson import is_number, number, parse
-from ..processes import RunResult, pid_alive, run
+from ..liveness import pid_alive
+from ..processes import RunResult, run
 from ..spec import LaunchSpec, check_posix_env_names, posix_spec, power_shell_spec
 from .driver import OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
 from .powershell import default_power_shell

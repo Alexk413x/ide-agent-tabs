@@ -24,7 +24,6 @@ from .db import (
     tx,
 )
 from .sessions import is_session_id
-from .wake import on_wake, remove_stale_wakes, signal_wake
 
 MAX_TEXT_CHARS = 32_000
 MAX_SENT_PER_MINUTE = 20
@@ -206,6 +205,8 @@ def send_message(
                 raise MailError("the disk is full; the message was not sent") from e
             raise
         if not sent.get("duplicate"):
+            from .wake import signal_wake
+
             signal_wake(home, out["to"])
         return sent
 
@@ -466,6 +467,8 @@ def wait_for_message(
     clock = now or now_ms
     deadline = time.monotonic() + timeout_ms / 1000
     woken = threading.Event()
+    from .wake import on_wake
+
     stop = on_wake(home, session_id, woken.set)
     dirty = True
     checked = time.monotonic()
@@ -533,6 +536,8 @@ def clean_store(home: str, live: Collection[str], now: float | None = None) -> N
                 [to],
             )
         query(home, lambda db: db.all("PRAGMA wal_checkpoint(TRUNCATE)"), CLEAN_DEADLINE_MS)
+        from .wake import remove_stale_wakes
+
         remove_stale_wakes(home, live, cutoff)
     except StoreBusyError:
         return

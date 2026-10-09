@@ -12,7 +12,8 @@ from ..clock import now_ms
 from ..files import read_bytes
 from ..installed import find_on_path
 from ..jsjson import trim
-from ..processes import CREATE_BREAKAWAY_FROM_JOB, detached_flags, pid_alive, run
+from ..liveness import pid_alive
+from ..processes import CREATE_BREAKAWAY_FROM_JOB, detached_flags, run
 from .driver import TerminalTab
 
 STARTUP_GRACE_MS = 60_000
@@ -36,7 +37,6 @@ _SESSION_ENV = {
     "CLAUDE_PLUGIN_DATA",
     "IDE_AGENT_TABS_ID",
     "IDE_AGENT_TABS_AGENT",
-    "IDE_AGENT_TABS_HOOKS",
     "CODEX_SANDBOX",
     "CODEX_SANDBOX_NETWORK_DISABLED",
     "GEMINI_CLI",

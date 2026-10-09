@@ -8,7 +8,7 @@ import threading
 from collections import OrderedDict
 from typing import Any, Callable, NamedTuple
 
-from ..processes import pid_alive
+from ..liveness import pid_alive
 from .host import Binding, BoundSession, ToolHost
 
 ROOTS_REQUEST = "agent-tabs-roots"

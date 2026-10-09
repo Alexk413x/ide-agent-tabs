@@ -10,7 +10,7 @@ from typing import Any, Callable
 from ..clock import iso, now_ms, parse_iso
 from ..files import file_lock, mtime_ms, read_text_if_exists, remove_file, write_atomically
 from ..jsjson import MAX_SAFE_INTEGER, parse, stringify, utf16_len
-from ..processes import pid_alive
+from ..liveness import pid_alive
 
 SESSIONS_DIR = "sessions"
 STATES = ("idle", "busy", "permission", "waking", "unknown")

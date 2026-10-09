@@ -13,8 +13,8 @@ from ..clock import iso, now_ms, parse_iso
 from ..closed import TranscriptDirs, locale_key, record_ended, transcript_dirs
 from ..files import read_text_if_exists, remove_file
 from ..jsjson import trim, utf16_len, utf16_slice
+from ..liveness import pid_alive
 from ..parallel import Task
-from ..processes import pid_alive
 from ..profiles import AGENT_ENV, BUILTIN_PROFILES, TAB_ID_ENV
 from ..scheduler import Job, Scheduler
 from .codex_config import read_codex_config

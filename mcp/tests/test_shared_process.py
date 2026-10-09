@@ -11,7 +11,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from ide_agent_tabs.processes import pid_alive
+from ide_agent_tabs.liveness import pid_alive
 from ide_agent_tabs.shared.client import ensure_server, probe, server_command, start_server, stop_server
 from ide_agent_tabs.shared.handover import claim_port
 from ide_agent_tabs.shared.headers import helper_headers, launcher_path

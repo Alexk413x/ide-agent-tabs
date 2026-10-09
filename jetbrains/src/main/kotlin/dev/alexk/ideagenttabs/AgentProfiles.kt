@@ -1,6 +1,7 @@
 package dev.alexk.ideagenttabs
 
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -9,6 +10,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
+import java.security.MessageDigest
 
 // Pure module: no IDE or Netty types, so profiles and settings test without a running IDE.
 
@@ -71,6 +73,7 @@ class LaunchContext(
     val searchPath: String = "",
     val python: List<String>? = null,
     val claudeSettings: String? = null,
+    val cwd: String? = null,
 )
 
 private fun isCmdShim(command: String, searchPath: String): Boolean {
@@ -107,11 +110,12 @@ private fun withoutPrompt(profile: AgentProfile, prompt: String?): AgentProfile 
 fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
     val unplanned = withoutPrompt(requested, context.prompt)
     val codex = unplanned.copy(args = withCodexPython(unplanned.args, context.python))
-    val profile = codex.copy(args = withClaudeSettings(codex.command, codex.args, context.args, context.claudeSettings))
+    val (ownArgs, callerArgs) = withClaudeSettings(codex.command, codex.args, context.args, context.claudeSettings, context.cwd)
+    val profile = codex.copy(args = ownArgs)
     if ((context.via ?: context.setting) == LaunchVia.ORI) {
         val flag = listOfNotNull(profile.promptFlag?.takeIf { context.prompt != null })
         val model = context.model?.let { listOf("--model", it) }.orEmpty()
-        val args = listOf(profile.name) + model + profile.args + context.args + flag
+        val args = listOf(profile.name) + model + profile.args + callerArgs + flag
         val refusal = oriRefusal(profile, context, args + listOfNotNull(context.prompt))
         if (refusal == null) {
             return AgentLaunch(profile.name, ORI_COMMAND, args, context.prompt, profile.env + context.env, LaunchVia.ORI)
@@ -123,7 +127,7 @@ fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
             "${profile.name} has no model option; open it without model, or set modelFlag for it in agents.json",
         )
     }
-    return profile.launch(context.prompt, context.args, context.env, context.model)
+    return profile.launch(context.prompt, callerArgs, context.env, context.model)
 }
 
 // Same strings as CODEX_TAB_ARGS in claude-plugin/mcp/src/ide_agent_tabs/profiles.py, which explains them; mcp/tests/test_codex_tab.py checks both.
@@ -187,10 +191,70 @@ fun claudeTabSettings(home: Path, windows: Boolean): String? {
     return if (runCatching { Files.isRegularFile(file) }.getOrDefault(false)) path else null
 }
 
-fun withClaudeSettings(command: String, args: List<String>, callerArgs: List<String>, settings: String?): List<String> {
-    if (settings == null || !CLAUDE_COMMAND.matches(command)) return args
-    if ((args + callerArgs).any { it == "--settings" || it.startsWith("--settings=") }) return args
-    return args + listOf("--settings", settings)
+private fun withoutSettings(args: List<String>): Pair<List<String>, String?> {
+    val kept = mutableListOf<String>()
+    var value: String? = null
+    var i = 0
+    while (i < args.size) {
+        val a = args[i]
+        when {
+            a == "--settings" && i + 1 < args.size -> value = args[++i]
+            a.startsWith("--settings=") -> value = a.removePrefix("--settings=")
+            else -> kept += a
+        }
+        i++
+    }
+    return kept to value
+}
+
+private fun readSettings(value: String, cwd: String?): JsonObject? = runCatching {
+    val text = if (value.trim().startsWith("{")) {
+        value
+    } else {
+        val absolute = value.startsWith("/") || Regex("([A-Za-z]:)?[\\\\/].*").matches(value)
+        if (!absolute && cwd == null) return null
+        Files.readString(if (absolute) Path.of(value) else Path.of(cwd!!).resolve(value))
+    }
+    JsonParser.parseString(text).takeIf { it.isJsonObject }?.asJsonObject
+}.getOrNull()
+
+fun mergedClaudeSettings(settings: String, value: String, cwd: String?): String? {
+    val user = readSettings(value, cwd) ?: return null
+    val ours = readSettings(settings, null)?.get("hooks")?.takeIf { it.isJsonObject }?.asJsonObject ?: return null
+    val hooks = user.get("hooks") ?: JsonObject()
+    if (!hooks.isJsonObject) return null
+    val merged = hooks.asJsonObject.deepCopy()
+    for ((event, groups) in ours.entrySet()) {
+        val existing = merged.get(event) ?: JsonArray()
+        if (!existing.isJsonArray || !groups.isJsonArray) return null
+        merged.add(event, existing.asJsonArray.deepCopy().apply { addAll(groups.asJsonArray) })
+    }
+    val result = user.deepCopy().apply { add("hooks", merged) }
+    val text = GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(result) + "\n"
+    val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }.take(16)
+    val file = Path.of(settings).resolveSibling("${CLAUDE_TAB_SETTINGS_FILE.removeSuffix(".json")}-$digest.json")
+    return runCatching {
+        if (!Files.isRegularFile(file) || Files.readString(file) != text) writeAtomically(file, text)
+        file.toString()
+    }.getOrNull()
+}
+
+// claude reads only the last --settings, so a tab whose profile or request passes its own gets one file that
+// merges those settings with the tab's hooks, and keeps the user's flag only when that merge is impossible.
+fun withClaudeSettings(
+    command: String,
+    args: List<String>,
+    callerArgs: List<String>,
+    settings: String?,
+    cwd: String? = null,
+): Pair<List<String>, List<String>> {
+    if (settings == null || !CLAUDE_COMMAND.matches(command)) return args to callerArgs
+    val (own, ownValue) = withoutSettings(args)
+    val (caller, callerValue) = withoutSettings(callerArgs)
+    val value = callerValue ?: ownValue ?: return (args + listOf("--settings", settings)) to callerArgs
+    val merged = mergedClaudeSettings(settings, value, cwd) ?: return args to callerArgs
+    return (own + listOf("--settings", merged)) to caller
 }
 
 val BUILTIN_PROFILES = listOf(

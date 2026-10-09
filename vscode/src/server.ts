@@ -67,6 +67,7 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
           searchPath: process.env.PATH ?? '',
           python: codexPython(settings.home, process.platform === 'win32'),
           claudeSettings: claudeTabSettings(settings.home, process.platform === 'win32'),
+          cwd: request.path,
         });
         const tab = host.open(request, profile, launch);
         return tab ? ok({ ...tab, via: launch.via }) : fail(409, 'no open folder to host the tab');

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { BadRequest, checkEnv, isAbsolutePath, MAX_ENTRIES, optString, optStringList, optStringMap, parseObject } from './request';
@@ -81,6 +82,7 @@ export interface LaunchContext {
   searchPath: string;
   python?: readonly string[];
   claudeSettings?: string;
+  cwd?: string;
 }
 
 function isCmdShim(command: string, searchPath: string): boolean {
@@ -117,8 +119,9 @@ function withoutPrompt(p: AgentProfile, prompt: string | undefined): AgentProfil
 export function planLaunch(profile: AgentProfile, ctx: LaunchContext): AgentLaunch {
   const unplanned = withoutPrompt(profile, ctx.prompt);
   const codex = { ...unplanned, args: withCodexPython(unplanned.args, ctx.python) };
-  const callerArgs = ctx.args ?? [];
-  const p = { ...codex, args: withClaudeSettings(codex.command, codex.args, callerArgs, ctx.claudeSettings) };
+  const settled = withClaudeSettings(codex.command, codex.args, ctx.args ?? [], ctx.claudeSettings, ctx.cwd);
+  const callerArgs = settled.callerArgs;
+  const p = { ...codex, args: settled.args };
   const callerEnv = ctx.env ?? {};
   if ((ctx.via ?? ctx.setting) === 'ori') {
     const flag = ctx.prompt !== undefined && p.promptFlag !== undefined ? [p.promptFlag] : [];
@@ -195,15 +198,77 @@ export function claudeTabSettings(home: string, windows: boolean): string | unde
   return recordedPython(home, windows) !== undefined && CMD_SAFE_PATH.test(file) && isFile(file) ? file : undefined;
 }
 
+function withoutSettings(args: readonly string[]): { kept: string[]; value: string | undefined } {
+  const kept: string[] = [];
+  let value: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--settings' && i + 1 < args.length) {
+      value = args[++i];
+    } else if (a.startsWith('--settings=')) {
+      value = a.slice('--settings='.length);
+    } else {
+      kept.push(a);
+    }
+  }
+  return { kept, value };
+}
+
+function readSettings(value: string, cwd: string | undefined): Record<string, unknown> | undefined {
+  let data: unknown;
+  try {
+    if (value.trim().startsWith('{')) {
+      data = JSON.parse(value);
+    } else {
+      const absolute = path.posix.isAbsolute(value) || path.win32.isAbsolute(value);
+      if (!absolute && cwd === undefined) return undefined;
+      data = JSON.parse(fs.readFileSync(absolute ? value : path.join(cwd!, value), 'utf8'));
+    }
+  } catch {
+    return undefined;
+  }
+  return typeof data === 'object' && data !== null && !Array.isArray(data) ? (data as Record<string, unknown>) : undefined;
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+export function mergedClaudeSettings(settings: string, value: string, cwd: string | undefined): string | undefined {
+  const user = readSettings(value, cwd);
+  const ours = readSettings(settings, undefined);
+  if (user === undefined || ours === undefined || !isObject(ours.hooks)) return undefined;
+  const hooks = user.hooks ?? {};
+  if (!isObject(hooks) || Object.keys(ours.hooks).some(e => !Array.isArray(hooks[e] ?? []))) return undefined;
+  const merged: Record<string, unknown> = { ...hooks };
+  for (const [event, groups] of Object.entries(ours.hooks)) merged[event] = [...((hooks[event] as unknown[]) ?? []), ...(groups as unknown[])];
+  const text = `${JSON.stringify({ ...user, hooks: merged }, null, 2)}\n`;
+  const digest = createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16);
+  const file = path.join(path.dirname(settings), `${CLAUDE_TAB_SETTINGS_FILE.replace(/\.json$/, '')}-${digest}.json`);
+  try {
+    if (!isFile(file) || fs.readFileSync(file, 'utf8') !== text) writeAtomically(file, text);
+  } catch {
+    return undefined;
+  }
+  return file;
+}
+
+// claude reads only the last --settings, so a tab whose profile or request passes its own gets one file that
+// merges those settings with the tab's hooks, and keeps the user's flag only when that merge is impossible.
 export function withClaudeSettings(
   command: string,
   args: readonly string[],
   callerArgs: readonly string[],
   settings: string | undefined,
-): string[] {
-  if (settings === undefined || !CLAUDE_COMMAND.test(command)) return [...args];
-  if ([...args, ...callerArgs].some(a => a === '--settings' || a.startsWith('--settings='))) return [...args];
-  return [...args, '--settings', settings];
+  cwd?: string,
+): { args: string[]; callerArgs: string[] } {
+  const unchanged = { args: [...args], callerArgs: [...callerArgs] };
+  if (settings === undefined || !CLAUDE_COMMAND.test(command)) return unchanged;
+  const own = withoutSettings(args);
+  const caller = withoutSettings(callerArgs);
+  const value = caller.value ?? own.value;
+  if (value === undefined) return { args: [...args, '--settings', settings], callerArgs: [...callerArgs] };
+  const merged = mergedClaudeSettings(settings, value, cwd);
+  if (merged === undefined) return unchanged;
+  return { args: [...own.kept, '--settings', merged], callerArgs: caller.kept };
 }
 
 function isFile(file: string): boolean {

@@ -52,7 +52,7 @@ object Agents {
     private val searchPath: String
         get() = EnvironmentUtil.getValue("PATH") ?: System.getenv("PATH").orEmpty()
 
-    fun launchFor(profile: AgentProfile, request: OpenRequest? = null): AgentLaunch =
+    fun launchFor(profile: AgentProfile, request: OpenRequest? = null, cwd: String? = request?.path?.toString()): AgentLaunch =
         planLaunch(
             profile,
             LaunchContext(
@@ -67,6 +67,7 @@ object Agents {
                 searchPath = searchPath,
                 python = codexPython(ideAgentTabsHome(), SystemInfo.isWindows),
                 claudeSettings = claudeTabSettings(ideAgentTabsHome(), SystemInfo.isWindows),
+                cwd = cwd,
             ),
         )
 
@@ -112,6 +113,6 @@ object Agents {
     @RequiresEdt
     fun open(project: Project, profile: AgentProfile) {
         val directory = project.basePath ?: System.getProperty("user.home")
-        AgentTabLauncher.open(project, directory, profile, launchFor(profile), focus = true)
+        AgentTabLauncher.open(project, directory, profile, launchFor(profile, cwd = directory), focus = true)
     }
 }

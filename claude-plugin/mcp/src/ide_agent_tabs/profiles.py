@@ -20,7 +20,6 @@ PLUGIN_ENV_PREFIX = "IDE_AGENT_TABS_"
 STARTUP_ENV = "JEDITERM_SOURCE"
 TAB_ID_ENV = f"{PLUGIN_ENV_PREFIX}ID"
 AGENT_ENV = f"{PLUGIN_ENV_PREFIX}AGENT"
-TAB_HOOKS_ENV = f"{PLUGIN_ENV_PREFIX}HOOKS"
 CLAUDE_TAB_SETTINGS_FILE = "claude-tab-settings.json"
 ALLOW_RESUME_KEY = "allowResume"
 IDE_START_TIMEOUT_KEY = "ideStartTimeoutSec"
@@ -142,12 +141,82 @@ def claude_tab_settings(home: str, windows: bool) -> str | None:
     return path
 
 
-def with_claude_settings(command: str, args: Sequence[str], caller_args: Sequence[str], settings: str | None) -> tuple[str, ...]:
+def _without_settings(args: Sequence[str]) -> tuple[list[str], str | None]:
+    kept: list[str] = []
+    value: str | None = None
+    i = 0
+    while i < len(args):
+        if args[i] == "--settings" and i + 1 < len(args):
+            value = args[i + 1]
+            i += 2
+            continue
+        if args[i].startswith("--settings="):
+            value = args[i][len("--settings=") :]
+        else:
+            kept.append(args[i])
+        i += 1
+    return kept, value
+
+
+def _read_settings(value: str, cwd: str | None) -> dict[str, Any] | None:
+    try:
+        if trim(value).startswith("{"):
+            data = parse(value)
+        else:
+            if not (posix_is_absolute(value) or win32_is_absolute(value)):
+                if cwd is None:
+                    return None
+                value = os.path.join(cwd, value)
+            with open(value, encoding="utf-8") as f:
+                data = parse(f.read())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def merged_claude_settings(settings: str, value: str, cwd: str | None) -> str | None:
+    from .files import read_text_if_exists, write_atomically
+    from .jsjson import stringify
+
+    user = _read_settings(value, cwd)
+    ours = _read_settings(settings, None)
+    if user is None or ours is None or not isinstance(ours.get("hooks"), dict):
+        return None
+    hooks = user.get("hooks", {})
+    if not isinstance(hooks, dict) or any(not isinstance(hooks.get(e, []), list) for e in ours["hooks"]):
+        return None
+    merged_hooks = dict(hooks)
+    for event, groups in ours["hooks"].items():
+        merged_hooks[event] = [*hooks.get(event, []), *groups]
+    text = stringify({**user, "hooks": merged_hooks}, 2) + "\n"
+    import hashlib
+
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    path = os.path.join(os.path.dirname(settings), f"{os.path.splitext(CLAUDE_TAB_SETTINGS_FILE)[0]}-{digest}.json")
+    try:
+        if read_text_if_exists(path) != text:
+            write_atomically(path, text)
+    except OSError:
+        return None
+    return path
+
+
+# claude reads only the last --settings, so a tab whose profile or request passes its own gets one file that
+# merges those settings with the tab's hooks, and keeps the user's flag only when that merge is impossible.
+def with_claude_settings(
+    command: str, args: Sequence[str], caller_args: Sequence[str], settings: str | None, cwd: str | None = None
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     if settings is None or not _CLAUDE_COMMAND.match(command):
-        return tuple(args)
-    if any(a == "--settings" or a.startswith("--settings=") for a in (*args, *caller_args)):
-        return tuple(args)
-    return (*args, "--settings", settings)
+        return tuple(args), tuple(caller_args)
+    own, own_value = _without_settings(args)
+    caller, caller_value = _without_settings(caller_args)
+    value = caller_value if caller_value is not None else own_value
+    if value is None:
+        return (*args, "--settings", settings), tuple(caller_args)
+    merged = merged_claude_settings(settings, value, cwd)
+    if merged is None:
+        return tuple(args), tuple(caller_args)
+    return (*own, "--settings", merged), tuple(caller)
 
 
 # goose run -s takes the first message from -t and stays interactive, but refuses to start without one.

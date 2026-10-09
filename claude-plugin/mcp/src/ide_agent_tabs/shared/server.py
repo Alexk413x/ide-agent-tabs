@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 from ..clock import now_iso
 from ..home import agent_tabs_home
-from ..processes import pid_alive
+from ..liveness import pid_alive
 from ..version import PACKAGE_VERSION
 from .front import Front, FrontDeps
 from .handover import HANDOVER_MS, claim_port

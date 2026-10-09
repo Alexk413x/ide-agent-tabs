@@ -37,21 +37,7 @@ def _parse(raw: bytes) -> dict[str, object]:
     return data if isinstance(data, dict) else {}
 
 
-def _remember_interpreter(cache: str) -> None:
-    if sys.version_info < (3, 9) or not sys.executable:
-        return
-    try:
-        os.makedirs(os.path.dirname(cache), exist_ok=True)
-        with open(cache, "w", encoding="utf-8") as f:
-            f.write(sys.executable.replace("\\", "/") + "\n")
-    except OSError:
-        return
-
-
 def main() -> None:
-    cache = os.environ.get("IDE_AGENT_TABS_HOOK_PYTHON")
-    if cache:
-        _remember_interpreter(cache)
     tab = os.environ.get("IDE_AGENT_TABS_ID")
     if not tab or tab == os.environ.get("IDE_AGENT_TABS_MOD"):
         return

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import os
 import sys
 from collections.abc import Mapping, Sequence
 from typing import NamedTuple
@@ -11,10 +10,6 @@ CREATE_BREAKAWAY_FROM_JOB = 0x01000000
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_FLAGS = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB
 RUN_TIMEOUT_S = 30.0
-
-_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-_STILL_ACTIVE = 259
-_ERROR_ACCESS_DENIED = 5
 
 
 class RunResult(NamedTuple):
@@ -29,34 +24,6 @@ def child_flags() -> int:
 
 def detached_flags() -> int:
     return DETACHED_FLAGS if sys.platform == "win32" else 0
-
-
-def pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if sys.platform == "win32":
-        if pid > 0xFFFFFFFF:
-            return False
-        # os.kill(pid, 0) on Windows calls TerminateProcess with exit code 0, so it ends the process it asks about.
-        import _winapi
-
-        try:
-            handle = _winapi.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        except OSError as e:
-            return getattr(e, "winerror", None) == _ERROR_ACCESS_DENIED
-        try:
-            return _winapi.GetExitCodeProcess(handle) == _STILL_ACTIVE
-        except OSError:
-            return False
-        finally:
-            _winapi.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
 
 
 def run(

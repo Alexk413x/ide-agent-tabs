@@ -10,7 +10,7 @@ from typing import Any
 from unittest import mock
 
 from ide_agent_tabs.clock import iso, parse_iso
-from ide_agent_tabs.messaging import store
+from ide_agent_tabs.messaging import store, wake
 from ide_agent_tabs.messaging.db import MailError, query
 from ide_agent_tabs.messaging.wake import wake_path
 from support import SRC, temp_home
@@ -290,7 +290,7 @@ class WaitTest(unittest.TestCase):
         home = temp_home(self)
         store.peek_unread(home, "tab-b")
         sender = self.send_from_another_process(home, "polled")
-        with mock.patch.object(store, "on_wake", lambda *_a: lambda: None), mock.patch.object(store, "RECHECK_MS", 100):
+        with mock.patch.object(wake, "on_wake", lambda *_a: lambda: None), mock.patch.object(store, "RECHECK_MS", 100):
             found = store.wait_for_message(home, "tab-b", None, 20_000)
         sender.join()
         assert found is not None

@@ -9,7 +9,7 @@ from collections.abc import Iterator, Sequence
 from typing import Callable
 
 from .clock import now_ms
-from .processes import pid_alive
+from .liveness import pid_alive
 from .winapi import open_shared_read
 
 LOCK_STALE_MS = 10_000

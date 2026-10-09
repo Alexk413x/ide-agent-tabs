@@ -417,7 +417,7 @@ class AgentProfilesTest {
     }
 
     @Test
-    fun `a Claude Code tab gets the tab settings file after its profile arguments, unless it brings its own`() {
+    fun `a Claude Code tab gets the tab settings file after its profile arguments`() {
         val windows = File.separatorChar == '\\'
         val settingsFile = home.resolve("mcp").resolve(CLAUDE_TAB_SETTINGS_FILE)
         Files.createDirectories(home.resolve("mcp"))
@@ -447,8 +447,46 @@ class AgentProfilesTest {
             assertFalse(name, "--settings" in plan(BUILTIN_PROFILES.first { it.name == name }).args)
         }
         assertEquals(emptyList<String>(), plan(claude.copy(command = "claude-wrapper")).args)
-        assertEquals(listOf("--settings=x.json"), plan(claude.copy(args = listOf("--settings=x.json"))).args)
-        assertEquals(listOf("--settings", "y"), plan(args = listOf("--settings", "y")).args)
+        assertEquals(listOf("--settings=/missing/x.json"), plan(claude.copy(args = listOf("--settings=/missing/x.json"))).args)
+        assertEquals(listOf("--settings", "{not json"), plan(args = listOf("--settings", "{not json")).args)
         assertEquals(emptyList<String>(), plan(settings = null).args)
+    }
+
+    @Test
+    fun `a Claude Code tab that brings its own settings gets one file that merges them with the tab hooks`() {
+        val ours = """{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/py","args":["hook","claude","Stop"]}]}]}}"""
+        val settingsFile = home.resolve("mcp").resolve(CLAUDE_TAB_SETTINGS_FILE)
+        Files.createDirectories(settingsFile.parent)
+        Files.writeString(settingsFile, ours)
+        val user = """{"permissions":{"allow":["Bash(git *)"]},"hooks":{"Stop":[{"hooks":[{"type":"command","command":"mine"}]}]}}"""
+        Files.writeString(home.resolve("mine.json"), user)
+        fun merged(args: List<String>): Pair<List<String>, com.google.gson.JsonObject> {
+            val i = args.indexOf("--settings")
+            return (args.take(i) + args.drop(i + 2)) to JsonParser.parseString(Files.readString(Path.of(args[i + 1]))).asJsonObject
+        }
+        val claude = BUILTIN_PROFILES.first { it.name == "claude" }
+        val override = claude.copy(args = listOf("--permission-mode", "bypassPermissions", "--settings", home.resolve("mine.json").toString()))
+        val context = LaunchContext(model = "opus", claudeSettings = settingsFile.toString())
+        val args = planLaunch(override, context).args
+        assertEquals(1, args.count { it == "--settings" })
+        val (rest, file) = merged(args)
+        assertEquals(listOf("--permission-mode", "bypassPermissions", "--model", "opus"), rest)
+        assertEquals(JsonParser.parseString(user).asJsonObject.get("permissions"), file.get("permissions"))
+        assertEquals(listOf("mine", "/py"), file.getAsJsonObject("hooks").getAsJsonArray("Stop").map { it.asJsonObject.getAsJsonArray("hooks")[0].asJsonObject.get("command").asString })
+        assertEquals(args, planLaunch(override, context).args)
+        val relative = merged(planLaunch(claude.copy(args = listOf("--settings=mine.json")), LaunchContext(claudeSettings = settingsFile.toString(), cwd = home.toString())).args)
+        assertEquals(emptyList<String>(), relative.first)
+        assertEquals(listOf("--settings=mine.json"), planLaunch(claude.copy(args = listOf("--settings=mine.json")), LaunchContext(claudeSettings = settingsFile.toString())).args)
+        val inline = merged(
+            planLaunch(
+                claude.copy(args = listOf("--settings", """{"model":"profile"}""")),
+                LaunchContext(args = listOf("--settings", """{"model":"request"}"""), claudeSettings = settingsFile.toString()),
+            ).args,
+        )
+        assertEquals(emptyList<String>(), inline.first)
+        assertEquals("request", inline.second.get("model").asString)
+        for (value in listOf("""{"hooks": []}""", """{"hooks": {"Stop": {}}}""", "[]")) {
+            assertEquals(value, listOf("--settings", value), planLaunch(claude, LaunchContext(args = listOf("--settings", value), claudeSettings = settingsFile.toString())).args)
+        }
     }
 }
