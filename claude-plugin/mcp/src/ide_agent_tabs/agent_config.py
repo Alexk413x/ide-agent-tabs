@@ -7,7 +7,7 @@ from typing import Any, NamedTuple
 
 from .jsjson import stringify
 from .messaging.hook import HOOK_EVENTS
-from .profiles import AGENT_ENV, TAB_HOOKS_ENV, TAB_ID_ENV
+from .profiles import AGENT_ENV, TAB_ID_ENV
 from .yaml_block import YamlDoc
 
 HOOK_AGENTS = ("codex", "gemini", "copilot", "agy", "grok", "hermes", "qwen", "goose")
@@ -206,12 +206,9 @@ def has_our_hooks(root: dict[str, Any], agent: str, target: HookTarget) -> bool:
     return True
 
 
-# Same matchers as the plugin's hooks/hooks.json.
 _CLAUDE_MATCHERS = {"SessionStart": "startup|resume|clear", "Notification": "permission_prompt|idle_prompt"}
 
 
-# A tab passes this file to claude with --settings. Its env makes the plugin's own hook commands exit, so a tab
-# never runs both sets of hooks.
 def claude_tab_settings(target: HookTarget) -> dict[str, Any]:
     def group(event: str) -> dict[str, Any]:
         handler = {
@@ -223,7 +220,7 @@ def claude_tab_settings(target: HookTarget) -> dict[str, Any]:
         matcher = _CLAUDE_MATCHERS.get(event)
         return {"matcher": matcher, "hooks": [handler]} if matcher is not None else {"hooks": [handler]}
 
-    return {"env": {TAB_HOOKS_ENV: "1"}, "hooks": {event: [group(event)] for event in HOOK_EVENTS["claude"]}}
+    return {"hooks": {event: [group(event)] for event in HOOK_EVENTS["claude"]}}
 
 
 def copilot_hooks(target: HookTarget) -> dict[str, Any]:

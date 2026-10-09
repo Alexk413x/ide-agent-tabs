@@ -3,6 +3,24 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.1
+
+Plugin and MCP server 0.9.1, with VS Code extension 0.1.30 and JetBrains plugin 0.4.13 bundled.
+
+### Update and restart every Claude Code tab
+
+Update the plugin, then close and reopen each Claude Code tab that started before the update. Until it
+restarts, such a tab has no agent hooks: its messaging state stays `unknown` and it gets no unread
+reminders.
+
+### Changed
+
+- The plugin has no agent hooks any more, so a Claude Code session outside an Agent Tabs tab starts no
+  hook process per prompt, tool call or turn end. Claude Code tabs get their agent hooks only from
+  `~/.ide-agent-tabs/mcp/claude-tab-settings.json`.
+- A profile or request that passes its own `--settings` to `claude` gets one generated settings file that
+  merges its settings with the tab's hooks, instead of a tab without hooks.
+
 ## 0.9.0
 
 Plugin and MCP server 0.9.0, with VS Code extension 0.1.29 and JetBrains plugin 0.4.12 bundled.

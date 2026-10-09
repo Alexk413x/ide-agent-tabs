@@ -37,6 +37,7 @@ class LaunchRequest(NamedTuple):
     cmd_shim: bool | None = None
     python: tuple[str, ...] | None = None
     claude_settings: str | None = None
+    cwd: str | None = None
 
 
 class LaunchPlan(NamedTuple):
@@ -66,7 +67,9 @@ def _without_prompt(p: AgentProfile, prompt: str | None) -> AgentProfile:
 def plan_launch(profile: AgentProfile, r: LaunchRequest) -> LaunchPlan:
     p = _without_prompt(profile, r.prompt)
     p = p._replace(args=with_codex_python(p.args, r.python))
-    p = p._replace(args=with_claude_settings(p.command, p.args, r.args, r.claude_settings))
+    args, caller_args = with_claude_settings(p.command, p.args, r.args, r.claude_settings, r.cwd)
+    p = p._replace(args=args)
+    r = r._replace(args=list(caller_args))
     if r.model is not None and not is_model(r.model):
         raise ConfigError(f"model must match {MODEL_SOURCE}")
     via = r.via if r.via is not None else r.launch_via

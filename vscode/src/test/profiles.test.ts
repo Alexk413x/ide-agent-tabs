@@ -632,7 +632,7 @@ test('a Codex tab runs its server on the interpreter python.json records, or on 
   assert.match(plan.args[2]!, /command = '\/usr\/bin\/python3', args = \['-I'/);
 });
 
-test('a Claude Code tab gets the tab settings file after its profile arguments, unless it brings its own', () => {
+test('a Claude Code tab gets the tab settings file after its profile arguments', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-claude-'));
   const windows = process.platform === 'win32';
   const settings = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
@@ -668,7 +668,38 @@ test('a Claude Code tab gets the tab settings file after its profile arguments, 
     assert.ok(!planLaunch(BUILTIN_PROFILES.find(p => p.name === name)!, ctx).args.includes('--settings'), name);
   }
   assert.deepEqual(planLaunch({ ...claude, command: 'claude-wrapper' }, ctx).args, []);
-  assert.deepEqual(planLaunch({ ...claude, args: ['--settings=x.json'] }, ctx).args, ['--settings=x.json']);
-  assert.deepEqual(planLaunch(claude, { ...ctx, args: ['--settings', 'y'] }).args, ['--settings', 'y']);
+  assert.deepEqual(planLaunch({ ...claude, args: ['--settings=/missing/x.json'] }, ctx).args, ['--settings=/missing/x.json']);
+  assert.deepEqual(planLaunch(claude, { ...ctx, args: ['--settings', '{not json'] }).args, ['--settings', '{not json']);
   assert.deepEqual(planLaunch(claude, { ...ctx, claudeSettings: undefined }).args, []);
+});
+
+test('a Claude Code tab that brings its own settings gets one file that merges them with the tab hooks', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-merge-'));
+  const ours = { hooks: { Stop: [{ hooks: [{ type: 'command', command: '/py', args: ['hook', 'claude', 'Stop'] }] }] } };
+  const settings = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
+  fs.mkdirSync(path.dirname(settings));
+  fs.writeFileSync(settings, JSON.stringify(ours));
+  const user = { permissions: { allow: ['Bash(git *)'] }, hooks: { Stop: [{ hooks: [{ type: 'command', command: 'mine' }] }] } };
+  fs.writeFileSync(path.join(home, 'mine.json'), JSON.stringify(user));
+  const merged = (args: string[]) => {
+    const i = args.indexOf('--settings');
+    return { rest: [...args.slice(0, i), ...args.slice(i + 2)], file: JSON.parse(fs.readFileSync(args[i + 1]!, 'utf8')) };
+  };
+  const claude = BUILTIN_PROFILES[0]!;
+  const override = { ...claude, args: ['--permission-mode', 'bypassPermissions', '--settings', path.join(home, 'mine.json')] };
+  const ctx: LaunchContext = { setting: 'direct', ori: null, windows: false, searchPath: '', claudeSettings: settings, model: 'opus' };
+  const args = planLaunch(override, ctx).args;
+  assert.equal(args.filter(a => a === '--settings').length, 1);
+  const { rest, file } = merged(args);
+  assert.deepEqual(rest, ['--permission-mode', 'bypassPermissions', '--model', 'opus']);
+  assert.deepEqual(file, { permissions: user.permissions, hooks: { Stop: [...user.hooks.Stop, ...ours.hooks.Stop] } });
+  assert.deepEqual(planLaunch(override, ctx).args, args);
+  const relative = merged(planLaunch({ ...claude, args: ['--settings=mine.json'] }, { ...ctx, model: undefined, cwd: home }).args);
+  assert.deepEqual([relative.rest, relative.file.permissions], [[], user.permissions]);
+  assert.deepEqual(planLaunch({ ...claude, args: ['--settings=mine.json'] }, { ...ctx, model: undefined }).args, ['--settings=mine.json']);
+  const inline = merged(planLaunch({ ...claude, args: ['--settings', '{"model":"profile"}'] }, { ...ctx, model: undefined, args: ['--settings', '{"model":"request"}'] }).args);
+  assert.deepEqual([inline.rest, inline.file], [[], { model: 'request', hooks: ours.hooks }]);
+  for (const value of ['{"hooks": []}', '{"hooks": {"Stop": {}}}', '[]']) {
+    assert.deepEqual(planLaunch(claude, { ...ctx, model: undefined, args: ['--settings', value] }).args, ['--settings', value], value);
+  }
 });

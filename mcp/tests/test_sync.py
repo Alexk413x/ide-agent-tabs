@@ -81,7 +81,7 @@ class SyncHook(unittest.TestCase):
         python = sys.executable.replace("\\", "/") if sys.platform == "win32" else sys.executable
         hook = os.path.join(h.ctx.home, "mcp", "py", "launch", "agent_hook.py")
         hook = hook.replace("\\", "/") if sys.platform == "win32" else hook
-        self.assertEqual(settings["env"], {"IDE_AGENT_TABS_HOOKS": "1"})
+        self.assertEqual(sorted(settings), ["hooks"])
         self.assertEqual(
             settings["hooks"]["UserPromptSubmit"],
             [{"hooks": [{"type": "command", "command": python, "args": ["-I", "-S", hook, "claude", "UserPromptSubmit"], "timeout": 5}]}],

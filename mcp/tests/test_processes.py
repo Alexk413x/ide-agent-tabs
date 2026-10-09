@@ -5,28 +5,28 @@ import subprocess
 import sys
 import unittest
 
-from ide_agent_tabs import processes
+from ide_agent_tabs import liveness, processes
 
 
 class LivenessTest(unittest.TestCase):
     def test_this_process_is_alive(self) -> None:
-        self.assertTrue(processes.pid_alive(os.getpid()))
+        self.assertTrue(liveness.pid_alive(os.getpid()))
 
     def test_non_positive_pids_are_not(self) -> None:
-        self.assertFalse(processes.pid_alive(0))
-        self.assertFalse(processes.pid_alive(-1))
+        self.assertFalse(liveness.pid_alive(0))
+        self.assertFalse(liveness.pid_alive(-1))
 
     def test_an_exited_child_is_not_alive_and_a_running_one_survives_the_check(self) -> None:
         child = subprocess.Popen([sys.executable, "-I", "-S", "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE)
         try:
             for _ in range(3):
-                self.assertTrue(processes.pid_alive(child.pid))
+                self.assertTrue(liveness.pid_alive(child.pid))
             self.assertIsNone(child.poll(), "the liveness check must not end the process")
         finally:
             assert child.stdin is not None
             child.stdin.close()
             child.wait()
-        self.assertFalse(processes.pid_alive(child.pid))
+        self.assertFalse(liveness.pid_alive(child.pid))
 
 
 class RunTest(unittest.TestCase):

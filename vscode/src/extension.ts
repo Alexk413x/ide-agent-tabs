@@ -72,7 +72,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return neutralIcon;
   };
 
-  const launchFor = (profile: AgentProfile) =>
+  const launchFor = (profile: AgentProfile, cwd?: string) =>
     planLaunch(profile, {
       setting: settings.shared().launchVia,
       ori: settings.detected().ori,
@@ -80,6 +80,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       searchPath: searchPath(),
       python: codexPython(home, isWindows),
       claudeSettings: claudeTabSettings(home, isWindows),
+      cwd,
     });
 
   const fileFolders = () => (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === 'file');
@@ -112,7 +113,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const openInFolder = (folder: vscode.WorkspaceFolder | undefined, profile: AgentProfile) => {
     const dir = folder ? folderPath(folder) : os.homedir();
-    openTab(dir, folder?.name ?? path.basename(dir), profile, { launch: launchFor(profile), focus: true });
+    openTab(dir, folder?.name ?? path.basename(dir), profile, { launch: launchFor(profile, dir), focus: true });
   };
 
   const openFromButton = (profile: AgentProfile) => {

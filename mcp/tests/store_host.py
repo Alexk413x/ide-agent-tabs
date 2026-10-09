@@ -5,10 +5,10 @@ from typing import Any, Callable
 
 from ide_agent_tabs.clock import now_iso
 from ide_agent_tabs.jsjson import stringify
+from ide_agent_tabs.liveness import pid_alive
 from ide_agent_tabs.messaging import store
 from ide_agent_tabs.messaging.db import MailError
 from ide_agent_tabs.messaging.sessions import HEARTBEAT_MS, MAIL_VERSION, Presence, live_sessions, read_presence, update_presence
-from ide_agent_tabs.processes import pid_alive
 from ide_agent_tabs.shared.host import Binding, BoundSession, Catalog, Progress
 
 HTTP_MAX_WAIT_S = 240

@@ -21,16 +21,6 @@
             "timeout": 60
           }
         ]
-      },
-      {
-        "matcher": "startup|resume|clear",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "set -- claude SessionStart; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
-            "timeout": 5
-          }
-        ]
       }
     ],
     "SessionEnd": [
@@ -39,73 +29,6 @@
           {
             "type": "command",
             "command": "set -- server SessionEnd; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/server-hook.ps1\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "set -- claude UserPromptSubmit; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "set -- claude PostToolUse; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "set -- claude PostToolUseFailure; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "permission_prompt|idle_prompt",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "set -- claude Notification; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "set -- claude Stop; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "StopFailure": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "set -- claude StopFailure; . \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-hook.ps1\"",
             "timeout": 5
           }
         ]

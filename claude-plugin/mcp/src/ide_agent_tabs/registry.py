@@ -8,7 +8,7 @@ from typing import Callable, NamedTuple, Union
 from .clock import now_ms
 from .files import mtime_ms, read_bytes
 from .jsjson import is_finite, is_number, is_safe_integer, js_string, parse
-from .processes import pid_alive
+from .liveness import pid_alive
 
 PROTOCOL_VERSION = 1
 ENDPOINTS_DIR = "endpoints"

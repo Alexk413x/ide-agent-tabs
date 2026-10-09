@@ -4,7 +4,7 @@ import socket
 import time
 from typing import Callable
 
-from ..processes import pid_alive
+from ..liveness import pid_alive
 from ..version import compare_versions
 from .client import ask_to_stop, probe, verified_state
 from .front import bind

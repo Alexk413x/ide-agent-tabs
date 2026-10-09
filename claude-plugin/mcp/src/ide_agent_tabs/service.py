@@ -634,6 +634,7 @@ class Service:
                     cmd_shim=self.is_windows and is_cmd_shim(profile.command, self.ctx.path_var),
                     python=codex_python(self.deps.home, self.is_windows),
                     claude_settings=claude_tab_settings(self.deps.home, self.is_windows),
+                    cwd=request.path,
                 ),
             )
         except ValueError as e:
