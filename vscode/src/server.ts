@@ -1,6 +1,6 @@
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { AgentLaunch, AgentProfile, AgentSettings, planLaunch } from './profiles';
+import { AgentLaunch, AgentProfile, AgentSettings, claudeTabSettings, codexPython, planLaunch } from './profiles';
 import { ENDPOINT_BASE } from './registry';
 import * as fs from 'node:fs';
 import { BadRequest, checkAdmission, checkRevealTarget, OpenRequest, parseCloseId, parseEmpty, parseInput, parseOpenRequest, parseRevealPath, RevealDeps } from './request';
@@ -65,6 +65,8 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
           ori: settings.detected().ori,
           windows: process.platform === 'win32',
           searchPath: process.env.PATH ?? '',
+          python: codexPython(settings.home, process.platform === 'win32'),
+          claudeSettings: claudeTabSettings(settings.home, process.platform === 'win32'),
         });
         const tab = host.open(request, profile, launch);
         return tab ? ok({ ...tab, via: launch.via }) : fail(409, 'no open folder to host the tab');

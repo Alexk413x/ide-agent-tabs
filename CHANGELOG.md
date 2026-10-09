@@ -1,8 +1,53 @@
 # Changelog
 
-Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`, which
-`mcp/package.json` matches) and the bundled IDE versions when they change. Tags are
-`ide-agent-tabs--v<version>`.
+Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
+bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
+
+## 0.9.0
+
+Plugin and MCP server 0.9.0, with VS Code extension 0.1.29 and JetBrains plugin 0.4.12 bundled.
+
+### Requirements
+
+- Python 3.9 or later on every OS. On Windows, Agent Tabs runs it with the `py` launcher (`py -3`),
+  else `python3` or `python`. It skips the Microsoft Store stubs in `WindowsApps`.
+- Git Bash on Windows, which Claude Code uses to run the plugin's hooks. Install Git for Windows.
+- Node.js is no longer needed.
+
+The setup skill checks both and says how to install what is missing.
+
+### Update and restart every session
+
+Update, then restart every agent session on the machine, in every IDE and terminal:
+
+```sh
+claude plugin marketplace update alexk413x
+claude plugin update ide-agent-tabs@alexk413x
+```
+
+A session that started on 0.8.0 keeps its Node server until it restarts. Messages still flow between
+0.8.0 and 0.9.0 sessions, because both share `~/.ide-agent-tabs/messages.db`. The first 0.9.0 session
+takes over the shared server port from a running 0.8.0 server.
+
+### Changed
+
+- The MCP server, the shared HTTP server, its headers helper, the hooks and the `agent-tabs` command
+  line run on Python and import only the standard library. The plugin ships its Python sources and no
+  Node bundle.
+- The skills run `"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs"` with the subcommands `list-ides`,
+  `jev`, `server` and `sync-ides`.
+- Other agent CLIs run the server copy in `~/.ide-agent-tabs/mcp/py/` with the Python interpreter that
+  `~/.ide-agent-tabs/mcp/python.json` names. Antigravity CLI uses `py -3` on Windows. The first Claude
+  Code session after the update rewrites each `node …/mcp-server.mjs` registration and hook entry,
+  including Hermes's hook approvals. When no registration uses the 0.8.0 Node copy any more, it
+  deletes that copy from `~/.ide-agent-tabs/mcp/`.
+- Codex tabs in VS Code and JetBrains IDEs start their Agent Tabs server with Python.
+- Claude Code tabs run their agent hooks from `~/.ide-agent-tabs/mcp/claude-tab-settings.json`, which the
+  server and the IDEs pass with `--settings` to every profile that runs `claude`, an `agents.json`
+  override of `claude` included. The hooks start the recorded Python interpreter directly instead of
+  through Git Bash, and the plugin's own agent hooks exit at once in such a tab.
+- The first Claude Code session writes the server copy in `~/.ide-agent-tabs/mcp/py/`, even when no other
+  agent CLI is registered, because Claude Code tabs run their hooks from it.
 
 ## 0.8.0
 

@@ -11,17 +11,21 @@ The server reads the registry and calls each IDE's HTTP API, as described in
 ## Shared server
 
 The Claude Code plugin registers `ide-agent-tabs` in [claude-plugin/.mcp.json](../claude-plugin/.mcp.json)
-as an HTTP server at `http://127.0.0.1:47828/mcp`. One Node process, `dist/shared-server.mjs`, serves
-every Claude Code session on the machine, in place of one process per session.
+as an HTTP server at `http://127.0.0.1:47828/mcp`. One Python process,
+`claude-plugin/mcp/launch/shared_server.py`, serves every Claude Code session on the machine, in place
+of one process per session. The server, its hooks and the command line need Python 3.9 or later and
+import only the standard library.
 
 - The `server_port` plugin option sets the port. Change it only when another program uses 47828, then
   restart Claude Code.
-- A headers helper, `claude-plugin/mcp/launch/headers.mjs`, and the plugin's `SessionStart` hook start
-  the server when nothing listens. The server exits after 8 hours with no request and no live session.
+- A headers helper, `claude-plugin/mcp/launch/headers.py`, and the plugin's `SessionStart` hook start
+  the server when nothing listens. Claude Code runs the helper as
+  `py -3 -I -S … || python3 -I -S … || python -I -S …`, through `cmd.exe` on Windows. The server exits
+  after 8 hours with no request and no live session.
 - It accepts requests only from `127.0.0.1` with this user's token from
   `~/.ide-agent-tabs/server/token`.
-- `node dist/mcp-server.mjs server status` shows the running server; `server stop` stops it. Both take
-  `--port <port>`.
+- `claude-plugin/mcp/launch/agent-tabs server status` shows the running server; `server stop` stops it.
+  Both take `--port <port>`.
 - `~/.ide-agent-tabs/server/server-47828.log` holds its log.
 
 See [Shared server](../docs/design.md#shared-server) for the protocol, session identity and build
@@ -180,9 +184,9 @@ TypeSafe's API.
 
 The server reads the API key from `TYPESAFE_API_KEY`, or from the operating system's credential store
 under service `typesafe`, account `api_key`. Each call appends a line without request contents to
-`jev/ledger.jsonl`. `node mcp-server.mjs jev status` reports where the key came from (`env`,
+`jev/ledger.jsonl`. `agent-tabs jev status` reports where the key came from (`env`,
 `credential-store` or `missing`), the last model seen, and today's calls, input tokens and estimated
-cost. `node mcp-server.mjs jev <ask|choose|check|rank|route>` takes the same request as the tool, as
+cost. `agent-tabs jev <ask|choose|check|rank|route>` takes the same request as the tool, as
 JSON on stdin. See [Jev judgments](../docs/design.md#jev-judgments-optional) for
 the settings, the key lookup and the ledger.
 
@@ -383,12 +387,23 @@ See [Claude Code mod](../docs/design.md#claude-code-mod) in the design doc.
 
 A Codex tab starts `codex --no-daemon` with `-c` options that add, for that session only, this server
 and five hooks that call it. Codex's shared daemon would start both with another tab's environment, so a
-Codex tab runs in its own process instead. The tab needs Codex 0.158 or later, and the shared server copy
-in `~/.ide-agent-tabs/mcp/`, which each Claude Code session start refreshes. The hooks are `mcp_tool`
-hooks: they call the internal `agent_tabs_hook` tool over the session's own MCP connection, so no process
-starts and no console window opens. The options also trust the five hooks, so Codex runs them without a
-`/hooks` review. For the exact options, see `CODEX_TAB_ARGS` in `src/profiles.ts` and
-[Codex tabs](../docs/design.md#codex-tabs) in the design doc.
+Codex tab runs in its own process instead. The tab needs Codex 0.158 or later, and the server copy in
+`~/.ide-agent-tabs/mcp/py/`, which each Claude Code session start refreshes.
+
+- The server option registers Agent Tabs as a stdio server. Its command is the interpreter that
+  `~/.ide-agent-tabs/mcp/python.json` records, or `py -3` on Windows and `python3` elsewhere when that
+  file is missing or its path can't go into the option. Its arguments are `-I -S -c` and a Python
+  one-liner in a TOML `'''…'''` string. The one-liner runs `mcp/py/launch/mcp_server.py` under
+  `IDE_AGENT_TABS_HOME`, or under `~/.ide-agent-tabs`. It holds no `"` or `%`, so PowerShell 5.1 and
+  `cmd.exe` pass it unchanged. The option also forwards `IDE_AGENT_TABS_ID`, `IDE_AGENT_TABS_AGENT` and
+  `IDE_AGENT_TABS_HOME`, and sets `tool_timeout_sec = 660`.
+- The hooks are `mcp_tool` hooks: they call the internal `agent_tabs_hook` tool over the session's own
+  MCP connection, so no process starts and no console window opens. The options also trust the five
+  hooks, so Codex runs them without a `/hooks` review.
+
+For the exact options, see `CODEX_TAB_ARGS` and `codex_python` in
+`claude-plugin/mcp/src/ide_agent_tabs/profiles.py`, and [Codex tabs](../docs/design.md#codex-tabs) in
+the design doc. The VS Code and JetBrains profiles hold the same strings.
 
 A Codex session outside a tab, such as one in the Codex desktop app, has no hooks. When its server's
 `IDE_AGENT_TABS_ID` names no open tab, the session's id becomes `codex-<thread id>`.
@@ -396,8 +411,7 @@ A Codex session outside a tab, such as one in the Codex desktop app, has no hook
 ### Message store
 
 Messages live in one SQLite database, `~/.ide-agent-tabs/messages.db`, that every agent session on the
-machine shares. The server uses Node's built-in `node:sqlite`, so messaging needs Node.js 22.13 or
-later; on an older Node the tab tools still work and the messaging tools say which Node they need.
+machine shares. The server uses Python's `sqlite3` module, in WAL mode.
 
 - Keep `~/.ide-agent-tabs` on a local disk. SQLite's locks don't hold on a network file system, so the
   server refuses a UNC path on Windows and an NFS, SMB or 9P folder on Linux, including WSL's `/mnt/c`.
@@ -445,7 +459,7 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `messages.db` | Every session's messages, with `messages.db-wal` and `messages.db-shm` beside it. See [Message store](#message-store). |
 | `wake/` | One small file per session that a send rewrites, so a waiting session wakes. |
 | `launch/` | Short-lived launch files. Each is deleted as soon as its tab starts. |
-| `mcp/` | A copy of the server for other agent CLIs. See [Other agents](#other-agents). |
+| `mcp/` | A copy of the server for other agent CLIs and Codex tabs, and `python.json`, the interpreter they run it with. See [Other agents](#other-agents). |
 
 | `config.json` key | Values | Default |
 |---|---|---|
@@ -470,30 +484,34 @@ which is the calling agent's `PATH`.
 ## Other agents
 
 Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code and Goose can
-run this server too. The setup skill registers it with the agents you choose, through `sync-ides.mjs`.
-For every agent except Pi and OpenCode, registering also adds the messaging hooks. Codex tabs bring
-their own server and hooks, so Codex needs registering only for Codex sessions outside tabs, and only on
-macOS and Linux. Codex (local) is a Codex tab and needs no registration:
+run this server too. The setup skill registers it with the agents you choose, through
+`agent-tabs sync-ides`. For every agent except Pi and OpenCode, registering also adds the messaging hooks.
+Codex tabs bring their own server and hooks, so Codex needs registering only for Codex sessions outside
+tabs, and only on macOS and Linux. Codex (local) is a Codex tab and needs no registration. From the
+repo root:
 
 ```sh
-node dist/sync-ides.mjs --agents
-node dist/sync-ides.mjs --register codex agy copilot gemini grok pi hermes opencode qwen goose
-node dist/sync-ides.mjs --unregister codex
+claude-plugin/mcp/launch/agent-tabs sync-ides --agents
+claude-plugin/mcp/launch/agent-tabs sync-ides --register codex agy copilot gemini grok pi hermes opencode qwen goose
+claude-plugin/mcp/launch/agent-tabs sync-ides --unregister codex
 ```
 
 `--agents` reports, for each agent, whether it's installed, whether it's registered, the server path it
-runs, whether that path is the stable copy, and `hooks`: whether its messaging hooks are in place (`null`
-for Codex, Pi and OpenCode, which get none). `--register` and `--unregister` print the same fields for
-each agent, with `ok` or an `error`.
+runs, `stable`: whether it runs the server copy with the interpreter in `python.json`, and `hooks`:
+whether its messaging hooks are in place (`null` for Codex, Pi and OpenCode, which get none).
+`--register` and `--unregister` print the same fields for each agent, with `ok` or an `error`.
 
-Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server name `ide-agent-tabs`:
+Each agent runs `<python> -I -S <path>`, with the server name `ide-agent-tabs`. `<python>` is the
+absolute interpreter that `~/.ide-agent-tabs/mcp/python.json` records, and `<path>` is
+`~/.ide-agent-tabs/mcp/py/launch/mcp_server.py`. Antigravity CLI refuses a command path with spaces, so
+it runs `py -3` on Windows, and `python3` elsewhere when the interpreter path has spaces.
 
 | Agent | Where the entry goes | How |
 |---|---|---|
-| Codex, not on Windows | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- node <path>` |
+| Codex, not on Windows | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- <python> -I -S <path>` |
 | Antigravity CLI | `mcpServers` in `~/.gemini/config/mcp_config.json` | The script edits the file. |
 | Copilot CLI | `mcpServers` in `~/.copilot/mcp-config.json`, or `$COPILOT_HOME/mcp-config.json` | The script edits the file. |
-| Gemini CLI | `~/.gemini/settings.json`, user scope | `gemini mcp add --scope user ide-agent-tabs node <path>` |
+| Gemini CLI | `mcpServers` in `~/.gemini/settings.json` | The script edits the file. |
 | Grok Build | The `[mcp_servers.ide-agent-tabs]` table in `~/.grok/config.toml`, or `$GROK_HOME/config.toml` | The script edits the file. |
 | Pi | `mcpServers` in `~/.pi/agent/mcp.json`, or `$PI_CODING_AGENT_DIR/mcp.json` | The script edits the file. |
 | Hermes | `mcp_servers` in `config.yaml` in `~/.hermes`, `$HERMES_HOME`, or `%LOCALAPPDATA%\hermes` on Windows | The script edits the file. |
@@ -501,10 +519,27 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
 | Qwen Code | `mcpServers` in `~/.qwen/settings.json`, or `$QWEN_HOME/settings.json` | The script edits the file. |
 | Goose | `extensions` in `config.yaml`: `~/.config/goose/` on macOS and Linux, `%APPDATA%\Block\goose\config\` on Windows, or `$GOOSE_PATH_ROOT/config/` | The script edits the file. |
 
-- `~/.ide-agent-tabs/mcp/` holds `mcp-server.mjs`, `agent-hook.mjs`, `launch/` and `THIRD_PARTY_NOTICES.txt`, in the same
-  layout as the plugin's `dist/`. The Claude Code plugin folder has the version in its path, so an
-  update would break a registration that pointed there. `--register` writes the copy. When a Claude Code
-  session starts after a plugin update, the session start hook refreshes the copy if it exists.
+- The Claude Code plugin folder has the version in its path, so an update would break a registration
+  that pointed there. Registrations point at a copy in `~/.ide-agent-tabs/mcp/` instead:
+
+  | Path | Holds |
+  |---|---|
+  | `python.json` | `{"python": "<absolute path>"}`: the base interpreter (outside any virtual environment) that registrations and Codex tabs run. |
+  | `py/<version>-<hash>/` | One build: `src/ide_agent_tabs/`, `launch/*.py`, the terminal scripts `launch/agent-launch.*`, and `version.json`. |
+  | `py/current.json` | The name and version of the current build. |
+  | `py/launch/mcp_server.py`, `py/launch/agent_hook.py` | Stubs that registrations and hooks point at. Each runs the script of the same name in the current build, so a registration outlives every update, and an update never changes a file a running server may still import. |
+
+  `--register` writes the copy. When a Claude Code session starts after a plugin update, the session
+  start hook refreshes the copy if `~/.ide-agent-tabs/mcp/` exists. It keeps the previous build and
+  deletes older ones. An older plugin never replaces a newer build. When the interpreter changes, the
+  hook rewrites `python.json`.
+- When a registration or a hook entry runs an older command, such as `node …/mcp-server.mjs` from a
+  plugin before 0.9.0, or an interpreter that changed, the session start hook rewrites it to the current
+  command. For Hermes it also moves the approvals in `shell-hooks-allowlist.json`. An agent registered
+  with another server, or not at all, stays as it is. Once no registration it found runs the Node copy,
+  the hook deletes that copy's files from `~/.ide-agent-tabs/mcp/`: `mcp-server.mjs`, `agent-hook.mjs`,
+  `THIRD_PARTY_NOTICES.txt` and `launch/`. It rewrites `version.json` with the current version, so a
+  0.8.0 plugin still installed elsewhere doesn't copy its server back.
 - The script writes each file to a temporary name and renames it, so a running server never reads a
   half-written file. If a file is in use, the hook logs the error to `sync.log` and tries again at the
   next session.
@@ -515,22 +550,25 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
   `opencode.jsonc` with comments. It reports an error instead, and you add the entry by hand:
 
   ```json
-  "ide-agent-tabs": { "type": "local", "command": "node", "args": ["<path>"], "env": { "IDE_AGENT_TABS_ID": "${IDE_AGENT_TABS_ID}", "IDE_AGENT_TABS_AGENT": "${IDE_AGENT_TABS_AGENT}" }, "tools": ["*"] }
+  "ide-agent-tabs": { "type": "local", "command": "<python>", "args": ["-I", "-S", "<path>"], "env": { "IDE_AGENT_TABS_ID": "${IDE_AGENT_TABS_ID}", "IDE_AGENT_TABS_AGENT": "${IDE_AGENT_TABS_AGENT}" }, "tools": ["*"] }
   ```
 
-  for Copilot CLI under `mcpServers`, for Antigravity CLI under `mcpServers`:
+  for Copilot CLI under `mcpServers`, for Antigravity CLI under `mcpServers` (on Windows, `"command": "py"`
+  and `"args": ["-3", "-I", "-S", "<path>"]`):
 
   ```json
-  "ide-agent-tabs": { "command": "node", "args": ["<path>"] }
+  "ide-agent-tabs": { "command": "<python>", "args": ["-I", "-S", "<path>"] }
   ```
 
   or for OpenCode under `mcp`:
 
   ```json
-  "ide-agent-tabs": { "type": "local", "command": ["node", "<path>"], "enabled": true, "timeout": 660000 }
+  "ide-agent-tabs": { "type": "local", "command": ["<python>", "-I", "-S", "<path>"], "enabled": true, "timeout": 660000 }
   ```
 
-- The hooks run `node ~/.ide-agent-tabs/mcp/agent-hook.mjs <agent> <event>`:
+  On Windows, write `<python>` and `<path>` with forward slashes.
+- The hooks run `<python> -I -S ~/.ide-agent-tabs/mcp/py/launch/agent_hook.py <agent> <event>`. When
+  the interpreter path has spaces, a hook runs `py -3` on Windows and quotes the path elsewhere:
 
   | Agent | Where the hooks go |
   |---|---|
@@ -554,8 +592,8 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
     hook path goes in without quotes. `--register agy` refuses a path with spaces or `cmd.exe` special
     characters.
   - `~/.gemini/config/hooks.json` is also read by Antigravity 2.0 and the Antigravity IDE. There,
-    `IDE_AGENT_TABS_ID` is unset, so the hook exits without output, at the cost of one `node` start for each
-    model call and tool call.
+    `IDE_AGENT_TABS_ID` is unset, so the hook exits without output, at the cost of one Python start for
+    each model call and tool call.
   - There is no permission or interrupt event. A session that waits for approval shows `busy`.
   - Antigravity CLI ends any MCP tool call after 3 minutes and has no setting to change that, so
     `wait_for_message` waits at most 170 seconds in an Antigravity CLI session.
@@ -570,18 +608,20 @@ Each agent runs `node ~/.ide-agent-tabs/mcp/mcp-server.mjs`, with the server nam
     forwards `IDE_AGENT_TABS_ID` and `IDE_AGENT_TABS_AGENT`. Pi gets no hooks, so it has no state.
   - Hermes passes a server only the variables its `env` names, and times a tool call out after 300
     seconds, so the entry sets `env` and `timeout: 660`. Its shell hooks run as
-    `node '<hook path>' hermes <event>`. Hermes asks before it first runs each (event, command) pair
+    `<python> -I -S <hook path> hermes <event>`, with each path in single quotes when it holds a
+    character outside letters, digits and `_@%+=:,./-`. Goose's hooks take the same form. Hermes asks before it first runs each (event, command) pair
     and skips the hook when nobody can answer, so `--register hermes` adds one `approvals` entry in
     `shell-hooks-allowlist.json` for each of its own pairs, and for nothing else. It never sets
     `hooks_auto_accept` or `HERMES_ACCEPT_HOOKS`. `pre_verify` nudges only after a turn that edited
     code, and Hermes counts each block against its `max_verify_nudges`.
   - Qwen Code's entry sets `env` and `timeout: 700000` (milliseconds). Its hooks run as
-    `node "<hook path>" qwen <event>`.
+    `<python> -I -S "<hook path>" qwen <event>`.
   - Goose's extension sets `timeout: 700`. Goose runs a hook with `sh -c`, so on Windows it needs Git
     Bash. With no first prompt, a Goose tab runs `goose session`, because `goose run -s` refuses to
     start without a message.
-  - The script edits the YAML of Hermes and Goose with the `yaml` package, and keeps comments and the
-    other keys. It leaves a file that isn't valid YAML alone and reports an error. It edits the TOML of
+  - The script edits the YAML of Hermes and Goose with a small editor for the block-style subset those
+    configs use, and keeps comments and the other keys. It leaves a file that uses anything else alone
+    and reports an error, and you edit it by hand. It edits the TOML of
     Grok Build only in the `[mcp_servers.ide-agent-tabs]` form.
 - `--register codex` refuses on Windows. The Codex desktop app reads the same `config.toml`, and Codex
   before 0.159 opens a console window each time the app starts an MCP server from it. Use Codex tabs
@@ -614,7 +654,7 @@ To remove Agent Tabs from the other agents, run `--unregister` with each agent, 
 
 A terminal tab never receives caller text on a command line. The server writes the command, arguments,
 prompt and environment variables to a launch file that only your user can read. The tab runs a fixed
-launch script from `dist/launch/`, which reads the file, deletes it, sets `IDE_AGENT_TABS_ID` and
+launch script from `claude-plugin/dist/launch/`, or from `launch/` in the server copy, which reads the file, deletes it, sets `IDE_AGENT_TABS_ID` and
 `IDE_AGENT_TABS_AGENT`, changes to `path`, and starts the agent with the prompt as the last argument.
 A command line holds only fixed flags, the server's own paths, `path` and a cleaned tab title. The server
 refuses a path that holds a control character.
@@ -764,12 +804,12 @@ identify the calling agent session, such as `CLAUDECODE` or `CODEX_SANDBOX`.
 
 ### Adding a terminal
 
-Each terminal is a `TerminalDriver` in `src/terminals/`, with `available`, `open`, `alive` and `close`,
-`currentCapabilities` when what it can do depends on its setup, and `input` when it can type a line into a
-tab. Add the driver to
-`TERMINAL_DRIVERS`, and to the platform order in `src/terminals/index.ts`. Shared pieces live in
-`shell.ts` (login shell, env mode and argv mode commands, path checks, titles) and `processes.ts`
-(environment, detached start, pid tracking).
+Each terminal is a `TerminalDriver` in `claude-plugin/mcp/src/ide_agent_tabs/terminals/`, with
+`available`, `open`, `alive` and `close`, `current_capabilities` when what it can do depends on its
+setup, and `input` when it can type a line into a tab. Add the driver to `TERMINAL_DRIVERS`, and to the
+platform order in `terminals/__init__.py`. Shared pieces live in `shell.py` (login shell, env mode and
+argv mode commands, path checks, titles) and `processes.py` (environment, detached start, pid
+tracking).
 
 ### Tested on
 
@@ -784,32 +824,44 @@ tab. Add the driver to
   the permission errors.
 - No driver is tested on a real Mac.
 
-## Build and test
+## Development
 
-You need Node.js 22.13 or later.
+The server's source is the Python package in `claude-plugin/mcp/src/ide_agent_tabs/`, with its entry
+points in `claude-plugin/mcp/launch/`. The plugin runs these files as they are; there is no build step.
+The server imports only the standard library and must run on Python 3.9, so avoid newer syntax and
+modules such as `match`, `X | Y` outside annotations and `tomllib`. The tests in `mcp/tests/` don't
+ship.
+
+You need [uv](https://docs.astral.sh/uv/). It installs the Python versions and the lint tools. From
+the repo root:
 
 ```sh
-npm install
-npm test
-npm run build
+uv run --python 3.13 --no-project python -I -S mcp/tests/run.py
+uv run --python 3.9 --no-project python -I -S mcp/tests/run.py
+uvx ruff@0.16.10 check
+uvx ruff@0.16.10 format --check
+uv run --frozen pyright
+uv run --frozen pyright --pythonplatform Linux
 ```
 
-`npm run build` type-checks the code and bundles it into `claude-plugin/dist/mcp-server.mjs`,
-`claude-plugin/dist/sync-ides.mjs`, `claude-plugin/dist/agent-hook.mjs`,
-`claude-plugin/dist/shared-server.mjs` with its `server-*.mjs` chunks, `claude-plugin/dist/server-start.mjs`
-and `claude-plugin/mcp/launch/headers.mjs`. It copies the launch scripts to `claude-plugin/dist/launch/` and
-writes the bundled packages' licenses to `claude-plugin/dist/THIRD_PARTY_NOTICES.txt`. It leaves the IDE
-builds in `claude-plugin/dist/ide/` in place. Commit the `dist/` folder: the plugin runs it without
-`node_modules`.
+`mcp/tests/run.py` runs every `test_*.py` with the standard library's `unittest`, so it also runs on a
+bare Python 3.9 without uv. Pass test module names to run only those, and `-v` for one line per test.
+`pyproject.toml` holds the ruff and pyright settings, which target Python 3.9.
 
-The launcher tests run the real launch scripts with `pwsh`, Windows PowerShell and bash when they're
-installed, and skip the rest.
+`node scripts/check.mjs` runs these checks with the rest of the repo's, and is the local gate before you
+commit. See [Checks](../README.md#checks).
 
-After you change a tool's registration in `src/server.ts`, run `node --import tsx scripts/write-catalog.ts`.
-The shared server answers `tools/list` from the catalog it writes, and a test fails when the catalog is
-stale.
-
-`bench/bench.mjs` measures the server: `memory`, `idle`, `startup`, `latency` (1, 4, 8 and 16 agents),
-`mixed` (32 HTTP sessions and 8 stdio processes), `cli` and `coldstarts`. Pass `--mode stdio` or
-`--mode http`. It runs in a temporary `IDE_AGENT_TABS_HOME` on port 47911, and builds nothing, so run
-`npm run bundle` first.
+- `claude-plugin/mcp/src/ide_agent_tabs/catalog.json` is the source of truth for the tool names,
+  descriptions and input schemas. Edit it by hand. The server validates arguments against it and
+  answers `tools/list` from it.
+- `mcp/tests/fixtures/` holds JSON fixtures that the tests compare against. They are frozen data; edit
+  them by hand when a behavior changes on purpose.
+- `mcp/tests/node080/` holds the 0.8.0 Node build as a test fixture. It doesn't ship. The interop tests
+  run it against the Python server: handover from a running 0.8.0 shared server, a message store shared
+  with 0.8.0 servers, and the hooks. They need Node.js on `PATH`, and skip without it unless
+  `IDE_AGENT_TABS_INTEROP=1` is set. The CI interop job sets it.
+- The launcher tests run the real launch scripts with `pwsh`, Windows PowerShell and bash when they're
+  installed, and skip the rest.
+- `mcp/bench/shared_server.py` measures the shared server's start and the headers helper, against the
+  0.8.0 build unless you pass `--no-node`. `mcp/bench/hook_startup.py` and `mcp/bench/hook_forms.py`
+  measure hook start-up.

@@ -8,11 +8,6 @@ const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8'
 const read = (file) => JSON.parse(readFileSync(path.join(root, file), 'utf8')).version;
 
 const plugin = read('claude-plugin/.claude-plugin/plugin.json');
-const mcp = read('mcp/package.json');
-if (plugin !== mcp) {
-  console.error(`claude-plugin/.claude-plugin/plugin.json is ${plugin} but mcp/package.json is ${mcp}. Keep them equal.`);
-  process.exit(1);
-}
 
 let tag;
 try {
@@ -24,8 +19,8 @@ try {
 const released = tag.replace(/^ide-agent-tabs--v/, '');
 const changed = git('diff', '--name-only', tag, '--', 'claude-plugin').split('\n').filter(Boolean);
 if (changed.length && plugin === released) {
-  console.error(`claude-plugin/ changed since ${tag}, but its version is still ${plugin}. Bump the version in`);
-  console.error('claude-plugin/.claude-plugin/plugin.json and mcp/package.json, and add a CHANGELOG entry. Changed:');
+  console.error(`claude-plugin/ changed since ${tag}, but its version is still ${plugin}. Bump the version with`);
+  console.error('node scripts/bump.mjs and add a CHANGELOG entry. Changed:');
   for (const file of changed) console.error(`  ${file}`);
   process.exit(1);
 }

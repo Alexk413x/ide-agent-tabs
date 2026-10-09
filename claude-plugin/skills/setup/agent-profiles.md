@@ -27,6 +27,10 @@ order, then custom profiles.
 A profile in `agents.json` with the same name overrides a built-in one. An `agents.json` profile named
 `codex` replaces the built-in `args` too, so its tabs lose messaging unless it copies them.
 
+A tab whose command is `claude` also gets `--settings ~/.ide-agent-tabs/mcp/claude-tab-settings.json` after
+the profile's `args`, so an `agents.json` override of `claude` keeps the tab's fast hooks. A profile or
+request that passes its own `--settings` doesn't get it; that tab runs the plugin's hooks instead.
+
 Add or override profiles in `~/.ide-agent-tabs/agents.json`:
 
 ```json

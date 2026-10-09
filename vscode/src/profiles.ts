@@ -79,6 +79,8 @@ export interface LaunchContext {
   ori: DetectedOri | null;
   windows: boolean;
   searchPath: string;
+  python?: readonly string[];
+  claudeSettings?: string;
 }
 
 function isCmdShim(command: string, searchPath: string): boolean {
@@ -113,8 +115,10 @@ function withoutPrompt(p: AgentProfile, prompt: string | undefined): AgentProfil
 }
 
 export function planLaunch(profile: AgentProfile, ctx: LaunchContext): AgentLaunch {
-  const p = withoutPrompt(profile, ctx.prompt);
+  const unplanned = withoutPrompt(profile, ctx.prompt);
+  const codex = { ...unplanned, args: withCodexPython(unplanned.args, ctx.python) };
   const callerArgs = ctx.args ?? [];
+  const p = { ...codex, args: withClaudeSettings(codex.command, codex.args, callerArgs, ctx.claudeSettings) };
   const callerEnv = ctx.env ?? {};
   if ((ctx.via ?? ctx.setting) === 'ori') {
     const flag = ctx.prompt !== undefined && p.promptFlag !== undefined ? [p.promptFlag] : [];
@@ -131,11 +135,11 @@ export function planLaunch(profile: AgentProfile, ctx: LaunchContext): AgentLaun
   return launchOf(p, ctx.prompt, callerArgs, callerEnv, ctx.model);
 }
 
-// Same strings as CODEX_TAB_ARGS in mcp/src/profiles.ts, which explains them; mcp/test/codexTab.test.ts checks both.
+// Same strings as CODEX_TAB_ARGS in claude-plugin/mcp/src/ide_agent_tabs/profiles.py, which explains them; mcp/tests/test_codex_tab.py checks both.
 export const CODEX_TAB_ARGS: readonly string[] = Object.freeze([
   "--no-daemon",
   "-c",
-  "mcp_servers.ide-agent-tabs={ command = 'node', args = ['-e', 'const p=require(`node:path`);import(require(`node:url`).pathToFileURL(p.join(process.env.IDE_AGENT_TABS_HOME||p.join(require(`node:os`).homedir(),`.ide-agent-tabs`),`mcp`,`mcp-server.mjs`)).href)'], env_vars = ['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'], tool_timeout_sec = 660 }",
+  "mcp_servers.ide-agent-tabs={ command = 'python3', args = ['-I', '-S', '-c', '''import os,runpy;h=os.environ.get('IDE_AGENT_TABS_HOME') or os.path.join(os.path.expanduser('~'),'.ide-agent-tabs');runpy.run_path(os.path.join(h,'mcp','py','launch','mcp_server.py'),run_name='__main__')'''], env_vars = ['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'], tool_timeout_sec = 660 }",
   "-c",
   "hooks.UserPromptSubmit=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'UserPromptSubmit', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
   "-c",
@@ -149,6 +153,66 @@ export const CODEX_TAB_ARGS: readonly string[] = Object.freeze([
   "-c",
   "hooks.state={ '/<session-flags>/config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, 'C:\\<session-flags>\\config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, '/<session-flags>/config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, 'C:\\<session-flags>\\config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, '/<session-flags>/config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, 'C:\\<session-flags>\\config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, '/<session-flags>/config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, 'C:\\<session-flags>\\config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, '/<session-flags>/config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' }, 'C:\\<session-flags>\\config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' } }",
 ]);
+
+const CODEX_SERVER_ARG = CODEX_TAB_ARGS[2];
+const CODEX_SERVER_HEAD = "mcp_servers.ide-agent-tabs={ command = 'python3', args = [";
+// A Codex tab runs its server on the interpreter that python.json records, so no py.exe stays behind as its parent.
+// The path goes into a TOML literal string and through cmd.exe, so it may not hold a quote, % or !, or end in \.
+const CODEX_PYTHON_SAFE = /^[^'"%!\x00-\x1f\x7f]*[^'"%!\x00-\x1f\x7f\\]$/;
+
+export function withCodexPython(args: readonly string[], python: readonly string[] | undefined): string[] {
+  if (python === undefined || python.length === 0) return [...args];
+  const head = python.slice(1).map(a => `'${a}', `).join('');
+  const arg = `mcp_servers.ide-agent-tabs={ command = '${python[0]}', args = [${head}${CODEX_SERVER_ARG.slice(CODEX_SERVER_HEAD.length)}`;
+  return args.map(a => (a === CODEX_SERVER_ARG ? arg : a));
+}
+
+export function recordedPython(home: string, windows: boolean): string | undefined {
+  let python: unknown;
+  try {
+    python = (JSON.parse(fs.readFileSync(path.join(home, 'mcp', 'python.json'), 'utf8')) as { python?: unknown }).python;
+  } catch {
+    python = undefined;
+  }
+  const absolute = windows ? path.win32.isAbsolute : path.posix.isAbsolute;
+  return typeof python === 'string' && absolute(python) && CODEX_PYTHON_SAFE.test(python) && isFile(python) ? python : undefined;
+}
+
+export function codexPython(home: string, windows: boolean): string[] {
+  const python = recordedPython(home, windows);
+  if (python !== undefined) return [python];
+  return windows ? ['py', '-3'] : ['python3'];
+}
+
+// Same rules as claude_tab_settings and with_claude_settings in claude-plugin/mcp/src/ide_agent_tabs/profiles.py.
+export const CLAUDE_TAB_SETTINGS_FILE = 'claude-tab-settings.json';
+// The settings path reaches cmd.exe when claude is a .cmd shim, so it may not hold a double quote or a cmd.exe metacharacter.
+const CMD_SAFE_PATH = /^[^"%!^&|<>\x00-\x1f\x7f]+$/;
+const CLAUDE_COMMAND = /^(?:.*[\\/])?claude(?:\.(?:exe|cmd|bat|ps1))?$/i;
+
+export function claudeTabSettings(home: string, windows: boolean): string | undefined {
+  const file = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
+  return recordedPython(home, windows) !== undefined && CMD_SAFE_PATH.test(file) && isFile(file) ? file : undefined;
+}
+
+export function withClaudeSettings(
+  command: string,
+  args: readonly string[],
+  callerArgs: readonly string[],
+  settings: string | undefined,
+): string[] {
+  if (settings === undefined || !CLAUDE_COMMAND.test(command)) return [...args];
+  if ([...args, ...callerArgs].some(a => a === '--settings' || a.startsWith('--settings='))) return [...args];
+  return [...args, '--settings', settings];
+}
+
+function isFile(file: string): boolean {
+  try {
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
 
 export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
   profile('claude', 'Claude Code', 'claude', { modelFlag: '--model' }),

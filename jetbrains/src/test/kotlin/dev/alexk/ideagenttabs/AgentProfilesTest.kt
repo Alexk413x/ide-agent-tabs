@@ -392,4 +392,63 @@ class AgentProfilesTest {
         assertTrue(error.message!!.contains("can't launch through Ori"))
         assertEquals(LaunchVia.ORI, planLaunch(real, ctx(via = LaunchVia.ORI)).via)
     }
+
+    @Test
+    fun `a Codex tab runs its server on the interpreter python json records`() {
+        val windows = File.separatorChar == '\\'
+        assertEquals(if (windows) listOf("py", "-3") else listOf("python3"), codexPython(home, windows))
+        val python = home.resolve("python.exe")
+        Files.writeString(python, "")
+        Files.createDirectories(home.resolve("mcp"))
+        Files.writeString(home.resolve("mcp").resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", python.toString()) }.toString())
+        assertEquals(listOf(python.toString()), codexPython(home, windows))
+        Files.writeString(home.resolve("mcp").resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", "$python'x") }.toString())
+        assertEquals(listOf("py", "-3"), codexPython(home, true))
+        assertEquals(listOf("python3"), codexPython(home, false))
+
+        val args = withCodexPython(CODEX_TAB_ARGS, listOf("py", "-3"))
+        assertEquals(CODEX_TAB_ARGS.size, args.size)
+        assertTrue(args[2].startsWith("mcp_servers.ide-agent-tabs={ command = 'py', args = ['-3', '-I', '-S', '-c', '''"))
+        assertEquals(CODEX_TAB_ARGS[2].substringAfter("'-I'"), args[2].substringAfter("'-I'"))
+        assertEquals(CODEX_TAB_ARGS.filterIndexed { i, _ -> i != 2 }, args.filterIndexed { i, _ -> i != 2 })
+        assertEquals(CODEX_TAB_ARGS, withCodexPython(CODEX_TAB_ARGS, null))
+        val plan = planLaunch(BUILTIN_PROFILES[1], LaunchContext(python = listOf("/usr/bin/python3")))
+        assertTrue(plan.args[2].contains("command = '/usr/bin/python3', args = ['-I'"))
+    }
+
+    @Test
+    fun `a Claude Code tab gets the tab settings file after its profile arguments, unless it brings its own`() {
+        val windows = File.separatorChar == '\\'
+        val settingsFile = home.resolve("mcp").resolve(CLAUDE_TAB_SETTINGS_FILE)
+        Files.createDirectories(home.resolve("mcp"))
+        assertNull(claudeTabSettings(home, windows))
+        Files.writeString(settingsFile, "{}")
+        assertNull(claudeTabSettings(home, windows))
+        val python = home.resolve("python.exe")
+        Files.writeString(python, "")
+        Files.writeString(home.resolve("mcp").resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", python.toString()) }.toString())
+        assertEquals(settingsFile.toString(), claudeTabSettings(home, windows))
+        Files.delete(settingsFile)
+        assertNull(claudeTabSettings(home, windows))
+
+        val claude = BUILTIN_PROFILES.first { it.name == "claude" }
+        fun plan(profile: AgentProfile = claude, args: List<String> = emptyList(), settings: String? = "/h/s.json", model: String? = null, setting: LaunchVia = LaunchVia.DIRECT) =
+            planLaunch(profile, LaunchContext(prompt = "hi", args = args, model = model, setting = setting, ori = DetectedOri("/bin/ori", null, listOf("claude")), claudeSettings = settings))
+        assertEquals(listOf("--settings", "/h/s.json", "--model", "opus", "--resume", "abc"), plan(args = listOf("--resume", "abc"), model = "opus").args)
+        val bypass = claude.copy(args = listOf("--permission-mode", "bypassPermissions"))
+        assertEquals(listOf("--permission-mode", "bypassPermissions", "--settings", "/h/s.json"), plan(bypass).args)
+        for (command in listOf("/usr/local/bin/claude", "C:\\Users\\a b\\.local\\bin\\claude.exe", "CLAUDE.CMD")) {
+            assertEquals(command, listOf("--settings", "/h/s.json"), plan(claude.copy(command = command)).args)
+        }
+        val ori = plan(setting = LaunchVia.ORI)
+        assertEquals(LaunchVia.ORI, ori.via)
+        assertEquals(listOf("claude", "--settings", "/h/s.json"), ori.args)
+        for (name in listOf("gemini", "copilot", "pi")) {
+            assertFalse(name, "--settings" in plan(BUILTIN_PROFILES.first { it.name == name }).args)
+        }
+        assertEquals(emptyList<String>(), plan(claude.copy(command = "claude-wrapper")).args)
+        assertEquals(listOf("--settings=x.json"), plan(claude.copy(args = listOf("--settings=x.json"))).args)
+        assertEquals(listOf("--settings", "y"), plan(args = listOf("--settings", "y")).args)
+        assertEquals(emptyList<String>(), plan(settings = null).args)
+    }
 }

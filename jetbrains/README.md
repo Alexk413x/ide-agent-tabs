@@ -326,5 +326,4 @@ folder.
 
 Free to use, including at work, and free to fork and share. You may not sell it, a fork
 of it, or paid setup or hosting of it, and you may not use it for fraud or scams. See
-[LICENSE](../LICENSE) for the full terms. The bundled third-party licenses are in
-`claude-plugin/dist/THIRD_PARTY_NOTICES.txt`.
+[LICENSE](../LICENSE) for the full terms.

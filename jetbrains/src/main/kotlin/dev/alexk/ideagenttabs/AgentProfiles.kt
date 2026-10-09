@@ -69,6 +69,8 @@ class LaunchContext(
     val ori: DetectedOri? = null,
     val windows: Boolean = false,
     val searchPath: String = "",
+    val python: List<String>? = null,
+    val claudeSettings: String? = null,
 )
 
 private fun isCmdShim(command: String, searchPath: String): Boolean {
@@ -103,7 +105,9 @@ private fun withoutPrompt(profile: AgentProfile, prompt: String?): AgentProfile 
     if (prompt == null && profile.command == "goose" && profile.args == GOOSE_RUN_ARGS) profile.copy(args = GOOSE_EMPTY_ARGS) else profile
 
 fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
-    val profile = withoutPrompt(requested, context.prompt)
+    val unplanned = withoutPrompt(requested, context.prompt)
+    val codex = unplanned.copy(args = withCodexPython(unplanned.args, context.python))
+    val profile = codex.copy(args = withClaudeSettings(codex.command, codex.args, context.args, context.claudeSettings))
     if ((context.via ?: context.setting) == LaunchVia.ORI) {
         val flag = listOfNotNull(profile.promptFlag?.takeIf { context.prompt != null })
         val model = context.model?.let { listOf("--model", it) }.orEmpty()
@@ -122,11 +126,11 @@ fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
     return profile.launch(context.prompt, context.args, context.env, context.model)
 }
 
-// Same strings as CODEX_TAB_ARGS in mcp/src/profiles.ts, which explains them; mcp/test/codexTab.test.ts checks both.
+// Same strings as CODEX_TAB_ARGS in claude-plugin/mcp/src/ide_agent_tabs/profiles.py, which explains them; mcp/tests/test_codex_tab.py checks both.
 val CODEX_TAB_ARGS = listOf(
     "--no-daemon",
     "-c",
-    "mcp_servers.ide-agent-tabs={ command = 'node', args = ['-e', 'const p=require(`node:path`);import(require(`node:url`).pathToFileURL(p.join(process.env.IDE_AGENT_TABS_HOME||p.join(require(`node:os`).homedir(),`.ide-agent-tabs`),`mcp`,`mcp-server.mjs`)).href)'], env_vars = ['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'], tool_timeout_sec = 660 }",
+    "mcp_servers.ide-agent-tabs={ command = 'python3', args = ['-I', '-S', '-c', '''import os,runpy;h=os.environ.get('IDE_AGENT_TABS_HOME') or os.path.join(os.path.expanduser('~'),'.ide-agent-tabs');runpy.run_path(os.path.join(h,'mcp','py','launch','mcp_server.py'),run_name='__main__')'''], env_vars = ['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'], tool_timeout_sec = 660 }",
     "-c",
     "hooks.UserPromptSubmit=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'UserPromptSubmit', session_id = '\${session_id}', turn_id = '\${turn_id}' }, timeout = 10 }] }]",
     "-c",
@@ -140,6 +144,54 @@ val CODEX_TAB_ARGS = listOf(
     "-c",
     "hooks.state={ '/<session-flags>/config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, 'C:\\<session-flags>\\config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, '/<session-flags>/config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, 'C:\\<session-flags>\\config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, '/<session-flags>/config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, 'C:\\<session-flags>\\config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, '/<session-flags>/config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, 'C:\\<session-flags>\\config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, '/<session-flags>/config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' }, 'C:\\<session-flags>\\config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' } }",
 )
+
+private val CODEX_SERVER_ARG = CODEX_TAB_ARGS[2]
+private const val CODEX_SERVER_HEAD = "mcp_servers.ide-agent-tabs={ command = 'python3', args = ["
+
+// A Codex tab runs its server on the interpreter that python.json records, so no py.exe stays behind as its parent.
+// The path goes into a TOML literal string and through cmd.exe, so it may not hold a quote, % or !, or end in \.
+private val CODEX_PYTHON_SAFE = Regex("[^'\"%!\\u0000-\\u001f\\u007f]*[^'\"%!\\u0000-\\u001f\\u007f\\\\]")
+
+fun withCodexPython(args: List<String>, python: List<String>?): List<String> {
+    if (python.isNullOrEmpty()) return args
+    val head = python.drop(1).joinToString("") { "'$it', " }
+    val arg = "mcp_servers.ide-agent-tabs={ command = '${python[0]}', args = [$head${CODEX_SERVER_ARG.substring(CODEX_SERVER_HEAD.length)}"
+    return args.map { if (it == CODEX_SERVER_ARG) arg else it }
+}
+
+fun recordedPython(home: Path, windows: Boolean): String? {
+    val python = runCatching {
+        JsonParser.parseString(Files.readString(home.resolve("mcp").resolve("python.json"))).asJsonObject.get("python")?.asString
+    }.getOrNull()
+    val absolute = python != null && (if (windows) Regex("([A-Za-z]:)?[\\\\/].*").matches(python) else python.startsWith("/"))
+    if (python != null && absolute && CODEX_PYTHON_SAFE.matches(python) && runCatching { Files.isRegularFile(Path.of(python)) }.getOrDefault(false)) {
+        return python
+    }
+    return null
+}
+
+fun codexPython(home: Path, windows: Boolean): List<String> =
+    recordedPython(home, windows)?.let { listOf(it) } ?: if (windows) listOf("py", "-3") else listOf("python3")
+
+// Same rules as claude_tab_settings and with_claude_settings in claude-plugin/mcp/src/ide_agent_tabs/profiles.py.
+const val CLAUDE_TAB_SETTINGS_FILE = "claude-tab-settings.json"
+
+// The settings path reaches cmd.exe when claude is a .cmd shim, so it may not hold a double quote or a cmd.exe metacharacter.
+private val CMD_SAFE_PATH = Regex("[^\"%!^&|<>\\u0000-\\u001f\\u007f]+")
+private val CLAUDE_COMMAND = Regex("(?:.*[\\\\/])?claude(?:\\.(?:exe|cmd|bat|ps1))?", RegexOption.IGNORE_CASE)
+
+fun claudeTabSettings(home: Path, windows: Boolean): String? {
+    val file = home.resolve("mcp").resolve(CLAUDE_TAB_SETTINGS_FILE)
+    val path = file.toString()
+    if (recordedPython(home, windows) == null || !CMD_SAFE_PATH.matches(path)) return null
+    return if (runCatching { Files.isRegularFile(file) }.getOrDefault(false)) path else null
+}
+
+fun withClaudeSettings(command: String, args: List<String>, callerArgs: List<String>, settings: String?): List<String> {
+    if (settings == null || !CLAUDE_COMMAND.matches(command)) return args
+    if ((args + callerArgs).any { it == "--settings" || it.startsWith("--settings=") }) return args
+    return args + listOf("--settings", settings)
+}
 
 val BUILTIN_PROFILES = listOf(
     AgentProfile("claude", "Claude Code", "claude", modelFlag = "--model"),

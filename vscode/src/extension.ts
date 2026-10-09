@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { typeLine } from './input';
 import { editorLocation, launchScripts, revivedTabs, terminalEnv, unixShell, windowsShell } from './launch';
-import { AgentLaunch, AgentProfile, AgentSettings, CONFIG_FILE, isInstalled, planLaunch } from './profiles';
+import { AgentLaunch, AgentProfile, AgentSettings, claudeTabSettings, CONFIG_FILE, codexPython, isInstalled, planLaunch } from './profiles';
 import { ENDPOINT_BEAT_MS, beatEndpoint, endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { closestBase } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
@@ -78,6 +78,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       ori: settings.detected().ori,
       windows: isWindows,
       searchPath: searchPath(),
+      python: codexPython(home, isWindows),
+      claudeSettings: claudeTabSettings(home, isWindows),
     });
 
   const fileFolders = () => (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === 'file');

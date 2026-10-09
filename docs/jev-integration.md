@@ -54,7 +54,7 @@ bind every tool in this plan.
 
 ### One server, not two
 
-The Jev tools live in `mcp/src/jev/` and the existing `ide-agent-tabs` MCP server serves them. An
+The Jev tools live in `claude-plugin/mcp/src/ide_agent_tabs/jev/` and the existing `ide-agent-tabs` MCP server serves them. An
 earlier draft used a second server. That changed on 2026-09-28, once the server could be registered
 with Codex, Gemini CLI, Copilot CLI and OpenCode (commit 7cef357):
 
@@ -63,14 +63,14 @@ with Codex, Gemini CLI, Copilot CLI and OpenCode (commit 7cef357):
   session pays nothing for a feature it doesn't use.
 - `design.md`'s Security section names the one outbound call.
 
-The command line is a subcommand of the same bundle, `node mcp-server.mjs jev <tool>`, so the copy in
-`~/.ide-agent-tabs/mcp/` that other agents register carries it too.
+The command line is a subcommand of the same server package, `agent-tabs jev <tool>`.
 
-### The SDK
+### The client
 
-TypeSafe's JavaScript SDK, `@typesafe-ai/sdk`, pinned to exactly 0.6.0 (MIT, no dependencies, Node 20
-or later). It retries 408, 429 and 5xx with backoff, honours `Retry-After`, and reads
-`TYPESAFE_BASE_URL`, which lets the tests point it at a fake server on loopback.
+The server calls the API with a small client on the standard library's `urllib`, not an SDK. It sends
+one `POST /v1/systemone` with a bearer key, retries 408, 429 and 5xx with backoff, honours
+`retry-after-ms` and `Retry-After`, and reads `TYPESAFE_BASE_URL`, which lets the tests point it at a
+fake server on loopback.
 
 ### Why build this and not use an existing server
 
@@ -122,7 +122,7 @@ diff, answer or document meets each of several narrow conditions.
 | Phase | What | Needs | Done when |
 |---|---|---|---|
 | J0 | The contract in `docs/design.md` | Nothing | Done |
-| J1 | `mcp/src/jev/`: the key lookup, the client, `jev_status`, `jev_ask`, `jev_choose`, `jev_check`, `jev_rank`, `jev_route`, the ledger, the server instructions and the `jev` subcommand. Tests use a fake TypeSafe server on loopback | Nothing | `npm test` and `npm run build` pass; one live call with the real key |
+| J1 | `claude-plugin/mcp/src/ide_agent_tabs/jev/`: the key lookup, the client, `jev_status`, `jev_ask`, `jev_choose`, `jev_check`, `jev_rank`, `jev_route`, the ledger, the server instructions and the `jev` subcommand. Tests use a fake TypeSafe server on loopback | Nothing | The tests pass; one live call with the real key |
 | J2 | The `jev` skill, the `delegate` change and the `setup` step | J1 | Codex, from a tab, calls `jev_status` and gets an answer |
 | J3 | A routing bench: about 30 past delegate tasks, each labelled with the right tier by the owner | J1 | Agreement and the `sure` share reported, and `sure` re-set from the data |
 | J4 | `jev_gate` and an opt-in `PreToolUse` guard hook for Claude Code, which can only answer `ask`, never `allow` | A bench of 40 harmless and 40 destructive shell commands, written before the question is tuned | No destructive command under the threshold |

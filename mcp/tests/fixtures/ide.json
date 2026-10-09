@@ -1,0 +1,7260 @@
+{
+  "probes": [
+    {
+      "files": [
+        "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe",
+        "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe",
+        "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+      ],
+      "dirs": {
+        "C:\\Program Files\\PowerShell": [
+          "7",
+          "7-preview"
+        ],
+        "C:\\Program Files\\WindowsApps": [
+          "Microsoft.PowerShell_7.5.4.0_x64__8wekyb3d8bbwe",
+          "Microsoft.PowerShell_7.4.1.0_x64__8wekyb3d8bbwe"
+        ]
+      },
+      "links": {
+        "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe": "C:\\Program Files\\WindowsApps\\Microsoft.PowerShell_7.6.6.0_x64__8wekyb3d8bbwe\\pwsh.exe"
+      },
+      "env": {
+        "ProgramFiles": "C:\\Program Files",
+        "LOCALAPPDATA": "C:\\Users\\u\\AppData\\Local",
+        "SystemRoot": "C:\\WINDOWS",
+        "PATH": "C:\\Program Files\\PowerShell\\7;\"C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\";C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0"
+      },
+      "versions": {
+        "C:\\Program Files\\PowerShell\\7\\pwsh.exe": "7.5.1",
+        "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe": "7.6.0-preview.4"
+      }
+    },
+    {
+      "files": [
+        "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe",
+        "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "D:\\tools\\pwsh.exe"
+      ],
+      "dirs": {
+        "C:\\Program Files\\WindowsApps": [
+          "Microsoft.PowerShell_7.5.4.0_x64__8wekyb3d8bbwe",
+          "Microsoft.PowerShellPreview_7.6.0.0_x64__8wekyb3d8bbwe"
+        ]
+      },
+      "links": {},
+      "env": {
+        "ProgramFiles": "C:\\Program Files",
+        "LOCALAPPDATA": "C:\\Users\\u\\AppData\\Local",
+        "SystemRoot": "C:\\WINDOWS",
+        "PATH": "D:\\tools"
+      },
+      "versions": {
+        "D:\\tools\\pwsh.exe": "garbage"
+      }
+    },
+    {
+      "files": [],
+      "dirs": {},
+      "links": {},
+      "env": {}
+    }
+  ],
+  "builtinProfiles": [
+    {
+      "args": [],
+      "result": [
+        {
+          "name": "claude",
+          "label": "Claude Code",
+          "command": "claude",
+          "args": [],
+          "env": {},
+          "modelFlag": "--model"
+        },
+        {
+          "name": "codex",
+          "label": "Codex",
+          "command": "codex",
+          "args": [
+            "--no-daemon",
+            "-c",
+            "mcp_servers.ide-agent-tabs={ command = 'python3', args = ['-I', '-S', '-c', '''import os,runpy;h=os.environ.get('IDE_AGENT_TABS_HOME') or os.path.join(os.path.expanduser('~'),'.ide-agent-tabs');runpy.run_path(os.path.join(h,'mcp','py','launch','mcp_server.py'),run_name='__main__')'''], env_vars = ['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'], tool_timeout_sec = 660 }",
+            "-c",
+            "hooks.UserPromptSubmit=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'UserPromptSubmit', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.PostToolUse=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'PostToolUse', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.PermissionRequest=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'PermissionRequest', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.Stop=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'Stop', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.Interrupt=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'Interrupt', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 3 }] }]",
+            "-c",
+            "hooks.state={ '/<session-flags>/config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, 'C:\\<session-flags>\\config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, '/<session-flags>/config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, 'C:\\<session-flags>\\config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, '/<session-flags>/config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, 'C:\\<session-flags>\\config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, '/<session-flags>/config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, 'C:\\<session-flags>\\config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, '/<session-flags>/config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' }, 'C:\\<session-flags>\\config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' } }"
+          ],
+          "env": {},
+          "modelFlag": "-m"
+        },
+        {
+          "name": "agy",
+          "label": "Antigravity CLI",
+          "command": "agy",
+          "args": [],
+          "env": {},
+          "promptFlag": "-i",
+          "modelFlag": "--model"
+        },
+        {
+          "name": "copilot",
+          "label": "Copilot CLI",
+          "command": "copilot",
+          "args": [],
+          "env": {},
+          "promptFlag": "-i",
+          "modelFlag": "--model"
+        },
+        {
+          "name": "gemini",
+          "label": "Gemini CLI",
+          "command": "gemini",
+          "args": [],
+          "env": {},
+          "promptFlag": "-i",
+          "modelFlag": "-m"
+        },
+        {
+          "name": "grok",
+          "label": "Grok Build",
+          "command": "grok",
+          "args": [],
+          "env": {},
+          "modelFlag": "-m"
+        },
+        {
+          "name": "pi",
+          "label": "Pi",
+          "command": "pi",
+          "args": [],
+          "env": {},
+          "modelFlag": "--model"
+        },
+        {
+          "name": "hermes",
+          "label": "Hermes",
+          "command": "hermes",
+          "args": [
+            "chat"
+          ],
+          "env": {},
+          "promptFlag": "-q",
+          "modelFlag": "-m"
+        },
+        {
+          "name": "opencode",
+          "label": "OpenCode",
+          "command": "opencode",
+          "args": [],
+          "env": {},
+          "promptFlag": "--prompt",
+          "modelFlag": "-m"
+        },
+        {
+          "name": "qwen",
+          "label": "Qwen Code",
+          "command": "qwen",
+          "args": [],
+          "env": {},
+          "promptFlag": "-i",
+          "modelFlag": "-m"
+        },
+        {
+          "name": "goose",
+          "label": "Goose",
+          "command": "goose",
+          "args": [
+            "run",
+            "-s"
+          ],
+          "env": {},
+          "promptFlag": "-t",
+          "modelFlag": "--model"
+        },
+        {
+          "name": "codex-local",
+          "label": "Codex (local)",
+          "command": "codex",
+          "args": [
+            "--no-daemon",
+            "-c",
+            "mcp_servers.ide-agent-tabs={ command = 'python3', args = ['-I', '-S', '-c', '''import os,runpy;h=os.environ.get('IDE_AGENT_TABS_HOME') or os.path.join(os.path.expanduser('~'),'.ide-agent-tabs');runpy.run_path(os.path.join(h,'mcp','py','launch','mcp_server.py'),run_name='__main__')'''], env_vars = ['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'], tool_timeout_sec = 660 }",
+            "-c",
+            "hooks.UserPromptSubmit=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'UserPromptSubmit', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.PostToolUse=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'PostToolUse', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.PermissionRequest=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'PermissionRequest', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.Stop=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'Stop', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.Interrupt=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'Interrupt', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 3 }] }]",
+            "-c",
+            "hooks.state={ '/<session-flags>/config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, 'C:\\<session-flags>\\config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, '/<session-flags>/config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, 'C:\\<session-flags>\\config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, '/<session-flags>/config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, 'C:\\<session-flags>\\config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, '/<session-flags>/config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, 'C:\\<session-flags>\\config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, '/<session-flags>/config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' }, 'C:\\<session-flags>\\config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' } }",
+            "--oss",
+            "--local-provider",
+            "ollama"
+          ],
+          "env": {},
+          "modelFlag": "-m"
+        }
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "args": [
+        null,
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        "{}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        "{\"mine\": {\"command\": \"my-cli\", \"args\": [\"--fast\"], \"promptFlag\": \"-p\", \"modelFlag\": \"--model\", \"env\": {\"B\": \"2\", \"A\": \"1\", \"10\": \"x\"}, \"label\": \"Mine\", \"icon\": \"star\"}}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local",
+          {
+            "name": "mine",
+            "label": "Mine",
+            "command": "my-cli",
+            "args": [
+              "--fast"
+            ],
+            "promptFlag": "-p",
+            "modelFlag": "--model",
+            "env": {
+              "10": "x",
+              "B": "2",
+              "A": "1"
+            },
+            "icon": "star"
+          }
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        "{\"claude\": {\"command\": \"claude-beta\", \"label\": \"  \"}, \"2\": {\"command\": \"two\"}, \"b\": {\"command\": \"bee\"}}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          {
+            "name": "claude",
+            "label": "claude",
+            "command": "claude-beta",
+            "args": [],
+            "env": {}
+          },
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local",
+          {
+            "name": "2",
+            "label": "2",
+            "command": "two",
+            "args": [],
+            "env": {}
+          },
+          {
+            "name": "b",
+            "label": "b",
+            "command": "bee",
+            "args": [],
+            "env": {}
+          }
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        "{\"bad name!\": {\"command\": \"x\"}}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: profile name 'bad name!' must be letters, digits, '.', '_' or '-'"
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"x\": {\"command\": \"\"}}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: profile x needs a command"
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"x\": {\"command\": \"x\", \"args\": \"no\"}}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: x.args must be an array of strings"
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"x\": {\"command\": \"x\", \"env\": {\"IDE_AGENT_TABS_ID\": \"1\"}}}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: x.env name IDE_AGENT_TABS_ID is reserved by the plugin"
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"x\": {\"command\": \"x\", \"env\": {\"A B\": \"1\"}}}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: x.env name is not a valid variable name: 'A B'"
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"x\": {\"command\": \"x\", \"promptFlag\": \" \"}}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: x.promptFlag must not be blank"
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"x\": {\"command\": \"x\", \"env\": {\"A\": 1}}}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: x.env.A must be a string"
+        ]
+      }
+    },
+    {
+      "args": [
+        "[]",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: agents.json must hold a JSON object"
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"x\": 5}",
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: profile x must be an object"
+        ]
+      }
+    },
+    {
+      "args": [
+        null,
+        null
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        null,
+        "{}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"defaultAgent\": \"codex\", \"tabRouting\": \"caller\", \"terminal\": \"wezterm\", \"terminalWindow\": \"dedicated\", \"launchVia\": \"ori\", \"focusNewTabs\": \"always\", \"claudeMod\": \"off\", \"allowResume\": false, \"ideStartTimeoutSec\": 0.4, \"shell\": \"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe\"}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "codex",
+        "tabRouting": "caller",
+        "terminalWindow": "dedicated",
+        "launchVia": "ori",
+        "focusNewTabs": "always",
+        "claudeMod": "off",
+        "allowResume": false,
+        "ideStartTimeoutSec": 0.4,
+        "preferredTerminal": "wezterm",
+        "shell": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"defaultAgent\": \"nope\", \"tabRouting\": \"sideways\", \"terminal\": 5, \"terminalWindow\": null, \"focusNewTabs\": \"sometimes\", \"allowResume\": \"yes\", \"ideStartTimeoutSec\": 99999, \"shell\": \"pwsh\"}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring tabRouting in config.json: it must be \"project\" or \"caller\"",
+          "Ignoring focusNewTabs in config.json: it must be \"auto\" or \"always\" or \"never\"",
+          "Ignoring allowResume in config.json: it must be true or false",
+          "Ignoring ideStartTimeoutSec in config.json: it must be a number of seconds above 0 and at most 3600",
+          "Ignoring terminal in config.json: it must be a string",
+          "Ignoring shell in config.json: it must be \"auto\" or the absolute path of a shell executable"
+        ]
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"terminal\": \"auto\", \"shell\": \"auto\", \"ideStartTimeoutSec\": -1}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring ideStartTimeoutSec in config.json: it must be a number of seconds above 0 and at most 3600"
+        ]
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"terminal\": \"  \", \"shell\": \"/bin/zsh\", \"ideStartTimeoutSec\": 3600}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 3600,
+        "preferredTerminal": null,
+        "shell": "/bin/zsh",
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"jev\": {\"enabled\": true, \"sure\": 0.9, \"tiers\": {\"claude\": \"smart\", \"codex:gpt-5\": \"fast\"}, \"pricePerMillionInput\": 0.1}}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": true,
+          "sure": 0.9,
+          "tiers": {
+            "claude": "smart",
+            "codex:gpt-5": "fast"
+          },
+          "pricePerMillionInput": 0.1
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"jev\": {\"enabled\": \"yes\"}}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring jev in /h/config.json, so Jev is off: jev.enabled must be true or false"
+        ]
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"jev\": {\"sure\": 2}}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring jev in /h/config.json, so Jev is off: jev.sure must be a number above 0 and at most 1"
+        ]
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"jev\": {\"tiers\": {\"bad name\": \"x\"}}}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring jev in /h/config.json, so Jev is off: jev.tiers name 'bad name' must be <profile> or <profile>:<model>"
+        ]
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"jev\": {\"tiers\": {\"x\": \" \"}}}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring jev in /h/config.json, so Jev is off: jev.tiers.x must be a description"
+        ]
+      }
+    },
+    {
+      "args": [
+        null,
+        "{\"jev\": 5}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring jev in /h/config.json, so Jev is off: jev must be an object"
+        ]
+      }
+    },
+    {
+      "args": [
+        null,
+        "[1]"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/config.json: config.json must hold a JSON object"
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"mine\": {\"command\": \"my-cli\", \"args\": [\"--fast\"], \"promptFlag\": \"-p\", \"modelFlag\": \"--model\", \"env\": {\"B\": \"2\", \"A\": \"1\", \"10\": \"x\"}, \"label\": \"Mine\", \"icon\": \"star\"}}",
+        "{\"defaultAgent\": \"mine\"}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local",
+          {
+            "name": "mine",
+            "label": "Mine",
+            "command": "my-cli",
+            "args": [
+              "--fast"
+            ],
+            "promptFlag": "-p",
+            "modelFlag": "--model",
+            "env": {
+              "10": "x",
+              "B": "2",
+              "A": "1"
+            },
+            "icon": "star"
+          }
+        ],
+        "defaultAgent": "mine",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": []
+      }
+    },
+    {
+      "args": [
+        "{\"bad name!\": {\"command\": \"x\"}}",
+        "{\"defaultAgent\": \"nope\", \"tabRouting\": \"sideways\", \"terminal\": 5, \"terminalWindow\": null, \"focusNewTabs\": \"sometimes\", \"allowResume\": \"yes\", \"ideStartTimeoutSec\": 99999, \"shell\": \"pwsh\"}"
+      ],
+      "result": {
+        "profiles": [
+          "claude",
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local"
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/agents.json and using the built-in agent profiles: profile name 'bad name!' must be letters, digits, '.', '_' or '-'",
+          "Ignoring tabRouting in config.json: it must be \"project\" or \"caller\"",
+          "Ignoring focusNewTabs in config.json: it must be \"auto\" or \"always\" or \"never\"",
+          "Ignoring allowResume in config.json: it must be true or false",
+          "Ignoring ideStartTimeoutSec in config.json: it must be a number of seconds above 0 and at most 3600",
+          "Ignoring terminal in config.json: it must be a string",
+          "Ignoring shell in config.json: it must be \"auto\" or the absolute path of a shell executable"
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"claude\": {\"command\": \"claude-beta\", \"label\": \"  \"}, \"2\": {\"command\": \"two\"}, \"b\": {\"command\": \"bee\"}}",
+        "[1]"
+      ],
+      "result": {
+        "profiles": [
+          {
+            "name": "claude",
+            "label": "claude",
+            "command": "claude-beta",
+            "args": [],
+            "env": {}
+          },
+          "codex",
+          "agy",
+          "copilot",
+          "gemini",
+          "grok",
+          "pi",
+          "hermes",
+          "opencode",
+          "qwen",
+          "goose",
+          "codex-local",
+          {
+            "name": "2",
+            "label": "2",
+            "command": "two",
+            "args": [],
+            "env": {}
+          },
+          {
+            "name": "b",
+            "label": "b",
+            "command": "bee",
+            "args": [],
+            "env": {}
+          }
+        ],
+        "defaultAgent": "claude",
+        "tabRouting": "project",
+        "terminalWindow": "last",
+        "launchVia": "direct",
+        "focusNewTabs": "auto",
+        "claudeMod": "on",
+        "allowResume": true,
+        "ideStartTimeoutSec": 180,
+        "preferredTerminal": null,
+        "shell": null,
+        "jev": {
+          "enabled": false,
+          "sure": 0.85,
+          "tiers": {},
+          "pricePerMillionInput": 0.042
+        },
+        "warnings": [
+          "Ignoring /h/config.json: config.json must hold a JSON object"
+        ]
+      }
+    }
+  ],
+  "launchOf": [
+    {
+      "args": [
+        "claude",
+        null,
+        [],
+        {}
+      ],
+      "result": {
+        "agent": "claude",
+        "command": "claude",
+        "args": [],
+        "env": {}
+      }
+    },
+    {
+      "args": [
+        "gemini",
+        "hi",
+        [
+          "--yolo"
+        ],
+        {
+          "A": "1"
+        }
+      ],
+      "result": {
+        "agent": "gemini",
+        "command": "gemini",
+        "args": [
+          "--yolo",
+          "-i"
+        ],
+        "prompt": "hi",
+        "env": {
+          "A": "1"
+        }
+      }
+    },
+    {
+      "args": [
+        "hermes",
+        "q",
+        [],
+        {}
+      ],
+      "result": {
+        "agent": "hermes",
+        "command": "hermes",
+        "args": [
+          "chat",
+          "-q"
+        ],
+        "prompt": "q",
+        "env": {}
+      }
+    }
+  ],
+  "planLaunch": [
+    {
+      "args": [
+        "claude",
+        {
+          "args": [],
+          "env": {},
+          "launchVia": "direct",
+          "ori": null,
+          "platform": "linux"
+        }
+      ],
+      "result": {
+        "via": "direct",
+        "launch": {
+          "agent": "claude",
+          "command": "claude",
+          "args": [],
+          "env": {}
+        }
+      }
+    },
+    {
+      "args": [
+        "claude",
+        {
+          "prompt": "hi",
+          "args": [
+            "--x"
+          ],
+          "env": {
+            "A": "1"
+          },
+          "model": "opus",
+          "launchVia": "direct",
+          "ori": null,
+          "platform": "linux"
+        }
+      ],
+      "result": {
+        "via": "direct",
+        "launch": {
+          "agent": "claude",
+          "command": "claude",
+          "args": [
+            "--model",
+            "opus",
+            "--x"
+          ],
+          "prompt": "hi",
+          "env": {
+            "A": "1"
+          }
+        }
+      }
+    },
+    {
+      "args": [
+        "gemini",
+        {
+          "prompt": "hi there",
+          "args": [],
+          "env": {},
+          "launchVia": "direct",
+          "ori": null,
+          "platform": "win32"
+        }
+      ],
+      "result": {
+        "via": "direct",
+        "launch": {
+          "agent": "gemini",
+          "command": "gemini",
+          "args": [
+            "-i"
+          ],
+          "prompt": "hi there",
+          "env": {}
+        }
+      }
+    },
+    {
+      "args": [
+        "goose",
+        {
+          "args": [],
+          "env": {},
+          "launchVia": "direct",
+          "ori": null,
+          "platform": "linux"
+        }
+      ],
+      "result": {
+        "via": "direct",
+        "launch": {
+          "agent": "goose",
+          "command": "goose",
+          "args": [
+            "session"
+          ],
+          "env": {}
+        }
+      }
+    },
+    {
+      "args": [
+        "goose",
+        {
+          "prompt": "go",
+          "args": [],
+          "env": {},
+          "model": "m",
+          "launchVia": "direct",
+          "ori": null,
+          "platform": "linux"
+        }
+      ],
+      "result": {
+        "via": "direct",
+        "launch": {
+          "agent": "goose",
+          "command": "goose",
+          "args": [
+            "run",
+            "-s",
+            "--model",
+            "m",
+            "-t"
+          ],
+          "prompt": "go",
+          "env": {}
+        }
+      }
+    },
+    {
+      "args": [
+        "hermes",
+        {
+          "prompt": "p",
+          "args": [],
+          "env": {},
+          "launchVia": "direct",
+          "ori": null,
+          "platform": "linux"
+        }
+      ],
+      "result": {
+        "via": "direct",
+        "launch": {
+          "agent": "hermes",
+          "command": "hermes",
+          "args": [
+            "chat",
+            "-q"
+          ],
+          "prompt": "p",
+          "env": {}
+        }
+      }
+    },
+    {
+      "args": [
+        "claude",
+        {
+          "prompt": "p",
+          "args": [],
+          "env": {},
+          "model": "sonnet",
+          "launchVia": "ori",
+          "ori": {
+            "path": "/x/ori",
+            "version": "1.2.3",
+            "agents": [
+              "claude",
+              "codex",
+              "opencode"
+            ]
+          },
+          "platform": "linux"
+        }
+      ],
+      "result": {
+        "via": "ori",
+        "launch": {
+          "agent": "claude",
+          "command": "ori",
+          "args": [
+            "claude",
+            "--model",
+            "sonnet"
+          ],
+          "prompt": "p",
+          "env": {}
+        }
+      }
+    },
+    {
+      "args": [
+        "claude",
+        {
+          "args": [],
+          "env": {},
+          "launchVia": "ori",
+          "ori": null,
+          "platform": "linux"
+        }
+      ],
+      "result": {
+        "via": "direct",
+        "launch": {
+          "agent": "claude",
+          "command": "claude",
+          "args": [],
+          "env": {}
+        }
+      }
+    },
+    {
+      "args": [
+        "claude",
+        {
+          "args": [],
+          "env": {},
+          "via": "ori",
+          "launchVia": "direct",
+          "ori": null,
+          "platform": "linux"
+        }
+      ],
+      "error": "claude can't launch through Ori: Ori isn't installed"
+    },
+    {
+      "args": [
+        "gemini",
+        {
+          "args": [],
+          "env": {},
+          "via": "ori",
+          "launchVia": "direct",
+          "ori": {
+            "path": "/x/ori",
+            "version": "1.2.3",
+            "agents": [
+              "claude",
+              "codex",
+              "opencode"
+            ]
+          },
+          "platform": "linux"
+        }
+      ],
+      "error": "gemini can't launch through Ori: Ori has no gemini launcher"
+    },
+    {
+      "args": [
+        "grok",
+        {
+          "args": [],
+          "env": {},
+          "via": "ori",
+          "launchVia": "direct",
+          "ori": {
+            "path": "/x/ori",
+            "version": "1.2.3",
+            "agents": [
+              "claude",
+              "codex",
+              "opencode"
+            ]
+          },
+          "platform": "linux"
+        }
+      ],
+      "error": "grok can't launch through Ori: Ori lists grok as not installed"
+    },
+    {
+      "args": [
+        "codex",
+        {
+          "prompt": "a & b",
+          "args": [],
+          "env": {},
+          "via": "ori",
+          "launchVia": "direct",
+          "ori": {
+            "path": "/x/ori",
+            "version": "1.2.3",
+            "agents": [
+              "claude",
+              "codex",
+              "opencode"
+            ]
+          },
+          "platform": "win32",
+          "cmdShim": true
+        }
+      ],
+      "error": "codex can't launch through Ori: an argument holds one of \" % ^ & | < >, which Ori won't pass to a cmd.exe shim on Windows"
+    },
+    {
+      "args": [
+        "codex",
+        {
+          "prompt": "a & b",
+          "args": [],
+          "env": {},
+          "launchVia": "ori",
+          "ori": {
+            "path": "/x/ori",
+            "version": "1.2.3",
+            "agents": [
+              "claude",
+              "codex",
+              "opencode"
+            ]
+          },
+          "platform": "win32",
+          "cmdShim": false
+        }
+      ],
+      "result": {
+        "via": "ori",
+        "launch": {
+          "agent": "codex",
+          "command": "ori",
+          "args": [
+            "codex",
+            "--no-daemon",
+            "-c",
+            "mcp_servers.ide-agent-tabs={ command = 'python3', args = ['-I', '-S', '-c', '''import os,runpy;h=os.environ.get('IDE_AGENT_TABS_HOME') or os.path.join(os.path.expanduser('~'),'.ide-agent-tabs');runpy.run_path(os.path.join(h,'mcp','py','launch','mcp_server.py'),run_name='__main__')'''], env_vars = ['IDE_AGENT_TABS_ID', 'IDE_AGENT_TABS_AGENT', 'IDE_AGENT_TABS_HOME'], tool_timeout_sec = 660 }",
+            "-c",
+            "hooks.UserPromptSubmit=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'UserPromptSubmit', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.PostToolUse=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'PostToolUse', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.PermissionRequest=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'PermissionRequest', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.Stop=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'Stop', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 10 }] }]",
+            "-c",
+            "hooks.Interrupt=[{ hooks = [{ type = 'mcp_tool', server = 'ide-agent-tabs', tool = 'agent_tabs_hook', input = { event = 'Interrupt', session_id = '${session_id}', turn_id = '${turn_id}' }, timeout = 3 }] }]",
+            "-c",
+            "hooks.state={ '/<session-flags>/config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, 'C:\\<session-flags>\\config.toml:user_prompt_submit:0:0' = { trusted_hash = 'sha256:aac36b4c0cfafe0f4ae641176bcc1ab25ae590dbe3be9268f7570b55ab4afe89' }, '/<session-flags>/config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, 'C:\\<session-flags>\\config.toml:post_tool_use:0:0' = { trusted_hash = 'sha256:75aa06c6f44c8918fe729537b56d5f498c931e032f5d89499593b4cd67ba335e' }, '/<session-flags>/config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, 'C:\\<session-flags>\\config.toml:permission_request:0:0' = { trusted_hash = 'sha256:5e1483151807db1577272adc730b9ffe56c96d22b1a8fe7c7ff6d6efe42f3626' }, '/<session-flags>/config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, 'C:\\<session-flags>\\config.toml:stop:0:0' = { trusted_hash = 'sha256:a97c883d6b41f88f6879ce99d0d343a7069f3fded56573aaa2b15fc5bbd01c6f' }, '/<session-flags>/config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' }, 'C:\\<session-flags>\\config.toml:interrupt:0:0' = { trusted_hash = 'sha256:c2704217d5db401ed47f178ff9db1a7be09662f73b3e55753f8600e42bd53165' } }"
+          ],
+          "prompt": "a & b",
+          "env": {}
+        }
+      }
+    },
+    {
+      "args": [
+        "claude",
+        {
+          "args": [],
+          "env": {},
+          "model": "bad model",
+          "launchVia": "direct",
+          "ori": null,
+          "platform": "linux"
+        }
+      ],
+      "error": "model must match ^[A-Za-z0-9._:/@+-]{1,200}$"
+    }
+  ],
+  "projectDepth": [
+    {
+      "args": [
+        "/work",
+        "/work/app",
+        false
+      ],
+      "result": 1
+    },
+    {
+      "args": [
+        "/work/",
+        "/work",
+        false
+      ],
+      "result": 1
+    },
+    {
+      "args": [
+        "/work/app",
+        "/work",
+        false
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "/wor",
+        "/work",
+        false
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "  ",
+        "/work",
+        false
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "C:\\Work",
+        "c:/work/app/",
+        true
+      ],
+      "result": 2
+    },
+    {
+      "args": [
+        "C:\\Work\\..\\Other",
+        "C:\\other\\x",
+        true
+      ],
+      "result": 2
+    },
+    {
+      "args": [
+        "/a//b/./c",
+        "/a/b/c/d",
+        false
+      ],
+      "result": 3
+    }
+  ],
+  "chooseIde": [
+    {
+      "args": [
+        [
+          {
+            "id": "a",
+            "startedAt": 1,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/work",
+                "focused": false
+              }
+            ]
+          },
+          {
+            "id": "b",
+            "startedAt": 2,
+            "projects": [
+              {
+                "name": "w2",
+                "path": "/work/app",
+                "focused": false
+              }
+            ]
+          }
+        ],
+        "/work/app/src",
+        false,
+        null,
+        "project"
+      ],
+      "result": {
+        "id": "b",
+        "reason": "open project w2 contains the path"
+      }
+    },
+    {
+      "args": [
+        [
+          {
+            "id": "a",
+            "startedAt": 1,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/work",
+                "focused": false
+              }
+            ]
+          },
+          {
+            "id": "b",
+            "startedAt": 2,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/work",
+                "focused": true
+              }
+            ]
+          }
+        ],
+        "/work/x",
+        false,
+        "a",
+        "project"
+      ],
+      "result": {
+        "id": "a",
+        "reason": "open project w contains the path; the caller's IDE"
+      }
+    },
+    {
+      "args": [
+        [
+          {
+            "id": "a",
+            "startedAt": 1,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/work",
+                "focused": false
+              }
+            ]
+          },
+          {
+            "id": "b",
+            "startedAt": 2,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/work",
+                "focused": false
+              }
+            ]
+          }
+        ],
+        "/work/x",
+        false,
+        null,
+        "project"
+      ],
+      "result": {
+        "id": "b",
+        "reason": "open project w contains the path"
+      }
+    },
+    {
+      "args": [
+        [
+          {
+            "id": "a",
+            "startedAt": 1,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/other",
+                "focused": false
+              }
+            ]
+          },
+          {
+            "id": "b",
+            "startedAt": 3,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/else",
+                "focused": false
+              }
+            ]
+          }
+        ],
+        "/work/x",
+        false,
+        null,
+        "project"
+      ],
+      "result": {
+        "id": "b",
+        "reason": "no open project contains the path; most recently started IDE"
+      }
+    },
+    {
+      "args": [
+        [
+          {
+            "id": "a",
+            "startedAt": 1,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/other",
+                "focused": false
+              }
+            ]
+          },
+          {
+            "id": "b",
+            "startedAt": 3,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/else",
+                "focused": false
+              }
+            ]
+          }
+        ],
+        "/work/x",
+        false,
+        "a",
+        "project"
+      ],
+      "result": {
+        "id": "a",
+        "reason": "no open project contains the path; the caller's IDE"
+      }
+    },
+    {
+      "args": [
+        [
+          {
+            "id": "a",
+            "startedAt": 1,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/work",
+                "focused": false
+              }
+            ]
+          },
+          {
+            "id": "b",
+            "startedAt": 3,
+            "projects": []
+          }
+        ],
+        "/work/x",
+        false,
+        "b",
+        "caller"
+      ],
+      "result": {
+        "id": "a",
+        "reason": "open project w contains the path"
+      }
+    },
+    {
+      "args": [
+        [
+          {
+            "id": "a",
+            "startedAt": 1,
+            "projects": [
+              {
+                "name": "w",
+                "path": "/work",
+                "focused": false
+              }
+            ]
+          },
+          {
+            "id": "b",
+            "startedAt": 3,
+            "projects": [
+              {
+                "name": "p",
+                "path": "/p",
+                "focused": false
+              }
+            ]
+          }
+        ],
+        "/work/x",
+        false,
+        "b",
+        "caller"
+      ],
+      "result": {
+        "id": "b",
+        "reason": "tabRouting is caller; the caller's IDE"
+      }
+    },
+    {
+      "args": [
+        [
+          {
+            "id": "a",
+            "startedAt": 1,
+            "projects": [
+              {
+                "name": "W",
+                "path": "C:\\Work",
+                "focused": false
+              }
+            ]
+          }
+        ],
+        "c:/work/App",
+        true,
+        null,
+        "project"
+      ],
+      "result": {
+        "id": "a",
+        "reason": "open project W contains the path"
+      }
+    },
+    {
+      "args": [
+        [
+          {
+            "id": "a",
+            "startedAt": 1,
+            "projects": [
+              {
+                "name": "W",
+                "path": "C:\\Work",
+                "focused": false
+              }
+            ]
+          }
+        ],
+        "D:\\work",
+        true,
+        null,
+        "project"
+      ],
+      "result": {
+        "id": "a",
+        "reason": "no open project contains the path; most recently started IDE"
+      }
+    },
+    {
+      "args": [
+        [],
+        "/x",
+        false,
+        null,
+        "project"
+      ],
+      "result": null
+    }
+  ],
+  "chooseTerminal": [
+    {
+      "args": [
+        "wezterm",
+        "windows-terminal",
+        [
+          "windows-terminal",
+          "wezterm"
+        ]
+      ],
+      "result": {
+        "name": "wezterm",
+        "reason": "no IDE is running; preferred terminal from config.json"
+      }
+    },
+    {
+      "args": [
+        "kitty",
+        "windows-terminal",
+        [
+          "windows-terminal"
+        ]
+      ],
+      "result": {
+        "error": "config.json names terminal \"kitty\", which this server can't drive on this OS; supported: windows-terminal"
+      }
+    },
+    {
+      "args": [
+        "kitty",
+        null,
+        []
+      ],
+      "result": {
+        "error": "config.json names terminal \"kitty\", which this server can't drive on this OS; supported: none"
+      }
+    },
+    {
+      "args": [
+        null,
+        "ghostty",
+        [
+          "ghostty"
+        ]
+      ],
+      "result": {
+        "name": "ghostty",
+        "reason": "no IDE is running; platform default terminal"
+      }
+    },
+    {
+      "args": [
+        null,
+        null,
+        []
+      ],
+      "result": {
+        "error": "no IDE is running and no supported terminal is available on this OS"
+      }
+    }
+  ],
+  "defaultTerminal": [
+    {
+      "args": [
+        "win32",
+        [
+          "wezterm",
+          "windows-terminal"
+        ]
+      ],
+      "result": "windows-terminal"
+    },
+    {
+      "args": [
+        "darwin",
+        [
+          "tmux",
+          "kitty"
+        ]
+      ],
+      "result": "kitty"
+    },
+    {
+      "args": [
+        "linux",
+        [
+          "iterm2"
+        ]
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "freebsd",
+        [
+          "tmux"
+        ]
+      ],
+      "result": null
+    }
+  ],
+  "parseEndpoint": [
+    {
+      "args": [
+        "{\"protocol\": 1, \"ide\": \"jetbrains\", \"product\": \"IntelliJ IDEA\", \"version\": \"2026.1\", \"pid\": 42, \"url\": \"http://127.0.0.1:5000/ide-agent-tabs/\", \"token\": \"t\", \"startedAt\": 5, \"beatMs\": 1000}",
+        "/h/endpoints/jetbrains-1.json",
+        99
+      ],
+      "result": {
+        "kind": "endpoint",
+        "endpoint": {
+          "id": "jetbrains-1",
+          "file": "/h/endpoints/jetbrains-1.json",
+          "ide": "jetbrains",
+          "product": "IntelliJ IDEA",
+          "version": "2026.1",
+          "pid": 42,
+          "url": "http://127.0.0.1:5000/ide-agent-tabs",
+          "token": "t",
+          "startedAt": 5,
+          "beatMs": 1000
+        }
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": 1, \"ide\": \"vscode\", \"pid\": 42, \"url\": \"http://localhost:1/x\", \"token\": \"t\"}",
+        "/h/endpoints/vscode-2.JSON",
+        77.5
+      ],
+      "result": {
+        "kind": "endpoint",
+        "endpoint": {
+          "id": "vscode-2",
+          "file": "/h/endpoints/vscode-2.JSON",
+          "ide": "vscode",
+          "product": "vscode",
+          "version": "",
+          "pid": 42,
+          "url": "http://localhost:1/x",
+          "token": "t",
+          "startedAt": 77.5
+        }
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": 1, \"ide\": \"vscode\", \"pid\": 42, \"url\": \"http://[::1]:1/x\", \"token\": \"t\", \"product\": \"\", \"beatMs\": -1, \"startedAt\": 0}",
+        "/h/e/v.json",
+        3
+      ],
+      "result": {
+        "kind": "endpoint",
+        "endpoint": {
+          "id": "v",
+          "file": "/h/e/v.json",
+          "ide": "vscode",
+          "product": "",
+          "version": "",
+          "pid": 42,
+          "url": "http://[::1]:1/x",
+          "token": "t",
+          "startedAt": 3
+        }
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": 2}",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json uses protocol 2",
+        "warn": false
+      }
+    },
+    {
+      "args": [
+        "{\"ide\": \"x\"}",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json uses protocol undefined",
+        "warn": false
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": \"1\"}",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json uses protocol 1",
+        "warn": false
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": null}",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json uses protocol null",
+        "warn": false
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": 1, \"ide\": \"x\", \"pid\": 0, \"url\": \"http://127.0.0.1\", \"token\": \"t\"}",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json lacks ide, url, token or pid",
+        "warn": true
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": 1, \"ide\": \"x\", \"pid\": 1.5, \"url\": \"http://127.0.0.1\", \"token\": \"t\"}",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json lacks ide, url, token or pid",
+        "warn": true
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": 1, \"ide\": \"x\", \"pid\": 1, \"url\": \"http://example.com\", \"token\": \"t\"}",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json has a non-loopback url",
+        "warn": true
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": 1, \"ide\": \"x\", \"pid\": 1, \"url\": \"ftp://127.0.0.1\", \"token\": \"t\"}",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json has a non-loopback url",
+        "warn": true
+      }
+    },
+    {
+      "args": [
+        "{\"protocol\": 1, \"ide\": \"x\", \"pid\": 1, \"url\": \"https://LOCALHOST:8443\", \"token\": \"t\"}",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "endpoint",
+        "endpoint": {
+          "id": "a",
+          "file": "/h/e/a.json",
+          "ide": "x",
+          "product": "x",
+          "version": "",
+          "pid": 1,
+          "url": "https://LOCALHOST:8443",
+          "token": "t",
+          "startedAt": 1
+        }
+      }
+    },
+    {
+      "args": [
+        "not json",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json is not JSON",
+        "warn": true
+      }
+    },
+    {
+      "args": [
+        "[1]",
+        "/h/e/a.json",
+        1
+      ],
+      "result": {
+        "kind": "skip",
+        "reason": "a.json must hold a JSON object",
+        "warn": true
+      }
+    }
+  ],
+  "findIdeEntry": [
+    {
+      "args": [
+        "vscode"
+      ],
+      "result": "vscode"
+    },
+    {
+      "args": [
+        "Code"
+      ],
+      "result": "vscode"
+    },
+    {
+      "args": [
+        "VS Code"
+      ],
+      "result": "vscode"
+    },
+    {
+      "args": [
+        "visual-studio-code"
+      ],
+      "result": "vscode"
+    },
+    {
+      "args": [
+        "insiders"
+      ],
+      "result": "code-insiders"
+    },
+    {
+      "args": [
+        "Cursor"
+      ],
+      "result": "cursor"
+    },
+    {
+      "args": [
+        "Windsurf Next"
+      ],
+      "result": "windsurf"
+    },
+    {
+      "args": [
+        "codium"
+      ],
+      "result": "vscodium"
+    },
+    {
+      "args": [
+        "antigravity-ide"
+      ],
+      "result": "antigravity"
+    },
+    {
+      "args": [
+        "studio"
+      ],
+      "result": "android-studio"
+    },
+    {
+      "args": [
+        "Android Studio"
+      ],
+      "result": "android-studio"
+    },
+    {
+      "args": [
+        "intellij"
+      ],
+      "result": "idea"
+    },
+    {
+      "args": [
+        "IntelliJ IDEA Ultimate"
+      ],
+      "result": "idea"
+    },
+    {
+      "args": [
+        "idea"
+      ],
+      "result": "idea"
+    },
+    {
+      "args": [
+        "pycharm"
+      ],
+      "result": "pycharm"
+    },
+    {
+      "args": [
+        "PyCharm Community"
+      ],
+      "result": "pycharm"
+    },
+    {
+      "args": [
+        "rider"
+      ],
+      "result": "rider"
+    },
+    {
+      "args": [
+        "notepad"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        ""
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "---"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "Kiro"
+      ],
+      "result": "kiro"
+    }
+  ],
+  "normalizeIdeName": [
+    {
+      "args": [
+        "vscode"
+      ],
+      "result": "vscode"
+    },
+    {
+      "args": [
+        "Code"
+      ],
+      "result": "code"
+    },
+    {
+      "args": [
+        "VS Code"
+      ],
+      "result": "vscode"
+    },
+    {
+      "args": [
+        "visual-studio-code"
+      ],
+      "result": "visualstudiocode"
+    },
+    {
+      "args": [
+        "insiders"
+      ],
+      "result": "insiders"
+    },
+    {
+      "args": [
+        "Cursor"
+      ],
+      "result": "cursor"
+    },
+    {
+      "args": [
+        "Windsurf Next"
+      ],
+      "result": "windsurfnext"
+    },
+    {
+      "args": [
+        "codium"
+      ],
+      "result": "codium"
+    },
+    {
+      "args": [
+        "antigravity-ide"
+      ],
+      "result": "antigravityide"
+    },
+    {
+      "args": [
+        "studio"
+      ],
+      "result": "studio"
+    },
+    {
+      "args": [
+        "Android Studio"
+      ],
+      "result": "androidstudio"
+    },
+    {
+      "args": [
+        "intellij"
+      ],
+      "result": "intellij"
+    },
+    {
+      "args": [
+        "IntelliJ IDEA Ultimate"
+      ],
+      "result": "intellijideaultimate"
+    },
+    {
+      "args": [
+        "idea"
+      ],
+      "result": "idea"
+    },
+    {
+      "args": [
+        "pycharm"
+      ],
+      "result": "pycharm"
+    },
+    {
+      "args": [
+        "PyCharm Community"
+      ],
+      "result": "pycharmcommunity"
+    },
+    {
+      "args": [
+        "rider"
+      ],
+      "result": "rider"
+    },
+    {
+      "args": [
+        "notepad"
+      ],
+      "result": "notepad"
+    },
+    {
+      "args": [
+        ""
+      ],
+      "result": ""
+    },
+    {
+      "args": [
+        "---"
+      ],
+      "result": ""
+    },
+    {
+      "args": [
+        "Kiro"
+      ],
+      "result": "kiro"
+    }
+  ],
+  "entryForProduct": [
+    {
+      "args": [
+        "Visual Studio Code"
+      ],
+      "result": "vscode"
+    },
+    {
+      "args": [
+        "visual studio code - insiders"
+      ],
+      "result": "code-insiders"
+    },
+    {
+      "args": [
+        " Cursor "
+      ],
+      "result": "cursor"
+    },
+    {
+      "args": [
+        "Windsurf Next"
+      ],
+      "result": "windsurf"
+    },
+    {
+      "args": [
+        "IntelliJ IDEA"
+      ],
+      "result": "idea"
+    },
+    {
+      "args": [
+        "IntelliJ IDEA Community Edition"
+      ],
+      "result": "idea"
+    },
+    {
+      "args": [
+        "Android Studio Narwhal"
+      ],
+      "result": "android-studio"
+    },
+    {
+      "args": [
+        "PyCharm"
+      ],
+      "result": "pycharm"
+    },
+    {
+      "args": [
+        "Positron"
+      ],
+      "result": "positron"
+    },
+    {
+      "args": [
+        "Fake Studio"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "Antigravity"
+      ],
+      "result": "antigravity"
+    }
+  ],
+  "productMatchesName": [
+    {
+      "args": [
+        "Visual Studio Code",
+        "vscode"
+      ],
+      "result": true
+    },
+    {
+      "args": [
+        "Visual Studio Code",
+        "idea"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Visual Studio Code",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Visual Studio Code",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Visual Studio Code",
+        "cursor"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "visual studio code - insiders",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "visual studio code - insiders",
+        "idea"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "visual studio code - insiders",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "visual studio code - insiders",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "visual studio code - insiders",
+        "cursor"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        " Cursor ",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        " Cursor ",
+        "idea"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        " Cursor ",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        " Cursor ",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        " Cursor ",
+        "cursor"
+      ],
+      "result": true
+    },
+    {
+      "args": [
+        "Windsurf Next",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Windsurf Next",
+        "idea"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Windsurf Next",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Windsurf Next",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Windsurf Next",
+        "cursor"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "IntelliJ IDEA",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "IntelliJ IDEA",
+        "idea"
+      ],
+      "result": true
+    },
+    {
+      "args": [
+        "IntelliJ IDEA",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "IntelliJ IDEA",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "IntelliJ IDEA",
+        "cursor"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "IntelliJ IDEA Community Edition",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "IntelliJ IDEA Community Edition",
+        "idea"
+      ],
+      "result": true
+    },
+    {
+      "args": [
+        "IntelliJ IDEA Community Edition",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "IntelliJ IDEA Community Edition",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "IntelliJ IDEA Community Edition",
+        "cursor"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Android Studio Narwhal",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Android Studio Narwhal",
+        "idea"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Android Studio Narwhal",
+        "studio"
+      ],
+      "result": true
+    },
+    {
+      "args": [
+        "Android Studio Narwhal",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Android Studio Narwhal",
+        "cursor"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "PyCharm",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "PyCharm",
+        "idea"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "PyCharm",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "PyCharm",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "PyCharm",
+        "cursor"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Positron",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Positron",
+        "idea"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Positron",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Positron",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Positron",
+        "cursor"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Fake Studio",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Fake Studio",
+        "idea"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Fake Studio",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Fake Studio",
+        "fake studio"
+      ],
+      "result": true
+    },
+    {
+      "args": [
+        "Fake Studio",
+        "cursor"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Antigravity",
+        "vscode"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Antigravity",
+        "idea"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Antigravity",
+        "studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Antigravity",
+        "fake studio"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "Antigravity",
+        "cursor"
+      ],
+      "result": false
+    }
+  ],
+  "entryForProductInfo": [
+    {
+      "args": [
+        "IntelliJ IDEA",
+        null
+      ],
+      "result": "idea"
+    },
+    {
+      "args": [
+        null,
+        "ai"
+      ],
+      "result": "android-studio"
+    },
+    {
+      "args": [
+        "Unknown",
+        "PY"
+      ],
+      "result": "pycharm"
+    },
+    {
+      "args": [
+        null,
+        null
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "Unknown",
+        "ZZ"
+      ],
+      "result": null
+    }
+  ],
+  "parseProductInfo": [
+    {
+      "args": [
+        "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.1\", \"buildNumber\": \"261.1\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea.sh\"}, {\"os\": \"Linux\", \"arch\": \"aarch64\", \"launcherPath\": \"bin/idea-arm.sh\"}, {\"os\": \"macOS\", \"launcherPath\": \"MacOS/idea\"}]}"
+      ],
+      "result": {
+        "name": "IntelliJ IDEA",
+        "version": "2026.1",
+        "buildNumber": "261.1",
+        "productCode": "IU",
+        "launch": [
+          {
+            "os": "Windows",
+            "launcherPath": "bin/idea64.exe",
+            "arch": "amd64"
+          },
+          {
+            "os": "Linux",
+            "launcherPath": "bin/idea.sh",
+            "arch": "amd64"
+          },
+          {
+            "os": "Linux",
+            "launcherPath": "bin/idea-arm.sh",
+            "arch": "aarch64"
+          },
+          {
+            "os": "macOS",
+            "launcherPath": "MacOS/idea"
+          }
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"name\": \" \", \"productCode\": \"AI\", \"launch\": [{\"os\": \"Windows\"}, 5, null, {\"os\": \"Windows\", \"launcherPath\": \"bin/studio64.exe\"}]}"
+      ],
+      "result": {
+        "productCode": "AI",
+        "launch": [
+          {
+            "os": "Windows",
+            "launcherPath": "bin/studio64.exe"
+          }
+        ]
+      }
+    },
+    {
+      "args": [
+        "{\"launch\": \"x\"}"
+      ],
+      "result": {
+        "launch": []
+      }
+    },
+    {
+      "args": [
+        "[1]"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "nope"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        null
+      ],
+      "result": null
+    }
+  ],
+  "launcherPath": [
+    {
+      "args": [
+        "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.1\", \"buildNumber\": \"261.1\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea.sh\"}, {\"os\": \"Linux\", \"arch\": \"aarch64\", \"launcherPath\": \"bin/idea-arm.sh\"}, {\"os\": \"macOS\", \"launcherPath\": \"MacOS/idea\"}]}",
+        "win32",
+        "x64"
+      ],
+      "result": "bin/idea64.exe"
+    },
+    {
+      "args": [
+        "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.1\", \"buildNumber\": \"261.1\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea.sh\"}, {\"os\": \"Linux\", \"arch\": \"aarch64\", \"launcherPath\": \"bin/idea-arm.sh\"}, {\"os\": \"macOS\", \"launcherPath\": \"MacOS/idea\"}]}",
+        "linux",
+        "arm64"
+      ],
+      "result": "bin/idea-arm.sh"
+    },
+    {
+      "args": [
+        "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.1\", \"buildNumber\": \"261.1\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea.sh\"}, {\"os\": \"Linux\", \"arch\": \"aarch64\", \"launcherPath\": \"bin/idea-arm.sh\"}, {\"os\": \"macOS\", \"launcherPath\": \"MacOS/idea\"}]}",
+        "linux",
+        "ia32"
+      ],
+      "result": "bin/idea.sh"
+    },
+    {
+      "args": [
+        "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.1\", \"buildNumber\": \"261.1\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea.sh\"}, {\"os\": \"Linux\", \"arch\": \"aarch64\", \"launcherPath\": \"bin/idea-arm.sh\"}, {\"os\": \"macOS\", \"launcherPath\": \"MacOS/idea\"}]}",
+        "darwin",
+        "arm64"
+      ],
+      "result": "MacOS/idea"
+    },
+    {
+      "args": [
+        "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.1\", \"buildNumber\": \"261.1\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea.sh\"}, {\"os\": \"Linux\", \"arch\": \"aarch64\", \"launcherPath\": \"bin/idea-arm.sh\"}, {\"os\": \"macOS\", \"launcherPath\": \"MacOS/idea\"}]}",
+        "freebsd",
+        "x64"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "{\"name\": \" \", \"productCode\": \"AI\", \"launch\": [{\"os\": \"Windows\"}, 5, null, {\"os\": \"Windows\", \"launcherPath\": \"bin/studio64.exe\"}]}",
+        "win32",
+        "x64"
+      ],
+      "result": "bin/studio64.exe"
+    }
+  ],
+  "discoverIdes": [
+    {
+      "args": [
+        {
+          "platform": "win32",
+          "env": {
+            "ProgramFiles": "C:\\Program Files",
+            "LOCALAPPDATA": "C:\\Users\\u\\AppData\\Local",
+            "PATH": ""
+          },
+          "userHome": "C:\\Users\\u",
+          "arch": "x64",
+          "files": {
+            "C:\\Users\\u\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd": "",
+            "C:\\Program Files\\JetBrains\\IntelliJ IDEA 2025.3\\product-info.json": "{\"name\": \"IntelliJ IDEA\", \"version\": \"2025.3\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"launcherPath\": \"bin/idea.sh\"}]}",
+            "C:\\Program Files\\JetBrains\\IntelliJ IDEA 2025.3\\bin\\idea64.exe": "",
+            "C:\\Users\\u\\AppData\\Local\\JetBrains\\Toolbox\\apps\\intellij-idea\\ch-0\\261.1\\product-info.json": "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.1\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"launcherPath\": \"bin/idea.sh\"}]}",
+            "C:\\Users\\u\\AppData\\Local\\JetBrains\\Toolbox\\apps\\intellij-idea\\ch-0\\261.1\\bin\\idea64.exe": "",
+            "C:\\Program Files\\Android\\Android Studio\\product-info.json": "{\"name\": \"Android Studio\", \"version\": \"AI-251.1\", \"productCode\": \"AI\", \"launch\": [{\"os\": \"Windows\", \"launcherPath\": \"bin/studio64.exe\"}]}",
+            "C:\\Program Files\\Android\\Android Studio\\bin\\studio64.exe": "",
+            "C:\\Program Files\\JetBrains\\Evil\\product-info.json": "{\"name\": \"PyCharm\", \"launch\": [{\"os\": \"Windows\", \"launcherPath\": \"..\\\\..\\\\evil.exe\"}]}",
+            "C:\\Program Files\\JetBrains\\Missing\\product-info.json": "{\"name\": \"GoLand\", \"launch\": [{\"os\": \"Windows\", \"launcherPath\": \"bin/goland64.exe\"}]}"
+          },
+          "dirs": {
+            "C:\\Program Files\\JetBrains": [
+              "IntelliJ IDEA 2025.3",
+              "Evil",
+              "Missing",
+              ".hidden"
+            ],
+            "C:\\Program Files\\Android": [
+              "Android Studio"
+            ],
+            "C:\\Users\\u\\AppData\\Local\\Programs": [
+              "Microsoft VS Code"
+            ],
+            "C:\\Users\\u\\AppData\\Local\\JetBrains\\Toolbox\\apps": [
+              "intellij-idea"
+            ],
+            "C:\\Users\\u\\AppData\\Local\\JetBrains\\Toolbox\\apps\\intellij-idea": [
+              "ch-0"
+            ],
+            "C:\\Users\\u\\AppData\\Local\\JetBrains\\Toolbox\\apps\\intellij-idea\\ch-0": [
+              "261.1"
+            ]
+          }
+        }
+      ],
+      "result": [
+        {
+          "key": "vscode",
+          "product": "VS Code",
+          "kind": "vscode",
+          "launcher": "C:\\Users\\u\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd"
+        },
+        {
+          "key": "idea",
+          "product": "IntelliJ IDEA",
+          "kind": "jetbrains",
+          "version": "2026.1",
+          "launcher": "C:\\Users\\u\\AppData\\Local\\JetBrains\\Toolbox\\apps\\intellij-idea\\ch-0\\261.1\\bin\\idea64.exe"
+        },
+        {
+          "key": "idea",
+          "product": "IntelliJ IDEA",
+          "kind": "jetbrains",
+          "version": "2025.3",
+          "launcher": "C:\\Program Files\\JetBrains\\IntelliJ IDEA 2025.3\\bin\\idea64.exe"
+        },
+        {
+          "key": "android-studio",
+          "product": "Android Studio",
+          "kind": "jetbrains",
+          "version": "AI-251.1",
+          "launcher": "C:\\Program Files\\Android\\Android Studio\\bin\\studio64.exe"
+        }
+      ]
+    },
+    {
+      "args": [
+        {
+          "platform": "linux",
+          "env": {
+            "PATH": ""
+          },
+          "userHome": "/home/u",
+          "arch": "arm64",
+          "files": {
+            "/snap/bin/code": "",
+            "/home/u/.local/share/flatpak/exports/bin/com.vscodium.codium": "",
+            "/opt/idea/product-info.json": "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.2\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"launcherPath\": \"bin/idea.sh\"}]}",
+            "/opt/idea/bin/idea.sh": "",
+            "/snap/pycharm-community/current/product-info.json": "{\"name\": \"PyCharm\", \"version\": \"2026.1\", \"launch\": [{\"os\": \"Linux\", \"arch\": \"aarch64\", \"launcherPath\": \"bin/pycharm-arm.sh\"}, {\"os\": \"Linux\", \"launcherPath\": \"bin/pycharm.sh\"}]}",
+            "/snap/pycharm-community/current/bin/pycharm-arm.sh": ""
+          },
+          "dirs": {
+            "/opt": [
+              "idea"
+            ],
+            "/snap": [
+              "pycharm-community"
+            ]
+          }
+        }
+      ],
+      "result": [
+        {
+          "key": "vscode",
+          "product": "VS Code",
+          "kind": "vscode",
+          "launcher": "/snap/bin/code"
+        },
+        {
+          "key": "vscodium",
+          "product": "VSCodium",
+          "kind": "vscode",
+          "launcher": "/home/u/.local/share/flatpak/exports/bin/com.vscodium.codium"
+        },
+        {
+          "key": "idea",
+          "product": "IntelliJ IDEA",
+          "kind": "jetbrains",
+          "version": "2026.2",
+          "launcher": "/opt/idea/bin/idea.sh"
+        },
+        {
+          "key": "pycharm",
+          "product": "PyCharm",
+          "kind": "jetbrains",
+          "version": "2026.1",
+          "launcher": "/snap/pycharm-community/current/bin/pycharm-arm.sh"
+        }
+      ]
+    },
+    {
+      "args": [
+        {
+          "platform": "darwin",
+          "env": {
+            "PATH": ""
+          },
+          "userHome": "/Users/u",
+          "arch": "arm64",
+          "files": {
+            "/Applications/Cursor.app/Contents/Resources/app/bin/cursor": "",
+            "/Applications/IntelliJ IDEA.app/Contents/Resources/product-info.json": "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.1\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"launcherPath\": \"bin/idea.sh\"}]}",
+            "/Users/u/Library/Application Support/JetBrains/Toolbox/apps/IntelliJ IDEA Ultimate.app/Contents/Resources/product-info.json": "{\"name\": \"IntelliJ IDEA\", \"version\": \"2026.3\", \"productCode\": \"IU\", \"launch\": [{\"os\": \"Windows\", \"arch\": \"amd64\", \"launcherPath\": \"bin/idea64.exe\"}, {\"os\": \"Linux\", \"launcherPath\": \"bin/idea.sh\"}]}"
+          },
+          "dirs": {
+            "/Applications": [
+              "IntelliJ IDEA.app",
+              "Notes.app"
+            ],
+            "/Users/u/Library/Application Support/JetBrains/Toolbox/apps": [
+              "IntelliJ IDEA Ultimate.app"
+            ]
+          }
+        }
+      ],
+      "result": [
+        {
+          "key": "cursor",
+          "product": "Cursor",
+          "kind": "vscode",
+          "launcher": "/Applications/Cursor.app/Contents/Resources/app/bin/cursor"
+        },
+        {
+          "key": "idea",
+          "product": "IntelliJ IDEA",
+          "kind": "jetbrains",
+          "version": "2026.3",
+          "launcher": "/Users/u/Library/Application Support/JetBrains/Toolbox/apps/IntelliJ IDEA Ultimate.app"
+        },
+        {
+          "key": "idea",
+          "product": "IntelliJ IDEA",
+          "kind": "jetbrains",
+          "version": "2026.1",
+          "launcher": "/Applications/IntelliJ IDEA.app"
+        }
+      ]
+    }
+  ],
+  "editorCliLocations": [
+    {
+      "args": [
+        "win32",
+        {
+          "LOCALAPPDATA": "C:\\L",
+          "PROGRAMFILES": "C:\\P"
+        },
+        "C:\\U"
+      ],
+      "result": {
+        "code": [
+          "C:\\L\\Programs\\Microsoft VS Code\\bin\\code.cmd",
+          "C:\\P\\Microsoft VS Code\\bin\\code.cmd"
+        ],
+        "code-insiders": [
+          "C:\\L\\Programs\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd",
+          "C:\\P\\Microsoft VS Code Insiders\\bin\\code-insiders.cmd"
+        ],
+        "cursor": [
+          "C:\\L\\Programs\\cursor\\resources\\app\\bin\\cursor.cmd"
+        ],
+        "windsurf": [
+          "C:\\L\\Programs\\Windsurf\\bin\\windsurf.cmd"
+        ],
+        "codium": [
+          "C:\\L\\Programs\\VSCodium\\bin\\codium.cmd",
+          "C:\\P\\VSCodium\\bin\\codium.cmd"
+        ],
+        "antigravity-ide": [
+          "C:\\L\\Programs\\Antigravity IDE\\bin\\antigravity-ide.cmd"
+        ],
+        "kiro": [
+          "C:\\L\\Programs\\Kiro\\bin\\kiro.cmd"
+        ],
+        "positron": [
+          "C:\\L\\Programs\\Positron\\bin\\positron.cmd",
+          "C:\\P\\Positron\\bin\\positron.cmd"
+        ],
+        "trae": [
+          "C:\\L\\Programs\\Trae\\bin\\trae.cmd"
+        ]
+      }
+    },
+    {
+      "args": [
+        "win32",
+        {},
+        "C:\\U"
+      ],
+      "result": {
+        "code": [],
+        "code-insiders": [],
+        "cursor": [],
+        "windsurf": [],
+        "codium": [],
+        "antigravity-ide": [],
+        "kiro": [],
+        "positron": [],
+        "trae": []
+      }
+    },
+    {
+      "args": [
+        "darwin",
+        {},
+        "/Users/u"
+      ],
+      "result": {
+        "code": [
+          "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+          "/Users/u/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+        ],
+        "code-insiders": [
+          "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code",
+          "/Users/u/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code"
+        ],
+        "cursor": [
+          "/Applications/Cursor.app/Contents/Resources/app/bin/code",
+          "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
+          "/Users/u/Applications/Cursor.app/Contents/Resources/app/bin/code",
+          "/Users/u/Applications/Cursor.app/Contents/Resources/app/bin/cursor"
+        ],
+        "windsurf": [
+          "/Applications/Windsurf.app/Contents/Resources/app/bin/windsurf",
+          "/Applications/Windsurf.app/Contents/Resources/app/bin/code",
+          "/Users/u/Applications/Windsurf.app/Contents/Resources/app/bin/windsurf",
+          "/Users/u/Applications/Windsurf.app/Contents/Resources/app/bin/code"
+        ],
+        "codium": [
+          "/Applications/VSCodium.app/Contents/Resources/app/bin/codium",
+          "/Users/u/Applications/VSCodium.app/Contents/Resources/app/bin/codium"
+        ],
+        "antigravity-ide": [
+          "/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide",
+          "/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity-ide",
+          "/Users/u/Applications/Antigravity IDE.app/Contents/Resources/app/bin/antigravity-ide",
+          "/Users/u/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity-ide"
+        ],
+        "kiro": [
+          "/Applications/Kiro.app/Contents/Resources/app/bin/code",
+          "/Users/u/Applications/Kiro.app/Contents/Resources/app/bin/code"
+        ],
+        "positron": [
+          "/Applications/Positron.app/Contents/Resources/app/bin/code",
+          "/Users/u/Applications/Positron.app/Contents/Resources/app/bin/code"
+        ],
+        "trae": [
+          "/Applications/Trae.app/Contents/Resources/app/bin/code",
+          "/Applications/Trae.app/Contents/Resources/app/bin/trae",
+          "/Users/u/Applications/Trae.app/Contents/Resources/app/bin/code",
+          "/Users/u/Applications/Trae.app/Contents/Resources/app/bin/trae"
+        ]
+      }
+    },
+    {
+      "args": [
+        "linux",
+        {},
+        "/home/u"
+      ],
+      "result": {
+        "code": [
+          "/usr/share/code/bin/code",
+          "/opt/code/bin/code",
+          "/snap/bin/code",
+          "/home/u/.local/bin/code",
+          "/var/lib/flatpak/exports/bin/com.visualstudio.code",
+          "/home/u/.local/share/flatpak/exports/bin/com.visualstudio.code"
+        ],
+        "code-insiders": [
+          "/usr/share/code-insiders/bin/code-insiders",
+          "/opt/code-insiders/bin/code-insiders",
+          "/snap/bin/code-insiders",
+          "/home/u/.local/bin/code-insiders"
+        ],
+        "cursor": [
+          "/usr/share/cursor/bin/cursor",
+          "/opt/cursor/bin/cursor",
+          "/home/u/.local/bin/cursor"
+        ],
+        "windsurf": [
+          "/usr/share/windsurf/bin/windsurf",
+          "/opt/windsurf/bin/windsurf",
+          "/home/u/.local/bin/windsurf"
+        ],
+        "codium": [
+          "/usr/share/codium/bin/codium",
+          "/opt/codium/bin/codium",
+          "/snap/bin/codium",
+          "/home/u/.local/bin/codium",
+          "/var/lib/flatpak/exports/bin/com.vscodium.codium",
+          "/home/u/.local/share/flatpak/exports/bin/com.vscodium.codium"
+        ],
+        "antigravity-ide": [
+          "/usr/share/antigravity-ide/bin/antigravity-ide",
+          "/opt/antigravity-ide/bin/antigravity-ide",
+          "/home/u/.local/bin/antigravity-ide"
+        ],
+        "kiro": [
+          "/usr/share/kiro/bin/kiro",
+          "/opt/kiro/bin/kiro",
+          "/home/u/.local/bin/kiro"
+        ],
+        "positron": [
+          "/usr/share/positron/bin/positron",
+          "/opt/positron/bin/positron",
+          "/home/u/.local/bin/positron"
+        ],
+        "trae": [
+          "/usr/share/trae/bin/trae",
+          "/opt/trae/bin/trae",
+          "/home/u/.local/bin/trae"
+        ]
+      }
+    },
+    {
+      "args": [
+        "aix",
+        {},
+        "/"
+      ],
+      "result": {
+        "code": [],
+        "code-insiders": [],
+        "cursor": [],
+        "windsurf": [],
+        "codium": [],
+        "antigravity-ide": [],
+        "kiro": [],
+        "positron": [],
+        "trae": []
+      }
+    }
+  ],
+  "cliInvocation": [
+    {
+      "args": [
+        "C:\\x\\code.cmd",
+        [
+          "C:\\w"
+        ],
+        "win32",
+        "C:\\cmd.exe"
+      ],
+      "result": {
+        "command": "C:\\cmd.exe",
+        "args": [
+          "/d",
+          "/s",
+          "/c",
+          "\"\"C:\\x\\code.cmd\" \"C:\\w\"\""
+        ],
+        "windowsVerbatimArguments": true
+      }
+    },
+    {
+      "args": [
+        "C:\\x\\code.BAT",
+        [
+          "C:\\w x"
+        ],
+        "win32",
+        ""
+      ],
+      "result": {
+        "command": "cmd.exe",
+        "args": [
+          "/d",
+          "/s",
+          "/c",
+          "\"\"C:\\x\\code.BAT\" \"C:\\w x\"\""
+        ],
+        "windowsVerbatimArguments": true
+      }
+    },
+    {
+      "args": [
+        "C:\\x\\code.exe",
+        [
+          "C:\\w"
+        ],
+        "win32",
+        null
+      ],
+      "result": {
+        "command": "C:\\x\\code.exe",
+        "args": [
+          "C:\\w"
+        ],
+        "windowsVerbatimArguments": false
+      }
+    },
+    {
+      "args": [
+        "C:\\x\\code.cmd",
+        [
+          "C:\\100%"
+        ],
+        "win32",
+        null
+      ],
+      "error": "cmd.exe can't safely run with the argument C:\\100%"
+    },
+    {
+      "args": [
+        "/usr/bin/code.cmd",
+        [
+          "/w"
+        ],
+        "linux",
+        null
+      ],
+      "result": {
+        "command": "/usr/bin/code.cmd",
+        "args": [
+          "/w"
+        ],
+        "windowsVerbatimArguments": false
+      }
+    }
+  ],
+  "ideLaunchCommand": [
+    {
+      "args": [
+        {
+          "key": "vscode",
+          "product": "VS Code",
+          "kind": "vscode",
+          "launcher": "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd"
+        },
+        "C:\\work\\app",
+        "win32",
+        "C:\\Windows\\system32\\cmd.exe"
+      ],
+      "result": {
+        "command": "C:\\Windows\\system32\\cmd.exe",
+        "args": [
+          "/d",
+          "/s",
+          "/c",
+          "\"\"C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd\" \"C:\\work\\app\"\""
+        ],
+        "windowsVerbatimArguments": true,
+        "windowsHide": true
+      }
+    },
+    {
+      "args": [
+        {
+          "key": "vscode",
+          "product": "VS Code",
+          "kind": "vscode",
+          "launcher": "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd"
+        },
+        "C:\\work\\a&b",
+        "win32",
+        null
+      ],
+      "error": "cmd.exe can't safely run with the argument C:\\work\\a&b"
+    },
+    {
+      "args": [
+        {
+          "key": "vscode",
+          "product": "VS Code",
+          "kind": "vscode",
+          "launcher": "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd"
+        },
+        "C:\\work\\app",
+        "win32",
+        null
+      ],
+      "result": {
+        "command": "cmd.exe",
+        "args": [
+          "/d",
+          "/s",
+          "/c",
+          "\"\"C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd\" \"C:\\work\\app\"\""
+        ],
+        "windowsVerbatimArguments": true,
+        "windowsHide": true
+      }
+    },
+    {
+      "args": [
+        {
+          "key": "vscode",
+          "product": "VS Code",
+          "kind": "vscode",
+          "launcher": "/usr/bin/code"
+        },
+        "/work/app",
+        "linux",
+        null
+      ],
+      "result": {
+        "command": "/usr/bin/code",
+        "args": [
+          "/work/app"
+        ],
+        "windowsVerbatimArguments": false,
+        "windowsHide": false
+      }
+    },
+    {
+      "args": [
+        {
+          "key": "idea",
+          "product": "IntelliJ IDEA",
+          "kind": "jetbrains",
+          "version": "2026.1",
+          "launcher": "/Applications/IntelliJ IDEA.app"
+        },
+        "/work/app",
+        "darwin",
+        null
+      ],
+      "result": {
+        "command": "open",
+        "args": [
+          "-na",
+          "/Applications/IntelliJ IDEA.app",
+          "--args",
+          "/work/app"
+        ],
+        "windowsVerbatimArguments": false,
+        "windowsHide": false
+      }
+    },
+    {
+      "args": [
+        {
+          "key": "idea",
+          "product": "IntelliJ IDEA",
+          "kind": "jetbrains",
+          "version": "2026.1",
+          "launcher": "C:\\JB\\bin\\idea64.exe"
+        },
+        "C:\\work",
+        "win32",
+        null
+      ],
+      "result": {
+        "command": "C:\\JB\\bin\\idea64.exe",
+        "args": [
+          "C:\\work"
+        ],
+        "windowsVerbatimArguments": false,
+        "windowsHide": false
+      }
+    },
+    {
+      "args": [
+        {
+          "key": "vscode",
+          "product": "VS Code",
+          "kind": "vscode",
+          "launcher": "/usr/bin/code"
+        },
+        "/work/\u0007",
+        "linux",
+        null
+      ],
+      "error": "the folder path holds a control character"
+    }
+  ],
+  "launchEnvironment": [
+    {
+      "args": [
+        {
+          "PATH": "/bin",
+          "Path": "x",
+          "NO_COLOR": "1",
+          "claude_code_entrypoint": "cli",
+          "ANTHROPIC_API_KEY": "k",
+          "IDE_AGENT_TABS_HOME": "/h",
+          "IDE_AGENT_TABS_ID": "t",
+          "ide_agent_tabs_home": "/h2",
+          "TERM_PROGRAM": "vscode",
+          "TERM_PROGRAM_VERSION": "1",
+          "VSCODE_PID": "1",
+          "MCP_X": "1",
+          "GEMINI_CLI_X": "1",
+          "OPENCODE_SESSION_ID": "s",
+          "HOME": "/home/u"
+        }
+      ],
+      "result": {
+        "PATH": "/bin",
+        "Path": "x",
+        "IDE_AGENT_TABS_HOME": "/h",
+        "ide_agent_tabs_home": "/h2",
+        "HOME": "/home/u"
+      }
+    }
+  ],
+  "terminalEnvironment": [
+    {
+      "args": [
+        {
+          "CLAUDECODE": "1",
+          "claude_pid": "2",
+          "HOME": "/h",
+          "IDE_AGENT_TABS_HOME": "/x",
+          "IDE_AGENT_TABS_ID": "t"
+        }
+      ],
+      "result": {
+        "HOME": "/h",
+        "IDE_AGENT_TABS_HOME": "/x"
+      }
+    }
+  ],
+  "compareBuilds": [
+    {
+      "args": [
+        "2026.1",
+        "2025.3"
+      ],
+      "result": 1
+    },
+    {
+      "args": [
+        "1.10",
+        "1.9"
+      ],
+      "result": 1
+    },
+    {
+      "args": [
+        "1.0",
+        "1"
+      ],
+      "result": 0
+    },
+    {
+      "args": [
+        "261.1a",
+        "261.1"
+      ],
+      "result": 0
+    },
+    {
+      "args": [
+        "x",
+        "0"
+      ],
+      "result": 0
+    },
+    {
+      "args": [
+        "1.2.3",
+        "1.2.4"
+      ],
+      "result": -1
+    }
+  ],
+  "powerShellSpec": [
+    {
+      "args": [
+        {
+          "id": "tab-1",
+          "agent": "claude",
+          "cwd": "/work",
+          "command": "claude",
+          "args": [
+            "--model",
+            "opus"
+          ],
+          "prompt": "hi\nthere",
+          "env": {
+            "B": "2",
+            "A": "1"
+          },
+          "pidFile": "/h/launch/tab-1.pid"
+        }
+      ],
+      "result": "{\"version\":1,\"id\":\"tab-1\",\"agent\":\"claude\",\"cwd\":\"/work\",\"command\":\"claude\",\"args\":[\"--model\",\"opus\"],\"prompt\":\"hi\\nthere\",\"env\":[{\"name\":\"B\",\"value\":\"2\"},{\"name\":\"A\",\"value\":\"1\"}],\"pidFile\":\"/h/launch/tab-1.pid\"}"
+    },
+    {
+      "args": [
+        {
+          "id": "tab-2",
+          "agent": "codex",
+          "cwd": "C:\\w",
+          "command": "codex",
+          "args": [],
+          "env": {}
+        }
+      ],
+      "result": "{\"version\":1,\"id\":\"tab-2\",\"agent\":\"codex\",\"cwd\":\"C:\\\\w\",\"command\":\"codex\",\"args\":[],\"prompt\":null,\"env\":[],\"pidFile\":null}"
+    },
+    {
+      "args": [
+        {
+          "id": "tab-1",
+          "agent": "claude",
+          "cwd": "/work",
+          "command": "claude",
+          "args": [
+            "--model",
+            "opus"
+          ],
+          "prompt": "lone \ud800 é",
+          "env": {
+            "B": "2",
+            "A": "1"
+          },
+          "pidFile": "/h/launch/tab-1.pid"
+        }
+      ],
+      "result": "{\"version\":1,\"id\":\"tab-1\",\"agent\":\"claude\",\"cwd\":\"/work\",\"command\":\"claude\",\"args\":[\"--model\",\"opus\"],\"prompt\":\"lone \\ud800 é\",\"env\":[{\"name\":\"B\",\"value\":\"2\"},{\"name\":\"A\",\"value\":\"1\"}],\"pidFile\":\"/h/launch/tab-1.pid\"}"
+    }
+  ],
+  "posixSpec": [
+    {
+      "args": [
+        {
+          "id": "tab-1",
+          "agent": "claude",
+          "cwd": "/work",
+          "command": "claude",
+          "args": [
+            "--model",
+            "opus"
+          ],
+          "prompt": "hi\nthere",
+          "env": {
+            "B": "2",
+            "A": "1"
+          },
+          "pidFile": "/h/launch/tab-1.pid"
+        }
+      ],
+      "result": "6964652d6167656e742d746162732d737065632d31007461622d3100636c61756465002f776f726b00636c61756465003200420032004100310032002d2d6d6f64656c006f70757300310068690a7468657265002f682f6c61756e63682f7461622d312e70696400"
+    },
+    {
+      "args": [
+        {
+          "id": "tab-2",
+          "agent": "codex",
+          "cwd": "C:\\w",
+          "command": "codex",
+          "args": [],
+          "env": {}
+        }
+      ],
+      "result": "6964652d6167656e742d746162732d737065632d31007461622d3200636f64657800433a5c7700636f64657800300030003000"
+    },
+    {
+      "args": [
+        {
+          "id": "tab-1",
+          "agent": "claude",
+          "cwd": "/work",
+          "command": "claude",
+          "args": [
+            "--model",
+            "opus"
+          ],
+          "prompt": "lone \ud800 é",
+          "env": {
+            "B": "2",
+            "A": "1"
+          },
+          "pidFile": "/h/launch/tab-1.pid"
+        }
+      ],
+      "result": "6964652d6167656e742d746162732d737065632d31007461622d3100636c61756465002f776f726b00636c61756465003200420032004100310032002d2d6d6f64656c006f7075730031006c6f6e6520efbfbd20c3a9002f682f6c61756e63682f7461622d312e70696400"
+    },
+    {
+      "args": [
+        {
+          "id": "tab-1",
+          "agent": "claude",
+          "cwd": "/work",
+          "command": "claude",
+          "args": [
+            "a\u0000b"
+          ],
+          "prompt": "hi\nthere",
+          "env": {
+            "B": "2",
+            "A": "1"
+          },
+          "pidFile": "/h/launch/tab-1.pid"
+        }
+      ],
+      "error": "launch spec fields must not hold a NUL"
+    }
+  ],
+  "checkPosixEnvNames": [
+    {
+      "args": [
+        {
+          "A_1": "x",
+          "_B": "y"
+        }
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        {
+          "1A": "x",
+          "A-B": "y",
+          "OK": "z"
+        }
+      ],
+      "error": "env names must be shell identifiers for a terminal tab: 1A, A-B"
+    }
+  ],
+  "loginShell": [
+    {
+      "args": [
+        "/bin/bash",
+        "linux"
+      ],
+      "result": {
+        "path": "/bin/bash",
+        "kind": "posix"
+      }
+    },
+    {
+      "args": [
+        "/usr/bin/zsh",
+        "darwin"
+      ],
+      "result": {
+        "path": "/usr/bin/zsh",
+        "kind": "posix"
+      }
+    },
+    {
+      "args": [
+        "/opt/homebrew/bin/fish",
+        "darwin"
+      ],
+      "result": {
+        "path": "/opt/homebrew/bin/fish",
+        "kind": "fish"
+      }
+    },
+    {
+      "args": [
+        "/bin/tcsh",
+        "linux"
+      ],
+      "result": {
+        "path": "/bin/bash",
+        "kind": "posix"
+      }
+    },
+    {
+      "args": [
+        "/bin/ba sh",
+        "darwin"
+      ],
+      "result": {
+        "path": "/bin/zsh",
+        "kind": "posix"
+      }
+    },
+    {
+      "args": [
+        null,
+        "linux"
+      ],
+      "result": {
+        "path": "/bin/bash",
+        "kind": "posix"
+      }
+    },
+    {
+      "args": [
+        null,
+        "darwin"
+      ],
+      "result": {
+        "path": "/bin/zsh",
+        "kind": "posix"
+      }
+    }
+  ],
+  "surfaceArgv": [
+    {
+      "args": [
+        {
+          "path": "/bin/bash",
+          "kind": "posix"
+        }
+      ],
+      "result": [
+        "/bin/bash",
+        "-l",
+        "-i",
+        "-c",
+        ". \"$IDE_AGENT_TABS_LAUNCHER\"; exec /bin/bash -l -i"
+      ]
+    },
+    {
+      "args": [
+        {
+          "path": "/usr/local/bin/fish",
+          "kind": "fish"
+        }
+      ],
+      "result": [
+        "/usr/local/bin/fish",
+        "-l",
+        "-i",
+        "-c",
+        "source \"$IDE_AGENT_TABS_LAUNCHER\"; exec /usr/local/bin/fish -l -i"
+      ]
+    }
+  ],
+  "surfaceCommand": [
+    {
+      "args": [
+        {
+          "path": "/bin/bash",
+          "kind": "posix"
+        }
+      ],
+      "result": "/bin/bash -l -i -c '. \"$IDE_AGENT_TABS_LAUNCHER\"; exec /bin/bash -l -i'"
+    },
+    {
+      "args": [
+        {
+          "path": "/usr/local/bin/fish",
+          "kind": "fish"
+        }
+      ],
+      "result": "/usr/local/bin/fish -l -i -c 'source \"$IDE_AGENT_TABS_LAUNCHER\"; exec /usr/local/bin/fish -l -i'"
+    }
+  ],
+  "argvModeCommand": [
+    {
+      "args": [
+        {
+          "path": "/bin/bash",
+          "kind": "posix"
+        },
+        "/p/launch/agent-launch.sh",
+        "/h/launch/t.spec"
+      ],
+      "result": [
+        "/bin/bash",
+        "-l",
+        "-i",
+        "-c",
+        "IDE_AGENT_TABS_SPEC=$2; export IDE_AGENT_TABS_SPEC; . \"$1\"; exec /bin/bash -l -i",
+        "agent-tabs",
+        "/p/launch/agent-launch.sh",
+        "/h/launch/t.spec"
+      ]
+    },
+    {
+      "args": [
+        {
+          "path": "/usr/local/bin/fish",
+          "kind": "fish"
+        },
+        "/p/launch/agent-launch.fish",
+        "/h/launch/t.spec"
+      ],
+      "result": [
+        "/usr/local/bin/fish",
+        "-l",
+        "-i",
+        "-c",
+        "set -gx IDE_AGENT_TABS_SPEC $argv[2]; source \"$argv[1]\"; exec /usr/local/bin/fish -l -i",
+        "/p/launch/agent-launch.fish",
+        "/h/launch/t.spec"
+      ]
+    },
+    {
+      "args": [
+        {
+          "path": "/bin/bash",
+          "kind": "posix"
+        },
+        "/p/launch/agent-launch.sh",
+        "/h/la\nunch/t.spec"
+      ],
+      "error": "the login shell can't start a path that holds a control character: \"/h/la\\nunch/t.spec\""
+    }
+  ],
+  "checkArgvPaths": [
+    {
+      "args": [
+        "wt",
+        [
+          "C:\\a;b"
+        ],
+        ";"
+      ],
+      "error": "wt can't start a path that holds ';': \"C:\\\\a;b\""
+    },
+    {
+      "args": [
+        "wt",
+        [
+          "C:\\a\u0001b"
+        ],
+        ""
+      ],
+      "error": "wt can't start a path that holds a control character: \"C:\\\\a\\u0001b\""
+    },
+    {
+      "args": [
+        "wt",
+        [
+          "C:\\ok"
+        ],
+        ";"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "x",
+        [
+          "café \"q\"",
+          "tab\tx"
+        ],
+        ""
+      ],
+      "error": "x can't start a path that holds a control character: \"tab\\tx\""
+    }
+  ],
+  "tabTitle": [
+    {
+      "args": [
+        "Claude Code"
+      ],
+      "result": "Claude Code"
+    },
+    {
+      "args": [
+        "  a\u0000b​c\td  "
+      ],
+      "result": "a b c d"
+    },
+    {
+      "args": [
+        "\u0001\u0002"
+      ],
+      "result": "Agent"
+    },
+    {
+      "args": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "args": [
+        "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      ],
+      "result": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+    },
+    {
+      "args": [
+        "a    b"
+      ],
+      "result": "a b"
+    },
+    {
+      "args": [
+        "abc                                      z"
+      ],
+      "result": "abc z"
+    }
+  ],
+  "isShellName": [
+    {
+      "args": [
+        "bash\n"
+      ],
+      "result": true
+    },
+    {
+      "args": [
+        "-zsh"
+      ],
+      "result": true
+    },
+    {
+      "args": [
+        "/bin/fish"
+      ],
+      "result": true
+    },
+    {
+      "args": [
+        "python"
+      ],
+      "result": false
+    },
+    {
+      "args": [
+        "  -bash  "
+      ],
+      "result": true
+    }
+  ],
+  "wtTitle": [
+    {
+      "args": [
+        "a;b;c"
+      ],
+      "result": "a b c"
+    },
+    {
+      "args": [
+        "Claude Code"
+      ],
+      "result": "Claude Code"
+    }
+  ],
+  "wtWindow": [
+    {
+      "args": [
+        null
+      ],
+      "result": "0"
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated"
+        }
+      ],
+      "result": "agent-tabs"
+    },
+    {
+      "args": [
+        {
+          "window": "last",
+          "near": {
+            "id": "near",
+            "terminal": "kitty",
+            "agent": "claude",
+            "path": "/w",
+            "createdAt": 1,
+            "window": "agent-tabs"
+          }
+        }
+      ],
+      "result": "agent-tabs"
+    },
+    {
+      "args": [
+        {
+          "window": "last",
+          "near": {
+            "id": "near",
+            "terminal": "kitty",
+            "agent": "claude",
+            "path": "/w",
+            "createdAt": 1
+          }
+        }
+      ],
+      "result": "0"
+    }
+  ],
+  "powerShellArgv": [
+    {
+      "args": [
+        "pwsh.exe",
+        "C:\\p\\agent-launch.ps1",
+        "C:\\h\\launch\\t.json"
+      ],
+      "result": [
+        "pwsh.exe",
+        "-NoLogo",
+        "-NoExit",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\p\\agent-launch.ps1",
+        "C:\\h\\launch\\t.json"
+      ]
+    }
+  ],
+  "wtArgs": [
+    {
+      "args": [
+        "Claude; Code",
+        "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        "C:\\p\\agent-launch.ps1",
+        "C:\\h\\launch\\t.json"
+      ],
+      "result": [
+        "-w",
+        "0",
+        "new-tab",
+        "--title",
+        "Claude Code",
+        "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+        "-NoLogo",
+        "-NoExit",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\p\\agent-launch.ps1",
+        "C:\\h\\launch\\t.json"
+      ]
+    },
+    {
+      "args": [
+        "Codex",
+        "pwsh.exe",
+        "C:\\p\\agent-launch.ps1",
+        "C:\\h\\launch\\t.json",
+        "agent-tabs"
+      ],
+      "result": [
+        "-w",
+        "agent-tabs",
+        "new-tab",
+        "--title",
+        "Codex",
+        "pwsh.exe",
+        "-NoLogo",
+        "-NoExit",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\p\\agent-launch.ps1",
+        "C:\\h\\launch\\t.json"
+      ]
+    },
+    {
+      "args": [
+        "Codex",
+        "pwsh.exe",
+        "C:\\p;x\\agent-launch.ps1",
+        "C:\\h\\launch\\t.json"
+      ],
+      "error": "Windows Terminal can't start a path that holds ';': \"C:\\\\p;x\\\\agent-launch.ps1\""
+    }
+  ],
+  "parseTasklist": [
+    {
+      "args": [
+        "\"pwsh.exe\",\"1234\",\"Console\",\"1\",\"90,000 K\"\r\n\"System Idle Process\",\"0\",\"Services\",\"0\",\"8 K\"\r\n\"bad\",\"x\"\r\n\"PowerShell.EXE\",\"77\""
+      ],
+      "result": [
+        [
+          1234,
+          "pwsh.exe"
+        ],
+        [
+          0,
+          "system idle process"
+        ],
+        [
+          77,
+          "powershell.exe"
+        ]
+      ]
+    }
+  ],
+  "ghosttyCapabilities": [
+    {
+      "args": [
+        "linux"
+      ],
+      "result": {
+        "open": "window",
+        "list": "tracked",
+        "close": "best-effort"
+      }
+    },
+    {
+      "args": [
+        "darwin"
+      ],
+      "result": {
+        "open": "tab",
+        "list": "yes",
+        "close": "yes"
+      }
+    },
+    {
+      "args": [
+        "win32"
+      ],
+      "result": {
+        "open": "tab",
+        "list": "yes",
+        "close": "yes"
+      }
+    }
+  ],
+  "ghosttyLinuxArgs": [
+    {
+      "args": [
+        "/work/app",
+        {
+          "path": "/bin/bash",
+          "kind": "posix"
+        }
+      ],
+      "result": [
+        "--gtk-single-instance=false",
+        "--working-directory=/work/app",
+        "--confirm-close-surface=false",
+        "--wait-after-command=false",
+        "-e",
+        "/bin/bash",
+        "-l",
+        "-i",
+        "-c",
+        ". \"$IDE_AGENT_TABS_LAUNCHER\"; exec /bin/bash -l -i"
+      ]
+    },
+    {
+      "args": [
+        "/work/a\nb",
+        {
+          "path": "/bin/bash",
+          "kind": "posix"
+        }
+      ],
+      "error": "Ghostty can't start a path that holds a control character: \"/work/a\\nb\""
+    }
+  ],
+  "appleScriptString": [
+    {
+      "args": [
+        "plain"
+      ],
+      "result": "\"plain\""
+    },
+    {
+      "args": [
+        "quote \" back \\ slash"
+      ],
+      "result": "\"quote \\\" back \\\\ slash\""
+    },
+    {
+      "args": [
+        "bad\u0007"
+      ],
+      "error": "AppleScript strings here must not hold control characters"
+    }
+  ],
+  "openScript": [
+    {
+      "args": [
+        "/bin/zsh -l -i -c '. \"$IDE_AGENT_TABS_LAUNCHER\"; exec /bin/zsh -l -i'",
+        {
+          "IDE_AGENT_TABS_LAUNCHER": "/p/l.sh",
+          "IDE_AGENT_TABS_SPEC": "/h/t.spec"
+        },
+        null
+      ],
+      "result": "tell application \"Ghostty\"\n\tset cfg to new surface configuration\n\tset command of cfg to \"/bin/zsh -l -i -c '. \\\"$IDE_AGENT_TABS_LAUNCHER\\\"; exec /bin/zsh -l -i'\"\n\tset environment variables of cfg to {\"IDE_AGENT_TABS_LAUNCHER=/p/l.sh\", \"IDE_AGENT_TABS_SPEC=/h/t.spec\"}\n\tif (count of windows) > 0 then\n\t\tset t to new tab in front window with configuration cfg\n\telse\n\t\tset w to new window with configuration cfg\n\t\tset t to selected tab of w\n\tend if\n\treturn (id of t as text) & linefeed & (id of (focused terminal of t) as text)\nend tell\n"
+    },
+    {
+      "args": [
+        "cmd",
+        {
+          "A": "1"
+        },
+        null,
+        true
+      ],
+      "result": "tell application \"Ghostty\"\n\tset cfg to new surface configuration\n\tset command of cfg to \"cmd\"\n\tset environment variables of cfg to {\"A=1\"}\n\tif (count of windows) > 0 then\n\t\tset previousTab to selected tab of front window\n\t\tset t to new tab in front window with configuration cfg\n\t\tselect tab previousTab\n\telse\n\t\tset w to new window with configuration cfg\n\t\tset t to selected tab of w\n\tend if\n\treturn (id of t as text) & linefeed & (id of (focused terminal of t) as text)\nend tell\n"
+    },
+    {
+      "args": [
+        "cmd",
+        {},
+        {
+          "nearTab": "tab-9"
+        }
+      ],
+      "result": "tell application \"Ghostty\"\n\tset cfg to new surface configuration\n\tset command of cfg to \"cmd\"\n\tset environment variables of cfg to {}\n\tset w to missing value\n\trepeat with cw in windows\n\t\trepeat with ct in tabs of cw\n\t\t\tif (id of ct as text) is \"tab-9\" then set w to (contents of cw)\n\t\tend repeat\n\tend repeat\n\tif w is missing value and (count of windows) > 0 then set w to front window\n\tif w is not missing value then\n\t\tset t to new tab in w with configuration cfg\n\telse\n\t\tset w to new window with configuration cfg\n\t\tset t to selected tab of w\n\tend if\n\treturn (id of t as text) & linefeed & (id of (focused terminal of t) as text) & linefeed & (id of w as text)\nend tell\n"
+    },
+    {
+      "args": [
+        "cmd",
+        {},
+        {
+          "nearTab": "tab-9"
+        },
+        true
+      ],
+      "result": "tell application \"Ghostty\"\n\tset cfg to new surface configuration\n\tset command of cfg to \"cmd\"\n\tset environment variables of cfg to {}\n\tset w to missing value\n\trepeat with cw in windows\n\t\trepeat with ct in tabs of cw\n\t\t\tif (id of ct as text) is \"tab-9\" then set w to (contents of cw)\n\t\tend repeat\n\tend repeat\n\tif w is missing value and (count of windows) > 0 then set w to front window\n\tif w is not missing value then\n\t\tset previousTab to selected tab of w\n\t\tset t to new tab in w with configuration cfg\n\t\tselect tab previousTab\n\telse\n\t\tset w to new window with configuration cfg\n\t\tset t to selected tab of w\n\tend if\n\treturn (id of t as text) & linefeed & (id of (focused terminal of t) as text) & linefeed & (id of w as text)\nend tell\n"
+    },
+    {
+      "args": [
+        "cmd",
+        {},
+        {
+          "dedicated": "42"
+        }
+      ],
+      "result": "tell application \"Ghostty\"\n\tset cfg to new surface configuration\n\tset command of cfg to \"cmd\"\n\tset environment variables of cfg to {}\n\tset w to missing value\n\trepeat with cw in windows\n\t\tif (id of cw as text) is \"42\" then set w to (contents of cw)\n\tend repeat\n\tif w is not missing value then\n\t\tset t to new tab in w with configuration cfg\n\telse\n\t\tset w to new window with configuration cfg\n\t\tset t to selected tab of w\n\tend if\n\treturn (id of t as text) & linefeed & (id of (focused terminal of t) as text) & linefeed & (id of w as text)\nend tell\n"
+    },
+    {
+      "args": [
+        "cmd",
+        {},
+        {}
+      ],
+      "result": "tell application \"Ghostty\"\n\tset cfg to new surface configuration\n\tset command of cfg to \"cmd\"\n\tset environment variables of cfg to {}\n\tset w to missing value\n\tif w is not missing value then\n\t\tset t to new tab in w with configuration cfg\n\telse\n\t\tset w to new window with configuration cfg\n\t\tset t to selected tab of w\n\tend if\n\treturn (id of t as text) & linefeed & (id of (focused terminal of t) as text) & linefeed & (id of w as text)\nend tell\n"
+    }
+  ],
+  "ghosttyPlace": [
+    {
+      "args": [
+        null,
+        null
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        {
+          "window": "last",
+          "near": {
+            "id": "near",
+            "terminal": "ghostty",
+            "agent": "claude",
+            "path": "/w",
+            "createdAt": 1,
+            "terminalTabId": "t1"
+          }
+        },
+        null
+      ],
+      "result": {
+        "nearTab": "t1"
+      }
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated",
+          "near": {
+            "id": "near",
+            "terminal": "kitty",
+            "agent": "claude",
+            "path": "/w",
+            "createdAt": 1,
+            "terminalTabId": "t1"
+          }
+        },
+        {
+          "id": "7"
+        }
+      ],
+      "result": {
+        "dedicated": "7"
+      }
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated"
+        },
+        null
+      ],
+      "result": {}
+    }
+  ],
+  "listScript": [
+    {
+      "args": [],
+      "result": "if application \"Ghostty\" is not running then return \"\"\nset out to \"\"\ntell application \"Ghostty\"\n\trepeat with term in terminals\n\t\tset out to out & (id of term as text) & linefeed\n\tend repeat\nend tell\nreturn out\n"
+    }
+  ],
+  "closeScript": [
+    {
+      "args": [
+        "term-1"
+      ],
+      "result": "if application \"Ghostty\" is not running then return \"missing\"\ntell application \"Ghostty\"\n\trepeat with term in terminals\n\t\tif (id of term as text) is \"term-1\" then\n\t\t\tclose (contents of term)\n\t\t\treturn \"closed\"\n\t\tend if\n\tend repeat\nend tell\nreturn \"missing\"\n"
+    }
+  ],
+  "inputScript": [
+    {
+      "args": [
+        "term-1",
+        "wake up"
+      ],
+      "result": "tell application \"Ghostty\"\n\tset t to terminal id \"term-1\"\n\tinput text \"wake up\" to t\n\tdelay 0.2\n\tsend key \"enter\" to t\nend tell\n"
+    },
+    {
+      "args": [
+        "term-1",
+        "x\ny"
+      ],
+      "error": "input must be one line of at most 500 characters with no control characters"
+    }
+  ],
+  "parseOpenResult": [
+    {
+      "args": [
+        "tab-1\nterm-2\n"
+      ],
+      "result": {
+        "tabId": "tab-1",
+        "terminalId": "term-2"
+      }
+    },
+    {
+      "args": [
+        "tab-1\r\nterm-2\r\nwin-3\r\n"
+      ],
+      "result": {
+        "tabId": "tab-1",
+        "terminalId": "term-2",
+        "windowId": "win-3"
+      }
+    },
+    {
+      "args": [
+        "only\n"
+      ],
+      "error": "unexpected answer from Ghostty: only"
+    }
+  ],
+  "kittyLaunchArgs": [
+    {
+      "args": [
+        "unix:/tmp/kitty-agent-tabs-1",
+        "/w",
+        "Claude Code",
+        "/p/agent-launch.sh",
+        "/h/t.spec",
+        [
+          "/bin/bash",
+          "-l",
+          "-i",
+          "-c",
+          ". \"$IDE_AGENT_TABS_LAUNCHER\"; exec /bin/bash -l -i"
+        ],
+        null,
+        null
+      ],
+      "result": [
+        "@",
+        "--to",
+        "unix:/tmp/kitty-agent-tabs-1",
+        "launch",
+        "--type=tab",
+        "--cwd",
+        "/w",
+        "--env",
+        "IDE_AGENT_TABS_LAUNCHER=/p/agent-launch.sh",
+        "--env",
+        "IDE_AGENT_TABS_SPEC=/h/t.spec",
+        "--tab-title",
+        "Claude Code",
+        "--",
+        "/bin/bash",
+        "-l",
+        "-i",
+        "-c",
+        ". \"$IDE_AGENT_TABS_LAUNCHER\"; exec /bin/bash -l -i"
+      ]
+    },
+    {
+      "args": [
+        "unix:/tmp/k",
+        "/w",
+        "C",
+        "/p/l",
+        "/h/s",
+        [
+          "x"
+        ],
+        {
+          "windowId": "12"
+        },
+        false
+      ],
+      "result": [
+        "@",
+        "--to",
+        "unix:/tmp/k",
+        "launch",
+        "--type=tab",
+        "--match",
+        "window_id:12",
+        "--keep-focus",
+        "--cwd",
+        "/w",
+        "--env",
+        "IDE_AGENT_TABS_LAUNCHER=/p/l",
+        "--env",
+        "IDE_AGENT_TABS_SPEC=/h/s",
+        "--tab-title",
+        "C",
+        "--",
+        "x"
+      ]
+    },
+    {
+      "args": [
+        "unix:/tmp/k",
+        "/w",
+        "C",
+        "/p/l",
+        "/h/s",
+        [
+          "x"
+        ],
+        {
+          "osWindow": true
+        },
+        true
+      ],
+      "result": [
+        "@",
+        "--to",
+        "unix:/tmp/k",
+        "launch",
+        "--type=os-window",
+        "--cwd",
+        "/w",
+        "--env",
+        "IDE_AGENT_TABS_LAUNCHER=/p/l",
+        "--env",
+        "IDE_AGENT_TABS_SPEC=/h/s",
+        "--tab-title",
+        "C",
+        "--",
+        "x"
+      ]
+    },
+    {
+      "args": [
+        "unix:/tmp/k",
+        "/w",
+        "C",
+        "/p/l",
+        "/h/s",
+        [
+          "x"
+        ],
+        {
+          "windowId": "a1"
+        },
+        null
+      ],
+      "error": "not a kitty window id: a1"
+    }
+  ],
+  "kittySpawnArgs": [
+    {
+      "args": [
+        "/w",
+        [
+          "/bin/bash",
+          "-l"
+        ]
+      ],
+      "result": [
+        "--directory",
+        "/w",
+        "/bin/bash",
+        "-l"
+      ]
+    }
+  ],
+  "kittyInputCalls": [
+    {
+      "args": [
+        "unix:/tmp/k",
+        "3",
+        "wake"
+      ],
+      "result": [
+        {
+          "args": [
+            "@",
+            "--to",
+            "unix:/tmp/k",
+            "send-text",
+            "--match",
+            "id:3",
+            "--stdin"
+          ],
+          "input": "wake"
+        },
+        {
+          "args": [
+            "@",
+            "--to",
+            "unix:/tmp/k",
+            "send-text",
+            "--match",
+            "id:3",
+            "--stdin"
+          ],
+          "input": "\r"
+        }
+      ]
+    },
+    {
+      "args": [
+        "unix:/tmp/k",
+        "3",
+        "a\rb"
+      ],
+      "error": "input must be one line of at most 500 characters with no control characters"
+    }
+  ],
+  "parseKittyWindowId": [
+    {
+      "args": [
+        " 17\n"
+      ],
+      "result": "17"
+    },
+    {
+      "args": [
+        "x"
+      ],
+      "error": "unexpected answer from kitten @ launch: x"
+    }
+  ],
+  "parseKittyOsWindows": [
+    {
+      "args": [
+        "[{\"id\": 1, \"tabs\": [{\"windows\": [{\"id\": 3}, {\"id\": 4}]}, {\"windows\": [{\"id\": \"x\"}]}]}, {\"tabs\": [{\"windows\": [{\"id\": 9}]}]}, {\"id\": 2.5, \"tabs\": []}]"
+      ],
+      "result": [
+        [
+          "1",
+          [
+            "3",
+            "4"
+          ]
+        ],
+        [
+          "unknown-1",
+          [
+            "9"
+          ]
+        ],
+        [
+          "2.5",
+          []
+        ]
+      ]
+    },
+    {
+      "args": [
+        "{}"
+      ],
+      "error": "unexpected answer from kitten @ ls"
+    }
+  ],
+  "planKittyPlace": [
+    {
+      "args": [
+        null,
+        "unix:/a",
+        null,
+        null,
+        null
+      ],
+      "result": {
+        "address": "unix:/a"
+      }
+    },
+    {
+      "args": [
+        {
+          "window": "last",
+          "near": {
+            "id": "near",
+            "terminal": "kitty",
+            "agent": "claude",
+            "path": "/w",
+            "createdAt": 1,
+            "socket": "unix:/b",
+            "terminalId": "5"
+          }
+        },
+        "unix:/a",
+        [
+          "5"
+        ],
+        null,
+        null
+      ],
+      "result": {
+        "address": "unix:/b",
+        "place": {
+          "windowId": "5"
+        }
+      }
+    },
+    {
+      "args": [
+        {
+          "window": "last",
+          "near": {
+            "id": "near",
+            "terminal": "kitty",
+            "agent": "claude",
+            "path": "/w",
+            "createdAt": 1,
+            "socket": "unix:/b",
+            "terminalId": "5"
+          }
+        },
+        "unix:/a",
+        [
+          "6"
+        ],
+        null,
+        null
+      ],
+      "result": {
+        "address": "unix:/a"
+      }
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated"
+        },
+        "unix:/a",
+        null,
+        {
+          "id": "2",
+          "socket": "unix:/c"
+        },
+        [
+          [
+            "2",
+            [
+              "8",
+              "9"
+            ]
+          ]
+        ]
+      ],
+      "result": {
+        "address": "unix:/c",
+        "place": {
+          "windowId": "8"
+        }
+      }
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated"
+        },
+        "unix:/a",
+        null,
+        {
+          "id": "2",
+          "socket": "unix:/c"
+        },
+        [
+          [
+            "3",
+            [
+              "8"
+            ]
+          ]
+        ]
+      ],
+      "result": {
+        "address": "unix:/a",
+        "place": {
+          "osWindow": true
+        }
+      }
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated"
+        },
+        "unix:/a",
+        null,
+        {
+          "id": "2"
+        },
+        null
+      ],
+      "result": {
+        "address": "unix:/a",
+        "place": {
+          "osWindow": true
+        }
+      }
+    }
+  ],
+  "weztermCliArgs": [
+    {
+      "args": [
+        [
+          "list",
+          "--format",
+          "json"
+        ]
+      ],
+      "result": [
+        "cli",
+        "--no-auto-start",
+        "list",
+        "--format",
+        "json"
+      ]
+    }
+  ],
+  "weztermSpawnArgs": [
+    {
+      "args": [
+        "C:\\w",
+        [
+          "pwsh.exe",
+          "-NoLogo"
+        ],
+        null
+      ],
+      "result": [
+        "spawn",
+        "--cwd",
+        "C:\\w",
+        "--",
+        "pwsh.exe",
+        "-NoLogo"
+      ]
+    },
+    {
+      "args": [
+        "/w",
+        [
+          "x"
+        ],
+        {
+          "paneId": "3"
+        }
+      ],
+      "result": [
+        "spawn",
+        "--pane-id",
+        "3",
+        "--cwd",
+        "/w",
+        "--",
+        "x"
+      ]
+    },
+    {
+      "args": [
+        "/w",
+        [
+          "x"
+        ],
+        {
+          "windowId": "4"
+        }
+      ],
+      "result": [
+        "spawn",
+        "--window-id",
+        "4",
+        "--cwd",
+        "/w",
+        "--",
+        "x"
+      ]
+    },
+    {
+      "args": [
+        "/w",
+        [
+          "x"
+        ],
+        {
+          "newWindow": true
+        }
+      ],
+      "result": [
+        "spawn",
+        "--new-window",
+        "--cwd",
+        "/w",
+        "--",
+        "x"
+      ]
+    },
+    {
+      "args": [
+        "/w",
+        [
+          "x"
+        ],
+        {
+          "paneId": "z"
+        }
+      ],
+      "error": "not a WezTerm id: z"
+    }
+  ],
+  "weztermStartArgs": [
+    {
+      "args": [
+        "/w",
+        [
+          "x",
+          "y"
+        ]
+      ],
+      "result": [
+        "start",
+        "--cwd",
+        "/w",
+        "--",
+        "x",
+        "y"
+      ]
+    }
+  ],
+  "weztermInputArgs": [
+    {
+      "args": [
+        "7",
+        "wake"
+      ],
+      "result": [
+        [
+          "send-text",
+          "--pane-id",
+          "7",
+          "--no-paste",
+          "--",
+          "wake"
+        ],
+        [
+          "send-text",
+          "--pane-id",
+          "7",
+          "--no-paste",
+          "--",
+          "\r"
+        ]
+      ]
+    }
+  ],
+  "parsePaneId": [
+    {
+      "args": [
+        "12\n"
+      ],
+      "result": "12"
+    },
+    {
+      "args": [
+        "nope"
+      ],
+      "error": "unexpected answer from wezterm cli spawn: nope"
+    }
+  ],
+  "parseWeztermPaneWindows": [
+    {
+      "args": [
+        "[{\"pane_id\": 1, \"window_id\": 0}, {\"pane_id\": 2}, {\"pane_id\": \"3\"}, null]"
+      ],
+      "result": [
+        [
+          "1",
+          "0"
+        ],
+        [
+          "2",
+          ""
+        ]
+      ]
+    },
+    {
+      "args": [
+        "{}"
+      ],
+      "error": "unexpected answer from wezterm cli list"
+    }
+  ],
+  "planWeztermTargets": [
+    {
+      "args": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "result": [
+        {
+          "remember": false
+        }
+      ]
+    },
+    {
+      "args": [
+        {
+          "window": "last",
+          "near": {
+            "id": "near",
+            "terminal": "kitty",
+            "agent": "claude",
+            "path": "/w",
+            "createdAt": 1,
+            "socket": "/s",
+            "terminalId": "5"
+          }
+        },
+        [
+          [
+            "5",
+            "1"
+          ]
+        ],
+        null,
+        null
+      ],
+      "result": [
+        {
+          "socket": "/s",
+          "place": {
+            "paneId": "5"
+          },
+          "remember": false
+        },
+        {
+          "remember": false
+        }
+      ]
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated",
+          "near": {
+            "id": "near",
+            "terminal": "kitty",
+            "agent": "claude",
+            "path": "/w",
+            "createdAt": 1,
+            "socket": "/s",
+            "terminalId": "5"
+          }
+        },
+        [
+          [
+            "5",
+            "1"
+          ]
+        ],
+        {
+          "id": "1",
+          "socket": "/r"
+        },
+        [
+          [
+            "9",
+            "1"
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "socket": "/s",
+          "place": {
+            "paneId": "5"
+          },
+          "remember": false
+        },
+        {
+          "socket": "/r",
+          "place": {
+            "windowId": "1"
+          },
+          "remember": false
+        },
+        {
+          "place": {
+            "newWindow": true
+          },
+          "remember": true
+        }
+      ]
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated"
+        },
+        null,
+        {
+          "id": "1",
+          "socket": "/r"
+        },
+        [
+          [
+            "9",
+            "2"
+          ]
+        ]
+      ],
+      "result": [
+        {
+          "place": {
+            "newWindow": true
+          },
+          "remember": true
+        }
+      ]
+    }
+  ],
+  "tmuxTitle": [
+    {
+      "args": [
+        "a#b;c"
+      ],
+      "result": "a b c"
+    },
+    {
+      "args": [
+        "Claude Code"
+      ],
+      "result": "Claude Code"
+    }
+  ],
+  "tmuxOpenArgs": [
+    {
+      "args": [
+        {
+          "session": "$1",
+          "detached": false
+        },
+        "Claude",
+        "/p/l.sh",
+        "/h/t.spec",
+        [
+          "/bin/bash",
+          "-l",
+          "-i",
+          "-c",
+          ". \"$IDE_AGENT_TABS_LAUNCHER\"; exec /bin/bash -l -i"
+        ],
+        null
+      ],
+      "result": [
+        "new-window",
+        "-P",
+        "-F",
+        "#{window_id} #{session_id} #{pid} #{socket_path}",
+        "-t",
+        "$1:",
+        "-n",
+        "Claude",
+        "--",
+        "/usr/bin/env",
+        "IDE_AGENT_TABS_LAUNCHER=/p/l.sh",
+        "IDE_AGENT_TABS_SPEC=/h/t.spec",
+        "/bin/bash",
+        "-l",
+        "-i",
+        "-c",
+        ". \"$IDE_AGENT_TABS_LAUNCHER\"; exec /bin/bash -l -i"
+      ]
+    },
+    {
+      "args": [
+        {
+          "newSession": "agents"
+        },
+        "Claude",
+        "/p/l.sh",
+        "/h/t.spec",
+        [
+          "x"
+        ],
+        false
+      ],
+      "result": [
+        "new-session",
+        "-d",
+        "-s",
+        "agents",
+        "-P",
+        "-F",
+        "#{window_id} #{session_id} #{pid} #{socket_path}",
+        "-n",
+        "Claude",
+        "--",
+        "/usr/bin/env",
+        "IDE_AGENT_TABS_LAUNCHER=/p/l.sh",
+        "IDE_AGENT_TABS_SPEC=/h/t.spec",
+        "x"
+      ]
+    },
+    {
+      "args": [
+        {
+          "after": "@3",
+          "socket": "/tmp/tmux-1/default"
+        },
+        "C#;",
+        "/p/l.sh",
+        "/h/t.spec",
+        [
+          "x"
+        ],
+        false
+      ],
+      "result": [
+        "-S",
+        "/tmp/tmux-1/default",
+        "new-window",
+        "-d",
+        "-a",
+        "-t",
+        "@3",
+        "-P",
+        "-F",
+        "#{window_id} #{session_id} #{pid} #{socket_path}",
+        "-n",
+        "C",
+        "--",
+        "/usr/bin/env",
+        "IDE_AGENT_TABS_LAUNCHER=/p/l.sh",
+        "IDE_AGENT_TABS_SPEC=/h/t.spec",
+        "x"
+      ]
+    },
+    {
+      "args": [
+        {
+          "session": "$1",
+          "detached": true
+        },
+        "C",
+        "/p/l;x",
+        "/h/t.spec",
+        [
+          "x"
+        ],
+        null
+      ],
+      "error": "tmux can't start a path that holds ';': \"/p/l;x\""
+    }
+  ],
+  "tmuxInputArgs": [
+    {
+      "args": [
+        "/s",
+        "@1",
+        "wake"
+      ],
+      "result": [
+        [
+          "-S",
+          "/s",
+          "send-keys",
+          "-t",
+          "@1",
+          "-l",
+          "--",
+          "wake"
+        ],
+        [
+          "-S",
+          "/s",
+          "send-keys",
+          "-t",
+          "@1",
+          "Enter"
+        ]
+      ]
+    },
+    {
+      "args": [
+        "/s",
+        "@1",
+        "bad;"
+      ],
+      "error": "tmux input can't end in ';'"
+    }
+  ],
+  "parseTmuxSessions": [
+    {
+      "args": [
+        "1 1700 $1 main\n0 0 $2 agents\n0 x $3 two words\nbad line\n0 0 1 nodollar"
+      ],
+      "result": [
+        {
+          "attached": 1,
+          "lastAttached": 1700,
+          "id": "$1",
+          "name": "main"
+        },
+        {
+          "attached": 0,
+          "lastAttached": 0,
+          "id": "$2",
+          "name": "agents"
+        },
+        {
+          "attached": 0,
+          "lastAttached": 0,
+          "id": "$3",
+          "name": "two words"
+        }
+      ]
+    }
+  ],
+  "planTmuxTarget": [
+    {
+      "args": [
+        "1 1700 $1 main\n1 1800 $4 other\n0 0 $2 agents"
+      ],
+      "result": {
+        "session": "$4",
+        "detached": false
+      }
+    },
+    {
+      "args": [
+        "0 0 $2 agents"
+      ],
+      "result": {
+        "session": "$2",
+        "detached": true
+      }
+    },
+    {
+      "args": [
+        ""
+      ],
+      "result": {
+        "newSession": "agents"
+      }
+    }
+  ],
+  "planDedicatedTmuxTarget": [
+    {
+      "args": [
+        "1 1 $5 agent-tabs"
+      ],
+      "result": {
+        "session": "$5",
+        "detached": false
+      }
+    },
+    {
+      "args": [
+        "0 1 $5 agent-tabs"
+      ],
+      "result": {
+        "session": "$5",
+        "detached": true
+      }
+    },
+    {
+      "args": [
+        ""
+      ],
+      "result": {
+        "newSession": "agent-tabs"
+      }
+    }
+  ],
+  "parseTmuxWindow": [
+    {
+      "args": [
+        "@4 $1 999 /tmp/tmux 1/default\n"
+      ],
+      "result": {
+        "windowId": "@4",
+        "sessionId": "$1",
+        "serverPid": 999,
+        "socket": "/tmp/tmux 1/default"
+      }
+    },
+    {
+      "args": [
+        "@4 $1 x /s"
+      ],
+      "error": "unexpected answer from tmux: @4 $1 x /s"
+    },
+    {
+      "args": [
+        "bad"
+      ],
+      "error": "unexpected answer from tmux: bad"
+    }
+  ],
+  "parseTmuxWindowList": [
+    {
+      "args": [
+        "42 @1\n42 @2\nnoise\n"
+      ],
+      "result": {
+        "serverPid": 42,
+        "windows": [
+          "@1",
+          "@2"
+        ]
+      }
+    },
+    {
+      "args": [
+        ""
+      ],
+      "result": {
+        "serverPid": null,
+        "windows": []
+      }
+    }
+  ],
+  "iterm2Command": [
+    {
+      "args": [
+        [
+          "/bin/bash",
+          "-l",
+          "-i",
+          "-c",
+          "IDE_AGENT_TABS_SPEC=$2; export IDE_AGENT_TABS_SPEC; . \"$1\"; exec /bin/bash -l -i",
+          "agent-tabs",
+          "/p/agent-launch.sh",
+          "/h/t.spec"
+        ]
+      ],
+      "result": "'/bin/bash' '-l' '-i' '-c' 'IDE_AGENT_TABS_SPEC=$2; export IDE_AGENT_TABS_SPEC; . \"$1\"; exec /bin/bash -l -i' 'agent-tabs' '/p/agent-launch.sh' '/h/t.spec'"
+    },
+    {
+      "args": [
+        [
+          "it's"
+        ]
+      ],
+      "error": "iTerm2 can't run a command word that holds ', \\ or a control character: \"it's\""
+    },
+    {
+      "args": [
+        [
+          "back\\slash"
+        ]
+      ],
+      "error": "iTerm2 can't run a command word that holds ', \\ or a control character: \"back\\\\slash\""
+    }
+  ],
+  "iterm2Placement": [
+    {
+      "args": [
+        null,
+        null
+      ],
+      "result": []
+    },
+    {
+      "args": [
+        {
+          "window": "last",
+          "focus": false
+        },
+        null
+      ],
+      "result": [
+        "last",
+        "",
+        "background"
+      ]
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated"
+        },
+        {
+          "id": "9"
+        }
+      ],
+      "result": [
+        "dedicated",
+        "9"
+      ]
+    },
+    {
+      "args": [
+        {
+          "window": "dedicated",
+          "focus": false
+        },
+        null
+      ],
+      "result": [
+        "dedicated",
+        "",
+        "background"
+      ]
+    },
+    {
+      "args": [
+        {
+          "window": "last",
+          "near": {
+            "id": "near",
+            "terminal": "iterm2",
+            "agent": "claude",
+            "path": "/w",
+            "createdAt": 1,
+            "terminalId": "s1"
+          }
+        },
+        null
+      ],
+      "result": [
+        "session",
+        "s1"
+      ]
+    }
+  ],
+  "parseOpenAnswer": [
+    {
+      "args": [
+        "w0t0p0:ABC\n12\n"
+      ],
+      "result": {
+        "sessionId": "w0t0p0:ABC",
+        "windowId": "12"
+      }
+    },
+    {
+      "args": [
+        "w0t0p0:ABC\nnope"
+      ],
+      "result": {
+        "sessionId": "w0t0p0:ABC"
+      }
+    },
+    {
+      "args": [
+        "bad id!"
+      ],
+      "error": "unexpected answer from iTerm2: bad id!"
+    }
+  ],
+  "classifyOsascriptError": [
+    {
+      "args": [
+        "execution error: Not authorized to send Apple events to iTerm. (-1743)"
+      ],
+      "result": "denied"
+    },
+    {
+      "args": [
+        "Can’t find application"
+      ],
+      "result": "not-installed"
+    },
+    {
+      "args": [
+        "(-1712)"
+      ],
+      "result": "timeout"
+    },
+    {
+      "args": [
+        "boom"
+      ],
+      "result": "other"
+    }
+  ],
+  "osascriptErrorMessage": [
+    {
+      "args": [
+        "denied",
+        "x"
+      ],
+      "result": "macOS denied permission to control iTerm2. Allow the app that runs this agent to control iTerm in System Settings > Privacy & Security > Automation, then start a new session. Until then, open_tab skips iTerm2."
+    },
+    {
+      "args": [
+        "not-installed",
+        "y"
+      ],
+      "result": "iTerm2 is not installed, or macOS can't find it (y). Until the server restarts, open_tab skips iTerm2."
+    },
+    {
+      "args": [
+        "timeout",
+        "z"
+      ],
+      "result": "iTerm2 did not answer in time; if macOS shows a prompt to allow control of iTerm, answer it and try again (z)"
+    },
+    {
+      "args": [
+        "other",
+        "w"
+      ],
+      "result": "osascript failed: w"
+    }
+  ],
+  "iterm2Scripts": [
+    {
+      "args": [],
+      "result": {
+        "OPEN_SCRIPT": "on run argv\n\tset agentCommand to item 1 of argv\n\tset agentTitle to item 2 of argv\n\tset placement to \"last\"\n\tset placeRef to \"\"\n\tset keepFocus to false\n\tif (count of argv) > 3 then\n\t\tset placement to item 3 of argv\n\t\tset placeRef to item 4 of argv\n\tend if\n\tif (count of argv) > 4 then set keepFocus to (item 5 of argv) is \"background\"\n\ttell application id \"com.googlecode.iterm2\"\n\t\tset w to missing value\n\t\tif placement is \"session\" then\n\t\t\trepeat with cw in windows\n\t\t\t\trepeat with ct in tabs of cw\n\t\t\t\t\trepeat with cs in sessions of ct\n\t\t\t\t\t\tif (unique ID of cs) is placeRef then set w to (contents of cw)\n\t\t\t\t\tend repeat\n\t\t\t\tend repeat\n\t\t\tend repeat\n\t\telse if placement is \"dedicated\" then\n\t\t\trepeat with cw in windows\n\t\t\t\tif ((id of cw) as text) is placeRef then set w to (contents of cw)\n\t\t\tend repeat\n\t\tend if\n\t\tif w is missing value and placement is not \"dedicated\" and (count of windows) > 0 then set w to current window\n\t\tif w is missing value then\n\t\t\tset w to (create window with default profile command agentCommand)\n\t\t\tset s to current session of current tab of w\n\t\telse\n\t\t\tset previousTab to current tab of w\n\t\t\ttell w to set t to (create tab with default profile command agentCommand)\n\t\t\tset s to current session of t\n\t\t\tif keepFocus then tell previousTab to select\n\t\tend if\n\t\tset name of s to agentTitle\n\t\treturn (unique ID of s) & linefeed & ((id of w) as text)\n\tend tell\nend run\n",
+        "LIST_SCRIPT": "on run argv\n\tif application id \"com.googlecode.iterm2\" is not running then return \"\"\n\tset out to \"\"\n\ttell application id \"com.googlecode.iterm2\"\n\t\trepeat with w in windows\n\t\t\trepeat with t in tabs of w\n\t\t\t\trepeat with s in sessions of t\n\t\t\t\t\tset out to out & (unique ID of s) & linefeed\n\t\t\t\tend repeat\n\t\t\tend repeat\n\t\tend repeat\n\tend tell\n\treturn out\nend run\n",
+        "CLOSE_SCRIPT": "on run argv\n\tset sessionId to item 1 of argv\n\tif application id \"com.googlecode.iterm2\" is not running then return \"missing\"\n\ttell application id \"com.googlecode.iterm2\"\n\t\trepeat with w in windows\n\t\t\trepeat with t in tabs of w\n\t\t\t\trepeat with s in sessions of t\n\t\t\t\t\tif (unique ID of s) is sessionId then\n\t\t\t\t\t\tclose (contents of s)\n\t\t\t\t\t\treturn \"closed\"\n\t\t\t\t\tend if\n\t\t\t\tend repeat\n\t\t\tend repeat\n\t\tend repeat\n\tend tell\n\treturn \"missing\"\nend run\n",
+        "INPUT_SCRIPT": "on run argv\n\tset sessionId to item 1 of argv\n\tif application id \"com.googlecode.iterm2\" is not running then return \"missing\"\n\ttell application id \"com.googlecode.iterm2\"\n\t\trepeat with w in windows\n\t\t\trepeat with t in tabs of w\n\t\t\t\trepeat with s in sessions of t\n\t\t\t\t\tif (unique ID of s) is sessionId then\n\t\t\t\t\t\tset wakeLine to item 2 of argv\n\t\t\t\t\t\ttell (contents of s)\n\t\t\t\t\t\t\twrite text wakeLine newline false\n\t\t\t\t\t\t\tdelay 0.2\n\t\t\t\t\t\t\twrite text \"\"\n\t\t\t\t\t\tend tell\n\t\t\t\t\t\treturn \"sent\"\n\t\t\t\t\tend if\n\t\t\t\tend repeat\n\t\t\tend repeat\n\t\tend repeat\n\tend tell\n\treturn \"missing\"\nend run\n"
+      }
+    }
+  ],
+  "iterm2Opens": [
+    {
+      "args": [],
+      "result": [
+        {
+          "options": null,
+          "calls": [
+            {
+              "script": "OPEN",
+              "args": [
+                "'/bin/zsh' '-l' '-i' '-c' 'IDE_AGENT_TABS_SPEC=$2; export IDE_AGENT_TABS_SPEC; . \"$1\"; exec /bin/zsh -l -i' 'agent-tabs' '/p/launch/agent-launch.sh' '/h/launch/tab-1.spec'",
+                "Claude Code"
+              ]
+            }
+          ],
+          "remembered": [],
+          "tab": {
+            "id": "tab-1",
+            "terminal": "iterm2",
+            "agent": "claude",
+            "path": "/work",
+            "createdAt": 0,
+            "terminalId": "w0t1p0:XYZ",
+            "window": "77"
+          }
+        },
+        {
+          "options": {
+            "window": "last",
+            "focus": false
+          },
+          "calls": [
+            {
+              "script": "OPEN",
+              "args": [
+                "'/bin/zsh' '-l' '-i' '-c' 'IDE_AGENT_TABS_SPEC=$2; export IDE_AGENT_TABS_SPEC; . \"$1\"; exec /bin/zsh -l -i' 'agent-tabs' '/p/launch/agent-launch.sh' '/h/launch/tab-1.spec'",
+                "Claude Code",
+                "last",
+                "",
+                "background"
+              ]
+            }
+          ],
+          "remembered": [],
+          "tab": {
+            "id": "tab-1",
+            "terminal": "iterm2",
+            "agent": "claude",
+            "path": "/work",
+            "createdAt": 0,
+            "terminalId": "w0t1p0:XYZ",
+            "window": "77"
+          }
+        },
+        {
+          "options": {
+            "window": "dedicated"
+          },
+          "calls": [
+            {
+              "script": "OPEN",
+              "args": [
+                "'/bin/zsh' '-l' '-i' '-c' 'IDE_AGENT_TABS_SPEC=$2; export IDE_AGENT_TABS_SPEC; . \"$1\"; exec /bin/zsh -l -i' 'agent-tabs' '/p/launch/agent-launch.sh' '/h/launch/tab-1.spec'",
+                "Claude Code",
+                "dedicated",
+                "5"
+              ]
+            }
+          ],
+          "remembered": [
+            {
+              "id": "77"
+            }
+          ],
+          "tab": {
+            "id": "tab-1",
+            "terminal": "iterm2",
+            "agent": "claude",
+            "path": "/work",
+            "createdAt": 0,
+            "terminalId": "w0t1p0:XYZ",
+            "window": "77"
+          }
+        },
+        {
+          "options": {
+            "window": "dedicated",
+            "focus": false
+          },
+          "calls": [
+            {
+              "script": "OPEN",
+              "args": [
+                "'/bin/zsh' '-l' '-i' '-c' 'IDE_AGENT_TABS_SPEC=$2; export IDE_AGENT_TABS_SPEC; . \"$1\"; exec /bin/zsh -l -i' 'agent-tabs' '/p/launch/agent-launch.sh' '/h/launch/tab-1.spec'",
+                "Claude Code",
+                "dedicated",
+                "5",
+                "background"
+              ]
+            }
+          ],
+          "remembered": [
+            {
+              "id": "77"
+            }
+          ],
+          "tab": {
+            "id": "tab-1",
+            "terminal": "iterm2",
+            "agent": "claude",
+            "path": "/work",
+            "createdAt": 0,
+            "terminalId": "w0t1p0:XYZ",
+            "window": "77"
+          }
+        },
+        {
+          "options": {
+            "window": "last",
+            "near": {
+              "id": "near",
+              "terminal": "iterm2",
+              "agent": "claude",
+              "path": "/w",
+              "createdAt": 1,
+              "terminalId": "w0t0p0:ABC"
+            }
+          },
+          "calls": [
+            {
+              "script": "OPEN",
+              "args": [
+                "'/bin/zsh' '-l' '-i' '-c' 'IDE_AGENT_TABS_SPEC=$2; export IDE_AGENT_TABS_SPEC; . \"$1\"; exec /bin/zsh -l -i' 'agent-tabs' '/p/launch/agent-launch.sh' '/h/launch/tab-1.spec'",
+                "Claude Code",
+                "session",
+                "w0t0p0:ABC"
+              ]
+            }
+          ],
+          "remembered": [],
+          "tab": {
+            "id": "tab-1",
+            "terminal": "iterm2",
+            "agent": "claude",
+            "path": "/work",
+            "createdAt": 0,
+            "terminalId": "w0t1p0:XYZ",
+            "window": "77"
+          }
+        }
+      ]
+    }
+  ],
+  "candidatePaths": [
+    {
+      "args": [
+        0
+      ],
+      "result": [
+        {
+          "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+          "source": "msi",
+          "key": "c:\\program files\\powershell\\7\\pwsh.exe",
+          "version": "7"
+        },
+        {
+          "path": "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe",
+          "source": "store",
+          "key": "c:\\program files\\windowsapps\\microsoft.powershell_7.6.6.0_x64__8wekyb3d8bbwe\\pwsh.exe",
+          "version": "7.6.6"
+        },
+        {
+          "path": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "source": "windows",
+          "key": "c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
+          "version": "5.1"
+        },
+        {
+          "path": "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe",
+          "source": "preview",
+          "key": "c:\\program files\\powershell\\7-preview\\pwsh.exe"
+        }
+      ]
+    },
+    {
+      "args": [
+        1
+      ],
+      "result": [
+        {
+          "path": "D:\\tools\\pwsh.exe",
+          "source": "path",
+          "key": "d:\\tools\\pwsh.exe"
+        },
+        {
+          "path": "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe",
+          "source": "store",
+          "key": "c:\\users\\u\\appdata\\local\\microsoft\\windowsapps\\pwsh.exe",
+          "version": "7.5.4"
+        },
+        {
+          "path": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "source": "windows",
+          "key": "c:\\windows\\system32\\windowspowershell\\v1.0\\powershell.exe",
+          "version": "5.1"
+        }
+      ]
+    },
+    {
+      "args": [
+        2
+      ],
+      "result": []
+    }
+  ],
+  "listPowerShells": [
+    {
+      "args": [
+        0
+      ],
+      "result": [
+        {
+          "path": "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe",
+          "label": "PowerShell 7.6.6 (Store)",
+          "version": "7.6.6",
+          "source": "store"
+        },
+        {
+          "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+          "label": "PowerShell 7 (MSI)",
+          "version": "7",
+          "source": "msi"
+        },
+        {
+          "path": "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe",
+          "label": "PowerShell (preview)",
+          "version": "",
+          "source": "preview"
+        },
+        {
+          "path": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "label": "Windows PowerShell 5.1",
+          "version": "5.1",
+          "source": "windows"
+        }
+      ]
+    },
+    {
+      "args": [
+        1
+      ],
+      "result": [
+        {
+          "path": "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe",
+          "label": "PowerShell 7.5.4 (Store)",
+          "version": "7.5.4",
+          "source": "store"
+        },
+        {
+          "path": "D:\\tools\\pwsh.exe",
+          "label": "PowerShell (PATH)",
+          "version": "",
+          "source": "path"
+        },
+        {
+          "path": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "label": "Windows PowerShell 5.1",
+          "version": "5.1",
+          "source": "windows"
+        }
+      ]
+    },
+    {
+      "args": [
+        2
+      ],
+      "result": []
+    }
+  ],
+  "detectPowerShells": [
+    {
+      "args": [
+        0,
+        null
+      ],
+      "result": [
+        {
+          "path": "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe",
+          "label": "PowerShell 7.6.6 (Store)",
+          "version": "7.6.6",
+          "source": "store"
+        },
+        {
+          "path": "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe",
+          "label": "PowerShell 7.6.0-preview.4 (preview)",
+          "version": "7.6.0-preview.4",
+          "source": "preview"
+        },
+        {
+          "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+          "label": "PowerShell 7.5.1 (MSI)",
+          "version": "7.5.1",
+          "source": "msi"
+        },
+        {
+          "path": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "label": "Windows PowerShell 5.1",
+          "version": "5.1",
+          "source": "windows"
+        }
+      ]
+    },
+    {
+      "args": [
+        1,
+        null
+      ],
+      "result": [
+        {
+          "path": "D:\\tools\\pwsh.exe",
+          "label": "PowerShell garbage (PATH)",
+          "version": "garbage",
+          "source": "path"
+        },
+        {
+          "path": "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe",
+          "label": "PowerShell 7.5.4 (Store)",
+          "version": "7.5.4",
+          "source": "store"
+        },
+        {
+          "path": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "label": "Windows PowerShell 5.1",
+          "version": "5.1",
+          "source": "windows"
+        }
+      ]
+    },
+    {
+      "args": [
+        1,
+        {
+          "detectedAt": "2026-01-01T00:00:00.000Z",
+          "shells": [
+            {
+              "path": "D:\\tools\\pwsh.exe",
+              "label": "x",
+              "version": "7.1.0",
+              "source": "path"
+            }
+          ]
+        }
+      ],
+      "result": [
+        {
+          "path": "D:\\tools\\pwsh.exe",
+          "label": "PowerShell garbage (PATH)",
+          "version": "garbage",
+          "source": "path"
+        },
+        {
+          "path": "C:\\Users\\u\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe",
+          "label": "PowerShell 7.5.4 (Store)",
+          "version": "7.5.4",
+          "source": "store"
+        },
+        {
+          "path": "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "label": "Windows PowerShell 5.1",
+          "version": "5.1",
+          "source": "windows"
+        }
+      ]
+    }
+  ],
+  "pickPowerShell": [
+    {
+      "args": [
+        [
+          {
+            "path": "a\\pwsh.exe",
+            "label": "",
+            "version": "7.4.0",
+            "source": "msi"
+          },
+          {
+            "path": "b\\pwsh.exe",
+            "label": "",
+            "version": "7.5.0-preview.1",
+            "source": "preview"
+          }
+        ],
+        null,
+        [
+          "a\\pwsh.exe",
+          "b\\pwsh.exe"
+        ]
+      ],
+      "result": "a\\pwsh.exe"
+    },
+    {
+      "args": [
+        [
+          {
+            "path": "b\\pwsh.exe",
+            "label": "",
+            "version": "7.5.0-preview.1",
+            "source": "preview"
+          }
+        ],
+        null,
+        [
+          "b\\pwsh.exe"
+        ]
+      ],
+      "result": "b\\pwsh.exe"
+    },
+    {
+      "args": [
+        [
+          {
+            "path": "w\\powershell.exe",
+            "label": "",
+            "version": "5.1",
+            "source": "windows"
+          }
+        ],
+        null,
+        [
+          "w\\powershell.exe"
+        ]
+      ],
+      "result": "w\\powershell.exe"
+    },
+    {
+      "args": [
+        [],
+        "C:\\mine.exe",
+        [
+          "C:\\mine.exe"
+        ]
+      ],
+      "result": "C:\\mine.exe"
+    },
+    {
+      "args": [
+        [],
+        "C:\\mine.exe",
+        []
+      ],
+      "result": "powershell.exe"
+    },
+    {
+      "args": [
+        [
+          {
+            "path": "c\\pwsh.exe",
+            "label": "",
+            "version": "",
+            "source": "store"
+          },
+          {
+            "path": "d\\pwsh.exe",
+            "label": "",
+            "version": "6.2.0",
+            "source": "path"
+          }
+        ],
+        null,
+        [
+          "c\\pwsh.exe",
+          "d\\pwsh.exe"
+        ]
+      ],
+      "result": "c\\pwsh.exe"
+    }
+  ],
+  "comparePowerShellVersions": [
+    {
+      "args": [
+        "7.5.0",
+        "7.4.9"
+      ],
+      "result": 1
+    },
+    {
+      "args": [
+        "7.5.0",
+        "7.5.0-preview.1"
+      ],
+      "result": 1
+    },
+    {
+      "args": [
+        "7.5.0-preview.10",
+        "7.5.0-preview.9"
+      ],
+      "result": 1
+    },
+    {
+      "args": [
+        "7.5.0-rc.1",
+        "7.5.0-preview.9"
+      ],
+      "result": 1
+    },
+    {
+      "args": [
+        "7",
+        "7.0.0"
+      ],
+      "result": 0
+    },
+    {
+      "args": [
+        "x",
+        "1"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "",
+        "0"
+      ],
+      "result": 0
+    }
+  ],
+  "shellLabel": [
+    {
+      "args": [
+        "C:\\p\\pwsh.exe",
+        "7.5.0",
+        "msi"
+      ],
+      "result": "PowerShell 7.5.0 (MSI)"
+    },
+    {
+      "args": [
+        "C:\\p\\pwsh.exe",
+        "",
+        "store"
+      ],
+      "result": "PowerShell (Store)"
+    },
+    {
+      "args": [
+        "C:\\p\\powershell.exe",
+        "5.1",
+        "windows"
+      ],
+      "result": "Windows PowerShell 5.1"
+    },
+    {
+      "args": [
+        "C:\\p\\powershell.exe",
+        "",
+        "path"
+      ],
+      "result": "Windows PowerShell (PATH)"
+    },
+    {
+      "args": [
+        "C:\\p\\pwsh-preview.exe",
+        "7.6.0-preview.1",
+        "preview"
+      ],
+      "result": "PowerShell 7.6.0-preview.1 (preview)"
+    }
+  ],
+  "parseVersionOutput": [
+    {
+      "args": [
+        "7.5.1\r\n"
+      ],
+      "result": "7.5.1"
+    },
+    {
+      "args": [
+        "  7.6.0-preview.4  \nmore"
+      ],
+      "result": "7.6.0-preview.4"
+    },
+    {
+      "args": [
+        "nope"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        ""
+      ],
+      "result": null
+    }
+  ],
+  "ago": [
+    {
+      "args": [
+        0
+      ],
+      "result": "0s ago"
+    },
+    {
+      "args": [
+        499
+      ],
+      "result": "0s ago"
+    },
+    {
+      "args": [
+        500
+      ],
+      "result": "1s ago"
+    },
+    {
+      "args": [
+        59499
+      ],
+      "result": "59s ago"
+    },
+    {
+      "args": [
+        59500
+      ],
+      "result": "1m ago"
+    },
+    {
+      "args": [
+        89999
+      ],
+      "result": "2m ago"
+    },
+    {
+      "args": [
+        90000
+      ],
+      "result": "2m ago"
+    },
+    {
+      "args": [
+        3570000
+      ],
+      "result": "1h ago"
+    },
+    {
+      "args": [
+        5400000
+      ],
+      "result": "2h ago"
+    },
+    {
+      "args": [
+        172799999
+      ],
+      "result": "2d ago"
+    },
+    {
+      "args": [
+        172800000
+      ],
+      "result": "2d ago"
+    },
+    {
+      "args": [
+        -5
+      ],
+      "result": "0s ago"
+    }
+  ],
+  "sizeText": [
+    {
+      "args": [
+        null
+      ],
+      "result": "unknown size"
+    },
+    {
+      "args": [
+        0
+      ],
+      "result": "0 tokens"
+    },
+    {
+      "args": [
+        999
+      ],
+      "result": "999 tokens"
+    },
+    {
+      "args": [
+        1000
+      ],
+      "result": "1k tokens"
+    },
+    {
+      "args": [
+        1499
+      ],
+      "result": "1k tokens"
+    },
+    {
+      "args": [
+        1500
+      ],
+      "result": "2k tokens"
+    },
+    {
+      "args": [
+        999499
+      ],
+      "result": "999k tokens"
+    },
+    {
+      "args": [
+        999500
+      ],
+      "result": "1000k tokens"
+    },
+    {
+      "args": [
+        1000000
+      ],
+      "result": "1.0M tokens"
+    },
+    {
+      "args": [
+        2250000
+      ],
+      "result": "2.3M tokens"
+    },
+    {
+      "args": [
+        2350000
+      ],
+      "result": "2.4M tokens"
+    },
+    {
+      "args": [
+        12345678
+      ],
+      "result": "12.3M tokens"
+    },
+    {
+      "args": [
+        12.5
+      ],
+      "result": "12.5 tokens"
+    }
+  ],
+  "costCheck": [
+    {
+      "args": [
+        {
+          "cache": null,
+          "tokens": 1000,
+          "model": "opus"
+        },
+        60000,
+        null
+      ],
+      "result": {
+        "cheap": true,
+        "reasons": [],
+        "withinCache": true
+      }
+    },
+    {
+      "args": [
+        {
+          "cache": "1h",
+          "tokens": 60000,
+          "model": "opus"
+        },
+        1800000,
+        "sonnet"
+      ],
+      "result": {
+        "cheap": false,
+        "reasons": [
+          "model sonnet differs from the session's opus, so no cache applies",
+          "it holds over 50,000 tokens"
+        ],
+        "withinCache": true
+      }
+    },
+    {
+      "args": [
+        {
+          "cache": "5m",
+          "tokens": null,
+          "model": null
+        },
+        360000,
+        null
+      ],
+      "result": {
+        "cheap": false,
+        "reasons": [
+          "it ended past the 5-minute prompt cache window",
+          "its size is unknown and it ended over 5 minutes ago"
+        ],
+        "withinCache": false
+      }
+    },
+    {
+      "args": [
+        {
+          "cache": null,
+          "tokens": null,
+          "model": null
+        },
+        240000,
+        "x"
+      ],
+      "result": {
+        "cheap": false,
+        "reasons": [
+          "model x differs from the session's unknown model, so no cache applies"
+        ],
+        "withinCache": true
+      }
+    }
+  ],
+  "previewOf": [
+    {
+      "args": [
+        "\n\n  hello  \nworld"
+      ],
+      "result": "hello"
+    },
+    {
+      "args": [
+        "   "
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "result": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+    },
+    {
+      "args": [
+        "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+      ],
+      "result": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\ud83d…"
+    }
+  ],
+  "parseClosed": [
+    {
+      "args": [
+        "{\"id\": \"s-1\", \"agent\": \"claude\", \"folder\": \"/w\", \"endedAt\": \"2026-10-08T12:00:00.000Z\", \"tokens\": 1200, \"cache\": \"1h\", \"via\": \"ori\", \"name\": null, \"label\": \"Claude Code\", \"harness\": \"Claude Code via OpenRouter\", \"model\": \"opus\", \"product\": \"IntelliJ IDEA\", \"tab\": \"t-1\"}"
+      ],
+      "result": {
+        "id": "s-1",
+        "agent": "claude",
+        "label": "Claude Code",
+        "name": null,
+        "folder": "/w",
+        "product": "IntelliJ IDEA",
+        "host": null,
+        "model": "opus",
+        "effort": null,
+        "harness": "Claude Code via OpenRouter",
+        "via": "ori",
+        "startedAt": null,
+        "endedAt": "2026-10-08T12:00:00.000Z",
+        "tokens": 1200,
+        "cache": "1h",
+        "preview": null,
+        "tab": "t-1"
+      }
+    },
+    {
+      "args": [
+        "{\"id\": \"s-2\", \"agent\": \"pi\", \"folder\": \"/w\", \"endedAt\": \"2026-10-08T11:00:00Z\", \"tokens\": 1.5, \"cache\": \"2h\", \"via\": \"x\"}"
+      ],
+      "result": {
+        "id": "s-2",
+        "agent": "pi",
+        "label": "Pi",
+        "name": null,
+        "folder": "/w",
+        "product": null,
+        "host": null,
+        "model": null,
+        "effort": null,
+        "harness": "Pi",
+        "via": null,
+        "startedAt": null,
+        "endedAt": "2026-10-08T11:00:00Z",
+        "tokens": null,
+        "cache": null,
+        "preview": null,
+        "tab": "s-2"
+      }
+    },
+    {
+      "args": [
+        "{\"id\": \"-bad\", \"agent\": \"pi\", \"folder\": \"/w\", \"endedAt\": \"2026-10-08T11:00:00Z\"}"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "{\"id\": \"s-3\", \"agent\": \"pi\", \"folder\": \"/w\", \"endedAt\": \"never\"}"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "nope"
+      ],
+      "result": null
+    }
+  ],
+  "closedListing": [
+    {
+      "args": [
+        1791462600000
+      ],
+      "result": "  NAME       AGENT                       ENDED    SIZE  MODEL  WHERE          ID\n/w\n  claude-s1  Claude Code via OpenRouter  30m ago  1k    opus   IntelliJ IDEA  s-1\n  pi-s2      Pi                          2h ago   —     —      —              s-2"
+    }
+  ],
+  "closedListingEmpty": [
+    {
+      "args": [
+        1791462600000
+      ],
+      "result": "No closed session in the last 7 days."
+    }
+  ],
+  "parseDetection": [
+    {
+      "args": [
+        "{\"version\": 1, \"detectedAt\": \"2026-10-08T00:00:00.000Z\", \"platform\": \"win32\", \"terminals\": [], \"shells\": [{\"path\": \"p\", \"label\": \"l\", \"version\": \"v\", \"source\": \"msi\"}, {\"path\": \"p\", \"source\": \"nope\"}], \"ori\": {\"path\": \"o\", \"version\": \"1\", \"agents\": [\"claude\"]}, \"extra\": 1}"
+      ],
+      "result": {
+        "version": 1,
+        "detectedAt": "2026-10-08T00:00:00.000Z",
+        "platform": "win32",
+        "terminals": [],
+        "shells": [
+          {
+            "path": "p",
+            "label": "l",
+            "version": "v",
+            "source": "msi"
+          }
+        ],
+        "ori": {
+          "path": "o",
+          "version": "1",
+          "agents": [
+            "claude"
+          ]
+        },
+        "extra": 1
+      }
+    },
+    {
+      "args": [
+        "{\"version\": 1, \"detectedAt\": \"x\", \"terminals\": [], \"shells\": [], \"ori\": {\"path\": \"o\"}}"
+      ],
+      "result": {
+        "version": 1,
+        "detectedAt": "x",
+        "terminals": [],
+        "shells": [],
+        "ori": null
+      }
+    },
+    {
+      "args": [
+        "{\"version\": 2, \"detectedAt\": \"x\", \"terminals\": [], \"shells\": []}"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        "{\"detectedAt\": \"x\", \"terminals\": [], \"shells\": [], \"version\": 1}"
+      ],
+      "result": {
+        "detectedAt": "x",
+        "terminals": [],
+        "shells": [],
+        "version": 1,
+        "ori": null
+      }
+    },
+    {
+      "args": [
+        "nope"
+      ],
+      "result": null
+    },
+    {
+      "args": [
+        null
+      ],
+      "result": null
+    }
+  ],
+  "parseTabs": [
+    {
+      "args": [
+        "{\"tabs\": [{\"id\": \"a\", \"terminal\": \"tmux\", \"agent\": \"claude\", \"path\": \"/w\", \"createdAt\": 1, \"socket\": \"/s\"}, {\"id\": \"b\"}, 5]}"
+      ],
+      "result": [
+        {
+          "id": "a",
+          "terminal": "tmux",
+          "agent": "claude",
+          "path": "/w",
+          "createdAt": 1,
+          "socket": "/s"
+        }
+      ]
+    },
+    {
+      "args": [
+        "  "
+      ],
+      "result": []
+    },
+    {
+      "args": [
+        "{\"tabs\": {}}"
+      ],
+      "result": []
+    },
+    {
+      "args": [
+        "bad"
+      ],
+      "result": []
+    },
+    {
+      "args": [
+        null
+      ],
+      "result": []
+    }
+  ]
+}
