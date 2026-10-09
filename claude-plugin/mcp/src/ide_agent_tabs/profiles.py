@@ -20,6 +20,8 @@ PLUGIN_ENV_PREFIX = "IDE_AGENT_TABS_"
 STARTUP_ENV = "JEDITERM_SOURCE"
 TAB_ID_ENV = f"{PLUGIN_ENV_PREFIX}ID"
 AGENT_ENV = f"{PLUGIN_ENV_PREFIX}AGENT"
+TAB_HOOKS_ENV = f"{PLUGIN_ENV_PREFIX}HOOKS"
+CLAUDE_TAB_SETTINGS_FILE = "claude-tab-settings.json"
 ALLOW_RESUME_KEY = "allowResume"
 IDE_START_TIMEOUT_KEY = "ideStartTimeoutSec"
 DEFAULT_IDE_START_TIMEOUT_SEC = 180
@@ -109,7 +111,7 @@ def with_codex_python(args: Sequence[str], python: Sequence[str] | None) -> tupl
     return tuple(arg if a == CODEX_SERVER_ARG else a for a in args)
 
 
-def codex_python(home: str, windows: bool) -> tuple[str, ...]:
+def recorded_python(home: str, windows: bool) -> str | None:
     try:
         with open(os.path.join(home, "mcp", "python.json"), encoding="utf-8") as f:
             python = json.load(f).get("python")
@@ -117,8 +119,35 @@ def codex_python(home: str, windows: bool) -> tuple[str, ...]:
         python = None
     absolute = win32_is_absolute if windows else posix_is_absolute
     if isinstance(python, str) and absolute(python) and _CODEX_PYTHON_SAFE.match(python) and os.path.isfile(python):
+        return python
+    return None
+
+
+def codex_python(home: str, windows: bool) -> tuple[str, ...]:
+    python = recorded_python(home, windows)
+    if python is not None:
         return (python,)
     return ("py", "-3") if windows else ("python3",)
+
+
+# The settings path reaches cmd.exe when claude is a .cmd shim, so it may not hold a double quote or a cmd.exe metacharacter.
+_CMD_SAFE_PATH = re.compile(r'[^"%!^&|<>\x00-\x1f\x7f]+\Z')
+_CLAUDE_COMMAND = re.compile(r"(?:.*[\\/])?claude(?:\.(?:exe|cmd|bat|ps1))?\Z", re.IGNORECASE)
+
+
+def claude_tab_settings(home: str, windows: bool) -> str | None:
+    path = os.path.join(home, "mcp", CLAUDE_TAB_SETTINGS_FILE)
+    if recorded_python(home, windows) is None or not _CMD_SAFE_PATH.match(path) or not os.path.isfile(path):
+        return None
+    return path
+
+
+def with_claude_settings(command: str, args: Sequence[str], caller_args: Sequence[str], settings: str | None) -> tuple[str, ...]:
+    if settings is None or not _CLAUDE_COMMAND.match(command):
+        return tuple(args)
+    if any(a == "--settings" or a.startswith("--settings=") for a in (*args, *caller_args)):
+        return tuple(args)
+    return (*args, "--settings", settings)
 
 
 # goose run -s takes the first message from -t and stays interactive, but refuses to start without one.

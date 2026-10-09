@@ -207,7 +207,7 @@ def start_server(command: Sequence[str], home: str, env: Mapping[str, str] | Non
     cwd = os.path.expanduser("~")
     for flags in (detached_flags(), detached_flags() & ~CREATE_BREAKAWAY_FROM_JOB):
         try:
-            return subprocess.Popen(
+            child = subprocess.Popen(
                 list(command),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -216,13 +216,21 @@ def start_server(command: Sequence[str], home: str, env: Mapping[str, str] | Non
                 cwd=cwd,
                 creationflags=flags,
                 start_new_session=sys.platform != "win32",
-            ).pid
+            )
         except PermissionError:
             # A job object that forbids breakaway refuses CREATE_BREAKAWAY_FROM_JOB with access denied.
             if sys.platform != "win32":
                 return None
+            continue
         except OSError:
             return None
+        if sys.platform != "win32":
+            # On POSIX a server that exits while its starter still runs stays a zombie until the starter reaps it,
+            # and pid_alive counts a zombie as running.
+            import threading
+
+            threading.Thread(target=child.wait, daemon=True).start()
+        return child.pid
     return None
 
 

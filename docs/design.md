@@ -158,6 +158,11 @@ untested (see [Agent support](#agent-support)). `antigravity` is the Antigravity
 An `agents.json` profile named `codex` replaces the built-in `args` too, so its tabs lose messaging unless
 it copies them.
 
+A tab whose command is `claude` also gets `--settings ~/.ide-agent-tabs/mcp/claude-tab-settings.json` after
+the profile's `args`, so an `agents.json` override of `claude` keeps the tab's fast hooks (see
+[Claude Code's hooks](#claude-codes-hooks)). A profile or request that passes its own `--settings` doesn't
+get it; that tab runs the plugin's hooks instead.
+
 You add or override profiles in `~/.ide-agent-tabs/agents.json`:
 
 ```json
@@ -310,7 +315,8 @@ and a fixed launch script reads them:
 | `IDE_AGENT_TABS_ARGC`, `IDE_AGENT_TABS_ARG_<n>` | bash, zsh, fish: the argument count, and each argument. Cleared before the agent starts. |
 | `IDE_AGENT_TABS_PROMPT` | The first prompt. Cleared before the agent starts. |
 
-The arguments are the profile's `args`, then the `modelFlag` and model if the request names a model,
+The arguments are the profile's `args`, then `--settings <file>` for a Claude Code tab (see
+[Claude Code's hooks](#claude-codes-hooks)), then the `modelFlag` and model if the request names a model,
 then the caller's `args`, then the `promptFlag` if there is a prompt. The prompt comes last. A tab
 started through Ori has a different command line; see [Model and Ori](#model-and-ori).
 
@@ -902,6 +908,53 @@ interpreter recorded in `~/.ide-agent-tabs/mcp/hook-python`, else `py -3` on Win
 `python3` or `python` outside `WindowsApps`, with `-I -S`. A hook that found no recorded interpreter sets
 `IDE_AGENT_TABS_HOOK_PYTHON`, and the Python script writes its own path there, so later hooks skip
 `py.exe`. The hook's stdin passes through to Python.
+
+#### Tab hooks
+
+A Claude Code tab that Agent Tabs starts runs its agent hooks without a shell. The server, the VS Code
+extension and the JetBrains plugin add `--settings ~/.ide-agent-tabs/mcp/claude-tab-settings.json` to the
+command line of every profile whose command is `claude` (also `claude.exe`, `claude.cmd` or a path to one),
+including an `agents.json` override of the `claude` profile. Claude Code merges hooks from `--settings` with
+the plugin's hooks and runs both. The file holds:
+
+- `env`: `{"IDE_AGENT_TABS_HOOKS": "1"}`. Claude Code sets it for the session, so every hook sees it. The
+  first line of `agent-hook.ps1` exits when it is set, so the plugin's hook commands do nothing in such a
+  tab, and only one of the two runs the hook.
+- `hooks`: the same seven events, matchers and timeouts as `hooks/hooks.json`, each in exec form:
+  `"command": "<python>"`, `"args": ["-I", "-S", "<home>/mcp/py/launch/agent_hook.py", "claude", "<event>"]`.
+  `<python>` is the interpreter in `python.json`, and the script is the server copy's stub (see
+  [Server copy](#server-copy)). Hook paths in a settings file expand `${CLAUDE_PLUGIN_ROOT}` only for plugin
+  hooks and never expand `~` or `$HOME`, so the file holds absolute paths.
+
+The session start hook writes the file with `python.json` and rewrites it when its content differs (see
+[Session start hook](#session-start-hook)). A launcher adds the flag only when `python.json` names an
+existing absolute interpreter and the file exists. It leaves the flag out, and the tab runs the plugin's
+hooks, when the profile's `args` or the request's `args` already pass `--settings`, or when the file's path
+holds `"`, `%`, `!`, `^`, `&`, `|`, `<` or `>`, which a `claude.cmd` shim would hand to `cmd.exe`. A file path
+needs no quoting rules of its own: the path travels like any other argument, through the launch spec or the
+IDE's environment variables (see [How a tab starts the agent](#how-a-tab-starts-the-agent)).
+
+A terminal the server starts drops `IDE_AGENT_TABS_HOOKS` with the other session variables, and the IDEs
+clear inherited `IDE_AGENT_TABS_*` variables, so a tab opened from a tab doesn't inherit it without its own
+settings file. A headless `claude -p` that a tab starts inherits it and runs no agent hooks. The hook
+ignores such a child's events while the tab is mid-turn anyway.
+
+`mcp/bench/claude_tab_hooks.py` times a tab's `UserPromptSubmit` inside `claude -p`, with a stripped
+plugin, `--setting-sources local` and a temporary home, the forms interleaved. On Windows under a busy
+desktop (CPU load 55% and more), 24 runs each from two runs of the bench, medians of the time Claude Code
+waited for the event's hooks:
+
+| Form | `UserPromptSubmit` |
+|---|---|
+| Node 0.8.0, exec form | 478 ms |
+| Plugin shell string through Git Bash | 731 ms |
+| Tab settings plus the plugin's no-op shell string (shipped) | 719 ms |
+| Tab settings alone, no plugin agent hooks (for comparison) | 653 ms |
+| The plugin's no-op shell string alone (for comparison) | 495 ms |
+
+Claude Code waits for every hook of an event, so the plugin's Git Bash no-op, which runs in parallel with
+the tab's hook, sets the floor of the shipped form. Run directly, outside Claude Code, the tab's exec
+form took 253 ms, Node 0.8.0 231 ms and the Git Bash no-op 145 ms (30 runs each, same machine).
 
 `mcp/bench/hook_forms.py` compares the forms, 25 runs each against a temporary home with a recorded
 interpreter, on Windows at a CPU load of 85-100% (medians):
@@ -2027,10 +2080,13 @@ shared server (see [Server start](#server-start)). It also runs
 4. If `~/.ide-agent-tabs/repository/` exists, copies the zip there as `ide-agent-tabs-<version>.zip`,
    rewrites `updatePlugins.xml` with a `file:///` URL, and deletes older zips. It never replaces a newer
    version that is already in the folder.
-5. If `~/.ide-agent-tabs/mcp/` exists, and the bundled server's build or the interpreter running the hook
-   differs from the one in `synced.json`, refreshes the server copy and `python.json` (see
+5. If the bundled server's build or the interpreter running the hook differs from the one in
+   `synced.json`, or `claude-tab-settings.json` is missing or differs from what the hook would write,
+   refreshes the server copy, `python.json` and `claude-tab-settings.json` (see
    [Server copy](#server-copy)), then moves registrations and hook entries that run an older command to
-   the current one. A failure leaves the old copy in place, and the next session tries again.
+   the current one. A failure leaves the old copy in place, and the next session tries again. The first
+   session on a machine makes the copy, because Claude Code tabs run their hooks from it (see
+   [Tab hooks](#tab-hooks)).
 6. Writes `synced.json`, appends any errors to `~/.ide-agent-tabs/sync.log`, and prints a message for the
    session when it updated something.
 
@@ -2049,12 +2105,13 @@ the bundled version passes it.
 
 ### Server copy
 
-Registrations in other agent CLIs, their hooks and Codex tabs point at a copy of the server in
-`~/.ide-agent-tabs/mcp/`, because the plugin's own folder has the version in its path:
+Registrations in other agent CLIs, their hooks, Codex tabs and the hooks of Claude Code tabs point at a
+copy of the server in `~/.ide-agent-tabs/mcp/`, because the plugin's own folder has the version in its path:
 
 | Path | Holds |
 |---|---|
 | `python.json` | `{"python": "<absolute path>"}`: the base interpreter, outside any virtual environment, that ran the sync. Registrations run it directly, so no `py.exe` stays behind as a parent process. |
+| `claude-tab-settings.json` | The hooks and environment a Claude Code tab gets through `--settings` (see [Tab hooks](#tab-hooks)). |
 | `py/<version>-<hash>/` | One build: `src/ide_agent_tabs/`, `launch/*.py`, the terminal scripts `launch/agent-launch.*`, and `version.json`. The hash covers every file, so a changed file makes a new build. |
 | `py/current.json` | `{"build": …, "version": …}`, naming the current build. |
 | `py/launch/mcp_server.py`, `py/launch/agent_hook.py` | Stubs. Each reads `current.json` and runs the script of the same name in that build. |

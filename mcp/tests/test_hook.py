@@ -8,6 +8,7 @@ import sys
 import unittest
 from typing import Any
 
+from ide_agent_tabs.agent_config import HookTarget, claude_tab_settings
 from ide_agent_tabs.clock import now_iso
 from ide_agent_tabs.jsjson import stringify
 from ide_agent_tabs.messaging import store
@@ -429,7 +430,7 @@ class HookScriptTest(unittest.TestCase):
         with open(cache, "w", encoding="utf-8") as f:
             f.write(os.path.join(home, "missing-python") + "\n")
         self.assertEqual(json.loads(run("Stop", {"IDE_AGENT_TABS_ID": ID}).stdout)["decision"], "block")
-        for extra in ({}, {"IDE_AGENT_TABS_ID": ID, "IDE_AGENT_TABS_MOD": ID}):
+        for extra in ({}, {"IDE_AGENT_TABS_ID": ID, "IDE_AGENT_TABS_MOD": ID}, {"IDE_AGENT_TABS_ID": ID, "IDE_AGENT_TABS_HOOKS": "1"}):
             quiet = run("Stop", extra)
             self.assertEqual([quiet.returncode, quiet.stdout.strip(), quiet.stderr], [0, b"", b""])
 
@@ -447,6 +448,29 @@ class HookScriptTest(unittest.TestCase):
                 continue
             with self.subTest(shell=name):
                 self.check_hook_commands([shell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"])
+
+    def test_the_tab_settings_run_the_plugin_hooks_in_exec_form_and_set_the_variable_that_quiets_them(self) -> None:
+        with open(os.path.join(ROOT, "claude-plugin", "hooks", "hooks.json"), encoding="utf-8") as f:
+            plugin = json.load(f)["hooks"]
+        ours = {
+            event: (g.get("matcher"), h["timeout"])
+            for event, groups in plugin.items()
+            for g in groups
+            for h in g["hooks"]
+            if "agent-hook.ps1" in h.get("command", "")
+        }
+        settings = claude_tab_settings(HookTarget(sys.executable, HOOK_SCRIPT, sys.platform))
+        self.assertEqual(settings["env"], {"IDE_AGENT_TABS_HOOKS": "1"})
+        tab = {event: (groups[0].get("matcher"), groups[0]["hooks"][0]["timeout"]) for event, groups in settings["hooks"].items()}
+        self.assertEqual(tab, ours)
+        home = temp_home(self, "iat-hook-")
+        mail(home)
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("IDE_AGENT_TABS")}
+        env = {**clean, "IDE_AGENT_TABS_HOME": home, **settings["env"], "IDE_AGENT_TABS_ID": ID}
+        handler = settings["hooks"]["Stop"][0]["hooks"][0]
+        self.assertEqual(handler["args"], ["-I", "-S", HOOK_SCRIPT, "claude", "Stop"])
+        out = subprocess.run([handler["command"], *handler["args"]], input=b"{}", capture_output=True, env=env, timeout=30, check=False)
+        self.assertEqual(json.loads(out.stdout)["decision"], "block")
 
     def test_the_hook_imports_no_heavy_modules(self) -> None:
         code = (

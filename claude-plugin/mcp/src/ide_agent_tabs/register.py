@@ -13,6 +13,7 @@ from .agent_config import (
     HookTarget,
     agy_python,
     agy_settings_file,
+    claude_tab_settings,
     copilot_hooks,
     goose_hooks,
     goose_manifest,
@@ -43,14 +44,15 @@ from .agent_config import (
 from .cli_run import cli_failure, run_cli_result
 from .clock import now_ms
 from .editor_clis import find_cli_on_path, path_var_of
-from .files import ensure_private_dir, read_text_if_exists, remove_file, replace_retrying
+from .files import ensure_private_dir, read_text_if_exists, remove_file, replace_retrying, write_atomically
 from .installed import is_installed
 from .jsjson import parse, stringify
 from .processes import RunResult
-from .profiles import AGENT_ENV, BUILTIN_PROFILES, TAB_ID_ENV
+from .profiles import AGENT_ENV, BUILTIN_PROFILES, CLAUDE_TAB_SETTINGS_FILE, TAB_ID_ENV
 from .server_copy import (
     Source,
     build_name,
+    copy_root,
     current_build,
     hook_copy_path,
     old_hook_path,
@@ -716,9 +718,21 @@ def _errors_of(outcomes: list[dict[str, Any]]) -> list[str]:
     return [f"{o['agent']}: {o['error']}" for o in outcomes if o.get("error") is not None]
 
 
+def tab_settings_file(ctx: RegisterContext) -> str:
+    return os.path.join(copy_root(ctx.home), CLAUDE_TAB_SETTINGS_FILE)
+
+
+def tab_settings_text(ctx: RegisterContext) -> str:
+    return stringify(claude_tab_settings(hook_target(ctx)), 2) + "\n"
+
+
 def refresh_copy(ctx: RegisterContext) -> tuple[str | None, bool]:
     build = refresh_server_copy(ctx.source, ctx.home)
-    return build, write_python(ctx.home, ctx.python)
+    python_changed = write_python(ctx.home, ctx.python)
+    text = tab_settings_text(ctx)
+    if read_text_if_exists(tab_settings_file(ctx)) != text:
+        write_atomically(tab_settings_file(ctx), text)
+    return build, python_changed
 
 
 def register_agents(ctx: RegisterContext, names: Sequence[str]) -> dict[str, Any]:
