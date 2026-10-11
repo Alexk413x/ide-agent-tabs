@@ -3,6 +3,18 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.2
+
+Plugin and MCP server 0.9.2.
+
+### Fixed
+
+- The mod's `open_agent_messages` tool returned an object as its result, which Claude Code rejects for a
+  registered tool. The call opened the pane but ended in a `tool_use_error`, and a caller such as the
+  Open Messages button in the-index treated that as a failure. The tool now returns a string.
+- When the terminal is too narrow for Claude Code to draw a pane that the model opened, the tool
+  answers `Widen Window to Display Pane` instead of reporting the pane as opened.
+
 ## 0.9.1
 
 Plugin and MCP server 0.9.1, with VS Code extension 0.1.30 and JetBrains plugin 0.4.13 bundled.
