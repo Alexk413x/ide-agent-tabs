@@ -3,6 +3,27 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.3
+
+Plugin and MCP server 0.9.3.
+
+### Fixed
+
+- Codex followed `mcpServers` in the Claude manifest, loaded the HTTP entry in `.mcp.json`, and could
+  not expand `${user_config.server_port}`. Every Codex start logged `invalid port number`, and
+  `thread/start` failed with `invalid transport in mcp_servers.ide-agent-tabs`. The plugin now has a
+  `.codex-plugin/plugin.json` with no MCP entry, and `.mcp.json` is now `mcp/claude.mcp.json`, named by
+  `mcpServers` in the Claude manifest. A checkout of this repo no longer loads it as a project server.
+- Codex ran `hooks/hooks.json`, which starts the shared Claude Code server and registers the Claude Code
+  mod. The Codex manifest names `hooks/codex-hooks.json`, which declares no hooks: a Codex tab gets its
+  server and hooks from the options it starts with.
+
+### Changed
+
+- The release checklist has a second version file, `.codex-plugin/plugin.json`, and `bump.mjs` sets it.
+- A Codex session outside an Agent Tabs tab has the plugin's skills but no Agent Tabs tools. On macOS and
+  Linux, run `agent-tabs sync-ides --register codex`. On Windows, open Codex through an Agent Tabs tab.
+
 ## 0.9.2
 
 Plugin and MCP server 0.9.2.

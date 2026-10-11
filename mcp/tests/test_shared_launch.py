@@ -20,7 +20,7 @@ PLACEHOLDER = re.compile(r"\$\{([^}]*)\}")
 
 
 def mcp_entry() -> dict[str, object]:
-    with open(os.path.join(PLUGIN, ".mcp.json"), encoding="utf-8") as f:
+    with open(os.path.join(PLUGIN, "mcp", "claude.mcp.json"), encoding="utf-8") as f:
         return json.load(f)["mcpServers"]["ide-agent-tabs"]
 
 

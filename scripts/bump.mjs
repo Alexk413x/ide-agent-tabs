@@ -41,6 +41,7 @@ function setJsonVersion(name, next, lock = false) {
 }
 
 setJsonVersion('claude-plugin/.claude-plugin/plugin.json', version);
+setJsonVersion('claude-plugin/.codex-plugin/plugin.json', version);
 if (vscode !== undefined) {
   setJsonVersion('vscode/package.json', vscode);
   setJsonVersion('vscode/package-lock.json', vscode, true);

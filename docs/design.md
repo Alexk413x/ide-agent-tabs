@@ -658,7 +658,7 @@ in the 47821-47829 block where each of the author's plugins takes one slot. Code
 Copilot CLI, Gemini CLI and the other agent CLIs keep their stdio server, because a shim per session
 would cost almost as much memory as the server it forwards to.
 
-`claude-plugin/.mcp.json` declares the server as `"type": "http"` with that URL, a `headersHelper`, and
+`claude-plugin/mcp/claude.mcp.json`, named by `mcpServers` in the Claude manifest, declares the server as `"type": "http"` with that URL, a `headersHelper`, and
 `"timeout": 300000`. The helper is
 `py -3 -I -S "${CLAUDE_PLUGIN_ROOT}/mcp/launch/headers.py" || python3 -I -S … || python -I -S …`.
 Claude Code runs it through `cmd.exe` on Windows, where `py -3` answers, and through `sh` elsewhere,
