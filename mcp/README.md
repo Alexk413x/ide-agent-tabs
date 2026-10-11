@@ -10,7 +10,7 @@ The server reads the registry and calls each IDE's HTTP API, as described in
 
 ## Shared server
 
-The Claude Code plugin registers `ide-agent-tabs` in [claude-plugin/.mcp.json](../claude-plugin/.mcp.json)
+The Claude Code plugin registers `ide-agent-tabs` in [claude-plugin/mcp/claude.mcp.json](../claude-plugin/mcp/claude.mcp.json)
 as an HTTP server at `http://127.0.0.1:47828/mcp`. One Python process,
 `claude-plugin/mcp/launch/shared_server.py`, serves every Claude Code session on the machine, in place
 of one process per session. The server, its hooks and the command line need Python 3.9 or later and

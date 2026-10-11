@@ -1,0 +1,4 @@
+{
+  "description": "Agent Tabs hooks for Codex: none. hooks.json starts the shared Claude Code server and registers a Claude Code mod, and a Codex tab gets its server and hooks from the options the tab starts with.",
+  "hooks": {}
+}

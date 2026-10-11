@@ -10,6 +10,7 @@ const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const bump = path.join(repo, 'scripts', 'bump.mjs');
 const FILES = [
   'claude-plugin/.claude-plugin/plugin.json',
+  'claude-plugin/.codex-plugin/plugin.json',
   'vscode/package.json',
   'vscode/package-lock.json',
   'jetbrains/gradle.properties',
@@ -36,6 +37,7 @@ test('bumps the plugin version in every file and adds a changelog stub', () => {
     const result = run(dir, '9.8.7');
     assert.equal(result.status, 0, result.stderr);
     assert.equal(json(dir, 'claude-plugin/.claude-plugin/plugin.json').version, '9.8.7');
+    assert.equal(json(dir, 'claude-plugin/.codex-plugin/plugin.json').version, '9.8.7');
     assert.equal(text(dir, 'vscode/package.json'), original('vscode/package.json'));
     assert.equal(text(dir, 'jetbrains/gradle.properties'), original('jetbrains/gradle.properties'));
     const stub = '## 9.8.7\n\nPlugin and MCP server 9.8.7.\n\n';
