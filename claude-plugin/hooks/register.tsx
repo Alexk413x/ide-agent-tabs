@@ -62,6 +62,7 @@ const OPEN_TOOL_NAME = 'open_agent_messages'
 const OPEN_TOOL = /^mcp__ide-agent-tabs__open_agent_messages$/
 const PANE_COMMAND = /^agent-messages$/
 const PANE_TITLE = 'Agent Tabs Messages'
+const WIDEN_NOTICE = 'Widen Window to Display Pane'
 const PANE_ROWS = 18
 const PANE_OPEN = { id: PANE, title: PANE_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows: PANE_ROWS } as const
 const OTHER_HOST = 'Other'
@@ -1104,8 +1105,9 @@ async function openPaneOn($: EngineInterface, change: Pick<AgentTabsPane, 'view'
   const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
   await clearHistory($)
   await $.state.set(paneRef, { ...pane, ...change })
-  await $.ui.open(PANE_OPEN)
+  const opened = await $.ui.open(PANE_OPEN)
   await showPane($)
+  return opened
 }
 
 async function openSender($: EngineInterface, name: string, id: string | undefined, message: string | null) {
@@ -1510,15 +1512,17 @@ export const register: Register = on => {
 
   on('tool.call', { tool: OPEN_TOOL }, async ($, e) => {
     const { value: me } = await $.state.get(selfRef)
-    if (!me) return { result: { opened: false }, text: 'The Agent Tabs mod is not running in this session.' }
+    // Core validates `result` against a registered tool's output shape: a string, an array or undefined, never an object.
+    const answer = (text: string) => ({ result: text, text })
+    if (!me) return answer('The Agent Tabs mod is not running in this session.')
     const agent = typeof (e as { agent?: unknown }).agent === 'string' ? ((e as { agent: string }).agent).trim() : ''
     if (agent === '') {
-      await openPaneOn($, { view: 'agents', agent: null, message: null })
-      return { result: { opened: true }, text: `${PANE_TITLE} pane opened.` }
+      const opened = await openPaneOn($, { view: 'agents', agent: null, message: null })
+      return answer(opened.isPlaced ? `${PANE_TITLE} pane opened.` : WIDEN_NOTICE)
     }
     const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
-    await openPaneOn($, { view: 'messages', agent: senderPick(rows, agent, undefined), message: null })
-    return { result: { opened: true, agent }, text: `${PANE_TITLE} pane opened on ${agent}'s messages.` }
+    const opened = await openPaneOn($, { view: 'messages', agent: senderPick(rows, agent, undefined), message: null })
+    return answer(opened.isPlaced ? `${PANE_TITLE} pane opened on ${agent}'s messages.` : WIDEN_NOTICE)
   })
 
   on('tool.describe', { tool: PEER_TOOLS }, async ($, e, next) => {

@@ -173,6 +173,7 @@ type WorldOptions = {
   mailFrom?: Record<string, string>
   files?: Record<string, string>
   configDir?: string
+  unplaced?: boolean
 }
 
 function world(on: On, options: WorldOptions = {}) {
@@ -212,7 +213,7 @@ function world(on: On, options: WorldOptions = {}) {
   on('ui.open', (_$, e) => {
     panes.opened.push(e)
     if (!panes.open.includes(e.id)) panes.open.push(e.id)
-    return { value: { isPlaced: true as const } }
+    return { value: options.unplaced ? { isPlaced: false as const, reason: 'the terminal is 100 columns wide; unasked panes need 144' } : { isPlaced: true as const } }
   })
   on('ui.close', (_$, e) => {
     panes.closed.push(e)
@@ -955,6 +956,11 @@ async function openPane($: Engine, command = 'agent-messages', presentation = PR
   return $.command.run({ command, args: '', origin: COMPOSER, presentation })
 }
 
+// Core accepts a registered tool's result only as a string, an array or undefined.
+function expectToolOutputShape(result: unknown) {
+  expect(result === undefined || typeof result === 'string' || Array.isArray(result)).toBe(true)
+}
+
 describe('agents pane', () => {
   test('an agent opens the pane through open_agent_messages, on the agents view or on the messages of one agent', async ($, on) => {
     const w = world(on, { tab: 'tab-c', history: HISTORY })
@@ -967,12 +973,24 @@ describe('agents pane', () => {
     expect(registered).toContain('open_agent_messages')
     const opened = await $.tool.call({ tool: 'mcp__ide-agent-tabs__open_agent_messages' } as never)
     expect((opened as { text?: string }).text).toBe('Agent Tabs Messages pane opened.')
+    expectToolOutputShape((opened as { result?: unknown }).result)
     expect(w.panes.open).toEqual(['agent-tabs'])
     const onAgent = await $.tool.call({ tool: 'mcp__ide-agent-tabs__open_agent_messages', agent: 'docs-9b [11aa22]' } as never)
     expect((onAgent as { text?: string }).text).toBe("Agent Tabs Messages pane opened on docs-9b [11aa22]'s messages.")
+    expectToolOutputShape((onAgent as { result?: unknown }).result)
     const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
     expect(await textIn(ui, 'docs-9b · 2 messages')).toBeDefined()
     await ui.unmount()
+  })
+
+  test('open_agent_messages says to widen the window when the terminal is too narrow to draw the pane', async ($, on) => {
+    world(on, { tab: 'tab-c', history: HISTORY, unplaced: true })
+    await start($)
+    for (const args of [{}, { agent: 'docs-9b [11aa22]' }]) {
+      const opened = (await $.tool.call({ tool: 'mcp__ide-agent-tabs__open_agent_messages', ...args } as never)) as { text?: string; result?: unknown }
+      expect(opened.text).toBe('Widen Window to Display Pane')
+      expectToolOutputShape(opened.result)
+    }
   })
 
   test('/agent-messages toggles one pane, closed by default, and reads nothing while closed', async ($, on) => {
