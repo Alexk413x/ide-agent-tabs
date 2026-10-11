@@ -14,7 +14,6 @@ import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
-import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 const val PLUGIN_ENV_PREFIX = "IDE_AGENT_TABS_"
@@ -70,8 +69,8 @@ object AgentTabLauncher {
         profile: AgentProfile,
         agent: AgentLaunch,
         focus: Boolean,
+        id: String,
     ): String {
-        val id = UUID.randomUUID().toString()
         val shell = if (SystemInfo.isWindows) {
             windowsShell(System.getenv("PATH").orEmpty())
         } else {

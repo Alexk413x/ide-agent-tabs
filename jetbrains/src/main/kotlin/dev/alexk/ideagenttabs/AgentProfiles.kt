@@ -72,6 +72,7 @@ class LaunchContext(
     val windows: Boolean = false,
     val searchPath: String = "",
     val python: List<String>? = null,
+    val http: CodexHttp? = null,
     val claudeSettings: String? = null,
     val cwd: String? = null,
 )
@@ -109,7 +110,7 @@ private fun withoutPrompt(profile: AgentProfile, prompt: String?): AgentProfile 
 
 fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
     val unplanned = withoutPrompt(requested, context.prompt)
-    val codex = unplanned.copy(args = withCodexPython(unplanned.args, context.python))
+    val codex = unplanned.copy(args = withCodexHttp(unplanned.args, context.http) ?: withCodexPython(unplanned.args, context.python))
     val (ownArgs, callerArgs) = withClaudeSettings(codex.command, codex.args, context.args, context.claudeSettings, context.cwd)
     val profile = codex.copy(args = ownArgs)
     if ((context.via ?: context.setting) == LaunchVia.ORI) {
@@ -176,6 +177,44 @@ fun recordedPython(home: Path, windows: Boolean): String? {
 
 fun codexPython(home: Path, windows: Boolean): List<String> =
     recordedPython(home, windows)?.let { listOf(it) } ?: if (windows) listOf("py", "-3") else listOf("python3")
+
+data class CodexHttp(val python: String, val headers: String, val port: Int, val tab: String, val agent: String, val home: String)
+
+private const val PORT_FILE = "port.json"
+
+// The helper command goes into a TOML literal string and through PowerShell 5.1 and cmd.exe, which mangle a quote, a
+// space or a % in an argument, so a path with one leaves the tab on the stdio server.
+private val HTTP_SAFE = Regex("[A-Za-z0-9_./:\\\\+-]+")
+private val HTTP_WORD = Regex("[A-Za-z0-9._-]{1,128}")
+
+fun codexHttpArg(http: CodexHttp): String {
+    val helper = "${http.python} -I -S ${http.headers} --tab ${http.tab} --agent ${http.agent} --port ${http.port} --home ${http.home}"
+    return "mcp_servers.ide-agent-tabs={ url = 'http://127.0.0.1:${http.port}/mcp', http_headers_helper = '$helper', " +
+        "startup_timeout_sec = 30, tool_timeout_sec = 660 }"
+}
+
+fun withCodexHttp(args: List<String>, http: CodexHttp?): List<String>? {
+    if (http == null || CODEX_SERVER_ARG !in args) return null
+    val arg = codexHttpArg(http)
+    return args.map { if (it == CODEX_SERVER_ARG) arg else it }
+}
+
+private fun readPort(home: Path): Int? = runCatching {
+    val port = JsonParser.parseString(Files.readString(home.resolve("mcp").resolve(PORT_FILE))).asJsonObject.get("port").asJsonPrimitive
+    if (port.isNumber) port.asString.toIntOrNull()?.takeIf { it in 1..65535 } else null
+}.getOrNull()
+
+fun codexHttp(home: Path, windows: Boolean, tab: String, agent: String): CodexHttp? {
+    val python = recordedPython(home, windows)
+    val port = readPort(home)
+    val file = home.resolve("mcp").resolve("py").resolve("launch").resolve("headers.py")
+    val headers = if (windows) file.toString().replace('\\', '/') else file.toString()
+    if (python == null || port == null || !runCatching { Files.isRegularFile(file) }.getOrDefault(false)) return null
+    if (!HTTP_WORD.matches(tab) || !HTTP_WORD.matches(agent)) return null
+    val homePath = home.toString()
+    if (listOf(python, headers, homePath).any { !HTTP_SAFE.matches(it) }) return null
+    return CodexHttp(python, headers, port, tab, agent, homePath)
+}
 
 // Same rules as claude_tab_settings and with_claude_settings in claude-plugin/mcp/src/ide_agent_tabs/profiles.py.
 const val CLAUDE_TAB_SETTINGS_FILE = "claude-tab-settings.json"

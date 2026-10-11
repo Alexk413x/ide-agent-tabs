@@ -110,6 +110,51 @@ def with_codex_python(args: Sequence[str], python: Sequence[str] | None) -> tupl
     return tuple(arg if a == CODEX_SERVER_ARG else a for a in args)
 
 
+class CodexHttp(NamedTuple):
+    python: str
+    headers: str
+    port: int
+    tab: str
+    agent: str
+    home: str
+
+
+# The helper command goes into a TOML literal string and through PowerShell 5.1 and cmd.exe, which mangle a quote, a
+# space or a % in an argument, so a path with one leaves the tab on the stdio server.
+_HTTP_SAFE = re.compile(r"[A-Za-z0-9_./:\\+-]+\Z")
+_HTTP_WORD = re.compile(r"[A-Za-z0-9._-]{1,128}\Z")
+
+
+def codex_http_arg(http: CodexHttp) -> str:
+    helper = f"{http.python} -I -S {http.headers} --tab {http.tab} --agent {http.agent} --port {http.port} --home {http.home}"
+    return (
+        f"mcp_servers.ide-agent-tabs={{ url = 'http://127.0.0.1:{http.port}/mcp', http_headers_helper = '{helper}', "
+        "startup_timeout_sec = 30, tool_timeout_sec = 660 }"
+    )
+
+
+def with_codex_http(args: Sequence[str], http: CodexHttp | None) -> tuple[str, ...] | None:
+    if http is None or CODEX_SERVER_ARG not in args:
+        return None
+    arg = codex_http_arg(http)
+    return tuple(arg if a == CODEX_SERVER_ARG else a for a in args)
+
+
+def codex_http(home: str, windows: bool, tab: str, agent: str) -> CodexHttp | None:
+    from .server_copy import headers_copy_path, read_port
+
+    python = recorded_python(home, windows)
+    port = read_port(home)
+    headers = headers_copy_path(home, "win32" if windows else "linux")
+    if python is None or port is None or not os.path.isfile(headers):
+        return None
+    if not _HTTP_WORD.match(tab) or not _HTTP_WORD.match(agent):
+        return None
+    if any(_HTTP_SAFE.match(p) is None for p in (python, headers, home)):
+        return None
+    return CodexHttp(python, headers, port, tab, agent, home)
+
+
 def recorded_python(home: str, windows: bool) -> str | None:
     try:
         with open(os.path.join(home, "mcp", "python.json"), encoding="utf-8") as f:

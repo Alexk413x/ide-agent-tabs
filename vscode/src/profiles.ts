@@ -81,6 +81,7 @@ export interface LaunchContext {
   windows: boolean;
   searchPath: string;
   python?: readonly string[];
+  http?: CodexHttp;
   claudeSettings?: string;
   cwd?: string;
 }
@@ -118,7 +119,7 @@ function withoutPrompt(p: AgentProfile, prompt: string | undefined): AgentProfil
 
 export function planLaunch(profile: AgentProfile, ctx: LaunchContext): AgentLaunch {
   const unplanned = withoutPrompt(profile, ctx.prompt);
-  const codex = { ...unplanned, args: withCodexPython(unplanned.args, ctx.python) };
+  const codex = { ...unplanned, args: withCodexHttp(unplanned.args, ctx.http) ?? withCodexPython(unplanned.args, ctx.python) };
   const settled = withClaudeSettings(codex.command, codex.args, ctx.args ?? [], ctx.claudeSettings, ctx.cwd);
   const callerArgs = settled.callerArgs;
   const p = { ...codex, args: settled.args };
@@ -168,6 +169,55 @@ export function withCodexPython(args: readonly string[], python: readonly string
   const head = python.slice(1).map(a => `'${a}', `).join('');
   const arg = `mcp_servers.ide-agent-tabs={ command = '${python[0]}', args = [${head}${CODEX_SERVER_ARG.slice(CODEX_SERVER_HEAD.length)}`;
   return args.map(a => (a === CODEX_SERVER_ARG ? arg : a));
+}
+
+export interface CodexHttp {
+  python: string;
+  headers: string;
+  port: number;
+  tab: string;
+  agent: string;
+  home: string;
+}
+
+// The helper command goes into a TOML literal string and through PowerShell 5.1 and cmd.exe, which mangle a quote, a
+// space or a % in an argument, so a path with one leaves the tab on the stdio server.
+const HTTP_SAFE = /^[A-Za-z0-9_./:\\+-]+$/;
+const HTTP_WORD = /^[A-Za-z0-9._-]{1,128}$/;
+
+export function codexHttpArg(http: CodexHttp): string {
+  const helper = `${http.python} -I -S ${http.headers} --tab ${http.tab} --agent ${http.agent} --port ${http.port} --home ${http.home}`;
+  return (
+    `mcp_servers.ide-agent-tabs={ url = 'http://127.0.0.1:${http.port}/mcp', http_headers_helper = '${helper}', ` +
+    'startup_timeout_sec = 30, tool_timeout_sec = 660 }'
+  );
+}
+
+export function withCodexHttp(args: readonly string[], http: CodexHttp | undefined): string[] | undefined {
+  if (http === undefined || !args.includes(CODEX_SERVER_ARG)) return undefined;
+  const arg = codexHttpArg(http);
+  return args.map(a => (a === CODEX_SERVER_ARG ? arg : a));
+}
+
+function readPort(home: string): number | undefined {
+  let port: unknown;
+  try {
+    port = (JSON.parse(fs.readFileSync(path.join(home, 'mcp', 'port.json'), 'utf8')) as { port?: unknown }).port;
+  } catch {
+    port = undefined;
+  }
+  return typeof port === 'number' && Number.isInteger(port) && port > 0 && port <= 65535 ? port : undefined;
+}
+
+export function codexHttp(home: string, windows: boolean, tab: string, agent: string): CodexHttp | undefined {
+  const python = recordedPython(home, windows);
+  const port = readPort(home);
+  const headersFile = path.join(home, 'mcp', 'py', 'launch', 'headers.py');
+  if (python === undefined || port === undefined || !isFile(headersFile)) return undefined;
+  if (!HTTP_WORD.test(tab) || !HTTP_WORD.test(agent)) return undefined;
+  const headers = windows ? headersFile.replace(/\\/g, '/') : headersFile;
+  if ([python, headers, home].some(p => !HTTP_SAFE.test(p))) return undefined;
+  return { python, headers, port, tab, agent, home };
 }
 
 export function recordedPython(home: string, windows: boolean): string | undefined {

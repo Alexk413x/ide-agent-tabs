@@ -24,6 +24,7 @@ import io.netty.handler.codec.http.QueryStringDecoder
 import org.jetbrains.ide.HttpRequestHandler
 import java.net.InetSocketAddress
 import java.nio.file.Path
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -54,8 +55,9 @@ class AgentTabHttpHandler : HttpRequestHandler() {
                     val profile = open.agent?.let {
                         Agents.settings.profile(it) ?: throw IllegalArgumentException("unknown agent: $it")
                     } ?: Agents.settings.defaultProfile()
-                    val launch = Agents.launchFor(profile, open)
-                    onEdt(context) { open(open, profile, launch) }
+                    val id = UUID.randomUUID().toString()
+                    val launch = Agents.launchFor(profile, open, tabId = id)
+                    onEdt(context) { open(open, profile, launch, id) }
                 }
                 "close" -> parseCloseId(body).let { onEdt(context) { close(it) } }
                 "input" -> parseInput(body).let { onEdt(context) { input(it) } }
@@ -99,9 +101,9 @@ class AgentTabHttpHandler : HttpRequestHandler() {
         Reply(500, error(e.toString()))
     }
 
-    private fun open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch): Reply {
+    private fun open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch, tabId: String): Reply {
         val project = chooseProject(request.path) ?: return Reply(409, error("no open project to host the tab"))
-        val id = AgentTabLauncher.open(project, request.path.toString(), profile, launch, request.focus)
+        val id = AgentTabLauncher.open(project, request.path.toString(), profile, launch, request.focus, tabId)
         return Reply(200, ok().apply {
             addProperty("id", id)
             addProperty("agent", profile.name)

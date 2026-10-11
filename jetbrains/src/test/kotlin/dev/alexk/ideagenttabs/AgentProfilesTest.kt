@@ -416,6 +416,78 @@ class AgentProfilesTest {
         assertTrue(plan.args[2].contains("command = '/usr/bin/python3', args = ['-I'"))
     }
 
+    private fun httpHome(port: Int? = 47828, stub: Boolean = true, python: Path? = null, prefix: String = "cst-http"): Path {
+        val dir = Files.createTempDirectory(prefix)
+        val mcp = Files.createDirectories(dir.resolve("mcp"))
+        val interpreter = python ?: dir.resolve("python.exe").also { Files.writeString(it, "") }
+        Files.writeString(mcp.resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", interpreter.toString()) }.toString())
+        if (port != null) Files.writeString(mcp.resolve("port.json"), """{"port": $port}""")
+        if (stub) Files.writeString(Files.createDirectories(mcp.resolve("py").resolve("launch")).resolve("headers.py"), "")
+        return dir
+    }
+
+    private val windows = File.separatorChar == '\\'
+
+    @Test
+    fun `a Codex tab uses the shared server when the copy, the port and the interpreter are recorded`() {
+        val dir = httpHome(port = 47831)
+        val http = codexHttp(dir, windows, "tab-1", "codex")!!
+        val headers = dir.resolve("mcp").resolve("py").resolve("launch").resolve("headers.py").toString().replace('\\', '/')
+        assertEquals(CodexHttp(dir.resolve("python.exe").toString(), headers, 47831, "tab-1", "codex", dir.toString()), http)
+        assertEquals(
+            "mcp_servers.ide-agent-tabs={ url = 'http://127.0.0.1:47831/mcp', http_headers_helper = '${http.python} -I -S $headers " +
+                "--tab tab-1 --agent codex --port 47831 --home $dir', startup_timeout_sec = 30, tool_timeout_sec = 660 }",
+            codexHttpArg(http),
+        )
+    }
+
+    @Test
+    fun `a Codex tab stays on the stdio server without a valid port, a headers stub or a safe path`() {
+        assertNull(codexHttp(httpHome(port = null), windows, "tab-1", "codex"))
+        assertNull(codexHttp(httpHome(stub = false), windows, "tab-1", "codex"))
+        assertNull(codexHttp(httpHome(), windows, "tab 1", "codex"))
+        assertNull(codexHttp(httpHome(), windows, "tab-1", "co dex"))
+        assertNull(codexHttp(httpHome(), windows, "a".repeat(129), "codex"))
+        val spaced = Files.createDirectories(Files.createTempDirectory("cst-sp").resolve("sp ace"))
+        assertNull(codexHttp(httpHome(python = spaced.resolve("python.exe").also { Files.writeString(it, "") }), windows, "tab-1", "codex"))
+        assertNull(codexHttp(httpHome(prefix = "cst-sp ace"), windows, "tab-1", "codex"))
+        for (port in listOf("0", "65536", "-1", "47828.5", "\"47828\"", "true", "null", "[]")) {
+            val dir = httpHome()
+            Files.writeString(dir.resolve("mcp").resolve("port.json"), """{"port": $port}""")
+            assertNull(port, codexHttp(dir, windows, "tab-1", "codex"))
+        }
+        val broken = httpHome()
+        Files.writeString(broken.resolve("mcp").resolve("port.json"), "not json")
+        assertNull(codexHttp(broken, windows, "tab-1", "codex"))
+        assertEquals(65535, codexHttp(httpHome(port = 65535), windows, "tab-1", "codex")?.port)
+    }
+
+    @Test
+    fun `withCodexHttp changes only the server argument`() {
+        val http = codexHttp(httpHome(), windows, "tab-1", "codex-local")!!
+        val swapped = withCodexHttp(CODEX_TAB_ARGS, http)!!
+        assertEquals(CODEX_TAB_ARGS.size, swapped.size)
+        assertEquals(listOf(codexHttpArg(http)), swapped.filterIndexed { i, arg -> arg != CODEX_TAB_ARGS[i] })
+        assertEquals(codexHttpArg(http), swapped[2])
+        assertNull(withCodexHttp(CODEX_TAB_ARGS, null))
+        assertNull(withCodexHttp(listOf("--other"), http))
+        assertFalse(Regex("[\"%!\\n]").containsMatchIn(codexHttpArg(http)))
+    }
+
+    @Test
+    fun `planLaunch gives a Codex tab the HTTP argument only when an HTTP server is set`() {
+        val codex = BUILTIN_PROFILES.first { it.name == "codex" }
+        val http = codexHttp(httpHome(), windows, "tab-1", "codex")!!
+        val shared = planLaunch(codex, LaunchContext(http = http, python = listOf("/usr/bin/python3")))
+        assertEquals(codexHttpArg(http), shared.args[2])
+        assertEquals(CODEX_TAB_ARGS.filterIndexed { i, _ -> i != 2 }, shared.args.filterIndexed { i, _ -> i != 2 })
+        val stdio = planLaunch(codex, LaunchContext(python = listOf("/usr/bin/python3")))
+        assertTrue(stdio.args[2].contains("command = '/usr/bin/python3', args = ['-I'"))
+        assertEquals(CODEX_TAB_ARGS, planLaunch(codex, LaunchContext()).args)
+        val claude = BUILTIN_PROFILES.first { it.name == "claude" }
+        assertEquals(emptyList<String>(), planLaunch(claude, LaunchContext(http = http)).args)
+    }
+
     @Test
     fun `a Claude Code tab gets the tab settings file after its profile arguments`() {
         val windows = File.separatorChar == '\\'

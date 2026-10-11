@@ -403,6 +403,21 @@ setup. The `codex` profile's `args`, placed before the caller's `args` and the p
   key-sorted JSON. `mcp/tests/test_codex_tab.py` recomputes the hashes. Codex's own `hooks/list` reports
   all five as `trusted` with these arguments.
 
+**Shared server instead of a stdio server.** When `~/.ide-agent-tabs/mcp/` records an interpreter
+(`python.json`), the port of the shared server (`port.json`, written when the server claims its port) and
+a `py/launch/headers.py` stub, the server, the IDEs and the Python service replace the stdio `-c`
+argument with `mcp_servers.ide-agent-tabs={ url = 'http://127.0.0.1:<port>/mcp', http_headers_helper =
+'<python> -I -S <headers.py> --tab <id> --agent <agent> --port <port> --home <home>', … }`. Codex runs
+the helper once per connection and gives it a stripped environment, with no `IDE_AGENT_TABS_*` variable,
+and it expands no variable in the command, so each launch writes the tab id, agent, port and home into
+the command as literal arguments. The launcher therefore creates the tab id before it plans the launch.
+`headers.py` takes the same four values from its arguments that it takes from the environment under
+Claude Code, and adds `X-Agent-Tabs-Cwd`, which the front turns into the session's folder, because a
+classic client can't be asked for its roots. The tab then costs a short-lived helper process at connect
+instead of a resident Python server. A path with a space, a quote or `%`, a missing port or stub, or a tab
+id outside `[A-Za-z0-9._-]` leaves the tab on the stdio server. The hooks are unchanged: they call
+`agent_tabs_hook` over the same connection.
+
 Rules for these arguments:
 
 - They need Codex 0.158 or later: 0.158 adds `--no-daemon`, and an older Codex exits with an unknown
@@ -669,9 +684,17 @@ sessions and refuses an entry whose helper uses anything else, or whose URL host
 The process has two parts:
 
 - **The front** (`shared/front.py`) speaks MCP 2026-07-28: `server/discover`, `tools/list`,
-  `tools/call`, `ping` and empty prompt and resource lists. It answers a notification with 202 and an
-  older protocol version with error -32022. It answers discovery and `tools/list` from `catalog.json`.
-  The Jev tools appear only while `config.json` turns Jev on.
+  `tools/call`, `ping` and empty prompt and resource lists. It answers a notification with 202. It
+  answers discovery and `tools/list` from `catalog.json`. The Jev tools appear only while `config.json`
+  turns Jev on.
+  A client that opens with `initialize`, such as Codex (protocol 2025-06-18, no `server/discover`), gets
+  the classic, stateless form of the same methods: `initialize` negotiates the newest of 2025-11-25,
+  2025-06-18, 2025-03-26 and 2024-11-05 that the client names, no session id is issued, results are
+  plain JSON without `resultType` or `_meta`, and the tool list and instructions follow the client's
+  agent (`X-Agent-Tabs-Agent`, else the `User-Agent` product), so Codex sees `agent_tabs_hook` and no
+  `agent_tabs_mod`. A request with any other version gets error -32022. A classic client can't be asked
+  for its roots, so its folder comes from `X-Agent-Tabs-Cwd`, which the headers helper sends, or the home
+  folder when the header is absent.
 - **The engine** (`shared/engine.py`) loads on the first tool call, with the tool code. It runs each
   session's tools through the same tool layer as the stdio server, so stdio and HTTP sessions run the
   same tool code and argument checks.

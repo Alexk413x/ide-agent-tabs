@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { AgentLaunch, AgentProfile, AgentSettings, claudeTabSettings, codexPython, planLaunch } from './profiles';
+import { AgentLaunch, AgentProfile, AgentSettings, claudeTabSettings, codexHttp, codexPython, planLaunch } from './profiles';
 import { ENDPOINT_BASE } from './registry';
 import * as fs from 'node:fs';
 import { BadRequest, checkAdmission, checkRevealTarget, OpenRequest, parseCloseId, parseEmpty, parseInput, parseOpenRequest, parseRevealPath, RevealDeps } from './request';
@@ -23,7 +24,7 @@ export interface TabInfo {
 export interface Host {
   info(): { ide: string; product: string; version: string; pid: number; projects: ProjectInfo[] };
   isInstalled(profile: AgentProfile): boolean;
-  open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch): TabInfo | undefined;
+  open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch, id: string): TabInfo | undefined;
   close(id: string): boolean;
   input(id: string, text: string): boolean;
   list(): TabInfo[];
@@ -55,6 +56,8 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
           if (!named) throw new BadRequest(`unknown agent: ${request.agent}`);
           profile = named;
         }
+        const id = randomUUID();
+        const windows = process.platform === 'win32';
         const launch = planLaunch(profile, {
           prompt: request.prompt,
           args: request.args,
@@ -63,13 +66,14 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
           via: request.via,
           setting: settings.shared().launchVia,
           ori: settings.detected().ori,
-          windows: process.platform === 'win32',
+          windows,
           searchPath: process.env.PATH ?? '',
-          python: codexPython(settings.home, process.platform === 'win32'),
-          claudeSettings: claudeTabSettings(settings.home, process.platform === 'win32'),
+          python: codexPython(settings.home, windows),
+          http: codexHttp(settings.home, windows, id, profile.name),
+          claudeSettings: claudeTabSettings(settings.home, windows),
           cwd: request.path,
         });
-        const tab = host.open(request, profile, launch);
+        const tab = host.open(request, profile, launch, id);
         return tab ? ok({ ...tab, via: launch.via }) : fail(409, 'no open folder to host the tab');
       }
       case 'close': {

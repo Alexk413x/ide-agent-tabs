@@ -9,8 +9,10 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Callable
 
 from ..clock import now_iso
+from ..files import ensure_private_dir
 from ..home import agent_tabs_home
 from ..liveness import pid_alive
+from ..server_copy import copy_root, write_port
 from ..version import PACKAGE_VERSION
 from .front import Front, FrontDeps
 from .handover import HANDOVER_MS, claim_port
@@ -122,6 +124,9 @@ class SharedServer:
             return False
         self.front = Front(sock, self.deps())
         write_state(self.home, ServerState(self.pid, self.port, self.version, self.started_at, self.shutdown_token))
+        with contextlib.suppress(OSError):
+            ensure_private_dir(copy_root(self.home))
+            write_port(self.home, self.port)
         self.log(f"{SERVICE} {self.version} serving http://127.0.0.1:{self.port}/mcp for {self.home}")
         return True
 

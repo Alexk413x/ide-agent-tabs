@@ -27,6 +27,7 @@ class _Session:
         from ..profiles import AGENT_ENV, TAB_ID_ENV
         from ..resume import ResumeDeps, Resumes
 
+        self.client_name = CLIENT_NAME if binding.agent == "claude" else binding.agent
         env = dict(host.env)
         env[AGENT_ENV] = binding.agent
         if binding.tab is not None:
@@ -81,7 +82,7 @@ class _Session:
         from ..mcp_tools import Call
 
         self.tools.jev_enabled = self.host.jev_enabled()
-        return self.tools.call(CLIENT_NAME, name, arguments, Call({}, cancel, _no_notify))
+        return self.tools.call(self.client_name, name, arguments, Call({}, cancel, _no_notify))
 
     def _finish(self) -> bool:
         with self._lock:
@@ -151,7 +152,7 @@ class Engine:
     def tools_for(self, agent: str) -> list[dict[str, Any]]:
         from ..mcp_tools import tools_for
 
-        return tools_for(CLIENT_NAME, self.jev_enabled())
+        return tools_for(CLIENT_NAME if agent == "claude" else agent, self.jev_enabled())
 
     def instructions_for(self, agent: str) -> str:
         from ..mcp_tools import server_instructions

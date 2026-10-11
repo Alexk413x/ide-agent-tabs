@@ -11,6 +11,8 @@ import {
   CLAUDE_TAB_SETTINGS_FILE,
   claudeTabSettings,
   CODEX_TAB_ARGS,
+  codexHttp,
+  codexHttpArg,
   codexPython,
   CONFIG_FILE,
   findOnPath,
@@ -20,6 +22,7 @@ import {
   planLaunch,
   profile,
   readDefaultAgent,
+  withCodexHttp,
   withCodexPython,
 } from '../profiles';
 import { BadRequest, checkEnv } from '../request';
@@ -630,6 +633,78 @@ test('a Codex tab runs its server on the interpreter python.json records, or on 
   assert.deepEqual(withCodexPython(CODEX_TAB_ARGS, undefined), [...CODEX_TAB_ARGS]);
   const plan = planLaunch(BUILTIN_PROFILES[1]!, { setting: 'direct', ori: null, windows: false, searchPath: '', python: ['/usr/bin/python3'] });
   assert.match(plan.args[2]!, /command = '\/usr\/bin\/python3', args = \['-I'/);
+});
+
+const onWindows = process.platform === 'win32';
+
+function httpHome(options: { port?: unknown; stub?: boolean; python?: string } = {}): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-http-'));
+  const mcp = path.join(home, 'mcp');
+  fs.mkdirSync(path.join(mcp, 'py', 'launch'), { recursive: true });
+  const python = options.python ?? path.join(home, 'python.exe');
+  if (options.python === undefined) fs.writeFileSync(python, '');
+  fs.writeFileSync(path.join(mcp, 'python.json'), JSON.stringify({ python }));
+  if (options.port !== null) fs.writeFileSync(path.join(mcp, 'port.json'), JSON.stringify({ port: options.port ?? 47828 }));
+  if (options.stub !== false) fs.writeFileSync(path.join(mcp, 'py', 'launch', 'headers.py'), '');
+  return home;
+}
+
+test('a Codex tab uses the shared server when the copy, the port and the interpreter are recorded', () => {
+  const home = httpHome({ port: 47831 });
+  const http = codexHttp(home, onWindows, 'tab-1', 'codex')!;
+  assert.ok(http);
+  const headers = path.join(home, 'mcp', 'py', 'launch', 'headers.py');
+  assert.deepEqual(http, {
+    python: path.join(home, 'python.exe'),
+    headers: onWindows ? headers.replace(/\\/g, '/') : headers,
+    port: 47831,
+    tab: 'tab-1',
+    agent: 'codex',
+    home,
+  });
+  const helper = `${http.python} -I -S ${http.headers} --tab tab-1 --agent codex --port 47831 --home ${home}`;
+  assert.equal(
+    codexHttpArg(http),
+    `mcp_servers.ide-agent-tabs={ url = 'http://127.0.0.1:47831/mcp', http_headers_helper = '${helper}', startup_timeout_sec = 30, tool_timeout_sec = 660 }`,
+  );
+});
+
+test('a Codex tab stays on the stdio server without a port, a headers stub or a safe path', () => {
+  assert.equal(codexHttp(httpHome({ port: null }), onWindows, 'tab-1', 'codex'), undefined);
+  assert.equal(codexHttp(httpHome({ port: 0 }), onWindows, 'tab-1', 'codex'), undefined);
+  assert.equal(codexHttp(httpHome({ port: 65536 }), onWindows, 'tab-1', 'codex'), undefined);
+  assert.equal(codexHttp(httpHome({ port: 1.5 }), onWindows, 'tab-1', 'codex'), undefined);
+  assert.equal(codexHttp(httpHome({ port: '47828' }), onWindows, 'tab-1', 'codex'), undefined);
+  assert.equal(codexHttp(httpHome({ stub: false }), onWindows, 'tab-1', 'codex'), undefined);
+  assert.equal(codexHttp(httpHome(), onWindows, 'tab 1', 'codex'), undefined);
+  assert.equal(codexHttp(httpHome(), onWindows, 'tab-1', 'co dex'), undefined);
+  assert.equal(codexHttp(httpHome(), onWindows, 'a'.repeat(129), 'codex'), undefined);
+  const spacedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-sp ace-'));
+  const spaced = path.join(spacedDir, 'python.exe');
+  fs.writeFileSync(spaced, '');
+  assert.equal(codexHttp(httpHome({ python: spaced }), onWindows, 'tab-1', 'codex'), undefined);
+});
+
+test('withCodexHttp changes only the server argument', () => {
+  const http = codexHttp(httpHome(), onWindows, 'tab-1', 'codex-local')!;
+  const swapped = withCodexHttp(CODEX_TAB_ARGS, http)!;
+  assert.deepEqual(swapped.filter((a, i) => a !== CODEX_TAB_ARGS[i]), [codexHttpArg(http)]);
+  assert.equal(swapped.length, CODEX_TAB_ARGS.length);
+  assert.equal(withCodexHttp(CODEX_TAB_ARGS, undefined), undefined);
+  assert.equal(withCodexHttp(['--other'], http), undefined);
+  assert.doesNotMatch(codexHttpArg(http), /["%!\n]/);
+});
+
+test('planLaunch gives a Codex tab the HTTP server argument when http is set and the stdio one otherwise', () => {
+  const codex = BUILTIN_PROFILES[1]!;
+  const http = codexHttp(httpHome(), onWindows, 'tab-1', 'codex')!;
+  const shared = planLaunch(codex, context({ http, python: ['/usr/bin/python3'] }));
+  assert.equal(shared.args[2], codexHttpArg(http));
+  assert.deepEqual(shared.args.filter((_, i) => i !== 2), CODEX_TAB_ARGS.filter((_, i) => i !== 2));
+  const stdio = planLaunch(codex, context({ python: ['/usr/bin/python3'] }));
+  assert.match(stdio.args[2]!, /command = '\/usr\/bin\/python3', args = \['-I'/);
+  assert.equal(planLaunch(codex, context()).args[2], CODEX_TAB_ARGS[2]);
+  assert.deepEqual(planLaunch(claudeProfile, context({ http })).args, []);
 });
 
 test('a Claude Code tab gets the tab settings file after its profile arguments', () => {

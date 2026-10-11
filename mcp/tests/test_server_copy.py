@@ -44,9 +44,9 @@ class ServerCopy(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(folder)), sorted([build, "current.json", "launch"]))
         self.assertEqual(
             sorted(os.listdir(os.path.join(folder, build, "launch"))),
-            ["agent-launch.fish", "agent-launch.ps1", "agent-launch.sh", "agent_hook.py", "mcp_server.py"],
+            ["agent-launch.fish", "agent-launch.ps1", "agent-launch.sh", "agent_hook.py", "headers.py", "mcp_server.py"],
         )
-        self.assertEqual(sorted(os.listdir(os.path.join(folder, "launch"))), ["agent_hook.py", "mcp_server.py"])
+        self.assertEqual(sorted(os.listdir(os.path.join(folder, "launch"))), ["agent_hook.py", "headers.py", "mcp_server.py"])
         self.assertEqual(read_current(home), {"build": build, "version": "0.9.0"})
         self.assertIsNone(refresh_server_copy(source, home), "an unchanged source copies nothing")
 

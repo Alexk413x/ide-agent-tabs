@@ -3,6 +3,30 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.4
+
+Plugin and MCP server 0.9.4, with VS Code extension 0.1.31 and JetBrains plugin 0.4.14 bundled.
+
+### Added
+
+- A Codex tab connects to the shared server over HTTP and starts no server of its own, when
+  `~/.ide-agent-tabs/mcp/` records the interpreter (`python.json`), the server's port (`port.json`, which
+  the server writes when it claims its port) and the `headers.py` stub. The tab's `-c` option names the
+  URL and an `http_headers_helper` that runs `headers.py` with `--tab`, `--agent`, `--port` and `--home`,
+  because Codex gives the helper no environment and expands no variable in its command. The Python
+  service, the VS Code extension and the JetBrains plugin build that option at launch, and each creates
+  the tab id before it plans the launch. A path with a space, a quote or `%`, or a missing port,
+  interpreter or stub, keeps the tab on the stdio server.
+- The shared server answers a client that opens with `initialize`, such as Codex, with the classic,
+  stateless form of `initialize`, `tools/list`, `tools/call` and `ping`, for protocol versions 2025-11-25,
+  2025-06-18, 2025-03-26 and 2024-11-05. Claude Code still opens with `server/discover` and is unchanged.
+  The tool list follows the client's agent, so a Codex session sees `agent_tabs_hook` and not
+  `agent_tabs_mod`. A session's tools run as its own agent, so the Codex hooks no longer fail with
+  `Tool agent_tabs_hook not found`.
+- `headers.py` takes `--tab`, `--agent`, `--port` and `--home`, and sends `X-Agent-Tabs-Cwd`, which the
+  server uses as the folder of a client that can't be asked for its roots. The server copy in
+  `~/.ide-agent-tabs/mcp/py/launch/` has a `headers.py` stub.
+
 ## 0.9.3
 
 Plugin and MCP server 0.9.3.

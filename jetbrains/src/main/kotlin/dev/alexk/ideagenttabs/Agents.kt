@@ -9,6 +9,7 @@ import com.intellij.util.EnvironmentUtil
 import com.intellij.util.IconUtil
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import java.nio.file.Path
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.swing.Icon
 
@@ -52,7 +53,12 @@ object Agents {
     private val searchPath: String
         get() = EnvironmentUtil.getValue("PATH") ?: System.getenv("PATH").orEmpty()
 
-    fun launchFor(profile: AgentProfile, request: OpenRequest? = null, cwd: String? = request?.path?.toString()): AgentLaunch =
+    fun launchFor(
+        profile: AgentProfile,
+        request: OpenRequest? = null,
+        cwd: String? = request?.path?.toString(),
+        tabId: String = UUID.randomUUID().toString(),
+    ): AgentLaunch =
         planLaunch(
             profile,
             LaunchContext(
@@ -66,6 +72,7 @@ object Agents {
                 windows = SystemInfo.isWindows,
                 searchPath = searchPath,
                 python = codexPython(ideAgentTabsHome(), SystemInfo.isWindows),
+                http = codexHttp(ideAgentTabsHome(), SystemInfo.isWindows, tabId, profile.name),
                 claudeSettings = claudeTabSettings(ideAgentTabsHome(), SystemInfo.isWindows),
                 cwd = cwd,
             ),
@@ -113,6 +120,7 @@ object Agents {
     @RequiresEdt
     fun open(project: Project, profile: AgentProfile) {
         val directory = project.basePath ?: System.getProperty("user.home")
-        AgentTabLauncher.open(project, directory, profile, launchFor(profile, cwd = directory), focus = true)
+        val id = UUID.randomUUID().toString()
+        AgentTabLauncher.open(project, directory, profile, launchFor(profile, cwd = directory, tabId = id), focus = true, id = id)
     }
 }

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import math
+import os
+import pathlib
 import re
 import select
 import socket
@@ -11,10 +13,11 @@ import threading
 from typing import Any, Callable, NamedTuple, cast
 
 from ..jsjson import js_string, parse, stringify
-from .hub import Identity
-from .state import HEADER_AGENT, HEADER_CLIENT, HEADER_PID, HEADER_PID_START, HEADER_TAB
+from .hub import ROOTS_REQUEST, Identity
+from .state import HEADER_AGENT, HEADER_CLIENT, HEADER_CWD, HEADER_PID, HEADER_PID_START, HEADER_TAB
 
 MODERN_PROTOCOL = "2026-07-28"
+CLASSIC_PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 VERSION_KEY = "io.modelcontextprotocol/protocolVersion"
 CAPABILITIES_KEY = "io.modelcontextprotocol/clientCapabilities"
 SERVER_INFO_KEY = "io.modelcontextprotocol/serverInfo"
@@ -39,6 +42,7 @@ LISTED = {"ttlMs": 0, "cacheScope": "private"}
 EMPTY_LISTS = {"prompts/list": "prompts", "resources/list": "resources", "resources/templates/list": "resourceTemplates"}
 NOT_ONE_MESSAGE = "Body must be a single JSON-RPC request or notification object"
 CLAUDE_AGENT = "claude"
+MAX_CWD_CHARS = 1024
 _CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _AGENT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -424,8 +428,12 @@ class Handler(socketserver.StreamRequestHandler):
             self.rpc_error(None, RpcError(INVALID_REQUEST, NOT_ONE_MESSAGE))
             return
 
+        if version != MODERN_PROTOCOL and (version in CLASSIC_PROTOCOLS or (version is None and msg["method"] == "initialize")):
+            self.classic_message(msg)
+            return
+
         def unsupported(request_id: Any) -> None:
-            data = {"supported": [MODERN_PROTOCOL], "requested": version or ""}
+            data = {"supported": [MODERN_PROTOCOL, *CLASSIC_PROTOCOLS], "requested": version or ""}
             self.rpc_error(request_id, RpcError(UNSUPPORTED_VERSION, "Unsupported protocol version", data))
 
         if "id" not in msg:
@@ -476,6 +484,70 @@ class Handler(socketserver.StreamRequestHandler):
             return
         meta_out = {SERVER_INFO_KEY: self.front.deps.server_info}
         self.send(200, {"jsonrpc": "2.0", "id": request_id, "result": {"resultType": "complete", "_meta": meta_out, **result}})
+
+    # Codex and other clients that open with `initialize` get the classic, stateless form: no session id, no
+    # roots request (the folder comes from the headers helper), and plain JSON results.
+    def classic_message(self, msg: dict[str, Any]) -> None:
+        if "id" not in msg:
+            self.send(202)
+            return
+        request_id = msg["id"]
+        valid_number = isinstance(request_id, (int, float)) and not isinstance(request_id, bool) and math.isfinite(request_id)
+        if not isinstance(request_id, str) and not valid_number:
+            self.rpc_error(None, RpcError(INVALID_REQUEST, NOT_ONE_MESSAGE))
+            return
+        method = msg["method"]
+        params = msg.get("params")
+        params = params if isinstance(params, dict) else {}
+        try:
+            result = self.classic_dispatch(method, params)
+        except RpcError as e:
+            self.rpc_error(request_id, e)
+            return
+        except Exception as e:  # noqa: BLE001 - any tool failure becomes a JSON-RPC error, as in the modern path
+            self.rpc_error(request_id, RpcError(INTERNAL_ERROR, str(e)))
+            return
+        if result is None:
+            self.rpc_error(request_id, RpcError(METHOD_NOT_FOUND, "Method not found", method))
+            return
+        self.send(200, {"jsonrpc": "2.0", "id": request_id, "result": result})
+
+    def classic_roots(self) -> dict[str, Any]:
+        cwd = percent_decoded(self.header(HEADER_CWD) or "")
+        if not cwd or len(cwd) > MAX_CWD_CHARS or not os.path.isabs(cwd):
+            return {}
+        return {ROOTS_REQUEST: {"roots": [{"uri": pathlib.Path(cwd).as_uri()}]}}
+
+    def classic_agent(self) -> str:
+        agent = self.identity().agent
+        if agent is not None:
+            return agent
+        from ..messaging.sessions import agent_from_client
+
+        return agent_from_client((self.header("user-agent") or "").split("/", 1)[0])
+
+    def classic_dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        deps = self.front.deps
+        if method == "initialize":
+            if not isinstance(params.get("clientInfo"), dict):
+                raise RpcError(INVALID_PARAMS, "Invalid initialize request")
+            requested = params.get("protocolVersion")
+            version = requested if requested in CLASSIC_PROTOCOLS else CLASSIC_PROTOCOLS[0]
+            return {
+                "protocolVersion": version,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": deps.server_info,
+                "instructions": deps.instructions(self.classic_agent()),
+            }
+        if method == "tools/list":
+            return {"tools": deps.tools(self.classic_agent())}
+        if method == "ping":
+            return {}
+        if method in EMPTY_LISTS:
+            return {EMPTY_LISTS[method]: []}
+        if method == "tools/call":
+            return self.dispatch(method, {**params, "inputResponses": self.classic_roots()})
+        return None
 
     def dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any] | None:
         deps = self.front.deps
