@@ -32,24 +32,24 @@ class AgentProfilesTest {
     @Test
     fun `built-in profiles match the design`() {
         assertEquals(
-            listOf("claude", "codex", "agy", "copilot", "gemini", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local"),
+            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local"),
             settings.profiles().map { it.name },
         )
         assertEquals(
-            listOf("Claude Code", "Codex", "Antigravity CLI", "Copilot CLI", "Gemini CLI", "Grok Build", "Pi", "Hermes", "OpenCode", "Qwen Code", "Goose", "Codex (local)"),
+            listOf("Claude Code", "Codex", "Antigravity CLI", "Copilot CLI", "Grok Build", "Pi", "Hermes", "OpenCode", "Qwen Code", "Goose", "Codex (local)"),
             settings.profiles().map { it.label },
         )
         assertEquals(
-            listOf("claude", "codex", "agy", "copilot", "gemini", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex"),
+            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex"),
             settings.profiles().map { it.command },
         )
         assertEquals(
-            listOf(null, null, "-i", "-i", "-i", null, null, "-q", "--prompt", "-i", "-t", null),
+            listOf(null, null, "-i", "-i", null, null, "-q", "--prompt", "-i", "-t", null),
             settings.profiles().map { it.promptFlag },
         )
         assertEquals(
             listOf(
-                emptyList(), CODEX_TAB_ARGS, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(),
+                emptyList(), CODEX_TAB_ARGS, emptyList(), emptyList(), emptyList(), emptyList(),
                 listOf("chat"), emptyList(), emptyList(), listOf("run", "-s"), CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "ollama"),
             ),
             settings.profiles().map { it.args },
@@ -76,7 +76,7 @@ class AgentProfilesTest {
         )
         val profiles = settings.profiles()
         assertEquals(
-            listOf("claude", "codex", "agy", "copilot", "gemini", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local", "opencode-local", "bare"),
+            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local", "opencode-local", "bare"),
             profiles.map { it.name },
         )
         assertEquals(AgentProfile("codex", "Codex (fast)", "codex", listOf("--model", "o4")), settings.profile("codex"))
@@ -161,8 +161,8 @@ class AgentProfilesTest {
 
     @Test
     fun `default agent comes from config and falls back to claude`() {
-        write(CONFIG_FILE, """{"defaultAgent": "gemini"}""")
-        assertEquals("gemini", settings.defaultProfile().name)
+        write(CONFIG_FILE, """{"defaultAgent": "copilot"}""")
+        assertEquals("copilot", settings.defaultProfile().name)
         write(CONFIG_FILE, """{"defaultAgent": "nope", "other": 1}""")
         assertEquals("claude", settings.defaultProfile().name)
         write(CONFIG_FILE, "broken")
@@ -227,7 +227,7 @@ class AgentProfilesTest {
     fun `built-in profiles carry the model flag of each CLI`() {
         assertEquals(
             listOf(
-                "claude" to "--model", "codex" to "-m", "agy" to "--model", "copilot" to "--model", "gemini" to "-m", "grok" to "-m", "pi" to "--model",
+                "claude" to "--model", "codex" to "-m", "agy" to "--model", "copilot" to "--model", "grok" to "-m", "pi" to "--model",
                 "hermes" to "-m", "opencode" to "-m", "qwen" to "-m", "goose" to "--model", "codex-local" to "-m",
             ),
             BUILTIN_PROFILES.map { it.name to it.modelFlag },
@@ -250,7 +250,7 @@ class AgentProfilesTest {
     private val oriAll = DetectedOri("/home/u/.local/bin/ori", "0.14.3", listOf("claude", "codex"))
     private val claude = AgentProfile("claude", "Claude Code", "claude", modelFlag = "--model")
     private val codex = AgentProfile("codex", "Codex", "codex", args = listOf("--no-daemon"), modelFlag = "-m")
-    private val gemini = AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i", modelFlag = "-m")
+    private val qwen = AgentProfile("qwen", "Qwen Code", "qwen", promptFlag = "-i", modelFlag = "-m")
     private val bare = AgentProfile("bare", "Bare", "bare-cli", promptFlag = "-i")
 
     private fun ctx(
@@ -271,8 +271,8 @@ class AgentProfilesTest {
         assertEquals(LaunchVia.DIRECT, launch.via)
         assertEquals("codex", launch.command)
         assertEquals(listOf("--no-daemon", "-m", "gpt-5", "--yolo"), launch.args)
-        val withFlag = planLaunch(gemini, ctx(model = "gemini-2.5-pro", prompt = "hi"))
-        assertEquals(listOf("-m", "gemini-2.5-pro", "-i"), withFlag.args)
+        val withFlag = planLaunch(qwen, ctx(model = "qwen3-coder", prompt = "hi"))
+        assertEquals(listOf("-m", "qwen3-coder", "-i"), withFlag.args)
         assertEquals("hi", withFlag.prompt)
         assertEquals(emptyList<String>(), planLaunch(claude, ctx()).args)
     }
@@ -329,7 +329,7 @@ class AgentProfilesTest {
     fun `the setting falls back to a direct launch when Ori cannot run the agent`() {
         val cases = listOf(
             claude to ctx(setting = LaunchVia.ORI, ori = null),
-            gemini to ctx(setting = LaunchVia.ORI),
+            qwen to ctx(setting = LaunchVia.ORI),
             AgentProfile("grok", "Grok", "grok") to ctx(setting = LaunchVia.ORI),
             AgentProfile("pi", "Pi", "pi") to ctx(setting = LaunchVia.ORI, ori = DetectedOri("/x/ori", null, listOf("claude"))),
         )
@@ -338,7 +338,7 @@ class AgentProfilesTest {
             assertEquals(profile.name, LaunchVia.DIRECT, launch.via)
             assertEquals(profile.command, launch.command)
         }
-        assertEquals(listOf("-m", "gemini-2.5-pro"), planLaunch(gemini, ctx(setting = LaunchVia.ORI, model = "gemini-2.5-pro")).args)
+        assertEquals(listOf("-m", "qwen3-coder"), planLaunch(qwen, ctx(setting = LaunchVia.ORI, model = "qwen3-coder")).args)
         assertThrows(IllegalArgumentException::class.java) { planLaunch(bare, ctx(setting = LaunchVia.ORI, model = "m")) }
     }
 
@@ -347,7 +347,7 @@ class AgentProfilesTest {
         fun message(profile: AgentProfile, context: LaunchContext) =
             assertThrows(IllegalArgumentException::class.java) { planLaunch(profile, context) }.message
         assertEquals("claude can't launch through Ori: Ori is not installed", message(claude, ctx(via = LaunchVia.ORI, ori = null)))
-        assertEquals("gemini can't launch through Ori: Ori does not support gemini", message(gemini, ctx(via = LaunchVia.ORI)))
+        assertEquals("qwen can't launch through Ori: Ori does not support qwen", message(qwen, ctx(via = LaunchVia.ORI)))
         assertEquals(
             "pi can't launch through Ori: Ori does not list pi as launchable",
             message(AgentProfile("pi", "Pi", "pi"), ctx(via = LaunchVia.ORI, ori = DetectedOri("/x/ori", null, listOf("claude")))),
@@ -515,7 +515,7 @@ class AgentProfilesTest {
         val ori = plan(setting = LaunchVia.ORI)
         assertEquals(LaunchVia.ORI, ori.via)
         assertEquals(listOf("claude", "--settings", "/h/s.json"), ori.args)
-        for (name in listOf("gemini", "copilot", "pi")) {
+        for (name in listOf("copilot", "pi")) {
             assertFalse(name, "--settings" in plan(BUILTIN_PROFILES.first { it.name == name }).args)
         }
         assertEquals(emptyList<String>(), plan(claude.copy(command = "claude-wrapper")).args)

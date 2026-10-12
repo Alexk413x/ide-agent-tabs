@@ -51,15 +51,15 @@ class SourcedLaunchTest {
     @Test
     fun `sourced launch points the shell at the script and passes the command and each arg in its own variable`() {
         val script = dir.resolve("agent.sh")
-        val gemini = AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i")
-        val launch = sourcedLaunch(unixShell("/bin/zsh", isMac = true), script, gemini.launch("hi", listOf("--a", ""), mapOf("FOO" to "bar")), "tab-1")
+        val copilot = AgentProfile("copilot", "Copilot CLI", "copilot", promptFlag = "-i")
+        val launch = sourcedLaunch(unixShell("/bin/zsh", isMac = true), script, copilot.launch("hi", listOf("--a", ""), mapOf("FOO" to "bar")), "tab-1")
         assertEquals(listOf("/bin/zsh", "-l", "-i"), launch.command)
         assertEquals(
             mapOf(
                 STARTUP_ENV to script.toString(),
                 TAB_ID_ENV to "tab-1",
-                AGENT_ENV to "gemini",
-                COMMAND_ENV to "gemini",
+                AGENT_ENV to "copilot",
+                COMMAND_ENV to "copilot",
                 PROMPT_ENV to "hi",
                 ARG_COUNT_ENV to "3",
                 "${ARG_ENV_PREFIX}0" to "--a",

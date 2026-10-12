@@ -20,7 +20,7 @@ from .sessions import (
 )
 from .store import peek_unread
 
-HOOK_CLIS = ("claude", "codex", "gemini", "copilot", "agy", "grok", "hermes", "qwen", "goose")
+HOOK_CLIS = ("claude", "codex", "copilot", "agy", "grok", "hermes", "qwen", "goose")
 MAX_NUDGES = 3
 
 Action = Mapping[str, Any]
@@ -53,7 +53,6 @@ HOOK_EVENTS: dict[str, dict[str, Action]] = {
         "Stop": _STOP,
         "Interrupt": _SETTLED,
     },
-    "gemini": {"BeforeAgent": _PROMPT, "BeforeTool": _BUSY, "Notification": _NOTIFICATION, "AfterTool": _AFTER_TOOL, "AfterAgent": _STOP},
     "copilot": {
         "sessionStart": _STARTED,
         "userPromptSubmitted": {"state": "busy", "prompt": True},
@@ -121,7 +120,7 @@ def _context_output(cli: str, event: str, text: str) -> dict[str, Any]:
 
 
 def _stop_output(cli: str, reason: str) -> dict[str, Any]:
-    return {"decision": "deny" if cli == "gemini" else "continue" if cli == "agy" else "block", "reason": reason}
+    return {"decision": "continue" if cli == "agy" else "block", "reason": reason}
 
 
 def _agent_session(data: Mapping[str, Any]) -> str | None:

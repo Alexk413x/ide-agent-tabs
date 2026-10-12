@@ -1,6 +1,6 @@
 # Agent Tabs for VS Code
 
-Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode,
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi, Hermes, OpenCode,
 Qwen Code and Goose, in editor tabs. You open a tab with one button. Another agent opens, lists and closes tabs through a local
 HTTP API, the same API the JetBrains plugin serves.
 
@@ -71,7 +71,7 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 
 | Setting | Values | Default |
 | --- | --- | --- |
-| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `agy`, `copilot`, `gemini`, `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local` | `claude` |
+| `ideAgentTabs.defaultAgent` | `claude`, `codex`, `agy`, `copilot`, `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local` | `claude` |
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
 | `ideAgentTabs.launchVia` | `direct`, `ori` (start supported agents with `ori <agent>`, which bills model usage through OpenRouter). Needs Ori (`ori`) installed. | `direct` |
 | `ideAgentTabs.closeAfterHandoff` | `true` (the new session closes the old tab once both sides confirm a handoff), `false` (leave the old tab open, marked as handed off) | `true` |
@@ -114,7 +114,7 @@ plugin or any other window shows up here too, and the MCP server uses the same d
 
 ## Agent profiles
 
-The built-in profiles are `claude`, `codex`, `agy`, `copilot`, `gemini`, `grok`, `pi`, `hermes`, `opencode`,
+The built-in profiles are `claude`, `codex`, `agy`, `copilot`, `grok`, `pi`, `hermes`, `opencode`,
 `qwen`, `goose` and `codex-local` (Codex with a local Ollama model). The Grok Build, Pi, Hermes, OpenCode, Qwen
 Code, Goose and Codex (local) profiles come from each CLI's documentation and haven't had a live test. The menus
 list only agents whose command is on `PATH`. To add a profile or change a built-in one, edit

@@ -77,10 +77,7 @@ class HookStateTest(unittest.TestCase):
             ("codex", "Stop", {}, "idle"),
             ("codex", "UserPromptSubmit", {}, "busy"),
             ("codex", "Interrupt", {}, "idle"),
-            ("gemini", "BeforeAgent", {}, "busy"),
-            ("gemini", "Notification", {"notification_type": "ToolPermission"}, "permission"),
-            ("gemini", "AfterTool", {}, "busy"),
-            ("gemini", "AfterAgent", {}, "idle"),
+            ("qwen", "Notification", {"notification_type": "ToolPermission"}, "permission"),
             ("copilot", "sessionStart", {"source": "new"}, "idle"),
             ("copilot", "userPromptSubmitted", {}, "busy"),
             ("copilot", "notification", {"notificationType": "permission_prompt"}, "permission"),
@@ -131,8 +128,6 @@ class HookStateTest(unittest.TestCase):
             ("codex", "PreToolUse", None),
             ("codex", "UserPromptSubmit", context("UserPromptSubmit")),
             ("codex", "PostToolUse", context("PostToolUse")),
-            ("gemini", "BeforeAgent", context("BeforeAgent")),
-            ("gemini", "AfterTool", context("AfterTool")),
             ("copilot", "userPromptSubmitted", None),
             ("copilot", "postToolUse", {"additionalContext": REMINDER}),
             ("agy", "PreInvocation", {"injectSteps": [{"ephemeralMessage": REMINDER}]}),
@@ -182,7 +177,6 @@ class HookStateTest(unittest.TestCase):
         hook(home, "claude", "UserPromptSubmit")
         self.assertEqual(presence(home)["nudges"], 0)
         self.assertEqual(hook(home, "codex", "Stop"), block)
-        self.assertEqual(hook(home, "gemini", "AfterAgent"), {"decision": "deny", "reason": block["reason"]})
         self.assertEqual(hook(home, "copilot", "agentStop"), block)
         hook(home, "agy", "PreInvocation", {"invocationNum": 0})
         self.assertEqual(hook(home, "agy", "Stop"), {"decision": "continue", "reason": block["reason"]})
@@ -212,7 +206,7 @@ class HookStateTest(unittest.TestCase):
         self.assertIsNone(hook(home, "vim", "Stop"))
         self.assertIsNone(hook(home, "claude", "SessionEnd"))
         self.assertFalse(os.path.exists(presence_path(home, ID)))
-        self.assertEqual(sorted(HOOK_EVENTS), ["agy", "claude", "codex", "copilot", "gemini", "goose", "grok", "hermes", "qwen"])
+        self.assertEqual(sorted(HOOK_EVENTS), ["agy", "claude", "codex", "copilot", "goose", "grok", "hermes", "qwen"])
 
 
 class HookOwnershipTest(unittest.TestCase):
@@ -250,7 +244,6 @@ class HookOwnershipTest(unittest.TestCase):
         cases = [
             ("codex", "UserPromptSubmit", "Stop", {"session_id": "tab"}, {"session_id": "child"}),
             ("agy", "PreInvocation", "Stop", {"conversationId": "tab", "invocationNum": 0}, {"conversationId": "child"}),
-            ("gemini", "BeforeAgent", "AfterAgent", {"session_id": "tab"}, {"session_id": "child"}),
         ]
         for cli, prompt, stop, own, child in cases:
             home = temp_home(self, "iat-hook-")

@@ -7,6 +7,14 @@ bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
 Plugin and MCP server 0.9.4, with VS Code extension 0.1.31 and JetBrains plugin 0.4.14 bundled.
 
+### Removed
+
+- Gemini CLI. It moved to the Antigravity CLI and gets no further updates. The `gemini` profile, its
+  `--register gemini` and `--unregister gemini` handling, its hooks, its icons and its settings in the
+  VS Code extension and the JetBrains plugin are gone. A registration that `--register gemini` wrote
+  earlier stays in `~/.gemini/settings.json`; delete the `ide-agent-tabs` entry there by hand. The
+  Antigravity CLI keeps its files under `~/.gemini/config/` and is unchanged.
+
 ### Added
 
 - A Codex tab connects to the shared server over HTTP and starts no server of its own, when

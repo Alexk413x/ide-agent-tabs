@@ -45,19 +45,19 @@ function fixture() {
 test('built-in profiles match the design', () => {
   const { settings, warnings } = fixture();
   const profiles = settings.profiles();
-  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
+  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
   assert.deepEqual(profiles.map(p => p.label), [
-    'Claude Code', 'Codex', 'Antigravity CLI', 'Copilot CLI', 'Gemini CLI', 'Grok Build', 'Pi', 'Hermes', 'OpenCode', 'Qwen Code', 'Goose', 'Codex (local)',
+    'Claude Code', 'Codex', 'Antigravity CLI', 'Copilot CLI', 'Grok Build', 'Pi', 'Hermes', 'OpenCode', 'Qwen Code', 'Goose', 'Codex (local)',
   ]);
-  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex']);
+  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex']);
   assert.deepEqual(profiles.map(p => p.promptFlag), [
-    undefined, undefined, '-i', '-i', '-i', undefined, undefined, '-q', '--prompt', '-i', '-t', undefined,
+    undefined, undefined, '-i', '-i', undefined, undefined, '-q', '--prompt', '-i', '-t', undefined,
   ]);
-  assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0, 0, 0, 0, 1, 0, 0, 2, CODEX_TAB_ARGS.length + 3]);
+  assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0, 0, 0, 1, 0, 0, 2, CODEX_TAB_ARGS.length + 3]);
   assert.deepEqual(profiles[1]!.args, CODEX_TAB_ARGS);
-  assert.deepEqual(profiles[7]!.args, ['chat']);
-  assert.deepEqual(profiles[10]!.args, ['run', '-s']);
-  assert.deepEqual(profiles[11]!.args, [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama']);
+  assert.deepEqual(profiles[6]!.args, ['chat']);
+  assert.deepEqual(profiles[9]!.args, ['run', '-s']);
+  assert.deepEqual(profiles[10]!.args, [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama']);
   assert.deepEqual(profiles[1]!.args.slice(0, 2), ['--no-daemon', '-c']);
   assert.equal(settings.defaultProfile().name, 'claude');
   assert.deepEqual(warnings, []);
@@ -96,7 +96,7 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     },
     "bare": {"command": "bare-cli"}
   }`);
-  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'opencode-local', 'bare']);
+  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'opencode-local', 'bare']);
   assert.deepEqual(settings.profile('codex'), profile('codex', 'Codex (fast)', 'codex', { args: ['--model', 'o4'], promptFlag: undefined, modelFlag: undefined, icon: undefined }));
   assert.deepEqual(
     settings.profile('opencode-local'),
@@ -182,8 +182,8 @@ test('reserved names are refused in profile env', () => {
 
 test('default agent comes from config and falls back to claude', () => {
   const { settings, warnings, write } = fixture();
-  write(CONFIG_FILE, '{"defaultAgent": "gemini"}');
-  assert.equal(settings.defaultProfile().name, 'gemini');
+  write(CONFIG_FILE, '{"defaultAgent": "copilot"}');
+  assert.equal(settings.defaultProfile().name, 'copilot');
   write(CONFIG_FILE, '{"defaultAgent": "nope", "other": 1}');
   assert.equal(settings.defaultProfile().name, 'claude');
   write(CONFIG_FILE, '{"defaultAgent": 3}');
@@ -197,12 +197,12 @@ test('a preferred agent wins over config unless it has no profile', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-agents-'));
   let preferred: string | undefined = 'codex';
   const settings = new AgentSettings(home, () => {}, () => preferred);
-  fs.writeFileSync(path.join(home, CONFIG_FILE), '{"defaultAgent": "gemini"}');
+  fs.writeFileSync(path.join(home, CONFIG_FILE), '{"defaultAgent": "copilot"}');
   assert.equal(settings.defaultProfile().name, 'codex');
   preferred = 'nope';
-  assert.equal(settings.defaultProfile().name, 'gemini');
+  assert.equal(settings.defaultProfile().name, 'copilot');
   preferred = undefined;
-  assert.equal(settings.defaultProfile().name, 'gemini');
+  assert.equal(settings.defaultProfile().name, 'copilot');
 });
 
 test('saving the default agent keeps the other settings', () => {
@@ -364,7 +364,7 @@ test('built-in profiles carry the model flag of each CLI', () => {
   assert.deepEqual(
     BUILTIN_PROFILES.map(p => [p.name, p.modelFlag]),
     [
-      ['claude', '--model'], ['codex', '-m'], ['agy', '--model'], ['copilot', '--model'], ['gemini', '-m'], ['grok', '-m'], ['pi', '--model'],
+      ['claude', '--model'], ['codex', '-m'], ['agy', '--model'], ['copilot', '--model'], ['grok', '-m'], ['pi', '--model'],
       ['hermes', '-m'], ['opencode', '-m'], ['qwen', '-m'], ['goose', '--model'], ['codex-local', '-m'],
     ],
   );
@@ -386,7 +386,7 @@ test('a custom profile sets modelFlag in the agents file', () => {
 const oriAll: DetectedOri = { path: '/home/u/.local/bin/ori', version: '0.14.3', agents: ['claude', 'codex'] };
 const claudeProfile = profile('claude', 'Claude Code', 'claude', { modelFlag: '--model' });
 const codexProfile = profile('codex', 'Codex', 'codex', { args: ['--no-daemon'], modelFlag: '-m' });
-const geminiProfile = profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i', modelFlag: '-m' });
+const copilotProfile = profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i', modelFlag: '--model' });
 const bareProfile = profile('bare', 'Bare', 'bare-cli', { promptFlag: '-i' });
 
 function context(extra: Partial<LaunchContext> = {}): LaunchContext {
@@ -398,8 +398,8 @@ test('a direct launch puts the model flag after the profile args', () => {
   assert.equal(launch.via, 'direct');
   assert.equal(launch.command, 'codex');
   assert.deepEqual(launch.args, ['--no-daemon', '-m', 'gpt-5', '--yolo']);
-  const withFlag = planLaunch(geminiProfile, context({ model: 'gemini-2.5-pro', prompt: 'hi' }));
-  assert.deepEqual(withFlag.args, ['-m', 'gemini-2.5-pro', '-i']);
+  const withFlag = planLaunch(copilotProfile, context({ model: 'gpt-5', prompt: 'hi' }));
+  assert.deepEqual(withFlag.args, ['--model', 'gpt-5', '-i']);
   assert.equal(withFlag.prompt, 'hi');
   assert.deepEqual(planLaunch(claudeProfile, context()).args, []);
 });
@@ -451,7 +451,7 @@ test('an explicit via beats the setting in both directions', () => {
 test('the setting falls back to a direct launch when Ori cannot run the agent', () => {
   const cases: [AgentProfile, Partial<LaunchContext>][] = [
     [claudeProfile, { ori: null }],
-    [geminiProfile, {}],
+    [copilotProfile, {}],
     [profile('grok', 'Grok', 'grok'), {}],
     [profile('pi', 'Pi', 'pi'), { ori: { ...oriAll, agents: ['claude'] } }],
   ];
@@ -460,14 +460,14 @@ test('the setting falls back to a direct launch when Ori cannot run the agent', 
     assert.equal(launch.via, 'direct', p.name);
     assert.equal(launch.command, p.command);
   }
-  const withModel = planLaunch(geminiProfile, context({ setting: 'ori', model: 'gemini-2.5-pro' }));
-  assert.deepEqual(withModel.args, ['-m', 'gemini-2.5-pro']);
+  const withModel = planLaunch(copilotProfile, context({ setting: 'ori', model: 'gpt-5' }));
+  assert.deepEqual(withModel.args, ['--model', 'gpt-5']);
   assert.throws(() => planLaunch(bareProfile, context({ setting: 'ori', model: 'm' })), /has no model option/);
 });
 
 test('an explicit Ori launch that cannot run fails with the reason', () => {
   assert.throws(() => planLaunch(claudeProfile, context({ via: 'ori', ori: null })), new BadRequest("claude can't launch through Ori: Ori is not installed"));
-  assert.throws(() => planLaunch(geminiProfile, context({ via: 'ori' })), new BadRequest("gemini can't launch through Ori: Ori does not support gemini"));
+  assert.throws(() => planLaunch(copilotProfile, context({ via: 'ori' })), new BadRequest("copilot can't launch through Ori: Ori does not support copilot"));
   assert.throws(
     () => planLaunch(profile('pi', 'Pi', 'pi'), context({ via: 'ori', ori: { ...oriAll, agents: ['claude'] } })),
     new BadRequest("pi can't launch through Ori: Ori does not list pi as launchable"),
@@ -739,7 +739,7 @@ test('a Claude Code tab gets the tab settings file after its profile arguments',
   }
   const ori = planLaunch(claude, { ...ctx, setting: 'ori', ori: { path: '/bin/ori', agents: ['claude'] } });
   assert.deepEqual([ori.via, ori.args], ['ori', ['claude', '--settings', '/h/s.json']]);
-  for (const name of ['gemini', 'copilot', 'pi']) {
+  for (const name of ['copilot', 'pi']) {
     assert.ok(!planLaunch(BUILTIN_PROFILES.find(p => p.name === name)!, ctx).args.includes('--settings'), name);
   }
   assert.deepEqual(planLaunch({ ...claude, command: 'claude-wrapper' }, ctx).args, []);

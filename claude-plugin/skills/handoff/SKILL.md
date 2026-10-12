@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Hand this session's work to a new agent tab (Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI or another agent from list_agents) through Agent Tabs, with a written brief, then stop here. Use when the user asks to continue the work in a fresh session or new tab, to move it to another repository or agent, or to pick it up in a session that loads an updated CLI or plugin. Also use when a first prompt says "Agent Tabs handoff". Not for a side task while this session keeps working.
+description: Hand this session's work to a new agent tab (Claude Code, Codex, Antigravity CLI, Copilot CLI or another agent from list_agents) through Agent Tabs, with a written brief, then stop here. Use when the user asks to continue the work in a fresh session or new tab, to move it to another repository or agent, or to pick it up in a session that loads an updated CLI or plugin. Also use when a first prompt says "Agent Tabs handoff". Not for a side task while this session keeps working.
 argument-hint: "[agent] [folder]"
 ---
 

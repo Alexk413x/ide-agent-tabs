@@ -31,7 +31,7 @@ OLD_NODE = "node /home/a/.ide-agent-tabs/mcp/agent-hook.mjs"
 
 class Commands(unittest.TestCase):
     def test_shell_hooks_put_a_bare_interpreter_first(self) -> None:
-        self.assertEqual(hook_command(POSIX, "gemini", "Stop"), f'/usr/bin/python3 -I -S "{HOOK}" gemini Stop')
+        self.assertEqual(hook_command(POSIX, "codex", "Stop"), f'/usr/bin/python3 -I -S "{HOOK}" codex Stop')
         self.assertEqual(hook_command(WINDOWS, "qwen", "Stop"), f'C:/Python313/python.exe -I -S "{WIN_HOOK}" qwen Stop')
 
     def test_an_interpreter_path_a_shell_would_split_falls_back(self) -> None:
@@ -46,7 +46,7 @@ class Commands(unittest.TestCase):
             HookTarget('C:/a"b/python.exe', WIN_HOOK, "win32"),
         ):
             with self.assertRaisesRegex(ValueError, "shell command"):
-                hook_command(bad, "gemini", "Stop")
+                hook_command(bad, "codex", "Stop")
 
     def test_antigravity_runs_py_3_on_windows_with_the_path_bare(self) -> None:
         self.assertEqual(agy_hook_command(WINDOWS, "Stop"), f"py -3 -I -S {WIN_HOOK} agy Stop")
@@ -84,7 +84,7 @@ class Commands(unittest.TestCase):
 
 class Migration(unittest.TestCase):
     def test_old_node_and_new_python_hooks_both_count_as_ours(self) -> None:
-        for text in (f"{OLD_NODE} gemini Stop", 'node "C:/x/agent-hook.mjs" qwen Stop', f"/usr/bin/python3 -I -S {HOOK} goose Stop", HOOK):
+        for text in (f"{OLD_NODE} codex Stop", 'node "C:/x/agent-hook.mjs" qwen Stop', f"/usr/bin/python3 -I -S {HOOK} goose Stop", HOOK):
             self.assertTrue(mentions_hook(text), text)
         for text in ("python /home/a/agent_hook.py", "node /x/my-agent-hook.mjs.bak", None):
             self.assertFalse(mentions_hook(text), text)

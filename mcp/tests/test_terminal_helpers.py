@@ -46,7 +46,6 @@ class TerminalEnvironmentTest(unittest.TestCase):
             "CODEX_SANDBOX": "seatbelt",
             "CODEX_SANDBOX_NETWORK_DISABLED": "1",
             "CODEX_HOME": "c",
-            "GEMINI_CLI": "1",
             "OPENCODE_SESSION_ID": "s",
             "ANTIGRAVITY_CLI_ALIAS": "agy",
             "COPILOT_HOME": "g",

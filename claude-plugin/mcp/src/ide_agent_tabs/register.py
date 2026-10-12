@@ -68,7 +68,7 @@ from .toml_table import read_toml_table, toml_table, with_toml_table
 from .yaml_block import YamlDoc, edit_yaml, yaml_value
 
 SERVER_NAME = "ide-agent-tabs"
-AGENTS = ("codex", "agy", "copilot", "gemini", "grok", "pi", "hermes", "opencode", "qwen", "goose")
+AGENTS = ("codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose")
 CLI_TIMEOUT_S = 30.0
 OPENCODE_SCHEMA = "https://opencode.ai/config.json"
 OPENCODE_TIMEOUT_MS = 660_000
@@ -118,8 +118,6 @@ def config_file(
 
     if agent == "codex":
         return os.path.join(var("CODEX_HOME") or os.path.join(user_home, ".codex"), "config.toml")
-    if agent == "gemini":
-        return os.path.join(var("GEMINI_CLI_HOME") or user_home, ".gemini", "settings.json")
     if agent == "copilot":
         return os.path.join(var("COPILOT_HOME") or os.path.join(user_home, ".copilot"), "mcp-config.json")
     if agent == "agy":
@@ -181,10 +179,6 @@ def agy_argv(argv: Sequence[str], platform: str) -> list[str]:
 def agy_entry(argv: Sequence[str], platform: str) -> dict[str, Any]:
     full = agy_argv(argv, platform)
     return {"command": full[0], "args": full[1:]}
-
-
-def gemini_entry(argv: Sequence[str]) -> dict[str, Any]:
-    return {"command": argv[0], "args": list(argv[1:])}
 
 
 # OpenCode applies timeout (ms) to tool calls too, and its default would cut wait_for_message short.
@@ -587,7 +581,6 @@ _JSON_ENTRIES: dict[str, Callable[[RegisterContext, list[str]], Any]] = {
     "opencode": lambda _, argv: opencode_entry(argv),
     "pi": lambda _, argv: pi_entry(argv),
     "qwen": lambda _, argv: qwen_entry(argv),
-    "gemini": lambda _, argv: gemini_entry(argv),
 }
 
 

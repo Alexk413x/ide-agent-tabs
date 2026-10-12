@@ -27,11 +27,9 @@ class ConfigFileTest(unittest.TestCase):
         j = os.path.join
         self.assertEqual(config_file("codex", {}, h, none), j("h", ".codex", "config.toml"))
         self.assertEqual(config_file("codex", {"CODEX_HOME": "c"}, h, none), j("c", "config.toml"))
-        self.assertEqual(config_file("gemini", {}, h, none), j("h", ".gemini", "settings.json"))
-        self.assertEqual(config_file("gemini", {"GEMINI_CLI_HOME": "g"}, h, none), j("g", ".gemini", "settings.json"))
         self.assertEqual(config_file("copilot", {}, h, none), j("h", ".copilot", "mcp-config.json"))
         self.assertEqual(config_file("copilot", {"COPILOT_HOME": "p"}, h, none), j("p", "mcp-config.json"))
-        self.assertEqual(config_file("agy", {"GEMINI_CLI_HOME": "g"}, h, none), j("h", ".gemini", "config", "mcp_config.json"))
+        self.assertEqual(config_file("agy", {}, h, none), j("h", ".gemini", "config", "mcp_config.json"))
         self.assertEqual(config_file("opencode", {}, h, none), j("h", ".config", "opencode", "opencode.json"))
         self.assertEqual(config_file("opencode", {"XDG_CONFIG_HOME": "x"}, h, none), j("x", "opencode", "opencode.json"))
         jsonc = j("x", "opencode", "opencode.jsonc")
@@ -56,7 +54,7 @@ class ConfigFileTest(unittest.TestCase):
 
     def test_every_agent_but_pi_and_codex_gets_global_hooks(self) -> None:
         self.assertEqual([takes_hooks(a) for a in ("grok", "pi", "hermes", "qwen", "goose")], [True, False, True, True, True])
-        self.assertEqual([takes_hooks(a) for a in ("codex", "gemini", "copilot", "agy")], [False, True, True, True])
+        self.assertEqual([takes_hooks(a) for a in ("codex", "copilot", "agy")], [False, True, True])
 
     def test_every_mcp_entry_outlasts_the_longest_wait_for_message(self) -> None:
         longest = MAX_WAIT_S + 60

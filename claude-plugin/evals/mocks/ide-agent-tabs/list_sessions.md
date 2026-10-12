@@ -22,8 +22,8 @@
       "self": false
     },
     {
-      "id": "gemini-tab-2",
-      "agent": "gemini",
+      "id": "qwen-tab-2",
+      "agent": "qwen",
       "path": "/work/docs",
       "host": "windows-terminal",
       "state": "busy",

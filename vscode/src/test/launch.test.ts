@@ -113,12 +113,12 @@ test('PowerShell env holds the command only when there are no args or prompt', (
 });
 
 test('bash, zsh and fish get the arg count and each arg in its own variable', () => {
-  const gemini = profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i' });
-  assert.deepEqual(terminalEnv('posix', launchOf(gemini, 'hi', ['--a', ''], { FOO: 'bar' }), 'tab-1'), {
+  const copilot = profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i' });
+  assert.deepEqual(terminalEnv('posix', launchOf(copilot, 'hi', ['--a', ''], { FOO: 'bar' }), 'tab-1'), {
     FOO: 'bar',
     [TAB_ID_ENV]: 'tab-1',
-    [AGENT_ENV]: 'gemini',
-    [COMMAND_ENV]: 'gemini',
+    [AGENT_ENV]: 'copilot',
+    [COMMAND_ENV]: 'copilot',
     [PROMPT_ENV]: 'hi',
     [ARG_COUNT_ENV]: '3',
     [`${ARG_ENV_PREFIX}0`]: '--a',
@@ -164,7 +164,7 @@ test('terminals that survive an extension host restart come back as tabs from th
 });
 
 test('known tabs and a second terminal with the same tab id are not revived', () => {
-  const env = { [TAB_ID_ENV]: 'tab-9', [AGENT_ENV]: 'gemini' };
+  const env = { [TAB_ID_ENV]: 'tab-9', [AGENT_ENV]: 'copilot' };
   const first = { creationOptions: { cwd: '/a', env } };
   const copy = { creationOptions: { cwd: '/b', env } };
   const known = { creationOptions: { cwd: '/c', env: { [TAB_ID_ENV]: 'tab-10' } } };

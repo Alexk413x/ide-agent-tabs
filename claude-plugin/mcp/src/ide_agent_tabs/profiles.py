@@ -273,7 +273,6 @@ BUILTIN_PROFILES: tuple[AgentProfile, ...] = (
     _profile("codex", "Codex", "codex", "-m", None, CODEX_TAB_ARGS),
     _profile("agy", "Antigravity CLI", "agy", "--model", "-i"),
     _profile("copilot", "Copilot CLI", "copilot", "--model", "-i"),
-    _profile("gemini", "Gemini CLI", "gemini", "-m", "-i"),
     _profile("grok", "Grok Build", "grok", "-m"),
     _profile("pi", "Pi", "pi", "--model"),
     _profile("hermes", "Hermes", "hermes", "-m", "-q", ("chat",)),

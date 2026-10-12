@@ -1,6 +1,6 @@
 # Agent Tabs
 
-Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI,
+Agent Tabs opens AI coding-agent sessions, such as Claude Code, Codex, Antigravity CLI, Copilot CLI,
 Grok Build, Pi, Hermes, OpenCode, Qwen Code and Goose, in IDE editor tabs. You open a tab with one button. An agent opens, lists and closes tabs in any IDE
 that runs on the same computer.
 
@@ -36,7 +36,7 @@ the new plugin as a normal plugin update.
 - Or, without an IDE, a terminal: Windows Terminal or WezTerm on Windows; Ghostty, iTerm2, kitty, WezTerm
   or tmux on macOS; Ghostty, kitty, WezTerm or tmux on Linux. iTerm2 and Ghostty on macOS need the
   Automation permission that macOS asks for on the first tab.
-- At least one agent CLI, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi,
+- At least one agent CLI, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi,
   Hermes, OpenCode, Qwen Code or Goose. Codex (local) runs Codex with a local Ollama model and needs
   Ollama 0.13.4 or later.
 
@@ -68,7 +68,7 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 ## Models, Ori and handoff
 
 - **Model.** `open_tab` takes a `model` and passes it with the agent's model flag: `--model` for Claude
-  Code, Antigravity CLI, Copilot CLI, Pi and Goose, and `-m` for Codex, Gemini CLI, Grok Build, Hermes,
+  Code, Antigravity CLI, Copilot CLI, Pi and Goose, and `-m` for Codex, Grok Build, Hermes,
   OpenCode, Qwen Code and Codex (local). A custom profile sets `modelFlag` in
   `~/.ide-agent-tabs/agents.json`. A model for a profile without one is an error.
 - **Ori.** With Ori installed, `open_tab` takes `via: "ori"` to start a supported agent with
@@ -86,7 +86,7 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 
 ## Agents
 
-The built-in agents are Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi,
+The built-in agents are Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi,
 Hermes, and the agents built for local models: OpenCode, Qwen Code, Goose and Codex (local). Grok Build,
 Pi, Hermes, OpenCode, Qwen Code, Goose and Codex (local) come from each CLI's documentation and haven't had
 a live test. Crush and Prime Agent aren't included. See [Agent support](mcp/README.md#agent-support) for

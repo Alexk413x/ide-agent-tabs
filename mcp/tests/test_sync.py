@@ -220,7 +220,7 @@ class Cli(unittest.TestCase):
         self.assertEqual(run(["--agents"], h.ctx, h.bundle, out.append, err.append), 0)
         report = json.loads(out[-1])
         self.assertEqual(report["server"]["exists"], False)
-        self.assertEqual(len(report["agents"]), 10)
+        self.assertEqual(len(report["agents"]), 9)
         self.assertEqual(run(["--register"], h.ctx, h.bundle, out.append, err.append), 2)
         self.assertIn("Usage: agent-tabs sync-ides <--hook", err[-1])
         self.assertEqual(run(["--register", "claude"], h.ctx, h.bundle, out.append, err.append), 1)

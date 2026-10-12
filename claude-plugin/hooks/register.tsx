@@ -34,7 +34,6 @@ const AGENT_LABELS: Record<string, string> = {
   codex: 'Codex',
   agy: 'Antigravity CLI',
   copilot: 'Copilot CLI',
-  gemini: 'Gemini CLI',
   grok: 'Grok Build',
   pi: 'Pi',
   hermes: 'Hermes',

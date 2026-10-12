@@ -301,7 +301,6 @@ val BUILTIN_PROFILES = listOf(
     AgentProfile("codex", "Codex", "codex", CODEX_TAB_ARGS, modelFlag = "-m"),
     AgentProfile("agy", "Antigravity CLI", "agy", promptFlag = "-i", modelFlag = "--model"),
     AgentProfile("copilot", "Copilot CLI", "copilot", promptFlag = "-i", modelFlag = "--model"),
-    AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i", modelFlag = "-m"),
     AgentProfile("grok", "Grok Build", "grok", modelFlag = "-m"),
     AgentProfile("pi", "Pi", "pi", modelFlag = "--model"),
     AgentProfile("hermes", "Hermes", "hermes", listOf("chat"), promptFlag = "-q", modelFlag = "-m"),

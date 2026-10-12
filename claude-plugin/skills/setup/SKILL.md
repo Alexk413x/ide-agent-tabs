@@ -125,7 +125,7 @@ The JSON report lists each editor with `ok`, or an `error`. Tell the user to rel
 
 ## 6. Other agents
 
-Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code and Goose can use
+Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code and Goose can use
 Agent Tabs too. With it, they can list IDEs, open,
 list and close agent tabs, and message any other agent session on this machine, including this one.
 
@@ -159,8 +159,7 @@ config and would open a console window each time it starts the server.
 
    Registering also adds the messaging hooks: as the `ide-agent-tabs` group in
    `~/.gemini/config/hooks.json` for Antigravity CLI, as `~/.copilot/hooks/ide-agent-tabs.json` for
-   Copilot CLI, to `~/.gemini/settings.json` for Gemini CLI, to `$GROK_HOME/hooks/ide-agent-tabs.json`
-   for Grok Build, to `hooks` in `config.yaml` (and the allowlist `shell-hooks-allowlist.json`) under
+   Copilot CLI, to `$GROK_HOME/hooks/ide-agent-tabs.json` for Grok Build, to `hooks` in `config.yaml` (and the allowlist `shell-hooks-allowlist.json`) under
    `HERMES_HOME` for Hermes, to `~/.qwen/settings.json` for Qwen Code, and as a plugin in
    `~/.agents/plugins/ide-agent-tabs/` for Goose. For Antigravity CLI, it also adds allow rules to
    `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` for the tools that read or message, so

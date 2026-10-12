@@ -10,8 +10,8 @@ from .messaging.hook import HOOK_EVENTS
 from .profiles import AGENT_ENV, TAB_ID_ENV
 from .yaml_block import YamlDoc
 
-HOOK_AGENTS = ("codex", "gemini", "copilot", "agy", "grok", "hermes", "qwen", "goose")
-SETTINGS_AGENTS = ("codex", "gemini", "qwen")
+HOOK_AGENTS = ("codex", "copilot", "agy", "grok", "hermes", "qwen", "goose")
+SETTINGS_AGENTS = ("codex", "qwen")
 AGY_HOOK_GROUP = "ide-agent-tabs"
 # Only tools that read or message: open_tab, close_tab and handoff start or stop agents, and jev_ sends text
 # off the machine, so those keep Antigravity CLI's own per-call confirmation.
@@ -96,8 +96,6 @@ def agy_settings_file(user_home: str) -> str:
 def hook_config_file(agent: str, env: Mapping[str, str], user_home: str, platform: str) -> str:
     if agent == "codex":
         return os.path.join(_env(env, "CODEX_HOME") or os.path.join(user_home, ".codex"), "hooks.json")
-    if agent == "gemini":
-        return os.path.join(_env(env, "GEMINI_CLI_HOME") or user_home, ".gemini", "settings.json")
     if agent == "copilot":
         return os.path.join(_env(env, "COPILOT_HOME") or os.path.join(user_home, ".copilot"), "hooks", COPILOT_HOOKS_FILE)
     if agent == "agy":
@@ -113,7 +111,7 @@ def hook_config_file(agent: str, env: Mapping[str, str], user_home: str, platfor
     raise ConfigError(f"{agent} takes no hooks")
 
 
-# Codex, Gemini CLI, Qwen Code and Grok Build run a hook command through a shell (cmd.exe or PowerShell on
+# Codex, Qwen Code and Grok Build run a hook command through a shell (cmd.exe or PowerShell on
 # Windows), so the paths may not hold characters any of those shells expands inside double quotes. PowerShell
 # reads a quoted first word as a string, not a command, so the interpreter goes in bare or as `py -3`.
 def hook_command(target: HookTarget, agent: str, event: str) -> str:
@@ -141,8 +139,6 @@ def _is_ours(handler: Any) -> bool:
 
 def _our_handler(agent: str, target: HookTarget, event: str) -> dict[str, Any]:
     command = hook_command(target, agent, event)
-    if agent == "gemini":
-        return {"type": "command", "name": "ide-agent-tabs", "command": command, "timeout": HOOK_TIMEOUT_S * 1000}
     return {"type": "command", "command": command, "timeout": HOOK_TIMEOUT_S}
 
 

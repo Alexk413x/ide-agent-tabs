@@ -11,7 +11,7 @@ import { closestBase } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
 import { AUTO, SHARED_DEFAULTS, SharedSettings, userSettingValue } from './sharedSettings';
 
-const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
+const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
 const ICON_FILES: Record<string, string> = { 'codex-local': 'codex' };
 
 const commandKey = (name: string) => name.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());

@@ -334,7 +334,6 @@ export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
   profile('codex', 'Codex', 'codex', { args: [...CODEX_TAB_ARGS], modelFlag: '-m' }),
   profile('agy', 'Antigravity CLI', 'agy', { promptFlag: '-i', modelFlag: '--model' }),
   profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i', modelFlag: '--model' }),
-  profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i', modelFlag: '-m' }),
   profile('grok', 'Grok Build', 'grok', { modelFlag: '-m' }),
   profile('pi', 'Pi', 'pi', { modelFlag: '--model' }),
   profile('hermes', 'Hermes', 'hermes', { args: ['chat'], promptFlag: '-q', modelFlag: '-m' }),

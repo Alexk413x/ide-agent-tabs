@@ -30,7 +30,6 @@ AGENT_COLORS = ("red", "blue", "green", "yellow", "purple", "orange", "pink", "c
 _CLIENT_AGENTS = (
     ("claude", "claude"),
     ("codex", "codex"),
-    ("gemini", "gemini"),
     ("copilot", "copilot"),
     ("opencode", "opencode"),
     ("antigravity", "agy"),
