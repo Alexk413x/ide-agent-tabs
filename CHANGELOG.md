@@ -3,6 +3,27 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.6
+
+Plugin and MCP server 0.9.6, with VS Code extension 0.1.33 and JetBrains plugin 0.4.16 bundled.
+
+### Added
+
+- The `showOriAgents` setting in `config.json` (**Show Ori agents**, off by default) lists Ori as a
+  separate entry for each agent Ori can launch. With it on and Ori detected, `list_agents` puts an
+  `ori:<name>` row right after each row with `ori: true`: `label` `Ori - <label>`, `command` `ori`,
+  `installed` `true`, `model` as the base row, `via` `ori` and `base` `<name>`, and the result carries
+  `showOriAgents: true` after `launchVia`. With it off, `list_agents` returns what it returned before.
+  `launchVia` keeps its meaning.
+- `open_tab`, `handoff` and the IDEs' `open` take `agent: "ori:<name>"` as the profile `<name>` with
+  `via: "ori"`, with the setting on or off. `ori:<name>` with `via: "direct"` is an error, and an agent
+  Ori can't launch fails with the same `can't launch through Ori` reason as `via: "ori"`. An Ori tab and
+  a direct tab of one agent open as separate tabs and sessions.
+- The VS Code extension and the JetBrains plugin show **Ori - &lt;agent&gt;** under each agent's own entry
+  in the New Agent Tab menus, the VS Code status bar tooltip and the agent quick pick, while the setting
+  is on and Ori lists the agent. Each IDE shows the setting as a checkbox: `ideAgentTabs.showOriAgents`
+  in VS Code, and **Show Ori agents** on the JetBrains Agent Tabs page when Ori is detected.
+
 ## 0.9.5
 
 Plugin and MCP server 0.9.5, with VS Code extension 0.1.32 and JetBrains plugin 0.4.15 bundled.

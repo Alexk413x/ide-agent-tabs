@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import {
   AGENTS_FILE,
+  agentEntries,
   AgentProfile,
   AgentSettings,
   answersHealth,
@@ -282,14 +283,14 @@ test('shared settings default when config.json is missing or lacks the keys', ()
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
   assert.deepEqual(settings.sharedFound(), {});
   write(CONFIG_FILE, '{"defaultAgent": "codex"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last', launchVia: 'direct', closeAfterHandoff: true, allowResume: true, focusNewTabs: 'auto', claudeMod: 'on' });
+  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last', launchVia: 'direct', closeAfterHandoff: true, allowResume: true, showOriAgents: false, focusNewTabs: 'auto', claudeMod: 'on' });
   assert.deepEqual(warnings, []);
 });
 
 test('shared settings read the seven keys and drop invalid values', () => {
   const { settings, write, warnings } = fixture();
   write(CONFIG_FILE, '{"tabRouting": "caller", "terminal": "wezterm", "shell": "/opt/pwsh", "terminalWindow": "dedicated", "launchVia": "ori"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated', launchVia: 'ori', closeAfterHandoff: true, allowResume: true, focusNewTabs: 'auto', claudeMod: 'on' });
+  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated', launchVia: 'ori', closeAfterHandoff: true, allowResume: true, showOriAgents: false, focusNewTabs: 'auto', claudeMod: 'on' });
   write(CONFIG_FILE, '{"tabRouting": "nowhere", "terminal": 3, "shell": " ", "terminalWindow": "", "launchVia": "both"}');
   assert.deepEqual(settings.sharedFound(), { shell: 'auto' });
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
@@ -393,6 +394,30 @@ test('a custom profile sets modelFlag in the agents file', () => {
 });
 
 const oriAll: DetectedOri = { path: '/home/u/.local/bin/ori', version: '0.14.3', agents: ['claude', 'codex'] };
+
+test('showOriAgents is a shared flag that defaults to off and saves only when on', () => {
+  const { settings, write } = fixture();
+  assert.equal(settings.shared().showOriAgents, false);
+  write(CONFIG_FILE, '{"showOriAgents": true}');
+  assert.equal(settings.shared().showOriAgents, true);
+  write(CONFIG_FILE, '{"showOriAgents": "yes"}');
+  assert.deepEqual(settings.sharedFound(), {});
+  assert.equal(withSharedValue('{"showOriAgents": true}', CONFIG_FILE, 'showOriAgents', false), '{}\n');
+  assert.equal(withSharedValue(undefined, CONFIG_FILE, 'showOriAgents', true), '{\n  "showOriAgents": true\n}\n');
+});
+
+test('agent entries put an Ori entry under each agent Ori can launch, only when shown', () => {
+  const qwen = profile('qwen', 'Qwen Code', 'qwen');
+  const all = [claudeProfile, qwen, codexProfile, profile('copilot', 'Copilot CLI', 'copilot')];
+  const ori: DetectedOri = { ...oriAll, agents: ['claude', 'codex', 'qwen'] };
+  const installed = (p: AgentProfile) => p.name !== 'codex';
+  const names = (shown: boolean, detected: DetectedOri | null = ori) => agentEntries(all, detected, shown, installed).map(e => e.name);
+  assert.deepEqual(names(false), ['claude', 'qwen', 'copilot']);
+  assert.deepEqual(names(true), ['claude', 'ori:claude', 'qwen', 'ori:codex', 'copilot']);
+  assert.deepEqual(names(true, null), ['claude', 'qwen', 'copilot']);
+  const entry = agentEntries(all, ori, true, installed)[1];
+  assert.deepEqual(entry, { name: 'ori:claude', label: 'Ori - Claude Code', profile: claudeProfile, via: 'ori' });
+});
 const claudeProfile = profile('claude', 'Claude Code', 'claude', { modelFlag: '--model' });
 const codexProfile = profile('codex', 'Codex', 'codex', { args: ['--no-daemon'], modelFlag: '-m' });
 const copilotProfile = profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i', modelFlag: '--model' });

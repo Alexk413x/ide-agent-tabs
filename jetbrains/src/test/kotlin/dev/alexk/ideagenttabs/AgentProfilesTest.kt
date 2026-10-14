@@ -266,6 +266,18 @@ class AgentProfilesTest {
     ) = LaunchContext(prompt, args, env, model, via, setting, ori, windows, searchPath)
 
     @Test
+    fun `agent entries put an Ori entry under each agent Ori can launch, only when shown`() {
+        val all = listOf(claude, qwen, codex, AgentProfile("copilot", "Copilot CLI", "copilot"))
+        val ori = DetectedOri("/x/ori", "0.14.3", listOf("claude", "codex", "qwen"))
+        val installed = { p: AgentProfile -> p.name != "codex" }
+        fun names(shown: Boolean, detected: DetectedOri? = ori) = agentEntries(all, detected, shown, installed).map { it.name }
+        assertEquals(listOf("claude", "qwen", "copilot"), names(false))
+        assertEquals(listOf("claude", "ori:claude", "qwen", "ori:codex", "copilot"), names(true))
+        assertEquals(listOf("claude", "qwen", "copilot"), names(true, null))
+        assertEquals(AgentEntry("ori:claude", "Ori - Claude Code", claude, LaunchVia.ORI), agentEntries(all, ori, true, installed)[1])
+    }
+
+    @Test
     fun `a direct launch puts the model flag after the profile args`() {
         val launch = planLaunch(codex, ctx(model = "gpt-5", args = listOf("--yolo"), prompt = "hi"))
         assertEquals(LaunchVia.DIRECT, launch.via)

@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.32",
+  "version": "0.1.33",
   "publisher": "alexk413x",
   "license": "LicenseRef-No-Resale-1.0",
   "repository": {
@@ -130,19 +130,26 @@
             "markdownDescription": "Launch through OpenRouter (Ori). Start supported agents with `ori <agent>`, which bills model usage through OpenRouter. Needs Ori (`ori`) installed.",
             "order": 3
           },
+          "ideAgentTabs.showOriAgents": {
+            "type": "boolean",
+            "scope": "machine",
+            "default": false,
+            "markdownDescription": "Show Ori agents. List an Ori entry under each agent that Ori (`ori`) can launch, such as `Ori - Claude Code`, in the New Agent Tab menus and in `list_agents`. An Ori entry opens the agent with `ori <agent>`, billed through OpenRouter, in its own tab next to the normal one. Needs Ori installed.",
+            "order": 4
+          },
           "ideAgentTabs.closeAfterHandoff": {
             "type": "boolean",
             "scope": "machine",
             "default": true,
             "markdownDescription": "Close the old tab after a handoff. After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off.",
-            "order": 4
+            "order": 5
           },
           "ideAgentTabs.allowResume": {
             "type": "boolean",
             "scope": "machine",
             "default": true,
             "markdownDescription": "Allow resuming closed sessions. Agents can reopen a Claude Code, Codex or Antigravity CLI session that ended in the last 7 days with `resume_tab`. A resume past the prompt cache re-reads the whole history at full price, so the agent asks you first. Off refuses every resume.",
-            "order": 5
+            "order": 6
           },
           "ideAgentTabs.claudeMod": {
             "type": "string",
@@ -161,7 +168,7 @@
               "Claude Code sessions use the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0."
             ],
             "markdownDescription": "Use the Claude Code mod (in-process messaging). Takes effect in Claude Code sessions that start after the change.",
-            "order": 6
+            "order": 7
           }
         },
         "order": 1
@@ -433,6 +440,36 @@
         "category": "Agent Tabs"
       },
       {
+        "command": "ideAgentTabs.openOri.claude",
+        "title": "Ori - Claude Code",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.openOri.codex",
+        "title": "Ori - Codex",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.openOri.grok",
+        "title": "Ori - Grok Build",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.openOri.pi",
+        "title": "Ori - Pi",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.openOri.hermes",
+        "title": "Ori - Hermes",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.openOri.opencode",
+        "title": "Ori - OpenCode",
+        "category": "Agent Tabs"
+      },
+      {
         "command": "ideAgentTabs.choosePreferredTerminal",
         "title": "Choose Preferred Terminal…",
         "category": "Agent Tabs"
@@ -689,6 +726,30 @@
           "when": "false"
         },
         {
+          "command": "ideAgentTabs.openOri.claude",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.openOri.codex",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.openOri.grok",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.openOri.pi",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.openOri.hermes",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.openOri.opencode",
+          "when": "false"
+        },
+        {
           "command": "ideAgentTabs.chooseWindowsShell",
           "when": "isWindows"
         }
@@ -700,9 +761,19 @@
           "group": "1_agents@0"
         },
         {
+          "command": "ideAgentTabs.openOri.claude",
+          "when": "ideAgentTabs.ori.claude",
+          "group": "1_agents@0.5"
+        },
+        {
           "command": "ideAgentTabs.open.codex",
           "when": "ideAgentTabs.installed.codex",
           "group": "1_agents@1"
+        },
+        {
+          "command": "ideAgentTabs.openOri.codex",
+          "when": "ideAgentTabs.ori.codex",
+          "group": "1_agents@1.5"
         },
         {
           "command": "ideAgentTabs.open.agy",
@@ -720,9 +791,19 @@
           "group": "1_agents@4"
         },
         {
+          "command": "ideAgentTabs.openOri.grok",
+          "when": "ideAgentTabs.ori.grok",
+          "group": "1_agents@4.5"
+        },
+        {
           "command": "ideAgentTabs.open.pi",
           "when": "ideAgentTabs.installed.pi",
           "group": "1_agents@5"
+        },
+        {
+          "command": "ideAgentTabs.openOri.pi",
+          "when": "ideAgentTabs.ori.pi",
+          "group": "1_agents@5.5"
         },
         {
           "command": "ideAgentTabs.open.hermes",
@@ -730,9 +811,19 @@
           "group": "1_agents@6"
         },
         {
+          "command": "ideAgentTabs.openOri.hermes",
+          "when": "ideAgentTabs.ori.hermes",
+          "group": "1_agents@6.5"
+        },
+        {
           "command": "ideAgentTabs.open.opencode",
           "when": "ideAgentTabs.installed.opencode",
           "group": "1_agents@7"
+        },
+        {
+          "command": "ideAgentTabs.openOri.opencode",
+          "when": "ideAgentTabs.ori.opencode",
+          "group": "1_agents@7.5"
         },
         {
           "command": "ideAgentTabs.open.qwen",

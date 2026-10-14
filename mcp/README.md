@@ -35,7 +35,7 @@ handover.
 
 | Tool | Input | Returns |
 |---|---|---|
-| `list_agents` | none | Profiles (`name`, `label`, `command`, `installed`, `model`: `true` when the profile takes a model, and `ori: true` when Ori can launch it), the `default` agent, `launchVia`, and any warnings about your config files |
+| `list_agents` | none | Profiles (`name`, `label`, `command`, `installed`, `model`: `true` when the profile takes a model, and `ori: true` when Ori can launch it), the `default` agent, `launchVia`, and any warnings about your config files. With `showOriAgents` on, an `ori:<name>` row follows each profile Ori can launch, and `showOriAgents: true` follows `launchVia`. See [Ori entries](#ori-entries). |
 | `list_tabs` | `ide` (optional) | Open tabs across all IDEs and terminals, or in one |
 | `open_tab` | `path`, and optional `agent`, `prompt`, `args`, `env`, `ide` (an id from `list-ides` or an IDE name), `model`, `via`, `focus` | The tab `id`, where it opened (`ide`), the `agent`, the `reason` for the route, `via: "ori"` when the tab started through Ori, and a `note` when you need to act, such as attaching to tmux, or when the tab opened somewhere other than the named IDE. While a named IDE is still starting: `pending: true`, the `product` and a `note`, with no `id`. See [IDE names](#ide-names). |
 | `close_tab` | `id` (optional) | The closed tab. With no `id`, it closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
@@ -96,6 +96,25 @@ and Ori can't launch the agent, the call fails with `<agent> can't launch throug
 
 The agent keeps its own identity. `IDE_AGENT_TABS_AGENT` stays `claude` or `codex`, so hooks, wake-ups
 and messaging follow that agent's rules.
+
+#### Ori entries
+
+To pick between an agent and the same agent through Ori without changing `launchVia`, set
+`showOriAgents` to `true` in `config.json` (**Show Ori agents** in the IDE settings). It is off by
+default and changes only what is listed:
+
+- `list_agents` puts a row right after each profile that has `ori: true`, such as
+  `{"name": "ori:claude", "label": "Ori - Claude Code", "command": "ori", "installed": true, "model": true, "via": "ori", "base": "claude"}`.
+  `model` matches the base row. The result carries `showOriAgents: true` after `launchVia`. With the
+  setting off, the result has neither.
+- The VS Code and JetBrains agent menus show `Ori - <label>` under the agent's own entry, while Ori is
+  detected.
+
+`open_tab` and `handoff` take `agent: "ori:<name>"` as `agent: "<name>"` with `via: "ori"`, with the
+setting on or off. `ori:<name>` with `via: "direct"` fails with
+`agent ori:<name> opens through Ori, so via must be "ori" or left out`. An agent Ori can't launch fails
+with the `can't launch through Ori` error above. An Ori tab and a direct tab of one agent are separate
+tabs and sessions; `list_sessions` shows both, with `via` `ori` and `direct`.
 
 Ori 0.14.3 on Windows, checked 2026-10-03:
 
@@ -473,7 +492,7 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 |---|---|
 | `endpoints/*.json` | One registry entry per running IDE. The server skips entries with an unknown `protocol` or a URL that isn't on the loopback address, and deletes entries whose process has ended or whose `beatMs` heartbeat (file modification time) stopped for more than 5 beats. |
 | `agents.json` | Your own agent profiles. The rules match the JetBrains plugin exactly. |
-| `config.json` | `defaultAgent`, `jev` (the Jev settings), `launchVia`, `closeAfterHandoff`, `allowResume` and the tab settings below. The JetBrains plugin and the VS Code extension edit the same keys. |
+| `config.json` | `defaultAgent`, `jev` (the Jev settings), `launchVia`, `showOriAgents`, `closeAfterHandoff`, `allowResume` and the tab settings below. The JetBrains plugin and the VS Code extension edit the same keys. |
 | `detected.json` | The terminals, on Windows the PowerShell installs, and `ori` (`path`, `version`, and the `agents` Ori lists as installed; `null` without Ori) that this machine has, for the IDE settings. The server writes it at start, `list-ides` when it is more than an hour old, and the Claude Code session start hook; don't edit it. |
 | `handoffs/` | The brief (`<id>.md`) and the record (`<id>.json`) of each handoff. |
 | `history/` | One record per ended session, named by the agent's session id, kept 7 days. See [Resume](#resume). |
@@ -493,6 +512,7 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `shell` | Windows only. `"auto"`, or the absolute path of a PowerShell executable | `"auto"`: the newest PowerShell 7 or later, else Windows PowerShell 5.1 |
 | `terminalWindow` | `"last"`: your last window. `"dedicated"`: a window kept for Agent Tabs. | `"last"` |
 | `launchVia` | `"direct"`: start each agent with its own command. `"ori"`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `"direct"` |
+| `showOriAgents` | `true`: list an `ori:<name>` entry (`Ori - <label>`) after each agent Ori can launch, in `list_agents` and the IDE menus. `false`: list each agent once. See [Ori entries](#ori-entries). | `false` |
 | `closeAfterHandoff` | `true`: the new session closes the old tab after a handoff. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
 | `allowResume` | `true`: `resume_tab` reopens closed sessions, asking for `confirm` when the resume costs full price. `false`: it refuses. See [Resume](#resume). | `true` |
 | `claudeMod` | `"on"`: Claude Code sessions use the Agent Tabs mod: SendMessage and ListAgents reach every agent, mail arrives in-process, and `/agent-messages` shows the agents pane. `"off"`: the hooks, wake lines and messaging tools, as in 0.6.0. New Claude Code sessions pick up a change. | `"on"` |

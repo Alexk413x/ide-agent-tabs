@@ -17,7 +17,7 @@ from .ide_client import IdeCall, IdeError
 from .ide_installs import IdeInstall, discover_ides, ide_launch_command, launch_environment, spawn_ide, system_discovery
 from .installed import is_cmd_shim, is_installed
 from .jsjson import js_round, js_string
-from .launch_plan import ORI_AGENTS, LaunchRequest, plan_launch
+from .launch_plan import ORI_AGENTS, ORI_PREFIX, LaunchRequest, plan_launch
 from .parallel import Task, run_all
 from .profiles import (
     AGENTS_FILE,
@@ -329,10 +329,24 @@ class Service:
                 "installed": is_installed(p.command, self.ctx.path_var, self.is_windows),
                 "model": p.model_flag is not None,
             }
+            agents.append(row)
             if ori is not None and p.name in ori["agents"] and p.name in ORI_AGENTS:
                 row["ori"] = True
-            agents.append(row)
+                if settings.terminal.show_ori_agents:
+                    agents.append(
+                        {
+                            "name": f"{ORI_PREFIX}{p.name}",
+                            "label": f"Ori - {p.label}",
+                            "command": "ori",
+                            "installed": True,
+                            "model": row["model"],
+                            "via": "ori",
+                            "base": p.name,
+                        }
+                    )
         result: dict[str, Any] = {"default": settings.default_agent.name, "agents": agents, "launchVia": settings.terminal.launch_via}
+        if settings.terminal.show_ori_agents:
+            result["showOriAgents"] = True
         if settings.warnings:
             result["warnings"] = settings.warnings
         return result

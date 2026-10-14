@@ -48,13 +48,13 @@ class AgentMenuGroup : ActionGroup(), DumbAware {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
     override fun getChildren(e: AnActionEvent?): Array<AnAction> {
-        val agents = Agents.installedProfiles().map { OpenAgentTabAction(it, Agents.launchFor(it).via) }
+        val agents = Agents.entries().map { OpenAgentTabAction(it, Agents.entryLabel(it)) }
         return (agents + listOf(Separator.getInstance(), OpenSettingsAction())).toTypedArray()
     }
 }
 
-private class OpenAgentTabAction(private val profile: AgentProfile, via: LaunchVia) :
-    DumbAwareAction(viaLabel(profile.label, via), "Open ${viaLabel(profile.label, via)} in an editor tab", Agents.icon(profile)) {
+private class OpenAgentTabAction(private val entry: AgentEntry, label: String) :
+    DumbAwareAction(label, "Open $label in an editor tab", Agents.icon(entry.profile)) {
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
@@ -64,7 +64,7 @@ private class OpenAgentTabAction(private val profile: AgentProfile, via: LaunchV
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        Agents.open(project, profile)
+        Agents.open(project, entry.profile, entry.via)
     }
 }
 

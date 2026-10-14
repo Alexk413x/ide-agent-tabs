@@ -191,6 +191,20 @@ class SharedSettingsTest {
     }
 
     @Test
+    fun `showOriAgents defaults to off, reads a boolean and saves only when on`() {
+        assertFalse(settings.shared().showOriAgents)
+        write(CONFIG_FILE, """{"showOriAgents": true}""")
+        assertTrue(settings.shared().showOriAgents)
+        write(CONFIG_FILE, """{"showOriAgents": "true"}""")
+        assertFalse(settings.shared().showOriAgents)
+        Files.writeString(config, """{"defaultAgent": "codex"}""")
+        assertTrue(settings.setShowOriAgents(true))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex", "showOriAgents": true}"""), saved())
+        assertTrue(settings.setShowOriAgents(false))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex"}"""), saved())
+    }
+
+    @Test
     fun `closeAfterHandoff leaves a broken config alone`() {
         Files.writeString(config, "{broken")
         assertFalse(settings.setCloseAfterHandoff(false))

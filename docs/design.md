@@ -84,7 +84,8 @@ The server refuses non-loopback addresses and any request with an `Origin` or `R
 `open` fields:
 
 - `path` (required): an absolute path to an existing folder. The session starts there.
-- `agent`: a profile name. The default is the configured default agent.
+- `agent`: a profile name. The default is the configured default agent. `ori:<name>`, such as
+  `ori:claude`, opens that profile through Ori, as `via: "ori"` does. See [Ori entries](#ori-entries).
 - `prompt`: the session's first message, up to 30,000 characters.
 - `args`: up to 64 extra arguments for the agent. They go after the profile's own arguments and before
   the prompt. Flags that skip the agent's permission prompts are allowed.
@@ -119,7 +120,7 @@ session for a new message.
 | Status | Meaning |
 |---|---|
 | 200 | Done. |
-| 400 | Bad body, relative path, missing folder, missing `id`, unknown `agent`, a bad `model` or `via`, a `model` for a profile without `modelFlag`, `via: "ori"` that Ori can't launch, or `input` `text` that is empty, over 500 characters or holds a control character. |
+| 400 | Bad body, relative path, missing folder, missing `id`, unknown `agent`, a bad `model` or `via`, a `model` for a profile without `modelFlag`, `via: "ori"` or an `ori:` agent that Ori can't launch, an `ori:` agent with `via: "direct"`, or `input` `text` that is empty, over 500 characters or holds a control character. |
 | 401 | Missing or wrong token. |
 | 403 | Non-loopback address, or an `Origin` or `Referer` header. |
 | 404 | `close`, `input`: no open tab with that id. An IDE build without `reveal` answers 404 for it. |
@@ -359,6 +360,26 @@ sets no `via`. An explicit `via` beats the setting.
   `detected.json` has an `ori` entry. A tab started through Ori carries a "via OpenRouter" tag in menus
   and tab names.
 
+#### Ori entries
+
+The `showOriAgents` setting lists Ori as a separate entry for each agent it can launch, so a user or an
+agent picks "Claude Code" or "Ori - Claude Code" instead of changing `launchVia`. It is off by default
+and changes only what is listed.
+
+- With `showOriAgents` on, `list_agents` puts a row right after each row that has `ori: true`:
+  `name` `ori:<name>`, `label` `Ori - <label>`, `command` `ori`, `installed` `true`, `model` as the base
+  row, `via` `ori` and `base` `<name>`. The result also carries `showOriAgents: true` after `launchVia`.
+  With it off, the result is the same as without the setting.
+- `open_tab`, `handoff` and the IDEs' `open` take `ori:<name>` as the profile `<name>` with `via: "ori"`,
+  whatever the setting says, so an agent that read an older list still opens the tab. `ori:<name>` with
+  `via: "direct"` fails with `agent ori:<name> opens through Ori, so via must be "ori" or left out`. An
+  agent Ori can't launch, or a machine without Ori, fails with the `can't launch through Ori` reason
+  above. Profile names can't hold `:`, so `ori:<name>` never names a custom profile.
+- The VS Code and JetBrains agent menus show `Ori - <label>` right under the agent's own entry, only
+  while the setting is on and `detected.json` lists the agent for Ori. Each entry opens its own tab
+  through Ori, so a direct session and an Ori session of one agent run side by side as separate tabs
+  and sessions; `list_sessions` shows both, with `via` `direct` and `ori`.
+
 Checked on Ori 0.14.3 on Windows 11, 2026-10-03:
 
 - Ori starts the agent as a child process: `ori.exe`, then `cmd.exe` (`codex.cmd`), then `node`, then
@@ -493,7 +514,7 @@ reads the registry and calls the HTTP API. Claude Code sessions reach it through
 
 | Tool | Does |
 |---|---|
-| `list_agents` | Lists profiles, which are installed, which take a model (`model`), which Ori can launch (`ori`), and the `launchVia` setting. |
+| `list_agents` | Lists profiles, which are installed, which take a model (`model`), which Ori can launch (`ori`), and the `launchVia` setting. With `showOriAgents` on, it adds an `ori:<name>` row after each agent Ori can launch. |
 | `list_tabs` | Lists tabs across all IDEs, or in one. |
 | `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus`. Returns `via: "ori"` for a tab started through Ori. |
 | `close_tab` | Closes a tab by `id`. With no `id`, closes the caller's own tab through `IDE_AGENT_TABS_ID`. Refuses the old tab of a handoff until the handoff is confirmed (see [Handoff](#handoff)). |
@@ -588,19 +609,21 @@ its own, such as a peer test or delegated work, passes no `focus`. With `auto`, 
 `never` decide alone and ignore it. The New Agent Tab button and the open-on-startup tab don't use the setting; they always take focus. What
 `focus: false` does depends on the host; see [Focus](#focus).
 
-Four more settings in `config.json` don't depend on where a tab opens:
+Five more settings in `config.json` don't depend on where a tab opens:
 
 | Setting | Key | Values | Default |
 |---|---|---|---|
 | Launch through OpenRouter (Ori) | `launchVia` | `direct`: start each agent with its own command. `ori`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `direct` |
+| Show Ori agents | `showOriAgents` | `true`: list an `Ori - <label>` entry under each agent Ori can launch, in the IDE menus and in `list_agents`. `false`: list each agent once. See [Ori entries](#ori-entries). | `false` |
 | Close the old tab after a handoff | `closeAfterHandoff` | `true`: the new session closes the old tab. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
 | Allow resuming closed sessions | `allowResume` | `true`: `resume_tab` reopens closed sessions. `false`: it refuses every call. See [Resume](#resume). | `true` |
 | Wait for a started IDE | `ideStartTimeoutSec` | Seconds to wait for an IDE that `open_tab`, `handoff` or `resume_tab` started by name to register, above 0 and at most 3600. After that the tab opens in the fallback. Only `config.json` sets it. | `180` |
 
-VS Code shows the first three in the **Agent Tabs** section, as `ideAgentTabs.launchVia`,
-`ideAgentTabs.closeAfterHandoff` and `ideAgentTabs.allowResume`. JetBrains shows them on the Agent Tabs
-page, `launchVia` next to **Default agent**, and writes `allowResume` only when it is off. Both IDEs
-show `launchVia` only when `detected.json` has an `ori` entry. The server treats a value it doesn't know
+VS Code shows the first four in the **Agent Tabs** section, as `ideAgentTabs.launchVia`,
+`ideAgentTabs.showOriAgents`, `ideAgentTabs.closeAfterHandoff` and `ideAgentTabs.allowResume`. JetBrains
+shows them on the Agent Tabs page, `launchVia` and **Show Ori agents** next to **Default agent**, and
+writes `allowResume` only when it is off and `showOriAgents` only when it is on. Both IDEs show
+`launchVia` only when `detected.json` has an `ori` entry; JetBrains shows **Show Ori agents** only then too. The server treats a value it doesn't know
 as the default, as for the tab settings.
 
 The VS Code settings have machine scope, so only the user-level value reaches `config.json`. A workspace's

@@ -9,13 +9,15 @@ from typing import Any
 from fake_ide import fake_ide
 from ide_agent_tabs.clock import iso, now_ms, parse_iso
 from ide_agent_tabs.detection import detect_ori
+from ide_agent_tabs.list_ides_cli import SessionPresence
 from ide_agent_tabs.processes import RunResult
 from ide_agent_tabs.service import FRESH_TAB_START_MS, Service, ServiceDeps, ToolError
 from ide_agent_tabs.spec import LaunchSpec
 from ide_agent_tabs.terminals.driver import OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
 from ide_agent_tabs.terminals.powershell import ShellProbe
 from support import temp_home
-from test_service import Setup, write
+from test_messaging import session
+from test_service import FakeTerminal, Setup, write
 
 MSI = "C:/Program Files/PowerShell/7/pwsh.exe"
 STORE = "C:/Users/a/AppData/Local/Microsoft/WindowsApps/pwsh.exe"
@@ -170,6 +172,36 @@ class TerminalRoutingTest(unittest.TestCase):
         with self.assertRaisesRegex(ToolError, "model must match"):
             s.service.open_tab({"path": s.work, "model": "two words"})
 
+    def test_an_ori_agent_name_opens_the_base_agent_through_ori_whatever_show_ori_agents_says(self) -> None:
+        s = Setup(self)
+        ori = {"path": "/usr/bin/ori", "version": "0.14.3", "agents": ["claude", "qwen"]}
+        write(
+            os.path.join(s.home, "detected.json"),
+            {"version": 1, "detectedAt": iso(now_ms()), "platform": "linux", "terminals": [], "shells": [], "ori": ori},
+        )
+        opened = s.service.open_tab({"path": s.work, "agent": "ori:claude", "ide": "fake-term"})
+        self.assertEqual((opened["agent"], opened["via"]), ("claude", "ori"))
+        spec = s.terminal.opened[-1][0]
+        self.assertEqual((spec.agent, spec.command, spec.args[0]), ("claude", "ori", "claude"))
+        with self.assertRaisesRegex(ToolError, '^agent ori:claude opens through Ori, so via must be "ori" or left out$'):
+            s.service.open_tab({"path": s.work, "agent": "ori:claude", "via": "direct", "ide": "fake-term"})
+        with self.assertRaisesRegex(ToolError, "^qwen can't launch through Ori: Ori has no qwen launcher$"):
+            s.service.open_tab({"path": s.work, "agent": "ori:qwen", "ide": "fake-term"})
+        with self.assertRaisesRegex(ToolError, "^unknown agent: nobody$"):
+            s.service.open_tab({"path": s.work, "agent": "ori:nobody", "ide": "fake-term"})
+
+        ide = fake_ide(self, projects=[{"name": "app", "path": s.work, "focused": True}])
+        ide.register(s.home, "jetbrains-1")
+        s.service.open_tab({"path": s.work, "agent": "ori:codex"})
+        self.assertEqual(ide.requests[-1], ("open", {"path": s.work, "agent": "codex", "via": "ori", "focus": False}))
+
+        write(
+            os.path.join(s.home, "detected.json"),
+            {"version": 1, "detectedAt": iso(now_ms()), "platform": "linux", "terminals": [], "shells": []},
+        )
+        with self.assertRaisesRegex(ToolError, "^claude can't launch through Ori: Ori isn't installed$"):
+            s.service.open_tab({"path": s.work, "agent": "ori:claude", "ide": "fake-term"})
+
     def test_a_tab_opened_without_a_prompt_counts_as_idle_once_it_has_had_time_to_start(self) -> None:
         s = Setup(self)
         ide = fake_ide(self, product="Fake Studio", projects=[{"name": "proj", "path": s.work, "focused": True}])
@@ -186,6 +218,39 @@ class TerminalRoutingTest(unittest.TestCase):
         self.assertEqual((presence["state"], presence["host"]), ("idle", "jetbrains-1"))
         self.assertNotIn("model", presence)
         self.assertGreaterEqual(parse_iso(presence["stateAt"]) or 0, before + FRESH_TAB_START_MS)
+
+
+class OriSideBySideTest(unittest.TestCase):
+    def test_a_claude_tab_and_an_ori_claude_tab_for_one_folder_are_two_listed_sessions(self) -> None:
+        home = temp_home(self)
+        work = temp_home(self, "iat-work-")
+        ori = {"path": "/usr/bin/ori", "version": "0.14.3", "agents": ["claude"]}
+        write(
+            os.path.join(home, "detected.json"),
+            {"version": 1, "detectedAt": iso(now_ms()), "platform": "linux", "terminals": [], "shells": [], "ori": ori},
+        )
+        ids = iter(["tab-direct", "tab-ori"])
+        service = Service(
+            ServiceDeps(
+                home=home,
+                scripts_dir=home,
+                platform="linux",
+                env={"PATH": ""},
+                call_ide=lambda *_a: {},
+                drivers=[FakeTerminal()],
+                new_id=lambda: next(ids),
+                presence=SessionPresence(),
+            )
+        )
+        direct = service.open_tab({"path": work, "agent": "claude", "ide": "fake-term"})
+        through_ori = service.open_tab({"path": work, "agent": "ori:claude", "ide": "fake-term"})
+        self.assertEqual((direct["id"], through_ori["id"]), ("tab-direct", "tab-ori"))
+        first = session(self, home, direct["id"], "claude", 1)
+        session(self, home, through_ori["id"], "claude", 2)
+        rows = first.list_sessions()["sessions"]
+        self.assertEqual(
+            sorted((r["id"], r["agent"], r["via"]) for r in rows), [("tab-direct", "claude", "direct"), ("tab-ori", "claude", "ori")]
+        )
 
 
 if __name__ == "__main__":

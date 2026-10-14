@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { typeLine } from './input';
 import { editorLocation, launchScripts, revivedTabs, terminalEnv, unixShell, windowsShell } from './launch';
 import {
+  agentEntries,
   AgentLaunch,
   AgentProfile,
   AgentSettings,
@@ -18,12 +19,13 @@ import {
   copilotHttp,
   isCopilotCommand,
   isInstalled,
+  ORI_PROFILES,
   planLaunch,
 } from './profiles';
 import { ENDPOINT_BEAT_MS, beatEndpoint, endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
-import { closestBase } from './request';
+import { BadRequest, closestBase, ORI_PREFIX } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
-import { AUTO, SHARED_DEFAULTS, SharedSettings, userSettingValue } from './sharedSettings';
+import { AUTO, LaunchVia, SHARED_DEFAULTS, SharedSettings, userSettingValue } from './sharedSettings';
 
 const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
 const ICON_FILES: Record<string, string> = { 'codex-local': 'codex' };
@@ -38,6 +40,7 @@ const SHARED_SETTING_NAMES: Record<keyof SharedSettings, string> = {
   launchVia: 'launchVia',
   closeAfterHandoff: 'closeAfterHandoff',
   allowResume: 'allowResume',
+  showOriAgents: 'showOriAgents',
   focusNewTabs: 'focusNewTabs',
   claudeMod: 'claudeMod',
 };
@@ -59,6 +62,7 @@ interface OpenOptions {
 }
 
 const VIA_LABEL = 'via OpenRouter';
+const ORI_MENU_AGENTS = ORI_PROFILES.filter(name => BUILTIN_ICONS.has(name));
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const log = vscode.window.createOutputChannel('Agent Tabs', { log: true });
@@ -87,8 +91,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return neutralIcon;
   };
 
-  const launchFor = (profile: AgentProfile, cwd?: string, id?: string, copilot?: CopilotHttp) =>
+  const launchFor = (profile: AgentProfile, cwd?: string, id?: string, copilot?: CopilotHttp, via?: LaunchVia) =>
     planLaunch(profile, {
+      via,
       setting: settings.shared().launchVia,
       ori: settings.detected().ori,
       windows: isWindows,
@@ -127,18 +132,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return { id, agent: tab.agent, project, path: dir };
   };
 
-  const openInFolder = async (folder: vscode.WorkspaceFolder | undefined, profile: AgentProfile) => {
+  const openInFolder = async (folder: vscode.WorkspaceFolder | undefined, profile: AgentProfile, via?: LaunchVia) => {
     const dir = folder ? folderPath(folder) : os.homedir();
     const id = randomUUID();
     const copilot = isCopilotCommand(profile.command) ? await copilotHttp(home, isWindows, copilotHooksFile(process.env, os.homedir())) : undefined;
-    openTab(dir, folder?.name ?? path.basename(dir), profile, { id, launch: launchFor(profile, dir, id, copilot), focus: true });
+    let launch: AgentLaunch;
+    try {
+      launch = launchFor(profile, dir, id, copilot, via);
+    } catch (e) {
+      if (!(e instanceof BadRequest)) throw e;
+      void vscode.window.showErrorMessage(e.message);
+      return;
+    }
+    openTab(dir, folder?.name ?? path.basename(dir), profile, { id, launch, focus: true });
   };
 
-  const openFromButton = (profile: AgentProfile) => {
+  const openFromButton = (profile: AgentProfile, via?: LaunchVia) => {
     const active = vscode.window.activeTextEditor?.document.uri;
     const activeFolder = active ? vscode.workspace.getWorkspaceFolder(active) : undefined;
-    void openInFolder(activeFolder?.uri.scheme === 'file' ? activeFolder : fileFolders()[0], profile);
+    void openInFolder(activeFolder?.uri.scheme === 'file' ? activeFolder : fileFolders()[0], profile, via);
   };
+
+  const entries = () =>
+    agentEntries(settings.profiles(), settings.detected().ori, settings.shared().showOriAgents, p => isInstalled(p.command, searchPath(), isWindows));
 
   const opensOnStartup = (folder: vscode.WorkspaceFolder) => {
     const mode = config().get<string>('openOnStartup', 'claudeFolder');
@@ -215,6 +231,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const all = settings.profiles();
     const installed = all.filter(p => isInstalled(p.command, searchPath(), isWindows));
     const missing = all.filter(p => !installed.includes(p));
+    const listed = entries();
     const dark = [vscode.ColorThemeKind.Dark, vscode.ColorThemeKind.HighContrast].includes(vscode.window.activeColorTheme.kind);
     const iconFor = (p: AgentProfile) => {
       const path = icon(p);
@@ -224,19 +241,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return uri instanceof vscode.Uri ? uri : undefined;
     };
     const viaLogo = iconUri(dark ? 'openrouter_dark.svg' : 'openrouter.svg');
-    const links = installed.map(p => {
-      const logo = iconFor(p);
-      const args = encodeURIComponent(JSON.stringify([p.name]));
+    const links = listed.map(entry => {
+      const logo = iconFor(entry.profile);
+      const args = encodeURIComponent(JSON.stringify([entry.name]));
       const img = logo ? `<img src="${logo.toString()}" width="16" height="16" align="absmiddle"> ` : '';
-      const via = launchFor(p).via === 'ori' ? ` <img src="${viaLogo.toString()}" width="16" height="16" align="absmiddle"> ${VIA_LABEL}` : '';
-      return `${img}[${escape(p.label)}](command:ideAgentTabs.openAgent?${args})${via}`;
+      const ori = entry.via === 'ori' || launchFor(entry.profile).via === 'ori';
+      const via = ori ? ` <img src="${viaLogo.toString()}" width="16" height="16" align="absmiddle"> ${VIA_LABEL}` : '';
+      return `${img}[${escape(entry.label)}](command:ideAgentTabs.openAgent?${args})${via}`;
     });
     for (const name of BUILTIN_ICONS) {
       void vscode.commands.executeCommand('setContext', `ideAgentTabs.installed.${commandKey(name)}`, installed.some(p => p.name === name));
     }
-    void vscode.commands.executeCommand('setContext', 'ideAgentTabs.customInstalled', installed.some(p => !BUILTIN_ICONS.has(p.name)));
+    for (const name of ORI_MENU_AGENTS) {
+      void vscode.commands.executeCommand('setContext', `ideAgentTabs.ori.${commandKey(name)}`, listed.some(e => e.via === 'ori' && e.profile.name === name));
+    }
+    void vscode.commands.executeCommand('setContext', 'ideAgentTabs.customInstalled', listed.some(e => !BUILTIN_ICONS.has(e.profile.name)));
     const lines = [
-      installed.length > 0 ? `Open an agent in an editor tab.  
+      listed.length > 0 ? `Open an agent in an editor tab.  
 New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No agent CLI found on PATH.',
       links.join('  \n'),
       missing.length > 0 ? `Not installed: ${missing.map(p => escape(p.label)).join(', ')}` : '',
@@ -334,16 +355,18 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
   };
 
   const chooseAgent = async () => {
-    const items = settings
-      .profiles()
-      .filter(p => isInstalled(p.command, searchPath(), isWindows))
-      .map(p => ({ label: p.label, description: launchFor(p).via === 'ori' ? VIA_LABEL : undefined, iconPath: icon(p), profile: p }));
+    const items = entries().map(entry => ({
+      label: entry.label,
+      description: entry.via === undefined && launchFor(entry.profile).via === 'ori' ? VIA_LABEL : undefined,
+      iconPath: icon(entry.profile),
+      entry,
+    }));
     if (items.length === 0) {
       void vscode.window.showInformationMessage('No agent CLI found on PATH.');
       return;
     }
     const picked = await vscode.window.showQuickPick(items, { title: 'Open Agent' });
-    if (picked) openFromButton(picked.profile);
+    if (picked) openFromButton(picked.entry.profile, picked.entry.via);
   };
 
   context.subscriptions.push(
@@ -365,9 +388,17 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
         if (profile) openFromButton(profile);
       }),
     ),
+    ...ORI_MENU_AGENTS.map(name =>
+      vscode.commands.registerCommand(`ideAgentTabs.openOri.${commandKey(name)}`, () => {
+        const profile = settings.profile(name);
+        if (profile) openFromButton(profile, 'ori');
+      }),
+    ),
     vscode.commands.registerCommand('ideAgentTabs.openAgent', (name: unknown) => {
-      const profile = typeof name === 'string' ? settings.profile(name) : undefined;
-      if (profile) openFromButton(profile);
+      if (typeof name !== 'string') return;
+      const ori = name.startsWith(ORI_PREFIX);
+      const profile = settings.profile(ori ? name.slice(ORI_PREFIX.length) : name);
+      if (profile) openFromButton(profile, ori ? 'ori' : undefined);
     }),
     vscode.window.onDidOpenTerminal(terminal => adopt([terminal])),
     vscode.window.onDidCloseTerminal(terminal => {
@@ -381,7 +412,10 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
       refreshStatus();
     }),
     vscode.workspace.onDidChangeConfiguration(e => {
-      if (SHARED_KEYS.some(key => e.affectsConfiguration(`ideAgentTabs.${SHARED_SETTING_NAMES[key]}`))) shareSettings();
+      if (SHARED_KEYS.some(key => e.affectsConfiguration(`ideAgentTabs.${SHARED_SETTING_NAMES[key]}`))) {
+        shareSettings();
+        refreshStatus();
+      }
       if (!e.affectsConfiguration('ideAgentTabs.defaultAgent')) return;
       shareDefault();
       refreshStatus();

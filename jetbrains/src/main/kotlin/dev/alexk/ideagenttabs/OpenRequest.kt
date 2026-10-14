@@ -201,7 +201,21 @@ data class OpenRequest(
                 throw IllegalArgumentException("model must be 1 to 200 characters from letters, digits and . _ : / @ + -")
             }
             val chosenVia = via?.let { LaunchVia.of(it) ?: throw IllegalArgumentException("via must be 'ori' or 'direct'") }
-            return OpenRequest(dir.normalize(), prompt?.takeIf { it.isNotBlank() }, args, env, agent, model, chosenVia, focus)
+            val ori = agent != null && agent.startsWith(ORI_PREFIX)
+            if (ori && chosenVia == LaunchVia.DIRECT) {
+                throw IllegalArgumentException("agent $agent opens through Ori, so via must be 'ori' or left out")
+            }
+            if (ori && agent.removePrefix(ORI_PREFIX).isBlank()) throw IllegalArgumentException("agent $agent names no agent after $ORI_PREFIX")
+            return OpenRequest(
+                dir.normalize(),
+                prompt?.takeIf { it.isNotBlank() },
+                args,
+                env,
+                if (ori) agent.removePrefix(ORI_PREFIX) else agent,
+                model,
+                if (ori) LaunchVia.ORI else chosenVia,
+                focus,
+            )
         }
     }
 }

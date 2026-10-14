@@ -113,6 +113,15 @@ test('parses an optional model and via', () => {
   assert.equal(parseOpenRequest(body({ model: 'x'.repeat(200) })).model?.length, 200);
 });
 
+test('an ori: agent name opens its base agent through Ori', () => {
+  for (const extra of [{}, { via: 'ori' }]) {
+    const request = parseOpenRequest(body({ agent: 'ori:claude', ...extra }));
+    assert.deepEqual([request.agent, request.via], ['claude', 'ori']);
+  }
+  assert.throws(() => parseOpenRequest(body({ agent: 'ori:claude', via: 'direct' })), new BadRequest("agent ori:claude opens through Ori, so via must be 'ori' or left out"));
+  assert.throws(() => parseOpenRequest(body({ agent: 'ori: ' })), new BadRequest('agent ori:  names no agent after ori:'));
+});
+
 test('args and env are optional', () => {
   const request = parseOpenRequest(body({}));
   assert.deepEqual(request.args, []);

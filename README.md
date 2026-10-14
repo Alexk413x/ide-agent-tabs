@@ -74,7 +74,9 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 - **Ori.** With Ori installed, `open_tab` takes `via: "ori"` to start a supported agent with
   `ori <agent>`. Ori bills model usage through OpenRouter. The setting **Launch through OpenRouter (Ori)**
   (`launchVia` in `config.json`) makes it the default. It is off by default and shows only when Ori is
-  detected. See [Model and Ori](mcp/README.md#model-and-ori).
+  detected. To keep both, turn on **Show Ori agents** (`showOriAgents`): the agent menus and
+  `list_agents` then show an entry such as **Ori - Claude Code** under each agent Ori can launch, and
+  `open_tab` takes `agent: "ori:claude"`. See [Model and Ori](mcp/README.md#model-and-ori).
 - **Handoff.** The `handoff` tool and skill move a session's work to a new tab with a written brief, then
   close the old tab once both sessions confirm. The `closeAfterHandoff` setting, on by default, controls
   the close. See [Handoff](mcp/README.md#handoff).
