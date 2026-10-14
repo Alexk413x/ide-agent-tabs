@@ -423,11 +423,11 @@ of its own. The tab starts `copilot --additional-mcp-config @~/.ide-agent-tabs/m
   replaces the stdio entry that `--register copilot` writes, for that session only.
 - The launcher sets `IDE_AGENT_TABS_CWD` to the tab's folder, percent-encoded, and the server uses it
   as the session's folder.
-- The launcher adds the option only when `port.json` and `copilot-http.json` name the same port and the
-  server answers `GET /health` on it. Otherwise the tab uses the registered stdio server.
-- The session ends when Copilot exits. The `sessionStart` hook that `--register copilot` installs
-  records the Copilot process, and the server checks it every 15 s. Without the hooks, the session lasts
-  until the shared server stops.
+- The launcher adds the option only when `port.json` and `copilot-http.json` name the same port, the
+  hooks file that `--register copilot` writes exists, and the server answers `GET /health` on the port.
+  Otherwise the tab uses the registered stdio server, which ends with the Copilot process.
+- The session ends when Copilot exits. The `sessionStart` hook in that hooks file records the Copilot
+  process, and the server checks it every 15 s.
 
 For the details, see `copilot_http` and `with_copilot_http` in
 `claude-plugin/mcp/src/ide_agent_tabs/profiles.py`, and [Copilot tabs](../docs/design.md#copilot-tabs) in

@@ -453,11 +453,12 @@ server answers. Otherwise it keeps the stdio server that `--register copilot` wr
   CLI adds those servers to its own for that run, and an entry named `ide-agent-tabs` replaces the
   registered stdio entry, so the stdio server doesn't start. The launch also sets `IDE_AGENT_TABS_CWD` to
   the tab's folder, percent-encoded as `headers.py` encodes `X-Agent-Tabs-Cwd`.
-- **When.** The option needs `port.json`, a `copilot-http.json` whose URL names the same port, a server
-  that answers `GET /health` on that port within 500 ms, and a config path without a space, a quote or
-  `%`. Otherwise the tab stays on the stdio server. No launcher starts the server: Claude Code's headers
-  helper and start hook do. The VS Code extension checks the server before it plans the launch, and the
-  JetBrains plugin checks it off the UI thread.
+- **When.** The option needs `port.json`, a `copilot-http.json` whose URL names the same port, a config
+  path without a space, a quote or `%`, the registered hooks file
+  (`$COPILOT_HOME/hooks/ide-agent-tabs.json`, else `~/.copilot/hooks/ide-agent-tabs.json`), and a server
+  that answers `GET /health` on that port within 500 ms. Otherwise the tab stays on the stdio server. No
+  launcher starts the server: Claude Code's headers helper and start hook do. The VS Code extension
+  checks the server before it plans the launch, and the JetBrains plugin checks it off the UI thread.
 - **Folder.** Copilot CLI declares no roots capability, so the front takes the session's folder from
   `X-Agent-Tabs-Cwd`, or the home folder when the variable is unset and the header holds the literal
   `${IDE_AGENT_TABS_CWD}`.
@@ -466,9 +467,9 @@ server answers. Otherwise it keeps the stdio server that `--register copilot` wr
   the same ancestry lookup as `headers.py` and records its pid and start time in the tab's presence file,
   as `agentPid` and `agentPidStart`. When the server binds the tab's session, it takes that process as the
   session's owner, so the session ends within 15 s of Copilot exiting, as a Claude Code session does. A
-  child Copilot started inside a busy turn of the tab doesn't replace the record. Without the record,
-  when the Copilot hooks aren't registered, the session belongs to the server process and ends when the
-  server stops.
+  child Copilot started inside a busy turn of the tab doesn't replace the record. A tab without the
+  registered hooks stays on the stdio server, which ends with the Copilot process, so no session outlives
+  its tab.
 
 ## Button
 

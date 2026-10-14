@@ -281,15 +281,20 @@ export function answersHealth(port: number, timeoutMs = COPILOT_HEALTH_TIMEOUT_M
   });
 }
 
+export function copilotHooksFile(env: NodeJS.ProcessEnv, userHome: string): string {
+  return path.join(env.COPILOT_HOME || path.join(userHome, '.copilot'), 'hooks', 'ide-agent-tabs.json');
+}
+
 export async function copilotHttp(
   home: string,
   windows: boolean,
+  hooksFile: string,
   answers: (port: number) => Promise<boolean> = answersHealth,
 ): Promise<CopilotHttp | undefined> {
   const port = readPort(home);
   const file = path.join(home, 'mcp', 'copilot-http.json');
   const config = windows ? file.replace(/\\/g, '/') : file;
-  if (port === undefined || copilotConfigPort(home) !== port || !HTTP_SAFE.test(config)) return undefined;
+  if (port === undefined || copilotConfigPort(home) !== port || !HTTP_SAFE.test(config) || !isFile(hooksFile)) return undefined;
   return (await answers(port)) ? { config, port } : undefined;
 }
 

@@ -488,8 +488,20 @@ class AgentProfilesTest {
         assertEquals(emptyList<String>(), planLaunch(claude, LaunchContext(http = http)).args)
     }
 
-    private fun copilotHome(port: Int? = 47951, configPort: Int? = 47951, prefix: String = "cst-copilot"): Path {
+    private fun hooksOf(dir: Path): File = copilotHooksFile(null, dir.resolve("user").toString())
+
+    private fun copilotHome(
+        port: Int? = 47951,
+        configPort: Int? = 47951,
+        prefix: String = "cst-copilot",
+        hooks: Boolean = true,
+    ): Path {
         val dir = Files.createTempDirectory(prefix)
+        if (hooks) {
+            val file = hooksOf(dir)
+            file.parentFile.mkdirs()
+            file.writeText("{}")
+        }
         val mcp = Files.createDirectories(dir.resolve("mcp"))
         if (port != null) Files.writeString(mcp.resolve("port.json"), """{"port": $port}""")
         if (configPort != null) {
@@ -503,7 +515,7 @@ class AgentProfilesTest {
     fun `a Copilot tab uses the shared server when the port, the config and a running server agree`() {
         val dir = copilotHome()
         val asked = mutableListOf<Int>()
-        val http = copilotHttp(dir, windows) { asked += it; true }
+        val http = copilotHttp(dir, windows, hooksOf(dir)) { asked += it; true }
         val file = dir.resolve("mcp").resolve("copilot-http.json").toString()
         assertEquals(CopilotHttp(if (windows) file.replace('\\', '/') else file, 47951), http)
         assertEquals(listOf(47951), asked)
@@ -511,11 +523,31 @@ class AgentProfilesTest {
 
     @Test
     fun `a Copilot tab stays on the stdio server without a server, a port, a matching config or a safe path`() {
-        assertNull(copilotHttp(copilotHome(), windows) { false })
-        assertNull(copilotHttp(copilotHome(port = null), windows) { true })
-        assertNull(copilotHttp(copilotHome(configPort = null), windows) { true })
-        assertNull(copilotHttp(copilotHome(configPort = 47952), windows) { true })
-        assertNull(copilotHttp(copilotHome(prefix = "cst-copilot sp ace"), windows) { true })
+        fun tab(dir: Path, answers: (Int) -> Boolean) = copilotHttp(dir, windows, hooksOf(dir), answers)
+        assertNull(tab(copilotHome()) { false })
+        assertNull(tab(copilotHome(port = null)) { true })
+        assertNull(tab(copilotHome(configPort = null)) { true })
+        assertNull(tab(copilotHome(configPort = 47952)) { true })
+        assertNull(tab(copilotHome(prefix = "cst-copilot sp ace")) { true })
+    }
+
+    @Test
+    fun `a Copilot tab stays on the stdio server without the registered hooks file`() {
+        val asked = mutableListOf<Int>()
+        val dir = copilotHome(hooks = false)
+        assertNull(copilotHttp(dir, windows, hooksOf(dir)) { asked += it; true })
+        assertNull(copilotHttp(dir, windows, hooksOf(dir).parentFile) { asked += it; true })
+        assertEquals(emptyList<Int>(), asked)
+        hooksOf(dir).apply { parentFile.mkdirs() }.writeText("{}")
+        assertTrue(copilotHttp(dir, windows, hooksOf(dir)) { true } != null)
+    }
+
+    @Test
+    fun `COPILOT_HOME moves the hooks file and an empty value falls back to the user home`() {
+        val tail = File("hooks", "ide-agent-tabs.json").path
+        assertEquals(File(File("c", "h"), tail), copilotHooksFile(File("c", "h").path, "u"))
+        assertEquals(File(File("u", ".copilot"), tail), copilotHooksFile("", "u"))
+        assertEquals(File(File("u", ".copilot"), tail), copilotHooksFile(null, "u"))
     }
 
     @Test

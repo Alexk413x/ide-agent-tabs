@@ -18,10 +18,12 @@ Plugin and MCP server 0.9.5, with VS Code extension 0.1.32 and JetBrains plugin 
   `IDE_AGENT_TABS_CWD` set to its percent-encoded folder. The Python service, the VS Code extension and
   the JetBrains plugin build the option at launch. A missing port or config, a server that doesn't
   answer, or a config path with a space, a quote or `%` keeps the tab on the stdio server.
+- A Copilot CLI tab connects over HTTP only when the Copilot hooks file
+  (`$COPILOT_HOME/hooks/ide-agent-tabs.json`, else `~/.copilot/hooks/ide-agent-tabs.json`) exists. Without
+  the hooks, no process owns the session, so the tab keeps the stdio server, which ends with the tab.
 - The shared server keys a session that sends neither a pid nor a client id on its tab id. The Copilot
   `sessionStart` hook records the Copilot process in the tab's presence file (`agentPid`,
-  `agentPidStart`), and the server ends the tab's session when that process exits. Without the Copilot
-  hooks, the session lasts until the server stops.
+  `agentPidStart`), and the server ends the tab's session when that process exits.
 - A 2026-07-28 client that declares no roots capability, such as Copilot CLI, gets no roots request: its
   folder comes from `X-Agent-Tabs-Cwd`, else the home folder. The tool list on this path follows
   `X-Agent-Tabs-Agent`, so a Copilot session doesn't see `agent_tabs_mod`.

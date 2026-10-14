@@ -80,8 +80,11 @@ object Agents {
             ),
         )
 
-    fun copilotFor(profile: AgentProfile): CopilotHttp? =
-        if (isCopilotCommand(profile.command)) copilotHttp(ideAgentTabsHome(), SystemInfo.isWindows) else null
+    fun copilotFor(profile: AgentProfile): CopilotHttp? {
+        if (!isCopilotCommand(profile.command)) return null
+        val copilotHome = EnvironmentUtil.getValue("COPILOT_HOME") ?: System.getenv("COPILOT_HOME")
+        return copilotHttp(ideAgentTabsHome(), SystemInfo.isWindows, copilotHooksFile(copilotHome, System.getProperty("user.home")))
+    }
 
     fun isInstalled(profile: AgentProfile): Boolean = isInstalled(profile.command, searchPath, SystemInfo.isWindows)
 

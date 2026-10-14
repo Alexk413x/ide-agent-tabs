@@ -8,6 +8,7 @@ import sys
 import unittest
 from typing import Any
 
+from ide_agent_tabs.agent_config import hook_config_file
 from ide_agent_tabs.launch_plan import LaunchRequest, plan_launch
 from ide_agent_tabs.messaging.hook import run_hook
 from ide_agent_tabs.messaging.sessions import read_presence, tab_owner, update_presence
@@ -41,7 +42,18 @@ def _write(path: str, value: Any) -> None:
         json.dump(value, f)
 
 
+def _hooks_file(test: unittest.TestCase, registered: bool = True) -> tuple[str, str]:
+    user = temp_home(test, "iat-copilot-user-")
+    file = hook_config_file("copilot", {}, user, sys.platform)
+    if registered:
+        _write(file, {"version": 1, "hooks": {}})
+    return user, file
+
+
 class CopilotHttpTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.user, self.hooks = _hooks_file(self)
+
     def home(self, port: int | None = 47951, config_port: int | None = 47951, prefix: str = "iat-copilot-http-") -> str:
         home = temp_home(self, prefix)
         if port is not None:
@@ -53,7 +65,7 @@ class CopilotHttpTest(unittest.TestCase):
     def test_a_tab_uses_the_shared_server_when_the_port_the_config_and_a_running_server_agree(self) -> None:
         home = self.home()
         asked: list[int] = []
-        http = copilot_http(home, WINDOWS, lambda port: asked.append(port) or True)
+        http = copilot_http(home, WINDOWS, self.hooks, lambda port: asked.append(port) or True)
         assert http is not None
         self.assertEqual(asked, [47951])
         self.assertEqual(http.port, 47951)
@@ -61,17 +73,30 @@ class CopilotHttpTest(unittest.TestCase):
         self.assertEqual(http.config, expected.replace("\\", "/") if WINDOWS else expected)
 
     def test_a_tab_stays_on_the_stdio_server_without_a_server_a_port_a_matching_config_or_a_safe_path(self) -> None:
-        self.assertIsNone(copilot_http(self.home(), WINDOWS, lambda _p: False))
-        self.assertIsNone(copilot_http(self.home(port=None), WINDOWS, lambda _p: True))
-        self.assertIsNone(copilot_http(self.home(config_port=None), WINDOWS, lambda _p: True))
-        self.assertIsNone(copilot_http(self.home(config_port=47952), WINDOWS, lambda _p: True))
-        self.assertIsNone(copilot_http(self.home(prefix="iat-copilot sp ace-"), WINDOWS, lambda _p: True))
+        self.assertIsNone(copilot_http(self.home(), WINDOWS, self.hooks, lambda _p: False))
+        self.assertIsNone(copilot_http(self.home(port=None), WINDOWS, self.hooks, lambda _p: True))
+        self.assertIsNone(copilot_http(self.home(config_port=None), WINDOWS, self.hooks, lambda _p: True))
+        self.assertIsNone(copilot_http(self.home(config_port=47952), WINDOWS, self.hooks, lambda _p: True))
+        self.assertIsNone(copilot_http(self.home(prefix="iat-copilot sp ace-"), WINDOWS, self.hooks, lambda _p: True))
+
+    def test_a_tab_stays_on_the_stdio_server_without_the_registered_hooks_file(self) -> None:
+        asked: list[int] = []
+
+        def answers(port: int) -> bool:
+            asked.append(port)
+            return True
+
+        _user, missing = _hooks_file(self, registered=False)
+        self.assertIsNone(copilot_http(self.home(), WINDOWS, missing, answers))
+        self.assertIsNone(copilot_http(self.home(), WINDOWS, os.path.dirname(self.hooks), answers))
+        self.assertEqual(asked, [])
+        self.assertIsNotNone(copilot_http(self.home(), WINDOWS, self.hooks, answers))
 
     def test_the_health_check_asks_the_recorded_port_and_refuses_a_closed_one(self) -> None:
         server = serve(self, temp_home(self, "iat-copilot-srv-"), StoreHost(temp_home(self, "iat-copilot-store-")))
-        self.assertIsNotNone(copilot_http(server.home, WINDOWS))
+        self.assertIsNotNone(copilot_http(server.home, WINDOWS, self.hooks))
         server.stop("test")
-        self.assertIsNone(copilot_http(server.home, WINDOWS))
+        self.assertIsNone(copilot_http(server.home, WINDOWS, self.hooks))
 
     def test_the_option_names_the_config_file_and_passes_the_folder_in_the_environment(self) -> None:
         http = CopilotHttp("C:/h/mcp/copilot-http.json", 47951)
@@ -132,7 +157,7 @@ class CopilotHttpTest(unittest.TestCase):
             self.assertIn("Bearer " + "cd" * 32, f.read())
 
     def test_a_terminal_tab_connects_while_the_server_runs_and_falls_back_after_it_stops(self) -> None:
-        s = Setup(self)
+        s = Setup(self, user_home=self.user)
         server = serve(self, s.home, StoreHost(s.home))
         s.service.open_tab({"path": s.work, "agent": "copilot", "ide": "fake-term"})
         spec = s.terminal.opened[-1][0]
@@ -142,6 +167,27 @@ class CopilotHttpTest(unittest.TestCase):
         server.stop("test")
         s.service.open_tab({"path": s.work, "agent": "copilot", "ide": "fake-term"})
         self.assertEqual((s.terminal.opened[-1][0].args, s.terminal.opened[-1][0].env), ([], {}))
+
+    def test_a_terminal_tab_stays_on_the_stdio_server_until_the_hooks_are_registered(self) -> None:
+        user, file = _hooks_file(self, registered=False)
+        s = Setup(self, user_home=user)
+        serve(self, s.home, StoreHost(s.home))
+        s.service.open_tab({"path": s.work, "agent": "copilot", "ide": "fake-term"})
+        self.assertEqual((s.terminal.opened[-1][0].args, s.terminal.opened[-1][0].env), ([], {}))
+        _write(file, {})
+        s.service.open_tab({"path": s.work, "agent": "copilot", "ide": "fake-term"})
+        self.assertEqual(s.terminal.opened[-1][0].args[0], "--additional-mcp-config")
+
+    def test_copilot_home_in_the_environment_moves_the_hooks_file(self) -> None:
+        other = temp_home(self, "iat-copilot-home-")
+        user, _file = _hooks_file(self, registered=False)
+        s = Setup(self, env={"PATH": "", "COPILOT_HOME": other}, user_home=user)
+        serve(self, s.home, StoreHost(s.home))
+        s.service.open_tab({"path": s.work, "agent": "copilot", "ide": "fake-term"})
+        self.assertEqual(s.terminal.opened[-1][0].args, [])
+        _write(os.path.join(other, "hooks", "ide-agent-tabs.json"), {})
+        s.service.open_tab({"path": s.work, "agent": "copilot", "ide": "fake-term"})
+        self.assertEqual(s.terminal.opened[-1][0].args[0], "--additional-mcp-config")
 
     def test_the_server_writes_the_config_when_it_claims_its_port(self) -> None:
         home = temp_home(self, "iat-copilot-srv-")

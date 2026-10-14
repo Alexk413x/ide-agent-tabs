@@ -228,6 +228,7 @@ data class CopilotHttp(val config: String, val port: Int)
 const val CWD_ENV = "IDE_AGENT_TABS_CWD"
 const val COPILOT_HEALTH_TIMEOUT_MS = 500
 private const val COPILOT_FILE = "copilot-http.json"
+private const val COPILOT_HOOKS_FILE = "ide-agent-tabs.json"
 private const val MAX_CWD_CHARS = 1024
 private val COPILOT_COMMAND = Regex("(?:.*[\\\\/])?copilot(?:\\.(?:exe|cmd|bat|ps1))?", RegexOption.IGNORE_CASE)
 private val CWD_SAFE = Regex("[A-Za-z0-9_.~/: \\\\-]")
@@ -263,11 +264,14 @@ fun answersHealth(port: Int, timeoutMs: Int = COPILOT_HEALTH_TIMEOUT_MS): Boolea
     }
 }.getOrDefault(false)
 
-fun copilotHttp(home: Path, windows: Boolean, answers: (Int) -> Boolean = { answersHealth(it) }): CopilotHttp? {
+fun copilotHooksFile(copilotHome: String?, userHome: String): File =
+    File(File(copilotHome?.takeIf { it.isNotEmpty() } ?: File(userHome, ".copilot").path, "hooks"), COPILOT_HOOKS_FILE)
+
+fun copilotHttp(home: Path, windows: Boolean, hooksFile: File, answers: (Int) -> Boolean = { answersHealth(it) }): CopilotHttp? {
     val port = readPort(home) ?: return null
     val file = home.resolve("mcp").resolve(COPILOT_FILE).toString()
     val config = if (windows) file.replace('\\', '/') else file
-    if (copilotConfigPort(home) != port || !HTTP_SAFE.matches(config)) return null
+    if (copilotConfigPort(home) != port || !HTTP_SAFE.matches(config) || !hooksFile.isFile) return null
     return if (answers(port)) CopilotHttp(config, port) else null
 }
 

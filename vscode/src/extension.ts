@@ -14,6 +14,7 @@ import {
   codexHttp,
   codexPython,
   CopilotHttp,
+  copilotHooksFile,
   copilotHttp,
   isCopilotCommand,
   isInstalled,
@@ -129,7 +130,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const openInFolder = async (folder: vscode.WorkspaceFolder | undefined, profile: AgentProfile) => {
     const dir = folder ? folderPath(folder) : os.homedir();
     const id = randomUUID();
-    const copilot = isCopilotCommand(profile.command) ? await copilotHttp(home, isWindows) : undefined;
+    const copilot = isCopilotCommand(profile.command) ? await copilotHttp(home, isWindows, copilotHooksFile(process.env, os.homedir())) : undefined;
     openTab(dir, folder?.name ?? path.basename(dir), profile, { id, launch: launchFor(profile, dir, id, copilot), focus: true });
   };
 

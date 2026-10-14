@@ -18,6 +18,7 @@ import {
   codexHttpArg,
   codexPython,
   CONFIG_FILE,
+  copilotHooksFile,
   copilotHttp,
   CWD_ENV,
   cwdHeader,
@@ -787,7 +788,7 @@ test('a Claude Code tab that brings its own settings gets one file that merges t
   }
 });
 
-function copilotHome(options: { port?: number | null; configPort?: number | null; prefix?: string } = {}): string {
+function copilotHome(options: { port?: number | null; configPort?: number | null; prefix?: string; hooks?: boolean } = {}): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix ?? 'iat-copilot-'));
   fs.mkdirSync(path.join(home, 'mcp'));
   if (options.port !== null) fs.writeFileSync(path.join(home, 'mcp', 'port.json'), JSON.stringify({ port: options.port ?? 47951 }));
@@ -795,13 +796,26 @@ function copilotHome(options: { port?: number | null; configPort?: number | null
     const entry = { type: 'http', url: `http://127.0.0.1:${options.configPort ?? 47951}/mcp`, headers: {}, tools: ['*'] };
     fs.writeFileSync(path.join(home, 'mcp', 'copilot-http.json'), JSON.stringify({ mcpServers: { 'ide-agent-tabs': entry } }));
   }
+  if (options.hooks !== false) {
+    const hooks = hooksOf(home);
+    fs.mkdirSync(path.dirname(hooks), { recursive: true });
+    fs.writeFileSync(hooks, '{}');
+  }
   return home;
+}
+
+function hooksOf(home: string): string {
+  return copilotHooksFile({}, path.join(home, 'user'));
+}
+
+function copilotTab(home: string, answers: (port: number) => Promise<boolean>) {
+  return copilotHttp(home, onWindows, hooksOf(home), answers);
 }
 
 test('a Copilot tab uses the shared server when the port, the config and a running server agree', async () => {
   const home = copilotHome();
   const asked: number[] = [];
-  const http = await copilotHttp(home, onWindows, async port => (asked.push(port), true));
+  const http = await copilotTab(home, async port => (asked.push(port), true));
   const file = path.join(home, 'mcp', 'copilot-http.json');
   assert.deepEqual(http, { config: onWindows ? file.replace(/\\/g, '/') : file, port: 47951 });
   assert.deepEqual(asked, [47951]);
@@ -809,11 +823,29 @@ test('a Copilot tab uses the shared server when the port, the config and a runni
 
 test('a Copilot tab stays on the stdio server without a server, a port, a matching config or a safe path', async () => {
   const yes = async () => true;
-  assert.equal(await copilotHttp(copilotHome(), onWindows, async () => false), undefined);
-  assert.equal(await copilotHttp(copilotHome({ port: null }), onWindows, yes), undefined);
-  assert.equal(await copilotHttp(copilotHome({ configPort: null }), onWindows, yes), undefined);
-  assert.equal(await copilotHttp(copilotHome({ configPort: 47952 }), onWindows, yes), undefined);
-  assert.equal(await copilotHttp(copilotHome({ prefix: 'iat-copilot sp ace-' }), onWindows, yes), undefined);
+  assert.equal(await copilotTab(copilotHome(), async () => false), undefined);
+  assert.equal(await copilotTab(copilotHome({ port: null }), yes), undefined);
+  assert.equal(await copilotTab(copilotHome({ configPort: null }), yes), undefined);
+  assert.equal(await copilotTab(copilotHome({ configPort: 47952 }), yes), undefined);
+  assert.equal(await copilotTab(copilotHome({ prefix: 'iat-copilot sp ace-' }), yes), undefined);
+});
+
+test('a Copilot tab stays on the stdio server without the registered hooks file', async () => {
+  const asked: number[] = [];
+  const answers = async (port: number) => (asked.push(port), true);
+  const home = copilotHome({ hooks: false });
+  assert.equal(await copilotTab(home, answers), undefined);
+  assert.equal(await copilotHttp(home, onWindows, path.dirname(hooksOf(home)), answers), undefined);
+  assert.deepEqual(asked, []);
+  fs.mkdirSync(path.dirname(hooksOf(home)), { recursive: true });
+  fs.writeFileSync(hooksOf(home), '{}');
+  assert.notEqual(await copilotTab(home, answers), undefined);
+});
+
+test('COPILOT_HOME moves the hooks file and an empty value falls back to the user home', () => {
+  assert.equal(copilotHooksFile({ COPILOT_HOME: path.join('c', 'h') }, 'u'), path.join('c', 'h', 'hooks', 'ide-agent-tabs.json'));
+  assert.equal(copilotHooksFile({ COPILOT_HOME: '' }, 'u'), path.join('u', '.copilot', 'hooks', 'ide-agent-tabs.json'));
+  assert.equal(copilotHooksFile({}, 'u'), path.join('u', '.copilot', 'hooks', 'ide-agent-tabs.json'));
 });
 
 test('the health check needs this service on the port', async () => {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import * as os from 'node:os';
 import {
   AgentLaunch,
   AgentProfile,
@@ -10,6 +11,7 @@ import {
   codexHttp,
   codexPython,
   CopilotHttp,
+  copilotHooksFile,
   copilotHttp,
   isCopilotCommand,
   planLaunch,
@@ -140,12 +142,13 @@ export async function handleOpen(
   host: Host,
   settings: AgentSettings,
   answers: (port: number) => Promise<boolean> = answersHealth,
+  hooksFile: string = copilotHooksFile(process.env, os.homedir()),
 ): Promise<Reply> {
   let copilot: CopilotHttp | undefined;
   try {
     const request = parseOpenRequest(body);
     const profile = request.agent === undefined ? settings.defaultProfile() : settings.profile(request.agent);
-    if (profile !== undefined && isCopilotCommand(profile.command)) copilot = await copilotHttp(settings.home, process.platform === 'win32', answers);
+    if (profile !== undefined && isCopilotCommand(profile.command)) copilot = await copilotHttp(settings.home, process.platform === 'win32', hooksFile, answers);
   } catch {
     copilot = undefined;
   }

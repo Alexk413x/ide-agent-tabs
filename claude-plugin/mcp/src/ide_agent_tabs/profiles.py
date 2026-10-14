@@ -176,12 +176,12 @@ def cwd_header(cwd: str) -> str:
     return quote(cwd, safe="/: \\", errors="surrogatepass")
 
 
-def copilot_http(home: str, windows: bool, answers: Callable[[int], bool] | None = None) -> CopilotHttp | None:
+def copilot_http(home: str, windows: bool, hooks_file: str, answers: Callable[[int], bool] | None = None) -> CopilotHttp | None:
     from .server_copy import copilot_config_path, copilot_config_port, read_port
 
     port = read_port(home)
     config = copilot_config_path(home, "win32" if windows else "linux")
-    if port is None or copilot_config_port(home) != port or _HTTP_SAFE.match(config) is None:
+    if port is None or copilot_config_port(home) != port or _HTTP_SAFE.match(config) is None or not os.path.isfile(hooks_file):
         return None
     from .shared.client import answers_health
 
