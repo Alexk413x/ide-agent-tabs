@@ -38,7 +38,7 @@ import { BadRequest, checkEnv } from '../request';
 import { DETECTED_FILE, DetectedOri, parseDetected, SHARED_DEFAULTS, userSettingValue, withSharedValue } from '../sharedSettings';
 
 function fixture() {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-agents-'));
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-agents-'));
   const warnings: string[] = [];
   const settings = new AgentSettings(home, w => warnings.push(w));
   let clock = Date.now() / 1000;
@@ -203,7 +203,7 @@ test('default agent comes from config and falls back to claude', () => {
 });
 
 test('a preferred agent wins over config unless it has no profile', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-agents-'));
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-agents-'));
   let preferred: string | undefined = 'codex';
   const settings = new AgentSettings(home, () => {}, () => preferred);
   fs.writeFileSync(path.join(home, CONFIG_FILE), '{"defaultAgent": "copilot"}');
@@ -256,7 +256,7 @@ test('installed means the command is on PATH, with Windows extensions on Windows
 });
 
 test('finds an executable on PATH and skips blank, quoted and invalid entries', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-path-'));
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-path-'));
   fs.writeFileSync(path.join(dir, 'tool.exe'), '');
   const searchPath = ['', '  ', path.join(dir, 'no', 'such'), 'bad<>|dir', `"${dir}"`].join(path.delimiter);
   assert.equal(findOnPath(searchPath, 'tool.exe'), path.join(dir, 'tool.exe'));
@@ -484,7 +484,7 @@ test('an explicit Ori launch that cannot run fails with the reason', () => {
 });
 
 function shimFixture(files: string[]) {
-  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-shim-'));
+  const bin = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-shim-'));
   for (const name of files) fs.writeFileSync(path.join(bin, name), '');
   return bin;
 }
@@ -623,7 +623,7 @@ test('closeAfterHandoff writes false only when unchecked and removes the key whe
 });
 
 test('a Codex tab runs its server on the interpreter python.json records, or on py -3 or python3', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-python-'));
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-python-'));
   const python = path.join(home, 'python.exe');
   fs.writeFileSync(python, '');
   assert.deepEqual(codexPython(home, process.platform === 'win32'), process.platform === 'win32' ? ['py', '-3'] : ['python3']);
@@ -647,7 +647,7 @@ test('a Codex tab runs its server on the interpreter python.json records, or on 
 const onWindows = process.platform === 'win32';
 
 function httpHome(options: { port?: unknown; stub?: boolean; python?: string } = {}): string {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-http-'));
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-http-'));
   const mcp = path.join(home, 'mcp');
   fs.mkdirSync(path.join(mcp, 'py', 'launch'), { recursive: true });
   const python = options.python ?? path.join(home, 'python.exe');
@@ -688,7 +688,7 @@ test('a Codex tab stays on the stdio server without a port, a headers stub or a 
   assert.equal(codexHttp(httpHome(), onWindows, 'tab 1', 'codex'), undefined);
   assert.equal(codexHttp(httpHome(), onWindows, 'tab-1', 'co dex'), undefined);
   assert.equal(codexHttp(httpHome(), onWindows, 'a'.repeat(129), 'codex'), undefined);
-  const spacedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-sp ace-'));
+  const spacedDir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-sp ace-'));
   const spaced = path.join(spacedDir, 'python.exe');
   fs.writeFileSync(spaced, '');
   assert.equal(codexHttp(httpHome({ python: spaced }), onWindows, 'tab-1', 'codex'), undefined);
@@ -717,7 +717,7 @@ test('planLaunch gives a Codex tab the HTTP server argument when http is set and
 });
 
 test('a Claude Code tab gets the tab settings file after its profile arguments', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-claude-'));
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-claude-'));
   const windows = process.platform === 'win32';
   const settings = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
   fs.mkdirSync(path.join(home, 'mcp'));
@@ -758,7 +758,7 @@ test('a Claude Code tab gets the tab settings file after its profile arguments',
 });
 
 test('a Claude Code tab that brings its own settings gets one file that merges them with the tab hooks', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-merge-'));
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-merge-'));
   const ours = { hooks: { Stop: [{ hooks: [{ type: 'command', command: '/py', args: ['hook', 'claude', 'Stop'] }] }] } };
   const settings = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
   fs.mkdirSync(path.dirname(settings));
