@@ -147,6 +147,11 @@ test('open gives a Copilot tab the shared server only while it answers', async (
   fs.writeFileSync(path.join(mcp, 'port.json'), JSON.stringify({ port }));
   const entry = { type: 'http', url: `http://127.0.0.1:${port}/mcp`, headers: {}, tools: ['*'] };
   fs.writeFileSync(path.join(mcp, 'copilot-http.json'), JSON.stringify({ mcpServers: { 'ide-agent-tabs': entry } }));
+  const copilotHome = path.join(dir, 'copilot-home');
+  fs.mkdirSync(path.join(copilotHome, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(copilotHome, 'hooks', 'ide-agent-tabs.json'), '{}');
+  const saved = process.env.COPILOT_HOME;
+  process.env.COPILOT_HOME = copilotHome;
   try {
     assert.equal((await call('open', { path: dir, agent: 'copilot' })).status, 200);
     const config = path.join(mcp, 'copilot-http.json');
@@ -159,7 +164,10 @@ test('open gives a Copilot tab the shared server only while it answers', async (
     assert.equal((await call('open', { path: dir, agent: 'nobody' })).status, 400);
   } finally {
     health.close();
+    if (saved === undefined) delete process.env.COPILOT_HOME;
+    else process.env.COPILOT_HOME = saved;
     fs.rmSync(mcp, { recursive: true, force: true });
+    fs.rmSync(copilotHome, { recursive: true, force: true });
   }
 });
 
