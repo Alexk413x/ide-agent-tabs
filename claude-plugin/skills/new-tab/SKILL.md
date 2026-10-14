@@ -57,6 +57,11 @@ Pass `via` only when the user asks to launch through Ori (OpenRouter, billed the
 directly. `list_agents` marks the agents Ori can launch with `ori: true`, and `launchVia` shows the
 setting that applies when you pass no `via`. A result with `via: "ori"` started through Ori.
 
+When the user turned on `showOriAgents`, `list_agents` also lists an entry such as `ori:claude`
+(`Ori - Claude Code`, with `via: "ori"` and `base: "claude"`) after each agent Ori can launch. Pass
+that name as `agent` when the user picks the Ori entry; it opens the base agent through Ori, in a tab of
+its own next to any direct tab. Don't pass `via: "direct"` with an `ori:` name.
+
 Report the folder, where the tab opened (IDE and project, or terminal), the agent, the model when you
 passed one, `via` when it is `ori`, and the tab id.
 

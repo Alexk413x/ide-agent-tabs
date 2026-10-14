@@ -179,6 +179,7 @@ export function isAbsolutePath(p: string, windows = process.platform === 'win32'
 }
 
 export const MODEL_PATTERN = /^[A-Za-z0-9._:/@+-]{1,200}$/;
+export const ORI_PREFIX = 'ori:';
 
 export interface OpenRequest {
   path: string;
@@ -235,14 +236,17 @@ export function openRequestOf(
     throw new BadRequest('model must be 1 to 200 characters from letters, digits and . _ : / @ + -');
   }
   if (via !== undefined && via !== 'ori' && via !== 'direct') throw new BadRequest("via must be 'ori' or 'direct'");
+  const ori = agent !== undefined && agent.startsWith(ORI_PREFIX);
+  if (ori && via === 'direct') throw new BadRequest(`agent ${agent} opens through Ori, so via must be 'ori' or left out`);
+  if (ori && isBlank(agent.slice(ORI_PREFIX.length))) throw new BadRequest(`agent ${agent} names no agent after ${ORI_PREFIX}`);
   return {
     path: stripTrailingSeparator(path.normalize(dir)),
     prompt: prompt !== undefined && !isBlank(prompt) ? prompt : undefined,
     args,
     env,
-    agent,
+    agent: ori ? agent.slice(ORI_PREFIX.length) : agent,
     model,
-    via,
+    via: ori ? 'ori' : via,
     focus,
   };
 }

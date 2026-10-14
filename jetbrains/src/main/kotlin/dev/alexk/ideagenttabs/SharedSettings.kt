@@ -59,6 +59,7 @@ data class SharedSettings(
     val launchVia: LaunchVia = LaunchVia.DIRECT,
     val closeAfterHandoff: Boolean = true,
     val allowResume: Boolean = true,
+    val showOriAgents: Boolean = false,
     val focusNewTabs: FocusNewTabs = FocusNewTabs.AUTO_FOCUS,
     val claudeMod: Boolean = true,
 )
@@ -85,6 +86,7 @@ fun readSharedSettings(text: String): SharedSettings {
         launchVia = LaunchVia.of(root.stringOrNull("launchVia")) ?: LaunchVia.DIRECT,
         closeAfterHandoff = root.booleanOrNull("closeAfterHandoff") ?: true,
         allowResume = root.booleanOrNull("allowResume") ?: true,
+        showOriAgents = root.booleanOrNull("showOriAgents") ?: false,
         focusNewTabs = FocusNewTabs.of(root.stringOrNull("focusNewTabs")) ?: FocusNewTabs.AUTO_FOCUS,
         claudeMod = root.stringOrNull("claudeMod") != CLAUDE_MOD_OFF,
     )

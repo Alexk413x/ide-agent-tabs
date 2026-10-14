@@ -51,8 +51,8 @@ class AgentMenuTrigger(private val showMenu: () -> Unit) : PopupHandler() {
 }
 
 fun showAgentMenu(project: Project, component: JComponent, place: (JBPopup) -> Unit) {
-    withInstalledAgents(project, component) { profiles, icons, vias ->
-        val items = profiles.indices.map { AgentMenuItem.Open(profiles[it], icons[it], vias[it]) } + AgentMenuItem.Settings
+    withInstalledAgents(project, component) { entries, icons, labels ->
+        val items = entries.indices.map { AgentMenuItem.Open(entries[it], icons[it], labels[it]) } + AgentMenuItem.Settings
         place(JBPopupFactory.getInstance().createListPopup(AgentMenuStep(project, items)))
     }
 }
@@ -61,21 +61,21 @@ fun showAgentTabsSettings(project: Project?) {
     ShowSettingsUtil.getInstance().showSettingsDialog(project, AgentTabsConfigurable::class.java)
 }
 
-private fun withInstalledAgents(project: Project, component: JComponent?, then: (List<AgentProfile>, List<Icon>, List<LaunchVia>) -> Unit) {
+private fun withInstalledAgents(project: Project, component: JComponent?, then: (List<AgentEntry>, List<Icon>, List<String>) -> Unit) {
     val modality = component?.let(ModalityState::stateForComponent) ?: ModalityState.nonModal()
     ApplicationManager.getApplication().executeOnPooledThread {
-        val profiles = Agents.installedProfiles()
-        val icons = profiles.map(Agents::icon)
-        val vias = profiles.map { Agents.launchFor(it).via }
+        val entries = Agents.entries()
+        val icons = entries.map { Agents.icon(it.profile) }
+        val labels = entries.map(Agents::entryLabel)
         ApplicationManager.getApplication().invokeLater({
             if (project.isDisposed || component?.isShowing == false) return@invokeLater
-            then(profiles, icons, vias)
+            then(entries, icons, labels)
         }, modality)
     }
 }
 
 private sealed interface AgentMenuItem {
-    class Open(val profile: AgentProfile, val icon: Icon, val via: LaunchVia) : AgentMenuItem
+    class Open(val entry: AgentEntry, val icon: Icon, val label: String) : AgentMenuItem
     data object Settings : AgentMenuItem
 }
 
@@ -85,7 +85,7 @@ private class AgentMenuStep(
 ) : BaseListPopupStep<AgentMenuItem>(if (items.first() is AgentMenuItem.Open) "Open Agent" else NO_AGENT_FOUND, items) {
 
     override fun getTextFor(value: AgentMenuItem) = when (value) {
-        is AgentMenuItem.Open -> viaLabel(value.profile.label, value.via)
+        is AgentMenuItem.Open -> value.label
         AgentMenuItem.Settings -> "Settings…"
     }
 
@@ -100,7 +100,7 @@ private class AgentMenuStep(
     override fun onChosen(selectedValue: AgentMenuItem, finalChoice: Boolean): PopupStep<*>? = doFinalStep {
         if (project.isDisposed) return@doFinalStep
         when (selectedValue) {
-            is AgentMenuItem.Open -> Agents.open(project, selectedValue.profile)
+            is AgentMenuItem.Open -> Agents.open(project, selectedValue.entry.profile, selectedValue.entry.via)
             AgentMenuItem.Settings -> showAgentTabsSettings(project)
         }
     }

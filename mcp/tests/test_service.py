@@ -433,6 +433,69 @@ class AgentsTest(unittest.TestCase):
             [f"Ignoring {os.path.join(s.home, 'agents.json')} and using the built-in agent profiles: agents.json must hold a JSON object"],
         )
 
+    def ori_setup(self, config: dict[str, Any]) -> Setup:
+        s = Setup(self, config=config)
+        ori = {"path": "/usr/bin/ori", "version": "0.14.3", "agents": ["claude", "codex", "qwen"]}
+        write(
+            os.path.join(s.home, "detected.json"),
+            {"version": 1, "detectedAt": iso(now_ms()), "platform": "linux", "terminals": [], "shells": [], "ori": ori},
+        )
+        return s
+
+    def test_list_agents_without_show_ori_agents_keeps_its_output(self) -> None:
+        def row(name: str, label: str, ori: bool = False) -> dict[str, Any]:
+            return {"name": name, "label": label, "command": name, "installed": False, "model": True, **({"ori": True} if ori else {})}
+
+        expected = {
+            "default": "claude",
+            "agents": [
+                row("claude", "Claude Code", ori=True),
+                row("codex", "Codex", ori=True),
+                row("agy", "Antigravity CLI"),
+                row("copilot", "Copilot CLI"),
+                row("grok", "Grok Build"),
+                row("pi", "Pi"),
+                row("hermes", "Hermes"),
+                row("opencode", "OpenCode"),
+                row("qwen", "Qwen Code"),
+                row("goose", "Goose"),
+                {**row("codex-local", "Codex (local)"), "command": "codex"},
+            ],
+            "launchVia": "direct",
+        }
+        for config in ({}, {"showOriAgents": False}):
+            with self.subTest(config=config):
+                listed = self.ori_setup(config).service.list_agents()
+                self.assertEqual(jsjson.stringify(listed), jsjson.stringify(expected))
+
+    def test_show_ori_agents_lists_an_ori_entry_after_each_agent_ori_can_launch(self) -> None:
+        listed = self.ori_setup({"showOriAgents": True}).service.list_agents()
+        names = [a["name"] for a in listed["agents"]]
+        self.assertEqual(names[:4], ["claude", "ori:claude", "codex", "ori:codex"])
+        self.assertNotIn("ori:qwen", names, "Ori lists qwen, but has no qwen launcher")
+        self.assertEqual(len(names), 13)
+        self.assertEqual(
+            listed["agents"][1],
+            {
+                "name": "ori:claude",
+                "label": "Ori - Claude Code",
+                "command": "ori",
+                "installed": True,
+                "model": True,
+                "via": "ori",
+                "base": "claude",
+            },
+        )
+        self.assertEqual(list(listed), ["default", "agents", "launchVia", "showOriAgents"])
+        self.assertIs(listed["showOriAgents"], True)
+
+    def test_show_ori_agents_lists_no_ori_entry_without_ori(self) -> None:
+        s = Setup(self, config={"showOriAgents": True})
+        fresh_detection(s.home)
+        listed = s.service.list_agents()
+        self.assertFalse(any(a["name"].startswith("ori:") or "ori" in a for a in listed["agents"]))
+        self.assertIs(listed["showOriAgents"], True)
+
 
 class IdeClientTest(unittest.TestCase):
     def endpoint(self, ide: FakeIde) -> Any:

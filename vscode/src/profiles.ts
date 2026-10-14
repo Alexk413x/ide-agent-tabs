@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
-import { BadRequest, checkEnv, isAbsolutePath, MAX_ENTRIES, optString, optStringList, optStringMap, parseObject } from './request';
+import { BadRequest, checkEnv, isAbsolutePath, MAX_ENTRIES, optString, optStringList, optStringMap, ORI_PREFIX, parseObject } from './request';
 import { writeAtomically } from './registry';
 import {
   Detected,
@@ -99,6 +99,32 @@ function isCmdShim(command: string, searchPath: string): boolean {
     if (hit !== undefined) return hit !== '.exe';
   }
   return true;
+}
+
+export function oriLaunchable(name: string, ori: DetectedOri | null): boolean {
+  return ori !== null && ori.agents.includes(name) && ORI_PROFILES.includes(name);
+}
+
+// Same rows as list_agents in claude-plugin/mcp/src/ide_agent_tabs/service.py, less the agents that aren't installed.
+export interface AgentEntry {
+  name: string;
+  label: string;
+  profile: AgentProfile;
+  via?: 'ori';
+}
+
+export function agentEntries(
+  profiles: readonly AgentProfile[],
+  ori: DetectedOri | null,
+  showOri: boolean,
+  installed: (p: AgentProfile) => boolean,
+): AgentEntry[] {
+  const entries: AgentEntry[] = [];
+  for (const p of profiles) {
+    if (installed(p)) entries.push({ name: p.name, label: p.label, profile: p });
+    if (showOri && oriLaunchable(p.name, ori)) entries.push({ name: `${ORI_PREFIX}${p.name}`, label: `Ori - ${p.label}`, profile: p, via: 'ori' });
+  }
+  return entries;
 }
 
 function oriRefusal(p: AgentProfile, ctx: LaunchContext, oriArgs: string[]): string | undefined {

@@ -74,6 +74,7 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 | `ideAgentTabs.defaultAgent` | `claude`, `codex`, `agy`, `copilot`, `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local` | `claude` |
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
 | `ideAgentTabs.launchVia` | `direct`, `ori` (start supported agents with `ori <agent>`, which bills model usage through OpenRouter). Needs Ori (`ori`) installed. | `direct` |
+| `ideAgentTabs.showOriAgents` | `true` (list an **Ori - &lt;agent&gt;** entry under each agent that Ori can launch, in the agent menus and in `list_agents`; it opens the agent with `ori <agent>` in its own tab), `false`. Needs Ori (`ori`) installed. | `false` |
 | `ideAgentTabs.closeAfterHandoff` | `true` (the new session closes the old tab once both sides confirm a handoff), `false` (leave the old tab open, marked as handed off) | `true` |
 | `ideAgentTabs.allowResume` | `true` (agents can reopen a session that ended in the last 7 days with `resume_tab`, and ask you first when the resume re-reads its history at full price), `false` (refuse every resume) | `true` |
 | `ideAgentTabs.claudeMod` | `on` (Claude Code sessions message other agents through SendMessage and ListAgents and get their messages in-process), `off` (the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0). Claude Code sessions that start after the change pick it up. | `on` |

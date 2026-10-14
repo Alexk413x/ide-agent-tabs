@@ -60,6 +60,7 @@ class AgentLaunch(
 )
 
 const val ORI_COMMAND = "ori"
+const val ORI_PREFIX = "ori:"
 val ORI_PROFILES = setOf("claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent")
 private val ORI_CMD_UNSAFE = Regex("[|\"%^&<>]")
 private val SHIM_EXTENSIONS = listOf(".exe", ".cmd", ".bat")
@@ -95,6 +96,19 @@ private fun isCmdShim(command: String, searchPath: String): Boolean {
     }
     return true
 }
+
+fun oriLaunchable(name: String, ori: DetectedOri?): Boolean = ori != null && name in ori.agents && name in ORI_PROFILES
+
+// Same rows as list_agents in claude-plugin/mcp/src/ide_agent_tabs/service.py, less the agents that aren't installed.
+data class AgentEntry(val name: String, val label: String, val profile: AgentProfile, val via: LaunchVia? = null)
+
+fun agentEntries(profiles: List<AgentProfile>, ori: DetectedOri?, showOri: Boolean, installed: (AgentProfile) -> Boolean): List<AgentEntry> =
+    profiles.flatMap { p ->
+        listOfNotNull(
+            AgentEntry(p.name, p.label, p).takeIf { installed(p) },
+            AgentEntry("$ORI_PREFIX${p.name}", "Ori - ${p.label}", p, LaunchVia.ORI).takeIf { showOri && oriLaunchable(p.name, ori) },
+        )
+    }
 
 private fun oriRefusal(profile: AgentProfile, context: LaunchContext, oriArgs: List<String>): String? {
     val ori = context.ori ?: return "Ori is not installed"
@@ -557,6 +571,8 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
     fun setCloseAfterHandoff(value: Boolean): Boolean = saveFlag("closeAfterHandoff", value, default = true)
 
     fun setAllowResume(value: Boolean): Boolean = saveFlag("allowResume", value, default = true)
+
+    fun setShowOriAgents(value: Boolean): Boolean = saveFlag("showOriAgents", value, default = false)
 
     private fun saveFlag(key: String, value: Boolean, default: Boolean): Boolean = try {
         val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null

@@ -222,6 +222,7 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
 | Setting | Key | Values | Default |
 |---|---|---|---|
 | Launch through OpenRouter (Ori) | `launchVia` | `direct`, `ori` | `direct` |
+| Show Ori agents | `showOriAgents` | `true`, `false` | `false` |
 | Close the old tab after a handoff | `closeAfterHandoff` | `true`, `false` | `true` |
 | Allow resuming closed sessions | `allowResume` | `true`, `false` | `true` |
 | Use the Claude Code mod (in-process messaging) | `claudeMod` | `on`, `off` | `on` |
@@ -234,6 +235,10 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
   the setting `direct` unless they ask for `ori`. An `open_tab` call with `via` overrides it. A
   Codex tab doesn't launch through Ori with an npm Codex on Windows, and `ori claude` may fail with
   `401 Missing Authentication header` in Ori 0.14.3; both are Ori limits.
+- Show Ori agents: With `true`, the agent menus and `list_agents` list an entry such as
+  **Ori - Claude Code** (`ori:claude`) under each agent Ori can launch, so the user picks per tab
+  instead of changing `launchVia`. Offer it under the same condition as `launchVia`. It changes only
+  what is listed.
 - Close the old tab after a handoff: After a handoff, the new session closes the old tab once both
   sides confirm. `false` leaves the old tab open, marked as handed off.
 - Allow resuming closed sessions: With `true`, agents can reopen a Claude Code, Codex or Antigravity CLI

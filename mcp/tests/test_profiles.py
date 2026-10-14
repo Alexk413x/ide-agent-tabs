@@ -16,6 +16,7 @@ from ide_agent_tabs.profiles import (
     check_env,
     claude_tab_settings,
     launch_of,
+    read_terminal_settings,
 )
 from ide_agent_tabs.request import validate_open
 from support import temp_home
@@ -171,6 +172,23 @@ class OpenRequestTest(unittest.TestCase):
         for given in bad:
             with self.subTest(given=str(given)[:80]), self.assertRaises(ConfigError):
                 validate_open(given)
+
+    def test_an_ori_agent_name_opens_its_base_agent_through_ori(self) -> None:
+        for given in ({"path": DIR, "agent": "ori:claude"}, {"path": DIR, "agent": "ori:claude", "via": "ori"}):
+            request = validate_open(given)
+            self.assertEqual((request.agent, request.via), ("claude", "ori"))
+        self.assertEqual(validate_open({"path": DIR, "agent": "claude"}).via, None)
+        with self.assertRaisesRegex(ConfigError, '^agent ori:claude opens through Ori, so via must be "ori" or left out$'):
+            validate_open({"path": DIR, "agent": "ori:claude", "via": "direct"})
+        with self.assertRaisesRegex(ConfigError, "^agent ori: names no agent after ori:$"):
+            validate_open({"path": DIR, "agent": "ori:"})
+
+    def test_show_ori_agents_defaults_to_off_and_takes_only_a_boolean(self) -> None:
+        self.assertFalse(read_terminal_settings({}, []).show_ori_agents)
+        self.assertTrue(read_terminal_settings({"showOriAgents": True}, []).show_ori_agents)
+        warnings: list[str] = []
+        self.assertFalse(read_terminal_settings({"showOriAgents": "yes"}, warnings).show_ori_agents)
+        self.assertEqual(warnings, ["Ignoring showOriAgents in config.json: it must be true or false"])
 
     def test_focus_passes_through_only_when_the_caller_gives_it(self) -> None:
         self.assertIsNone(validate_open({"path": DIR}).focus)

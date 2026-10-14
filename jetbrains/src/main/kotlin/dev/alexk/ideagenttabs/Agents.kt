@@ -3,6 +3,7 @@ package dev.alexk.ideagenttabs
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.LayeredIcon
@@ -59,6 +60,7 @@ object Agents {
         cwd: String? = request?.path?.toString(),
         tabId: String = UUID.randomUUID().toString(),
         copilot: CopilotHttp? = null,
+        via: LaunchVia? = request?.via,
     ): AgentLaunch =
         planLaunch(
             profile,
@@ -67,7 +69,7 @@ object Agents {
                 args = request?.args.orEmpty(),
                 env = request?.env.orEmpty(),
                 model = request?.model,
-                via = request?.via,
+                via = via,
                 setting = settings.shared().launchVia,
                 ori = settings.detected().ori,
                 windows = SystemInfo.isWindows,
@@ -92,6 +94,15 @@ object Agents {
         val path = searchPath
         return settings.profiles().filter { isInstalled(it.command, path, SystemInfo.isWindows) }
     }
+
+    fun entries(): List<AgentEntry> {
+        val path = searchPath
+        return agentEntries(settings.profiles(), settings.detected().ori, settings.shared().showOriAgents) {
+            isInstalled(it.command, path, SystemInfo.isWindows)
+        }
+    }
+
+    fun entryLabel(entry: AgentEntry): String = if (entry.via == null) viaLabel(entry.label, launchFor(entry.profile).via) else entry.label
 
     fun icon(profile: AgentProfile): Icon {
         profile.icon?.let { return customIcons.computeIfAbsent(it, ::loadCustomIcon) }
@@ -126,20 +137,26 @@ object Agents {
     fun setDefaultAgent(profile: AgentProfile): Boolean = settings.setDefaultAgent(profile.name)
 
     @RequiresEdt
-    fun open(project: Project, profile: AgentProfile) {
+    fun open(project: Project, profile: AgentProfile, via: LaunchVia? = null) {
         val directory = project.basePath ?: System.getProperty("user.home")
         val id = UUID.randomUUID().toString()
+        val start = { copilot: CopilotHttp? ->
+            val launch = try {
+                launchFor(profile, cwd = directory, tabId = id, copilot = copilot, via = via)
+            } catch (e: IllegalArgumentException) {
+                Messages.showErrorDialog(project, e.message, "Agent Tabs")
+                null
+            }
+            if (launch != null) AgentTabLauncher.open(project, directory, profile, launch, focus = true, id = id)
+        }
         if (!isCopilotCommand(profile.command)) {
-            AgentTabLauncher.open(project, directory, profile, launchFor(profile, cwd = directory, tabId = id), focus = true, id = id)
+            start(null)
             return
         }
         val application = ApplicationManager.getApplication()
         application.executeOnPooledThread {
             val copilot = copilotFor(profile)
-            application.invokeLater({
-                val launch = launchFor(profile, cwd = directory, tabId = id, copilot = copilot)
-                AgentTabLauncher.open(project, directory, profile, launch, focus = true, id = id)
-            }, project.disposed)
+            application.invokeLater({ start(copilot) }, project.disposed)
         }
     }
 }

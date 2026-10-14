@@ -232,6 +232,28 @@ test('open through Ori follows via, then the launchVia setting, then Ori detecti
   }
 });
 
+test('open takes an ori: agent name as the base agent through Ori', async () => {
+  const noOri = await call('open', { path: dir, agent: 'ori:claude' });
+  assert.equal(noOri.status, 400);
+  assert.equal(noOri.json.error, "claude can't launch through Ori: Ori is not installed");
+
+  fs.writeFileSync(path.join(home, 'detected.json'), JSON.stringify({ ori: { path: '/x/ori', version: '0.14.3', agents: ['claude'] } }));
+  try {
+    const { status, json } = await call('open', { path: dir, agent: 'ori:claude' });
+    assert.equal(status, 200);
+    assert.deepEqual([json.agent, json.via], ['claude', 'ori']);
+    assert.deepEqual([opened.at(-1)?.profile.name, opened.at(-1)?.launch.command, opened.at(-1)?.launch.args], ['claude', 'ori', ['claude']]);
+    const direct = await call('open', { path: dir, agent: 'ori:claude', via: 'direct' });
+    assert.equal(direct.status, 400);
+    assert.equal(direct.json.error, "agent ori:claude opens through Ori, so via must be 'ori' or left out");
+    const copilot = await call('open', { path: dir, agent: 'ori:copilot' });
+    assert.equal(copilot.json.error, "copilot can't launch through Ori: Ori does not support copilot");
+    assert.equal((await call('open', { path: dir, agent: 'ori:nobody' })).json.error, 'unknown agent: nobody');
+  } finally {
+    fs.rmSync(path.join(home, 'detected.json'), { force: true });
+  }
+});
+
 test('open without an agent uses the default', async () => {
   fs.writeFileSync(path.join(home, 'config.json'), '{"defaultAgent":"codex"}');
   const { json } = await call('open', { path: dir });

@@ -208,6 +208,22 @@ class OpenRequestTest {
     }
 
     @Test
+    fun `an ori agent name opens its base agent through Ori`() {
+        val path = dir.toString().replace("\\", "\\\\")
+        for (extra in listOf("", ""","via":"ori"""")) {
+            val request = OpenRequest.parse("""{"path":"$path","agent":"ori:claude"$extra}""")
+            assertEquals("claude", request.agent)
+            assertEquals(LaunchVia.ORI, request.via)
+        }
+        val direct = assertThrows(IllegalArgumentException::class.java) {
+            OpenRequest.parse("""{"path":"$path","agent":"ori:claude","via":"direct"}""")
+        }
+        assertEquals("agent ori:claude opens through Ori, so via must be 'ori' or left out", direct.message)
+        val blank = assertThrows(IllegalArgumentException::class.java) { OpenRequest.parse("""{"path":"$path","agent":"ori: "}""") }
+        assertEquals("agent ori:  names no agent after ori:", blank.message)
+    }
+
+    @Test
     fun `parses an optional model and via`() {
         val path = dir.toString().replace("\\", "\\\\")
         val request = OpenRequest.parse("""{"path":"$path","model":"anthropic/claude-sonnet-4.5:beta","via":"ori"}""")

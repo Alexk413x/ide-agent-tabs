@@ -5,7 +5,7 @@ from typing import Any, Callable, NamedTuple
 
 from .jsjson import trim, utf16_len
 from .jspath import is_absolute, normalize
-from .launch_plan import MODEL_SOURCE, is_model
+from .launch_plan import MODEL_SOURCE, ORI_PREFIX, is_model
 from .profiles import MAX_ENTRIES, MAX_PROMPT_CHARS, ConfigError, check_env
 
 
@@ -66,6 +66,13 @@ def validate_open(given: dict[str, Any], is_directory: Callable[[str], bool] = _
         raise ConfigError(f"model must match {MODEL_SOURCE}")
     if via is not None and via not in ("ori", "direct"):
         raise ConfigError('via must be "ori" or "direct"')
+    if agent is not None and agent.startswith(ORI_PREFIX):
+        if via == "direct":
+            raise ConfigError(f'agent {agent} opens through Ori, so via must be "ori" or left out')
+        if trim(agent[len(ORI_PREFIX) :]) == "":
+            raise ConfigError(f"agent {agent} names no agent after {ORI_PREFIX}")
+        agent = agent[len(ORI_PREFIX) :]
+        via = "ori"
     if focus is not None and not isinstance(focus, bool):
         raise ConfigError("focus must be true or false")
     return OpenRequest(

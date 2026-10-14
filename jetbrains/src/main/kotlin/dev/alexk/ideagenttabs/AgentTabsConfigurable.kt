@@ -71,6 +71,13 @@ class AgentTabsConfigurable : BoundConfigurable("Agent Tabs") {
                         })
                         .comment("Start supported agents with <code>ori &lt;agent&gt;</code>, which bills model usage through OpenRouter.")
                 }
+                row {
+                    checkBox("Show Ori agents")
+                        .bindSelected({ Agents.settings.shared().showOriAgents }, { value ->
+                            if (value != Agents.settings.shared().showOriAgents) saved(Agents.settings.setShowOriAgents(value))
+                        })
+                        .comment("List an Ori entry, such as Ori - Claude Code, under each agent that Ori can launch, in the New Agent Tab menus and in list_agents. It opens the agent with <code>ori &lt;agent&gt;</code> in its own tab.")
+                }
             }
             row {
                 checkBox("Close the old tab after a handoff")

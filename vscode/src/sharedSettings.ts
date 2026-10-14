@@ -23,6 +23,7 @@ export interface SharedSettings {
   launchVia: LaunchVia;
   closeAfterHandoff: boolean;
   allowResume: boolean;
+  showOriAgents: boolean;
   focusNewTabs: FocusNewTabs;
   claudeMod: ClaudeMod;
 }
@@ -35,6 +36,7 @@ export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
   launchVia: 'direct',
   closeAfterHandoff: true,
   allowResume: true,
+  showOriAgents: false,
   focusNewTabs: AUTO,
   claudeMod: 'on',
 });
@@ -85,6 +87,7 @@ export function readSharedSettings(text: string, file: string): Partial<SharedSe
   if (launchVia !== undefined) found.launchVia = launchVia;
   if (typeof root.closeAfterHandoff === 'boolean') found.closeAfterHandoff = root.closeAfterHandoff;
   if (typeof root.allowResume === 'boolean') found.allowResume = root.allowResume;
+  if (typeof root.showOriAgents === 'boolean') found.showOriAgents = root.showOriAgents;
   const focusNewTabs = oneOf(FOCUS_NEW_TABS, root.focusNewTabs);
   if (focusNewTabs !== undefined) found.focusNewTabs = focusNewTabs;
   const claudeMod = oneOf(CLAUDE_MOD, root.claudeMod);

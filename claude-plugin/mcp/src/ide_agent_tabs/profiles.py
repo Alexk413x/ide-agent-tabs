@@ -469,6 +469,7 @@ class TerminalSettings(NamedTuple):
     focus_new_tabs: str = "auto"
     claude_mod: str = "on"
     allow_resume: bool = True
+    show_ori_agents: bool = False
     ide_start_timeout_sec: float = DEFAULT_IDE_START_TIMEOUT_SEC
     preferred_terminal: str | None = None
     shell: str | None = None
@@ -518,6 +519,7 @@ def read_terminal_settings(config: dict[str, Any], warnings: list[str]) -> Termi
     focus_new_tabs = _choice(config, "focusNewTabs", ("auto", "always", "never"), warnings)
     claude_mod = _choice(config, "claudeMod", ("on", "off"), warnings)
     allow_resume = _flag(config, ALLOW_RESUME_KEY, True, warnings)
+    show_ori_agents = _flag(config, "showOriAgents", False, warnings)
     timeout = _seconds(config, IDE_START_TIMEOUT_KEY, DEFAULT_IDE_START_TIMEOUT_SEC, MAX_IDE_START_TIMEOUT_SEC, warnings)
     preferred: str | None = None
     terminal = config.get("terminal")
@@ -540,6 +542,7 @@ def read_terminal_settings(config: dict[str, Any], warnings: list[str]) -> Termi
         focus_new_tabs=focus_new_tabs,
         claude_mod=claude_mod,
         allow_resume=allow_resume,
+        show_ori_agents=show_ori_agents,
         ide_start_timeout_sec=timeout,
         preferred_terminal=preferred or None,
         shell=shell or None,

@@ -19,6 +19,7 @@ from .profiles import (
 )
 
 ORI_AGENTS: tuple[str, ...] = ("claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent")
+ORI_PREFIX = "ori:"
 MODEL_SOURCE = "^[A-Za-z0-9._:/@+-]{1,200}$"
 MODEL_PATTERN = re.compile(r"[A-Za-z0-9._:/@+-]{1,200}")
 # Ori refuses to pass these to a .cmd shim such as the npm codex.cmd.
