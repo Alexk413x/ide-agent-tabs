@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
+import * as http from 'node:http';
 import * as path from 'node:path';
 import { BadRequest, checkEnv, isAbsolutePath, MAX_ENTRIES, optString, optStringList, optStringMap, parseObject } from './request';
 import { writeAtomically } from './registry';
@@ -82,6 +83,7 @@ export interface LaunchContext {
   searchPath: string;
   python?: readonly string[];
   http?: CodexHttp;
+  copilot?: CopilotHttp;
   claudeSettings?: string;
   cwd?: string;
 }
@@ -119,7 +121,8 @@ function withoutPrompt(p: AgentProfile, prompt: string | undefined): AgentProfil
 
 export function planLaunch(profile: AgentProfile, ctx: LaunchContext): AgentLaunch {
   const unplanned = withoutPrompt(profile, ctx.prompt);
-  const codex = { ...unplanned, args: withCodexHttp(unplanned.args, ctx.http) ?? withCodexPython(unplanned.args, ctx.python) };
+  const codexArgs = withCodexHttp(unplanned.args, ctx.http) ?? withCodexPython(unplanned.args, ctx.python);
+  const codex = { ...unplanned, ...withCopilotHttp(unplanned.command, codexArgs, unplanned.env, ctx.copilot, ctx.cwd) };
   const settled = withClaudeSettings(codex.command, codex.args, ctx.args ?? [], ctx.claudeSettings, ctx.cwd);
   const callerArgs = settled.callerArgs;
   const p = { ...codex, args: settled.args };
@@ -218,6 +221,95 @@ export function codexHttp(home: string, windows: boolean, tab: string, agent: st
   const headers = windows ? headersFile.replace(/\\/g, '/') : headersFile;
   if ([python, headers, home].some(p => !HTTP_SAFE.test(p))) return undefined;
   return { python, headers, port, tab, agent, home };
+}
+
+// Same rules as copilot_http and with_copilot_http in claude-plugin/mcp/src/ide_agent_tabs/profiles.py.
+export interface CopilotHttp {
+  config: string;
+  port: number;
+}
+
+export const CWD_ENV = 'IDE_AGENT_TABS_CWD';
+export const COPILOT_HEALTH_TIMEOUT_MS = 500;
+const MAX_CWD_CHARS = 1024;
+const COPILOT_COMMAND = /^(?:.*[\\/])?copilot(?:\.(?:exe|cmd|bat|ps1))?$/i;
+const CWD_SAFE = /^[A-Za-z0-9_.~/: \\-]$/;
+
+export function isCopilotCommand(command: string): boolean {
+  return COPILOT_COMMAND.test(command);
+}
+
+export function cwdHeader(cwd: string): string {
+  let out = '';
+  for (const c of cwd) {
+    out += CWD_SAFE.test(c) ? c : [...Buffer.from(c, 'utf8')].map(b => `%${b.toString(16).toUpperCase().padStart(2, '0')}`).join('');
+  }
+  return out;
+}
+
+function copilotConfigPort(home: string): number | undefined {
+  let url: unknown;
+  try {
+    const config = JSON.parse(fs.readFileSync(path.join(home, 'mcp', 'copilot-http.json'), 'utf8')) as {
+      mcpServers?: Record<string, { url?: unknown } | undefined>;
+    };
+    url = config.mcpServers?.['ide-agent-tabs']?.url;
+  } catch {
+    url = undefined;
+  }
+  const match = typeof url === 'string' ? /^http:\/\/127\.0\.0\.1:([0-9]{1,5})\/mcp$/.exec(url) : null;
+  const port = match ? Number(match[1]) : 0;
+  return port > 0 && port <= 65535 ? port : undefined;
+}
+
+export function answersHealth(port: number, timeoutMs = COPILOT_HEALTH_TIMEOUT_MS): Promise<boolean> {
+  return new Promise(resolve => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/health', timeout: timeoutMs }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => (body += chunk));
+      res.on('end', () => {
+        try {
+          resolve(res.statusCode === 200 && (JSON.parse(body) as { service?: unknown }).service === 'ide-agent-tabs');
+        } catch {
+          resolve(false);
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(false));
+  });
+}
+
+export function copilotHooksFile(env: NodeJS.ProcessEnv, userHome: string): string {
+  return path.join(env.COPILOT_HOME || path.join(userHome, '.copilot'), 'hooks', 'ide-agent-tabs.json');
+}
+
+export async function copilotHttp(
+  home: string,
+  windows: boolean,
+  hooksFile: string,
+  answers: (port: number) => Promise<boolean> = answersHealth,
+): Promise<CopilotHttp | undefined> {
+  const port = readPort(home);
+  const file = path.join(home, 'mcp', 'copilot-http.json');
+  const config = windows ? file.replace(/\\/g, '/') : file;
+  if (port === undefined || copilotConfigPort(home) !== port || !HTTP_SAFE.test(config) || !isFile(hooksFile)) return undefined;
+  return (await answers(port)) ? { config, port } : undefined;
+}
+
+// Copilot CLI adds the servers in --additional-mcp-config to its own for one run, and an entry with the registered
+// server's name replaces it, so the tab starts no stdio server.
+export function withCopilotHttp(
+  command: string,
+  args: readonly string[],
+  env: Record<string, string>,
+  copilot: CopilotHttp | undefined,
+  cwd: string | undefined,
+): { args: string[]; env: Record<string, string> } {
+  if (copilot === undefined || !isCopilotCommand(command)) return { args: [...args], env };
+  const folder: Record<string, string> = cwd !== undefined && cwd.length > 0 && cwd.length <= MAX_CWD_CHARS ? { [CWD_ENV]: cwdHeader(cwd) } : {};
+  return { args: [...args, '--additional-mcp-config', `@${copilot.config}`], env: { ...env, ...folder } };
 }
 
 export function recordedPython(home: string, windows: boolean): string | undefined {
@@ -334,7 +426,6 @@ export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
   profile('codex', 'Codex', 'codex', { args: [...CODEX_TAB_ARGS], modelFlag: '-m' }),
   profile('agy', 'Antigravity CLI', 'agy', { promptFlag: '-i', modelFlag: '--model' }),
   profile('copilot', 'Copilot CLI', 'copilot', { promptFlag: '-i', modelFlag: '--model' }),
-  profile('gemini', 'Gemini CLI', 'gemini', { promptFlag: '-i', modelFlag: '-m' }),
   profile('grok', 'Grok Build', 'grok', { modelFlag: '-m' }),
   profile('pi', 'Pi', 'pi', { modelFlag: '--model' }),
   profile('hermes', 'Hermes', 'hermes', { args: ['chat'], promptFlag: '-q', modelFlag: '-m' }),

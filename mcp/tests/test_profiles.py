@@ -68,7 +68,7 @@ class ClaudeTabSettingsTest(unittest.TestCase):
     def test_other_agents_and_a_missing_settings_file_get_no_flag(self) -> None:
         base = LaunchRequest(args=[], env={}, launch_via="direct", ori=None, platform="linux", claude_settings="/h/s.json")
         claude = next(p for p in BUILTIN_PROFILES if p.name == "claude")
-        for name in ("gemini", "copilot", "pi"):
+        for name in ("copilot", "pi"):
             profile = next(p for p in BUILTIN_PROFILES if p.name == name)
             self.assertNotIn("--settings", plan_launch(profile, base).launch.args, name)
         self.assertEqual(plan_launch(claude._replace(command="claude-wrapper"), base).launch.args, [])

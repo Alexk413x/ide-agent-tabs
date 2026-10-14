@@ -72,7 +72,7 @@ START_RETRY_DELAYS_MS = (1_000, 3_000, 9_000)
 REWAKE_EVERY_MS = 15_000
 FOLLOW_UP_MS = MAX_WAIT_S * 1000
 MOD_STATES = ("idle", "busy", "permission")
-AGENT_ORDER = ("claude", "codex", "agy", "copilot", "gemini", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local")
+AGENT_ORDER = ("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local")
 MOD_DELIVERY_NOTE = "the recipient's Agent Tabs mod delivers it in-process once the session is idle"
 CODEX_ID_PREFIX = "codex-"
 SESSION_PREFIX_CHARS = 8
@@ -294,7 +294,19 @@ class Messaging:
                 p[key] = cur[key]
         if self.thread_id is not None:
             p["threadId"] = self.thread_id
-        for key in ("handedOffTo", "driver", "modBeat", "nativeName", "via", "project", "model", "effort", "product"):
+        for key in (
+            "handedOffTo",
+            "driver",
+            "modBeat",
+            "nativeName",
+            "via",
+            "project",
+            "model",
+            "effort",
+            "product",
+            "agentPid",
+            "agentPidStart",
+        ):
             if cur.get(key) is not None:
                 p[key] = cur[key]
         p["beatMs"] = self._beat_ms

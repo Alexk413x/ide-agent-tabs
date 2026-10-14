@@ -56,7 +56,7 @@ bind every tool in this plan.
 
 The Jev tools live in `claude-plugin/mcp/src/ide_agent_tabs/jev/` and the existing `ide-agent-tabs` MCP server serves them. An
 earlier draft used a second server. That changed on 2026-09-28, once the server could be registered
-with Codex, Gemini CLI, Copilot CLI and OpenCode (commit 7cef357):
+with Codex, Copilot CLI and OpenCode (commit 7cef357):
 
 - Every agent that has the tab tools gets the Jev tools too, with no second registration.
 - With Jev off, the server lists no Jev tools, sends no Jev instructions and makes no network call. A
@@ -88,7 +88,7 @@ most specific:
 
 1. **The server's instructions.** MCP lets a server send instructions to every client at connection.
    When Jev is on, they say when to reach for it and when not to. Support differs by client, as of
-   2026-09-28: Gemini CLI and OpenCode add them to the system prompt. Copilot CLI supports them, and a
+   2026-09-28: OpenCode adds them to the system prompt. Copilot CLI supports them, and a
    flag, `--allow-all-mcp-server-instructions`, suggests they are gated by default. Codex uses them as
    the tool group's description, cut to 250 characters in its short summaries. So the first 250
    characters must carry the rule on their own.

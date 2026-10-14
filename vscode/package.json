@@ -2,8 +2,8 @@
   "name": "ide-agent-tabs",
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
-  "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.31",
+  "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
+  "version": "0.1.32",
   "publisher": "alexk413x",
   "license": "LicenseRef-No-Resale-1.0",
   "repository": {
@@ -23,7 +23,6 @@
     "codex",
     "agy",
     "copilot",
-    "gemini",
     "terminal"
   ],
   "main": "./dist/extension.js",
@@ -54,7 +53,6 @@
               "codex",
               "agy",
               "copilot",
-              "gemini",
               "grok",
               "pi",
               "hermes",
@@ -68,7 +66,6 @@
               "Codex",
               "Antigravity CLI",
               "Copilot CLI",
-              "Gemini CLI",
               "Grok Build",
               "Pi",
               "Hermes",
@@ -82,7 +79,6 @@
               "Codex.",
               "Antigravity CLI.",
               "Copilot CLI.",
-              "Gemini CLI.",
               "Grok Build.",
               "Pi.",
               "Hermes.",
@@ -339,20 +335,6 @@
         "category": "Agent Tabs"
       },
       {
-        "command": "ideAgentTabs.newTab.gemini",
-        "title": "New Gemini CLI Tab",
-        "category": "Agent Tabs",
-        "icon": {
-          "light": "resources/icons/agents/gemini_new.svg",
-          "dark": "resources/icons/agents/gemini_new_dark.svg"
-        }
-      },
-      {
-        "command": "ideAgentTabs.open.gemini",
-        "title": "Gemini CLI",
-        "category": "Agent Tabs"
-      },
-      {
         "command": "ideAgentTabs.newTab.grok",
         "title": "New Grok Build Tab",
         "category": "Agent Tabs",
@@ -498,12 +480,6 @@
         "when": "ideAgentTabs.buttonAgent == copilot"
       },
       {
-        "command": "ideAgentTabs.newTab.gemini",
-        "key": "ctrl+alt+a",
-        "mac": "cmd+alt+a",
-        "when": "ideAgentTabs.buttonAgent == gemini"
-      },
-      {
         "command": "ideAgentTabs.newTab.grok",
         "key": "ctrl+alt+a",
         "mac": "cmd+alt+a",
@@ -572,11 +548,6 @@
         {
           "command": "ideAgentTabs.newTab.copilot",
           "when": "ideAgentTabs.buttonAgent == copilot",
-          "group": "navigation@-0.2"
-        },
-        {
-          "command": "ideAgentTabs.newTab.gemini",
-          "when": "ideAgentTabs.buttonAgent == gemini",
           "group": "navigation@-0.2"
         },
         {
@@ -662,14 +633,6 @@
           "when": "false"
         },
         {
-          "command": "ideAgentTabs.newTab.gemini",
-          "when": "false"
-        },
-        {
-          "command": "ideAgentTabs.open.gemini",
-          "when": "false"
-        },
-        {
           "command": "ideAgentTabs.newTab.grok",
           "when": "false"
         },
@@ -752,44 +715,39 @@
           "group": "1_agents@3"
         },
         {
-          "command": "ideAgentTabs.open.gemini",
-          "when": "ideAgentTabs.installed.gemini",
-          "group": "1_agents@4"
-        },
-        {
           "command": "ideAgentTabs.open.grok",
           "when": "ideAgentTabs.installed.grok",
-          "group": "1_agents@5"
+          "group": "1_agents@4"
         },
         {
           "command": "ideAgentTabs.open.pi",
           "when": "ideAgentTabs.installed.pi",
-          "group": "1_agents@6"
+          "group": "1_agents@5"
         },
         {
           "command": "ideAgentTabs.open.hermes",
           "when": "ideAgentTabs.installed.hermes",
-          "group": "1_agents@7"
+          "group": "1_agents@6"
         },
         {
           "command": "ideAgentTabs.open.opencode",
           "when": "ideAgentTabs.installed.opencode",
-          "group": "1_agents@8"
+          "group": "1_agents@7"
         },
         {
           "command": "ideAgentTabs.open.qwen",
           "when": "ideAgentTabs.installed.qwen",
-          "group": "1_agents@9"
+          "group": "1_agents@8"
         },
         {
           "command": "ideAgentTabs.open.goose",
           "when": "ideAgentTabs.installed.goose",
-          "group": "1_agents@10"
+          "group": "1_agents@9"
         },
         {
           "command": "ideAgentTabs.open.codexLocal",
           "when": "ideAgentTabs.installed.codexLocal",
-          "group": "1_agents@11"
+          "group": "1_agents@10"
         },
         {
           "command": "ideAgentTabs.newTabWith",

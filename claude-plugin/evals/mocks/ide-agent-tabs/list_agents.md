@@ -33,13 +33,6 @@
       "model": true
     },
     {
-      "name": "gemini",
-      "label": "Gemini CLI",
-      "command": "gemini",
-      "installed": true,
-      "model": true
-    },
-    {
       "name": "grok",
       "label": "Grok Build",
       "command": "grok",

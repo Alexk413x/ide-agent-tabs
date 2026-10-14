@@ -256,7 +256,6 @@ _DROP_PREFIXES = (
     "CLAUDE_",
     "ANTHROPIC_",
     "CODEX_",
-    "GEMINI_CLI",
     "COPILOT_",
     "IDE_AGENT_TABS_",
     "JEDITERM_SOURCE",

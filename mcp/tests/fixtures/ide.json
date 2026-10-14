@@ -116,15 +116,6 @@
           "modelFlag": "--model"
         },
         {
-          "name": "gemini",
-          "label": "Gemini CLI",
-          "command": "gemini",
-          "args": [],
-          "env": {},
-          "promptFlag": "-i",
-          "modelFlag": "-m"
-        },
-        {
           "name": "grok",
           "label": "Grok Build",
           "command": "grok",
@@ -223,7 +214,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -262,7 +252,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -301,7 +290,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -362,7 +350,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -415,7 +402,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -456,7 +442,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -497,7 +482,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -538,7 +522,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -579,7 +562,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -620,7 +602,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -661,7 +642,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -702,7 +682,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -743,7 +722,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -784,7 +762,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -823,7 +800,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -862,7 +838,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -901,7 +876,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -947,7 +921,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -988,7 +961,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1027,7 +999,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1069,7 +1040,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1110,7 +1080,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1151,7 +1120,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1192,7 +1160,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1233,7 +1200,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1274,7 +1240,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1315,7 +1280,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1370,7 +1334,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1423,7 +1386,6 @@
           "codex",
           "agy",
           "copilot",
-          "gemini",
           "grok",
           "pi",
           "hermes",
@@ -1485,7 +1447,7 @@
     },
     {
       "args": [
-        "gemini",
+        "qwen",
         "hi",
         [
           "--yolo"
@@ -1495,8 +1457,8 @@
         }
       ],
       "result": {
-        "agent": "gemini",
-        "command": "gemini",
+        "agent": "qwen",
+        "command": "qwen",
         "args": [
           "--yolo",
           "-i"
@@ -1584,7 +1546,7 @@
     },
     {
       "args": [
-        "gemini",
+        "qwen",
         {
           "prompt": "hi there",
           "args": [],
@@ -1597,8 +1559,8 @@
       "result": {
         "via": "direct",
         "launch": {
-          "agent": "gemini",
-          "command": "gemini",
+          "agent": "qwen",
+          "command": "qwen",
           "args": [
             "-i"
           ],
@@ -1759,7 +1721,7 @@
     },
     {
       "args": [
-        "gemini",
+        "qwen",
         {
           "args": [],
           "env": {},
@@ -1777,7 +1739,7 @@
           "platform": "linux"
         }
       ],
-      "error": "gemini can't launch through Ori: Ori has no gemini launcher"
+      "error": "qwen can't launch through Ori: Ori has no qwen launcher"
     },
     {
       "args": [
@@ -4070,7 +4032,6 @@
           "TERM_PROGRAM_VERSION": "1",
           "VSCODE_PID": "1",
           "MCP_X": "1",
-          "GEMINI_CLI_X": "1",
           "OPENCODE_SESSION_ID": "s",
           "HOME": "/home/u"
         }

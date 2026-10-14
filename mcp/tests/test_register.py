@@ -49,7 +49,6 @@ class Setup:
             {
                 "PATH": self.bin,
                 "CODEX_HOME": os.path.join(self.user, ".codex"),
-                "GEMINI_CLI_HOME": self.user,
                 "COPILOT_HOME": os.path.join(self.user, ".copilot"),
                 "XDG_CONFIG_HOME": os.path.join(self.user, ".config"),
                 "HERMES_HOME": os.path.join(self.user, ".hermes"),
@@ -125,22 +124,6 @@ class Register(unittest.TestCase):
             self.assertTrue(a["ok"] and a["registered"] and a["stable"] and a["path"] == server, a)
             self.assertEqual(a["hooks"], True if takes_hooks(a["agent"]) else None, a)
 
-        self.assertEqual(read_json(s.file("gemini"))["mcpServers"]["ide-agent-tabs"], {"command": argv[0], "args": argv[1:]})
-        self.assertEqual(
-            read_json(s.file("gemini"))["hooks"]["AfterAgent"],
-            [
-                {
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "name": "ide-agent-tabs",
-                            "command": hook_command(target, "gemini", "AfterAgent"),
-                            "timeout": 5000,
-                        }
-                    ]
-                }
-            ],
-        )
         copilot = read_json(s.file("copilot"))
         self.assertEqual(copilot["mcpServers"]["github"], {"type": "http", "url": "https://example.test/mcp"})
         self.assertEqual(
@@ -227,7 +210,6 @@ class Register(unittest.TestCase):
         self.assertEqual(read_json(s.file("pi")), json.loads(originals["pi"]))
         self.assertEqual(read_json(s.file("qwen")), json.loads(originals["qwen"]))
         self.assertEqual(read_json(s.file("copilot")), json.loads(originals["copilot"]))
-        self.assertNotIn("hooks", read_json(s.file("gemini")))
         self.assertEqual(read_json(s.hooks("agy")), agy_user_hooks)
         self.assertEqual(read_json(agy_settings), {"permissions": {"allow": ["command(adb devices)"]}})
         self.assertEqual(read_json(allowlist), {"approvals": [user_approval]})
@@ -267,29 +249,6 @@ def node_era(s: Setup) -> dict[str, str]:
     hook = old_server_path(home, platform).replace("mcp-server.mjs", "agent-hook.mjs")
     write(os.path.join(home, "mcp", "mcp-server.mjs"), "// 0.8.0\n")
     node = {"command": "node", "args": [server]}
-    write(
-        s.file("gemini"),
-        json.dumps(
-            {
-                "mcpServers": {"ide-agent-tabs": node},
-                "hooks": {
-                    "AfterAgent": [
-                        {
-                            "hooks": [
-                                {
-                                    "type": "command",
-                                    "name": "ide-agent-tabs",
-                                    "command": f'node "{hook}" gemini AfterAgent',
-                                    "timeout": 5000,
-                                }
-                            ]
-                        }
-                    ]
-                },
-            },
-            indent=2,
-        ),
-    )
     write(
         s.file("copilot"),
         json.dumps({"mcpServers": {"ide-agent-tabs": {"type": "local", **node, "env": TAB_ENV, "tools": ["*"]}}}, indent=2),
@@ -405,17 +364,17 @@ class Migration(unittest.TestCase):
         self.assertEqual(read_text(s.file("pi")), text)
 
     def test_hooks_that_run_another_homes_copy_stay_as_they_are(self) -> None:
-        s = Setup(self, installed=("gemini", "copilot"))
+        s = Setup(self, installed=("qwen", "copilot"))
         other = os.path.join(s.root, "other home", "mcp", "agent-hook.mjs").replace("\\", "/")
-        gemini = json.dumps({"hooks": {"AfterAgent": [{"hooks": [{"type": "command", "command": f'node "{other}" gemini AfterAgent'}]}]}})
+        qwen = json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": f'node "{other}" qwen Stop'}]}]}})
         copilot = json.dumps(
             {"version": 1, "hooks": {"agentStop": [{"type": "command", "exec": "node", "args": [other, "copilot", "agentStop"]}]}}
         )
-        write(s.hooks("gemini"), gemini)
+        write(s.hooks("qwen"), qwen)
         write(s.hooks("copilot"), copilot)
         refresh_copy(s.ctx)
         self.assertEqual(migrate_registrations(s.ctx), ([], []))
-        self.assertEqual((read_text(s.hooks("gemini")), read_text(s.hooks("copilot"))), (gemini, copilot))
+        self.assertEqual((read_text(s.hooks("qwen")), read_text(s.hooks("copilot"))), (qwen, copilot))
 
     @unittest.skipIf(WINDOWS, "Codex is not registered on Windows")
     def test_a_node_codex_registration_moves_through_the_codex_cli(self) -> None:

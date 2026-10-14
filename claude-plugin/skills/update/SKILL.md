@@ -61,7 +61,7 @@ When the Claude Code plugin is current, bring the IDEs up to its bundled version
 
 It updates the extension only in editors that already have an older version, and puts the new
 JetBrains plugin in `~/.ide-agent-tabs/repository/` if that folder exists. It also refreshes the MCP
-server copy in `~/.ide-agent-tabs/mcp/py/`, if `~/.ide-agent-tabs/mcp/` exists. Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi,
+server copy in `~/.ide-agent-tabs/mcp/py/`, if `~/.ide-agent-tabs/mcp/` exists. Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi,
 Hermes, OpenCode, Qwen Code and Goose run the server from that copy, so their registrations keep working after an update.
 When a registration or a hook entry runs an older command, such as `node …/mcp-server.mjs` from a
 plugin before 0.9.0, the hook rewrites it to run the server copy on the Python interpreter that

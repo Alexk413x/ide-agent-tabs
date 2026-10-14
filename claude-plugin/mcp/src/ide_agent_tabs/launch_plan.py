@@ -10,10 +10,12 @@ from .profiles import (
     AgentProfile,
     CodexHttp,
     ConfigError,
+    CopilotHttp,
     launch_of,
     with_claude_settings,
     with_codex_http,
     with_codex_python,
+    with_copilot_http,
 )
 
 ORI_AGENTS: tuple[str, ...] = ("claude", "codex", "grok", "hermes", "opencode", "pi", "prime-agent")
@@ -39,6 +41,7 @@ class LaunchRequest(NamedTuple):
     cmd_shim: bool | None = None
     python: tuple[str, ...] | None = None
     http: CodexHttp | None = None
+    copilot: CopilotHttp | None = None
     claude_settings: str | None = None
     cwd: str | None = None
 
@@ -70,6 +73,8 @@ def _without_prompt(p: AgentProfile, prompt: str | None) -> AgentProfile:
 def plan_launch(profile: AgentProfile, r: LaunchRequest) -> LaunchPlan:
     p = _without_prompt(profile, r.prompt)
     p = p._replace(args=with_codex_http(p.args, r.http) or with_codex_python(p.args, r.python))
+    copilot_args, copilot_env = with_copilot_http(p.command, p.args, p.env, r.copilot, r.cwd)
+    p = p._replace(args=copilot_args, env=copilot_env)
     args, caller_args = with_claude_settings(p.command, p.args, r.args, r.claude_settings, r.cwd)
     p = p._replace(args=args)
     r = r._replace(args=list(caller_args))

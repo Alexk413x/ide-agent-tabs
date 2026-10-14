@@ -54,7 +54,7 @@ const ago = (ms: number) => new Date(NOW - ms).toISOString()
 const MIN = 60_000
 const HOUR = 60 * MIN
 
-const LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', agy: 'Antigravity CLI', gemini: 'Gemini CLI' }
+const LABELS: Record<string, string> = { claude: 'Claude Code', codex: 'Codex', agy: 'Antigravity CLI', qwen: 'Qwen Code' }
 
 const core = (id: string) => id.replace(/^(s-|codex-)/, '').replace(/[^A-Za-z0-9]/g, '')
 const slug = (path: string) => path.split(/[\\/]+/).filter(p => p !== '').at(-1)!.toLowerCase()
@@ -89,7 +89,7 @@ const ROWS: Row[] = [
   row({ id: 'codex-1a2b', agent: 'codex', state: 'idle', path: 'C:\\w', via: 'ori', where: 'Windows Terminal', model: 'gpt-5.5', effort: 'medium', startedAt: ago(2 * 24 * HOUR) }),
   row({ id: 'c0dec0de-8888', agent: 'codex', state: 'busy', path: 'C:\\w', where: 'Windows Terminal', startedAt: ago(10 * MIN) }),
   row({ id: 'a2a2a2a2-6666', agent: 'agy', state: 'idle', tab: 'a2a2a2a2-6666', where: 'Windows Terminal', host: 'Windows Terminal', path: 'C:\\a', startedAt: ago(3 * MIN + 59_600) }),
-  row({ id: '9e9e0000-7777', agent: 'gemini', state: 'idle', tab: '9e9e0000-7777', where: 'Windows Terminal', host: 'Windows Terminal', path: 'C:\\W\\sub' }),
+  row({ id: '9e9e0000-7777', agent: 'qwen', state: 'idle', tab: '9e9e0000-7777', where: 'Windows Terminal', host: 'Windows Terminal', path: 'C:\\W\\sub' }),
 ]
 
 const MERGED = [
@@ -121,7 +121,7 @@ const MERGED = [
   '  a',
   '    a-a2                                  idle        4m   Antigravity CLI               —                         —       a2a2a2a2',
   '  sub',
-  '    sub-9e                                idle        —    Gemini CLI                    —                         —       9e9e0000',
+  '    sub-9e                                idle        —    Qwen Code                     —                         —       9e9e0000',
   '',
   'Other',
   '  z',
@@ -788,7 +788,7 @@ const AGENT_LINES = [
   "  ▸ sub",
   "",
   "    0 • sub-9e",
-  "      ● idle · Gemini CLI",
+  "      ● idle · Qwen Code",
   "Other",
   "  ▸ z",
   "",

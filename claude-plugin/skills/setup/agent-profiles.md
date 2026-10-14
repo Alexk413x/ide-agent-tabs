@@ -11,7 +11,6 @@ A profile says how to start one agent CLI. Every IDE uses the same built-in prof
 | `codex` | Codex | `codex` and fixed `args` that give the tab its Agent Tabs server and messaging hooks | positional | `-m` |
 | `agy` | Antigravity CLI | `agy` | `-i <prompt>` | `--model` |
 | `copilot` | Copilot CLI | `copilot` | `-i <prompt>` | `--model` |
-| `gemini` | Gemini CLI | `gemini` | `-i <prompt>` | `-m` |
 | `grok` | Grok Build | `grok` | positional | `-m` |
 | `pi` | Pi | `pi` | positional | `--model` |
 | `hermes` | Hermes | `hermes chat` | `-q <prompt>` | `-m` |

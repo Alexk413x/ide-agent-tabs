@@ -23,6 +23,7 @@ SERVER_ENTRY = "mcp_server.py"
 HOOK_ENTRY = "agent_hook.py"
 HEADERS_ENTRY = "headers.py"
 PORT_FILE = "port.json"
+COPILOT_FILE = "copilot-http.json"
 STUB_ENTRIES = (SERVER_ENTRY, HOOK_ENTRY, HEADERS_ENTRY)
 OLD_SERVER_FILE = "mcp-server.mjs"
 OLD_HOOK_FILE = "agent-hook.mjs"
@@ -261,3 +262,36 @@ def read_port(home: str) -> int | None:
 def write_port(home: str, port: int) -> None:
     if read_port(home) != port:
         write_atomically(os.path.join(copy_root(home), PORT_FILE), stringify({"port": port}, 2) + "\n")
+
+
+def copilot_config_path(home: str, platform: str) -> str:
+    return slashes(os.path.join(copy_root(home), COPILOT_FILE), platform)
+
+
+# Copilot CLI expands ${VAR} in header values from its own environment, which an Agent Tabs tab sets; the token
+# stays in this private file instead of an environment variable that every child process would inherit.
+def copilot_config(port: int, token: str) -> dict[str, Any]:
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Agent-Tabs-Tab": "${IDE_AGENT_TABS_ID}",
+        "X-Agent-Tabs-Agent": "${IDE_AGENT_TABS_AGENT}",
+        "X-Agent-Tabs-Cwd": "${IDE_AGENT_TABS_CWD}",
+    }
+    entry = {"type": "http", "url": f"http://127.0.0.1:{port}/mcp", "headers": headers, "tools": ["*"]}
+    return {"mcpServers": {"ide-agent-tabs": entry}}
+
+
+def write_copilot_config(home: str, port: int, token: str) -> None:
+    path = os.path.join(copy_root(home), COPILOT_FILE)
+    text = stringify(copilot_config(port, token), 2) + "\n"
+    if read_text_if_exists(path) != text:
+        write_atomically(path, text)
+
+
+def copilot_config_port(home: str) -> int | None:
+    servers = (_read_json(os.path.join(copy_root(home), COPILOT_FILE)) or {}).get("mcpServers")
+    entry = servers.get("ide-agent-tabs") if isinstance(servers, dict) else None
+    url = entry.get("url") if isinstance(entry, dict) else None
+    match = re.fullmatch(r"http://127\.0\.0\.1:([0-9]{1,5})/mcp", url) if isinstance(url, str) else None
+    port = int(match.group(1)) if match else 0
+    return port if 0 < port <= 65535 else None

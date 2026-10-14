@@ -3,9 +3,47 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.5
+
+Plugin and MCP server 0.9.5, with VS Code extension 0.1.32 and JetBrains plugin 0.4.15 bundled.
+
+### Added
+
+- A Copilot CLI tab connects to the shared server over HTTP and starts no server of its own, while the
+  server answers `GET /health` on the port in `~/.ide-agent-tabs/mcp/port.json`. The server writes
+  `~/.ide-agent-tabs/mcp/copilot-http.json` (mode 0600) when it claims its port: an `ide-agent-tabs`
+  entry with the URL, the bearer token, and `X-Agent-Tabs-Tab`, `X-Agent-Tabs-Agent` and
+  `X-Agent-Tabs-Cwd` headers that Copilot CLI fills from the tab's environment. The tab starts with
+  `--additional-mcp-config @<that file>`, which replaces the registered stdio entry for that session, and
+  `IDE_AGENT_TABS_CWD` set to its percent-encoded folder. The Python service, the VS Code extension and
+  the JetBrains plugin build the option at launch. A missing port or config, a server that doesn't
+  answer, or a config path with a space, a quote or `%` keeps the tab on the stdio server.
+- A Copilot CLI tab connects over HTTP only when the Copilot hooks file
+  (`$COPILOT_HOME/hooks/ide-agent-tabs.json`, else `~/.copilot/hooks/ide-agent-tabs.json`) exists. Without
+  the hooks, no process owns the session, so the tab keeps the stdio server, which ends with the tab.
+- The shared server keys a session that sends neither a pid nor a client id on its tab id. The Copilot
+  `sessionStart` hook records the Copilot process in the tab's presence file (`agentPid`,
+  `agentPidStart`), and the server ends the tab's session when that process exits.
+- A 2026-07-28 client that declares no roots capability, such as Copilot CLI, gets no roots request: its
+  folder comes from `X-Agent-Tabs-Cwd`, else the home folder. The tool list on this path follows
+  `X-Agent-Tabs-Agent`, so a Copilot session doesn't see `agent_tabs_mod`.
+
+### Changed
+
+- The JetBrains plugin plans a tab opened through its HTTP API off the request thread, and checks the
+  shared server for a Copilot tab off the UI thread.
+
 ## 0.9.4
 
 Plugin and MCP server 0.9.4, with VS Code extension 0.1.31 and JetBrains plugin 0.4.14 bundled.
+
+### Removed
+
+- Gemini CLI. It moved to the Antigravity CLI and gets no further updates. The `gemini` profile, its
+  `--register gemini` and `--unregister gemini` handling, its hooks, its icons and its settings in the
+  VS Code extension and the JetBrains plugin are gone. A registration that `--register gemini` wrote
+  earlier stays in `~/.gemini/settings.json`; delete the `ide-agent-tabs` entry there by hand. The
+  Antigravity CLI keeps its files under `~/.gemini/config/` and is unchanged.
 
 ### Added
 

@@ -11,7 +11,7 @@ from .host import Binding, BoundSession, Progress, ToolHost
 
 CLIENT_NAME = "claude-code"
 HTTP_MAX_WAIT_S = 240
-_SESSION_ENV = ("IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_MOD")
+_SESSION_ENV = ("IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_CWD", "IDE_AGENT_TABS_MOD")
 
 
 def _no_notify(_method: str, _params: dict[str, Any]) -> None:

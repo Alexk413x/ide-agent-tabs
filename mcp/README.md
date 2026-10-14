@@ -1,7 +1,7 @@
 # Agent Tabs MCP server
 
 This MCP server lets an agent open, list and close agent tabs, and message other agent sessions. A tab
-runs an interactive agent CLI session, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build,
+runs an interactive agent CLI session, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build,
 Pi, Hermes, OpenCode, Qwen Code or Goose. The tab opens in a running IDE that has the Agent Tabs extension, or in a terminal app when no IDE is running.
 
 The server reads the registry and calls each IDE's HTTP API, as described in
@@ -66,7 +66,6 @@ unchanged.
   | `codex` | `-m` |
   | `agy` | `--model` |
   | `copilot` | `--model` |
-  | `gemini` | `-m` |
   | `grok` | `-m` |
   | `pi` | `--model` |
   | `hermes` | `-m` |
@@ -193,7 +192,7 @@ the settings, the key lookup and the ledger.
 ## Agent support
 
 The built-in agents, in the order every list uses: Claude Code, Codex, Antigravity CLI, Copilot CLI,
-Gemini CLI, Grok Build, Pi, Hermes, then the agents built for local models: OpenCode, Qwen Code, Goose and
+Grok Build, Pi, Hermes, then the agents built for local models: OpenCode, Qwen Code, Goose and
 Codex (local). Custom profiles come last.
 
 | Agent | Tabs | Messaging | State | Model | Via Ori | Icon source | Live-tested |
@@ -202,7 +201,6 @@ Codex (local). Custom profiles come last.
 | Codex | Yes | Yes in tabs, which bring their own server and hooks. `--register codex` covers sessions outside tabs on macOS and Linux. | `idle`, `busy`, `permission`; `Interrupt` | `-m` | Yes | Bundled in an earlier release | Yes |
 | Antigravity CLI | Yes | Yes, with `--register agy` | `idle`, `busy`; no `permission` | `--model` | No | Bundled in an earlier release | Yes, headless; the interactive tab is partly untested |
 | Copilot CLI | Yes | Yes, with `--register copilot` | `idle`, `busy`, `permission`, from docs | `--model` | No | Bundled in an earlier release | Partly: state comes from docs |
-| Gemini CLI | Yes | Yes, with `--register gemini` | `idle`, `busy`, `permission` | `-m` | No | Bundled in an earlier release | As in [Tested on](../docs/design.md#tested-on) |
 | Grok Build | Yes | Yes, with `--register grok` | `idle`, `busy`, `permission`; input idle signal (`idle_prompt`) | `-m` | Yes | Official SpaceXAI PNGs, embedded unchanged | No |
 | Pi | Yes | Tools only, with `--register pi` | None | `--model` | Yes | `pi.dev/favicon.svg` | No |
 | Hermes | Yes | Yes, with `--register hermes` | `idle`, `busy`, `permission`; nudges only after code edits | `-m` | Yes | Official `icon-master` (`.svg` and `-dark`) | No |
@@ -215,7 +213,7 @@ Codex (local). Custom profiles come last.
 reports no state, so no wake-up types into it and no reminder reaches it. It reads a message only when it
 calls `read_messages` or `wait_for_message`.
 
-The seven agents after Gemini CLI are built from each CLI's documentation, and none is installed on the
+The seven agents after Copilot CLI are built from each CLI's documentation, and none is installed on the
 development machine, so none is live-tested. Treat their profile flags, registration files and hook
 behavior as unverified until a live run confirms them. Their profiles:
 
@@ -340,7 +338,6 @@ to answer a message that needs no answer.
 | Codex | In Codex tabs only, from the tab's arguments; trusted, with no `/hooks` review | Yes | Yes | Yes |
 | Antigravity CLI | Added by `--register agy` | Yes, before each model call | Yes, through the same hook; Antigravity CLI ignores a `PostToolUse` hook's output | Yes |
 | Copilot CLI | Added by `--register copilot` | No: Copilot CLI drops that hook's output | Yes | Yes |
-| Gemini CLI | Added by `--register gemini` | Yes | Yes | Yes |
 | Grok Build | Added by `--register grok` | No | Yes | Yes |
 | Pi | None | No | No | No |
 | Hermes | Added by `--register hermes` | Yes | No | Yes, but only after a turn that edited code (`pre_verify`) |
@@ -414,6 +411,27 @@ the design doc. The VS Code and JetBrains profiles hold the same strings.
 
 A Codex session outside a tab, such as one in the Codex desktop app, has no hooks. When its server's
 `IDE_AGENT_TABS_ID` names no open tab, the session's id becomes `codex-<thread id>`.
+
+### Copilot tabs
+
+A Copilot CLI tab connects to the shared server over HTTP when the server answers, and starts no server
+of its own. The tab starts `copilot --additional-mcp-config @~/.ide-agent-tabs/mcp/copilot-http.json`.
+
+- The shared server writes `copilot-http.json` (mode 0600) when it claims its port. It holds an
+  `ide-agent-tabs` entry with the server's URL, the bearer token, and headers that Copilot CLI fills from
+  the tab's `IDE_AGENT_TABS_ID`, `IDE_AGENT_TABS_AGENT` and `IDE_AGENT_TABS_CWD` variables. The entry
+  replaces the stdio entry that `--register copilot` writes, for that session only.
+- The launcher sets `IDE_AGENT_TABS_CWD` to the tab's folder, percent-encoded, and the server uses it
+  as the session's folder.
+- The launcher adds the option only when `port.json` and `copilot-http.json` name the same port, the
+  hooks file that `--register copilot` writes exists, and the server answers `GET /health` on the port.
+  Otherwise the tab uses the registered stdio server, which ends with the Copilot process.
+- The session ends when Copilot exits. The `sessionStart` hook in that hooks file records the Copilot
+  process, and the server checks it every 15 s.
+
+For the details, see `copilot_http` and `with_copilot_http` in
+`claude-plugin/mcp/src/ide_agent_tabs/profiles.py`, and [Copilot tabs](../docs/design.md#copilot-tabs) in
+the design doc.
 
 ### Message store
 
@@ -490,7 +508,7 @@ which is the calling agent's `PATH`.
 
 ## Other agents
 
-Codex, Antigravity CLI, Copilot CLI, Gemini CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code and Goose can
+Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code and Goose can
 run this server too. The setup skill registers it with the agents you choose, through
 `agent-tabs sync-ides`. For every agent except Pi and OpenCode, registering also adds the messaging hooks.
 Codex tabs bring their own server and hooks, so Codex needs registering only for Codex sessions outside
@@ -499,7 +517,7 @@ repo root:
 
 ```sh
 claude-plugin/mcp/launch/agent-tabs sync-ides --agents
-claude-plugin/mcp/launch/agent-tabs sync-ides --register codex agy copilot gemini grok pi hermes opencode qwen goose
+claude-plugin/mcp/launch/agent-tabs sync-ides --register codex agy copilot grok pi hermes opencode qwen goose
 claude-plugin/mcp/launch/agent-tabs sync-ides --unregister codex
 ```
 
@@ -518,7 +536,6 @@ it runs `py -3` on Windows, and `python3` elsewhere when the interpreter path ha
 | Codex, not on Windows | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` | `codex mcp add ide-agent-tabs -- <python> -I -S <path>` |
 | Antigravity CLI | `mcpServers` in `~/.gemini/config/mcp_config.json` | The script edits the file. |
 | Copilot CLI | `mcpServers` in `~/.copilot/mcp-config.json`, or `$COPILOT_HOME/mcp-config.json` | The script edits the file. |
-| Gemini CLI | `mcpServers` in `~/.gemini/settings.json` | The script edits the file. |
 | Grok Build | The `[mcp_servers.ide-agent-tabs]` table in `~/.grok/config.toml`, or `$GROK_HOME/config.toml` | The script edits the file. |
 | Pi | `mcpServers` in `~/.pi/agent/mcp.json`, or `$PI_CODING_AGENT_DIR/mcp.json` | The script edits the file. |
 | Hermes | `mcp_servers` in `config.yaml` in `~/.hermes`, `$HERMES_HOME`, or `%LOCALAPPDATA%\hermes` on Windows | The script edits the file. |
@@ -581,7 +598,6 @@ it runs `py -3` on Windows, and `python3` elsewhere when the interpreter path ha
   |---|---|
   | Antigravity CLI | The `ide-agent-tabs` group in `~/.gemini/config/hooks.json` |
   | Copilot CLI | Its own file, `~/.copilot/hooks/ide-agent-tabs.json`, or under `$COPILOT_HOME` |
-  | Gemini CLI | `hooks` in `~/.gemini/settings.json` |
   | Grok Build | Its own file, `~/.grok/hooks/ide-agent-tabs.json`, or under `$GROK_HOME` |
   | Hermes | `hooks` in `config.yaml`, plus the approvals in `shell-hooks-allowlist.json` next to it |
   | Qwen Code | `hooks` in `~/.qwen/settings.json`, or `$QWEN_HOME/settings.json` |

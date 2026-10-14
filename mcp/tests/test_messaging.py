@@ -145,7 +145,6 @@ class NamesTest(unittest.TestCase):
         cases = {
             "claude-code": "claude",
             "codex-mcp-client": "codex",
-            "gemini-cli-mcp-client": "gemini",
             "github-copilot-cli": "copilot",
             "opencode": "opencode",
             "antigravity-client": "agy",
@@ -169,11 +168,9 @@ class NamesTest(unittest.TestCase):
         self.assertIsNone(unread_reminder([]))
         two = [
             {"from": {"id": "tab-a", "agent": "codex", "path": "/w"}},
-            {"from": {"id": "s-1234567890", "agent": "gemini", "path": "/"}},
+            {"from": {"id": "s-1234567890", "agent": "qwen", "path": "/"}},
         ]
-        self.assertEqual(
-            unread_reminder(two), "Agent Tabs: 2 unread messages from codex tab-a, gemini s-123456. read_messages returns them."
-        )
+        self.assertEqual(unread_reminder(two), "Agent Tabs: 2 unread messages from codex tab-a, qwen s-123456. read_messages returns them.")
         self.assertEqual(unread_reminder(two[:1]), "Agent Tabs: 1 unread message from codex tab-a. read_messages returns it.")
 
     def test_short_names_take_four_id_characters_after_the_agent_and_more_only_on_a_collision(self) -> None:
@@ -260,9 +257,9 @@ class PresenceTest(unittest.TestCase):
 
         loose = session(self, home, None, "", 200, is_alive=alive, random_id=lambda: "s-loose0000001")
         self.assertEqual(loose.id, "s-loose0000001")
-        loose.set_client("gemini-cli-mcp-client")
-        self.assertEqual((sessions.read_presence(home, loose.id) or {}).get("agent"), "gemini")
-        a.set_client("gemini-cli-mcp-client")
+        loose.set_client("qwen-cli-mcp-client-ide-agent-tabs")
+        self.assertEqual((sessions.read_presence(home, loose.id) or {}).get("agent"), "qwen")
+        a.set_client("qwen-cli-mcp-client-ide-agent-tabs")
         self.assertEqual((sessions.read_presence(home, "tab-a") or {}).get("agent"), "codex")
 
         sessions.update_presence(
@@ -889,7 +886,7 @@ class ListSessionsTest(unittest.TestCase):
         sessions.update_presence(home, "tab-c", lambda _: {"id": "tab-c", "host": "jetbrains-1", "project": "Plugins", "via": "direct"})
         sessions.update_presence(home, "tab-x", lambda _: {"id": "tab-x", "host": "windows-terminal", "via": "ori"})
         made = [
-            session(self, home, "tab-g", "gemini", 1, FakeHosts(None, labels=labels)),
+            session(self, home, "tab-g", "qwen", 1, FakeHosts(None, labels=labels)),
             session(self, home, "tab-x", "codex", 2, FakeHosts(None, labels=labels)),
             session(self, home, "tab-c", "claude", 3, FakeHosts(None, labels=labels)),
             session(self, home, "tab-z", "zed-agent", 4, FakeHosts(None, labels=labels)),
@@ -897,7 +894,7 @@ class ListSessionsTest(unittest.TestCase):
         ]
         made[2].mod_presence({"driver": True, "nativeName": "plugins-fa [6a3948]", "state": "idle", "model": "opus", "effort": "high"})
         rows = made[0].list_sessions()["sessions"]
-        self.assertEqual([r["agent"] for r in rows], ["claude", "codex", "agy", "gemini", "zed-agent"])
+        self.assertEqual([r["agent"] for r in rows], ["claude", "codex", "agy", "qwen", "zed-agent"])
         claude_row, codex_row = rows[0], rows[1]
         self.assertEqual(
             [claude_row[k] for k in ("name", "id", "route", "tab", "host", "ide", "via", "state")],
@@ -912,8 +909,8 @@ class ListSessionsTest(unittest.TestCase):
             [claude_row[k] for k in ("shortName", "legacyName", "harness", "where", "model", "effort")],
             ["plugins-fa [6a3948]", "claude-tabc", "Claude Code", "IntelliJ IDEA", "opus", "high"],
         )
-        self.assertIs(next(r for r in rows if r["agent"] == "gemini")["self"], True)
-        self.assertEqual([r["self"] for r in rows if r["agent"] != "gemini"], [False] * 4)
+        self.assertIs(next(r for r in rows if r["agent"] == "qwen")["self"], True)
+        self.assertEqual([r["self"] for r in rows if r["agent"] != "qwen"], [False] * 4)
 
         patch(home, "tab-c", modBeat=now_ms() - sessions.MOD_STALE_MS - 1)
         stale = made[0].list_sessions()["sessions"][0]

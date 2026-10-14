@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -95,7 +96,7 @@ test('agents lists every profile with the default and installed flags', async ()
   assert.equal(status, 200);
   assert.equal(json.default, 'claude');
   assert.deepEqual(json.agents.at(-1), { name: 'probe', label: 'Probe', command: 'probe-cli', installed: true });
-  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'probe']);
+  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'probe']);
 });
 
 test('open, list, close, and close again', async () => {
@@ -134,6 +135,39 @@ test('open plans a Codex tab with the id it hands the host', async () => {
     assert.notEqual(opened.at(-1)!.id, last.id);
   } finally {
     fs.rmSync(mcp, { recursive: true, force: true });
+  }
+});
+
+test('open gives a Copilot tab the shared server only while it answers', async () => {
+  const mcp = path.join(home, 'mcp');
+  const health = http.createServer((_req, res) => res.end(JSON.stringify({ service: 'ide-agent-tabs' })));
+  await new Promise<void>(resolve => health.listen(0, '127.0.0.1', resolve));
+  const port = (health.address() as AddressInfo).port;
+  fs.mkdirSync(mcp, { recursive: true });
+  fs.writeFileSync(path.join(mcp, 'port.json'), JSON.stringify({ port }));
+  const entry = { type: 'http', url: `http://127.0.0.1:${port}/mcp`, headers: {}, tools: ['*'] };
+  fs.writeFileSync(path.join(mcp, 'copilot-http.json'), JSON.stringify({ mcpServers: { 'ide-agent-tabs': entry } }));
+  const copilotHome = path.join(dir, 'copilot-home');
+  fs.mkdirSync(path.join(copilotHome, 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(copilotHome, 'hooks', 'ide-agent-tabs.json'), '{}');
+  const saved = process.env.COPILOT_HOME;
+  process.env.COPILOT_HOME = copilotHome;
+  try {
+    assert.equal((await call('open', { path: dir, agent: 'copilot' })).status, 200);
+    const config = path.join(mcp, 'copilot-http.json');
+    const last = opened.at(-1)!;
+    assert.deepEqual(last.launch.args, ['--additional-mcp-config', `@${process.platform === 'win32' ? config.replace(/\\/g, '/') : config}`]);
+    assert.deepEqual(Object.keys(last.launch.env), ['IDE_AGENT_TABS_CWD']);
+    await new Promise<void>(resolve => health.close(() => resolve()));
+    assert.equal((await call('open', { path: dir, agent: 'copilot' })).status, 200);
+    assert.deepEqual(opened.at(-1)!.launch.args, []);
+    assert.equal((await call('open', { path: dir, agent: 'nobody' })).status, 400);
+  } finally {
+    health.close();
+    if (saved === undefined) delete process.env.COPILOT_HOME;
+    else process.env.COPILOT_HOME = saved;
+    fs.rmSync(mcp, { recursive: true, force: true });
+    fs.rmSync(copilotHome, { recursive: true, force: true });
   }
 });
 

@@ -7,6 +7,7 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Protocol, TypeVar
 
+from .agent_config import hook_config_file
 from .clock import now_ms, parse_iso
 from .detection import DRIVER_ERRORS, Detection, available_drivers, detect, read_detection, write_detection
 from .editor_clis import env_value, path_var_of
@@ -23,9 +24,12 @@ from .profiles import (
     CONFIG_FILE,
     TAB_ID_ENV,
     AgentSettings,
+    CopilotHttp,
     claude_tab_settings,
     codex_http,
     codex_python,
+    copilot_http,
+    is_copilot_command,
     resolve_focus,
     resolve_settings,
 )
@@ -103,6 +107,7 @@ class ServiceDeps(NamedTuple):
     ide_wait: IdeWait = IdeWait()
     log: Callable[[str], None] | None = None
     presence: PresenceOps | None = None
+    user_home: str | None = None
 
 
 class SystemIdes:
@@ -168,6 +173,12 @@ class Service:
     @property
     def is_windows(self) -> bool:
         return self.deps.platform == "win32"
+
+    def _copilot_http(self, command: str) -> CopilotHttp | None:
+        if not is_copilot_command(command):
+            return None
+        hooks_file = hook_config_file("copilot", self.deps.env, self.deps.user_home or os.path.expanduser("~"), self.deps.platform)
+        return copilot_http(self.deps.home, self.is_windows, hooks_file)
 
     def settings(self) -> AgentSettings:
         agents_path = os.path.join(self.deps.home, AGENTS_FILE)
@@ -636,6 +647,7 @@ class Service:
                     cmd_shim=self.is_windows and is_cmd_shim(profile.command, self.ctx.path_var),
                     python=codex_python(self.deps.home, self.is_windows),
                     http=codex_http(self.deps.home, self.is_windows, tab_id, profile.name),
+                    copilot=self._copilot_http(profile.command),
                     claude_settings=claude_tab_settings(self.deps.home, self.is_windows),
                     cwd=request.path,
                 ),

@@ -1,7 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { AgentLaunch, AgentProfile, AgentSettings, claudeTabSettings, codexHttp, codexPython, planLaunch } from './profiles';
+import * as os from 'node:os';
+import {
+  AgentLaunch,
+  AgentProfile,
+  AgentSettings,
+  answersHealth,
+  claudeTabSettings,
+  codexHttp,
+  codexPython,
+  CopilotHttp,
+  copilotHooksFile,
+  copilotHttp,
+  isCopilotCommand,
+  planLaunch,
+} from './profiles';
 import { ENDPOINT_BASE } from './registry';
 import * as fs from 'node:fs';
 import { BadRequest, checkAdmission, checkRevealTarget, OpenRequest, parseCloseId, parseEmpty, parseInput, parseOpenRequest, parseRevealPath, RevealDeps } from './request';
@@ -45,7 +59,7 @@ export function route(url: string | undefined): string | undefined {
   return ROUTES.has(name) ? name : undefined;
 }
 
-export function handle(name: string, body: string, host: Host, settings: AgentSettings): Reply {
+export function handle(name: string, body: string, host: Host, settings: AgentSettings, copilot?: CopilotHttp): Reply {
   try {
     switch (name) {
       case 'open': {
@@ -70,6 +84,7 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
           searchPath: process.env.PATH ?? '',
           python: codexPython(settings.home, windows),
           http: codexHttp(settings.home, windows, id, profile.name),
+          copilot,
           claudeSettings: claudeTabSettings(settings.home, windows),
           cwd: request.path,
         });
@@ -120,6 +135,25 @@ export const systemReveal: RevealDeps = {
   },
   platform: process.platform,
 };
+
+// A Copilot tab connects to the shared server only while it answers, which takes a request, so open checks it first.
+export async function handleOpen(
+  body: string,
+  host: Host,
+  settings: AgentSettings,
+  answers: (port: number) => Promise<boolean> = answersHealth,
+  hooksFile: string = copilotHooksFile(process.env, os.homedir()),
+): Promise<Reply> {
+  let copilot: CopilotHttp | undefined;
+  try {
+    const request = parseOpenRequest(body);
+    const profile = request.agent === undefined ? settings.defaultProfile() : settings.profile(request.agent);
+    if (profile !== undefined && isCopilotCommand(profile.command)) copilot = await copilotHttp(settings.home, process.platform === 'win32', hooksFile, answers);
+  } catch {
+    copilot = undefined;
+  }
+  return handle('open', body, host, settings, copilot);
+}
 
 export async function handleReveal(body: string, host: Host, deps: RevealDeps = systemReveal): Promise<Reply> {
   try {
@@ -177,6 +211,7 @@ export function createApiServer(token: string, host: Host, settings: AgentSettin
       if (tooLarge) return;
       const body = Buffer.concat(chunks).toString('utf8');
       if (name === 'reveal') void handleReveal(body, host).then(reply => respond(res, reply));
+      else if (name === 'open') void handleOpen(body, host, settings).then(reply => respond(res, reply));
       else respond(res, handle(name, body, host, settings));
     });
   });

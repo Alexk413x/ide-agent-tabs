@@ -5,13 +5,27 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { typeLine } from './input';
 import { editorLocation, launchScripts, revivedTabs, terminalEnv, unixShell, windowsShell } from './launch';
-import { AgentLaunch, AgentProfile, AgentSettings, claudeTabSettings, CONFIG_FILE, codexHttp, codexPython, isInstalled, planLaunch } from './profiles';
+import {
+  AgentLaunch,
+  AgentProfile,
+  AgentSettings,
+  claudeTabSettings,
+  CONFIG_FILE,
+  codexHttp,
+  codexPython,
+  CopilotHttp,
+  copilotHooksFile,
+  copilotHttp,
+  isCopilotCommand,
+  isInstalled,
+  planLaunch,
+} from './profiles';
 import { ENDPOINT_BEAT_MS, beatEndpoint, endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { closestBase } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
 import { AUTO, SHARED_DEFAULTS, SharedSettings, userSettingValue } from './sharedSettings';
 
-const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'gemini', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
+const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
 const ICON_FILES: Record<string, string> = { 'codex-local': 'codex' };
 
 const commandKey = (name: string) => name.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
@@ -73,7 +87,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return neutralIcon;
   };
 
-  const launchFor = (profile: AgentProfile, cwd?: string, id?: string) =>
+  const launchFor = (profile: AgentProfile, cwd?: string, id?: string, copilot?: CopilotHttp) =>
     planLaunch(profile, {
       setting: settings.shared().launchVia,
       ori: settings.detected().ori,
@@ -81,6 +95,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       searchPath: searchPath(),
       python: codexPython(home, isWindows),
       http: id === undefined ? undefined : codexHttp(home, isWindows, id, profile.name),
+      copilot,
       claudeSettings: claudeTabSettings(home, isWindows),
       cwd,
     });
@@ -112,16 +127,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return { id, agent: tab.agent, project, path: dir };
   };
 
-  const openInFolder = (folder: vscode.WorkspaceFolder | undefined, profile: AgentProfile) => {
+  const openInFolder = async (folder: vscode.WorkspaceFolder | undefined, profile: AgentProfile) => {
     const dir = folder ? folderPath(folder) : os.homedir();
     const id = randomUUID();
-    openTab(dir, folder?.name ?? path.basename(dir), profile, { id, launch: launchFor(profile, dir, id), focus: true });
+    const copilot = isCopilotCommand(profile.command) ? await copilotHttp(home, isWindows, copilotHooksFile(process.env, os.homedir())) : undefined;
+    openTab(dir, folder?.name ?? path.basename(dir), profile, { id, launch: launchFor(profile, dir, id, copilot), focus: true });
   };
 
   const openFromButton = (profile: AgentProfile) => {
     const active = vscode.window.activeTextEditor?.document.uri;
     const activeFolder = active ? vscode.workspace.getWorkspaceFolder(active) : undefined;
-    openInFolder(activeFolder?.uri.scheme === 'file' ? activeFolder : fileFolders()[0], profile);
+    void openInFolder(activeFolder?.uri.scheme === 'file' ? activeFolder : fileFolders()[0], profile);
   };
 
   const opensOnStartup = (folder: vscode.WorkspaceFolder) => {
@@ -148,7 +164,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const openOnStartup = (folders: readonly vscode.WorkspaceFolder[]) => {
     const folder = folders.find(f => f.uri.scheme === 'file' && opensOnStartup(f));
-    if (folder) openInFolder(folder, settings.defaultProfile());
+    if (folder) void openInFolder(folder, settings.defaultProfile());
   };
 
   const host: Host = {

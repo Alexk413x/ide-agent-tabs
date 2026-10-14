@@ -471,6 +471,9 @@ class Handler(socketserver.StreamRequestHandler):
         ):
             self.rpc_error(request_id, RpcError(HEADER_MISMATCH, "mcp-name header does not match the request body's name"))
             return
+        capabilities = meta[CAPABILITIES_KEY]
+        if method == "tools/call" and "inputResponses" not in params and not (isinstance(capabilities, dict) and "roots" in capabilities):
+            params = {**params, "inputResponses": self.classic_roots()}
         try:
             result = self.dispatch(method, params)
         except RpcError as e:
@@ -486,7 +489,8 @@ class Handler(socketserver.StreamRequestHandler):
         self.send(200, {"jsonrpc": "2.0", "id": request_id, "result": {"resultType": "complete", "_meta": meta_out, **result}})
 
     # Codex and other clients that open with `initialize` get the classic, stateless form: no session id, no
-    # roots request (the folder comes from the headers helper), and plain JSON results.
+    # roots request (the folder comes from X-Agent-Tabs-Cwd), and plain JSON results. A modern client that declares
+    # no roots capability, such as Copilot CLI, gets its folder the same way.
     def classic_message(self, msg: dict[str, Any]) -> None:
         if "id" not in msg:
             self.send(202)
@@ -553,10 +557,10 @@ class Handler(socketserver.StreamRequestHandler):
         deps = self.front.deps
         if method == "server/discover":
             capabilities = {"tools": {"listChanged": False}}
-            instructions = deps.instructions(CLAUDE_AGENT)
+            instructions = deps.instructions(self.identity().agent or CLAUDE_AGENT)
             return {**LISTED, "supportedVersions": [MODERN_PROTOCOL], "capabilities": capabilities, "instructions": instructions}
         if method == "tools/list":
-            return {"tools": deps.tools(CLAUDE_AGENT), **LISTED}
+            return {"tools": deps.tools(self.identity().agent or CLAUDE_AGENT), **LISTED}
         if method == "ping":
             return {}
         if method in EMPTY_LISTS:

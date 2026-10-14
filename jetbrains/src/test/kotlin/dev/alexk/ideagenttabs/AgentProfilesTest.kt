@@ -32,24 +32,24 @@ class AgentProfilesTest {
     @Test
     fun `built-in profiles match the design`() {
         assertEquals(
-            listOf("claude", "codex", "agy", "copilot", "gemini", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local"),
+            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local"),
             settings.profiles().map { it.name },
         )
         assertEquals(
-            listOf("Claude Code", "Codex", "Antigravity CLI", "Copilot CLI", "Gemini CLI", "Grok Build", "Pi", "Hermes", "OpenCode", "Qwen Code", "Goose", "Codex (local)"),
+            listOf("Claude Code", "Codex", "Antigravity CLI", "Copilot CLI", "Grok Build", "Pi", "Hermes", "OpenCode", "Qwen Code", "Goose", "Codex (local)"),
             settings.profiles().map { it.label },
         )
         assertEquals(
-            listOf("claude", "codex", "agy", "copilot", "gemini", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex"),
+            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex"),
             settings.profiles().map { it.command },
         )
         assertEquals(
-            listOf(null, null, "-i", "-i", "-i", null, null, "-q", "--prompt", "-i", "-t", null),
+            listOf(null, null, "-i", "-i", null, null, "-q", "--prompt", "-i", "-t", null),
             settings.profiles().map { it.promptFlag },
         )
         assertEquals(
             listOf(
-                emptyList(), CODEX_TAB_ARGS, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(),
+                emptyList(), CODEX_TAB_ARGS, emptyList(), emptyList(), emptyList(), emptyList(),
                 listOf("chat"), emptyList(), emptyList(), listOf("run", "-s"), CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "ollama"),
             ),
             settings.profiles().map { it.args },
@@ -76,7 +76,7 @@ class AgentProfilesTest {
         )
         val profiles = settings.profiles()
         assertEquals(
-            listOf("claude", "codex", "agy", "copilot", "gemini", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local", "opencode-local", "bare"),
+            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local", "opencode-local", "bare"),
             profiles.map { it.name },
         )
         assertEquals(AgentProfile("codex", "Codex (fast)", "codex", listOf("--model", "o4")), settings.profile("codex"))
@@ -161,8 +161,8 @@ class AgentProfilesTest {
 
     @Test
     fun `default agent comes from config and falls back to claude`() {
-        write(CONFIG_FILE, """{"defaultAgent": "gemini"}""")
-        assertEquals("gemini", settings.defaultProfile().name)
+        write(CONFIG_FILE, """{"defaultAgent": "copilot"}""")
+        assertEquals("copilot", settings.defaultProfile().name)
         write(CONFIG_FILE, """{"defaultAgent": "nope", "other": 1}""")
         assertEquals("claude", settings.defaultProfile().name)
         write(CONFIG_FILE, "broken")
@@ -227,7 +227,7 @@ class AgentProfilesTest {
     fun `built-in profiles carry the model flag of each CLI`() {
         assertEquals(
             listOf(
-                "claude" to "--model", "codex" to "-m", "agy" to "--model", "copilot" to "--model", "gemini" to "-m", "grok" to "-m", "pi" to "--model",
+                "claude" to "--model", "codex" to "-m", "agy" to "--model", "copilot" to "--model", "grok" to "-m", "pi" to "--model",
                 "hermes" to "-m", "opencode" to "-m", "qwen" to "-m", "goose" to "--model", "codex-local" to "-m",
             ),
             BUILTIN_PROFILES.map { it.name to it.modelFlag },
@@ -250,7 +250,7 @@ class AgentProfilesTest {
     private val oriAll = DetectedOri("/home/u/.local/bin/ori", "0.14.3", listOf("claude", "codex"))
     private val claude = AgentProfile("claude", "Claude Code", "claude", modelFlag = "--model")
     private val codex = AgentProfile("codex", "Codex", "codex", args = listOf("--no-daemon"), modelFlag = "-m")
-    private val gemini = AgentProfile("gemini", "Gemini CLI", "gemini", promptFlag = "-i", modelFlag = "-m")
+    private val qwen = AgentProfile("qwen", "Qwen Code", "qwen", promptFlag = "-i", modelFlag = "-m")
     private val bare = AgentProfile("bare", "Bare", "bare-cli", promptFlag = "-i")
 
     private fun ctx(
@@ -271,8 +271,8 @@ class AgentProfilesTest {
         assertEquals(LaunchVia.DIRECT, launch.via)
         assertEquals("codex", launch.command)
         assertEquals(listOf("--no-daemon", "-m", "gpt-5", "--yolo"), launch.args)
-        val withFlag = planLaunch(gemini, ctx(model = "gemini-2.5-pro", prompt = "hi"))
-        assertEquals(listOf("-m", "gemini-2.5-pro", "-i"), withFlag.args)
+        val withFlag = planLaunch(qwen, ctx(model = "qwen3-coder", prompt = "hi"))
+        assertEquals(listOf("-m", "qwen3-coder", "-i"), withFlag.args)
         assertEquals("hi", withFlag.prompt)
         assertEquals(emptyList<String>(), planLaunch(claude, ctx()).args)
     }
@@ -329,7 +329,7 @@ class AgentProfilesTest {
     fun `the setting falls back to a direct launch when Ori cannot run the agent`() {
         val cases = listOf(
             claude to ctx(setting = LaunchVia.ORI, ori = null),
-            gemini to ctx(setting = LaunchVia.ORI),
+            qwen to ctx(setting = LaunchVia.ORI),
             AgentProfile("grok", "Grok", "grok") to ctx(setting = LaunchVia.ORI),
             AgentProfile("pi", "Pi", "pi") to ctx(setting = LaunchVia.ORI, ori = DetectedOri("/x/ori", null, listOf("claude"))),
         )
@@ -338,7 +338,7 @@ class AgentProfilesTest {
             assertEquals(profile.name, LaunchVia.DIRECT, launch.via)
             assertEquals(profile.command, launch.command)
         }
-        assertEquals(listOf("-m", "gemini-2.5-pro"), planLaunch(gemini, ctx(setting = LaunchVia.ORI, model = "gemini-2.5-pro")).args)
+        assertEquals(listOf("-m", "qwen3-coder"), planLaunch(qwen, ctx(setting = LaunchVia.ORI, model = "qwen3-coder")).args)
         assertThrows(IllegalArgumentException::class.java) { planLaunch(bare, ctx(setting = LaunchVia.ORI, model = "m")) }
     }
 
@@ -347,7 +347,7 @@ class AgentProfilesTest {
         fun message(profile: AgentProfile, context: LaunchContext) =
             assertThrows(IllegalArgumentException::class.java) { planLaunch(profile, context) }.message
         assertEquals("claude can't launch through Ori: Ori is not installed", message(claude, ctx(via = LaunchVia.ORI, ori = null)))
-        assertEquals("gemini can't launch through Ori: Ori does not support gemini", message(gemini, ctx(via = LaunchVia.ORI)))
+        assertEquals("qwen can't launch through Ori: Ori does not support qwen", message(qwen, ctx(via = LaunchVia.ORI)))
         assertEquals(
             "pi can't launch through Ori: Ori does not list pi as launchable",
             message(AgentProfile("pi", "Pi", "pi"), ctx(via = LaunchVia.ORI, ori = DetectedOri("/x/ori", null, listOf("claude")))),
@@ -488,6 +488,111 @@ class AgentProfilesTest {
         assertEquals(emptyList<String>(), planLaunch(claude, LaunchContext(http = http)).args)
     }
 
+    private fun hooksOf(dir: Path): File = copilotHooksFile(null, dir.resolve("user").toString())
+
+    private fun copilotHome(
+        port: Int? = 47951,
+        configPort: Int? = 47951,
+        prefix: String = "cst-copilot",
+        hooks: Boolean = true,
+    ): Path {
+        val dir = Files.createTempDirectory(prefix)
+        if (hooks) {
+            val file = hooksOf(dir)
+            file.parentFile.mkdirs()
+            file.writeText("{}")
+        }
+        val mcp = Files.createDirectories(dir.resolve("mcp"))
+        if (port != null) Files.writeString(mcp.resolve("port.json"), """{"port": $port}""")
+        if (configPort != null) {
+            val entry = """{"type": "http", "url": "http://127.0.0.1:$configPort/mcp", "headers": {}, "tools": ["*"]}"""
+            Files.writeString(mcp.resolve("copilot-http.json"), """{"mcpServers": {"ide-agent-tabs": $entry}}""")
+        }
+        return dir
+    }
+
+    @Test
+    fun `a Copilot tab uses the shared server when the port, the config and a running server agree`() {
+        val dir = copilotHome()
+        val asked = mutableListOf<Int>()
+        val http = copilotHttp(dir, windows, hooksOf(dir)) { asked += it; true }
+        val file = dir.resolve("mcp").resolve("copilot-http.json").toString()
+        assertEquals(CopilotHttp(if (windows) file.replace('\\', '/') else file, 47951), http)
+        assertEquals(listOf(47951), asked)
+    }
+
+    @Test
+    fun `a Copilot tab stays on the stdio server without a server, a port, a matching config or a safe path`() {
+        fun tab(dir: Path, answers: (Int) -> Boolean) = copilotHttp(dir, windows, hooksOf(dir), answers)
+        assertNull(tab(copilotHome()) { false })
+        assertNull(tab(copilotHome(port = null)) { true })
+        assertNull(tab(copilotHome(configPort = null)) { true })
+        assertNull(tab(copilotHome(configPort = 47952)) { true })
+        assertNull(tab(copilotHome(prefix = "cst-copilot sp ace")) { true })
+    }
+
+    @Test
+    fun `a Copilot tab stays on the stdio server without the registered hooks file`() {
+        val asked = mutableListOf<Int>()
+        val dir = copilotHome(hooks = false)
+        assertNull(copilotHttp(dir, windows, hooksOf(dir)) { asked += it; true })
+        assertNull(copilotHttp(dir, windows, hooksOf(dir).parentFile) { asked += it; true })
+        assertEquals(emptyList<Int>(), asked)
+        hooksOf(dir).apply { parentFile.mkdirs() }.writeText("{}")
+        assertTrue(copilotHttp(dir, windows, hooksOf(dir)) { true } != null)
+    }
+
+    @Test
+    fun `COPILOT_HOME moves the hooks file and an empty value falls back to the user home`() {
+        val tail = File("hooks", "ide-agent-tabs.json").path
+        assertEquals(File(File("c", "h"), tail), copilotHooksFile(File("c", "h").path, "u"))
+        assertEquals(File(File("u", ".copilot"), tail), copilotHooksFile("", "u"))
+        assertEquals(File(File("u", ".copilot"), tail), copilotHooksFile(null, "u"))
+    }
+
+    @Test
+    fun `the health check needs this service on the port`() {
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/health") { exchange ->
+            val body = """{"service": "ide-agent-tabs"}""".toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        val port = server.address.port
+        try {
+            assertTrue(answersHealth(port))
+        } finally {
+            server.stop(0)
+        }
+        assertFalse(answersHealth(port))
+    }
+
+    @Test
+    fun `planLaunch gives a Copilot tab the config file and its folder, and leaves other agents alone`() {
+        val copilot = BUILTIN_PROFILES.first { it.name == "copilot" }
+        val http = CopilotHttp("C:/h/mcp/copilot-http.json", 47951)
+        val folder = "C:\\work\\my repo\\100%"
+        val launch = planLaunch(copilot, LaunchContext(copilot = http, cwd = folder, prompt = "hi", env = mapOf("X" to "1")))
+        assertEquals(listOf("--additional-mcp-config", "@C:/h/mcp/copilot-http.json", "-i"), launch.args)
+        assertEquals(mapOf("X" to "1", CWD_ENV to "C:\\work\\my repo\\100%25"), launch.env)
+        launch.args.forEach { assertFalse(it, Regex("[\\s\"%]").containsMatchIn(it)) }
+        assertEquals(emptyList<String>(), planLaunch(copilot, LaunchContext(cwd = folder)).args)
+        assertEquals(emptyMap<String, String>(), planLaunch(copilot, LaunchContext(cwd = folder)).env)
+        val codex = BUILTIN_PROFILES.first { it.name == "codex" }
+        assertEquals(CODEX_TAB_ARGS, planLaunch(codex, LaunchContext(copilot = http, cwd = "/w")).args)
+        listOf("copilot", "COPILOT.CMD", "C:\\npm\\copilot.ps1", "/usr/local/bin/copilot").forEach { assertTrue(it, isCopilotCommand(it)) }
+        listOf("codex", "copilot-x", "notcopilot").forEach { assertFalse(it, isCopilotCommand(it)) }
+        assertEquals(listOf("--additional-mcp-config", "@C:/h/mcp/copilot-http.json") to emptyMap<String, String>(), withCopilotHttp("copilot", emptyList(), emptyMap(), http, null))
+    }
+
+    @Test
+    fun `the folder header percent-encodes as the Python server copy does`() {
+        assertEquals("C:\\work\\my repo\\100%25", cwdHeader("C:\\work\\my repo\\100%"))
+        assertEquals("/tmp/Zo%C3%AB/%24%7BHOME%7D/a%26b~c", cwdHeader("/tmp/Zoë/\${HOME}/a&b~c"))
+        assertEquals("/tmp/%E6%97%A5%E6%9C%AC", cwdHeader("/tmp/日本"))
+    }
+
     @Test
     fun `a Claude Code tab gets the tab settings file after its profile arguments`() {
         val windows = File.separatorChar == '\\'
@@ -515,7 +620,7 @@ class AgentProfilesTest {
         val ori = plan(setting = LaunchVia.ORI)
         assertEquals(LaunchVia.ORI, ori.via)
         assertEquals(listOf("claude", "--settings", "/h/s.json"), ori.args)
-        for (name in listOf("gemini", "copilot", "pi")) {
+        for (name in listOf("copilot", "pi")) {
             assertFalse(name, "--settings" in plan(BUILTIN_PROFILES.first { it.name == name }).args)
         }
         assertEquals(emptyList<String>(), plan(claude.copy(command = "claude-wrapper")).args)
