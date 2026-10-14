@@ -9,7 +9,7 @@ import { newToken } from '../registry';
 import { checkRevealTarget, OpenRequest, RevealDeps } from '../request';
 import { apiUrl, createApiServer, Host, listen, route, systemReveal, TabInfo } from '../server';
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-server-'));
+const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-server-'));
 const home = path.join(dir, 'home');
 fs.mkdirSync(home);
 fs.writeFileSync(path.join(home, 'agents.json'), JSON.stringify({ probe: { label: 'Probe', command: 'probe-cli', promptFlag: '-p' } }));
@@ -264,7 +264,7 @@ test('reveal shows a known folder through the host and refuses anything else', a
   assert.equal(okReply.status, 200);
   assert.deepEqual(okReply.json, { ok: true, path: fs.realpathSync.native(dir) });
   assert.deepEqual(revealed, [fs.realpathSync.native(dir)]);
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-outside-'));
+  const outside = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-outside-'));
   for (const [body, error] of [
     [{}, 'path is required'],
     [{ path: 'relative/dir' }, 'path must be absolute: relative/dir'],
@@ -299,7 +299,7 @@ test('reveal resolves links first, refuses one that lands outside the known fold
   assert.throws(() => checkRevealTarget('/work/repo', [], deps('linux')), /not a folder of this window/);
   if (process.platform !== 'win32') {
     const linked = path.join(dir, 'away');
-    fs.symlinkSync(fs.mkdtempSync(path.join(os.tmpdir(), 'iat-away-')), linked);
+    fs.symlinkSync(fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-away-')), linked);
     assert.throws(() => checkRevealTarget(linked, [dir], systemReveal), /is not a folder of this window/);
   }
 });
