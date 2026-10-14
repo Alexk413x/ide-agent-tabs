@@ -12,7 +12,7 @@ from ..clock import now_iso
 from ..files import ensure_private_dir
 from ..home import agent_tabs_home
 from ..liveness import pid_alive
-from ..server_copy import copy_root, write_port
+from ..server_copy import copy_root, write_copilot_config, write_port
 from ..version import PACKAGE_VERSION
 from .front import Front, FrontDeps
 from .handover import HANDOVER_MS, claim_port
@@ -82,7 +82,7 @@ class SharedServer:
         self.last_request = now()
         self.token = ensure_token(home)
         self.shutdown_token = new_token()
-        self.hub = Hub(host, alive=alive or pid_alive, log=self.log, prepare=shared_store_mode)
+        self.hub = Hub(host, alive=alive or pid_alive, log=self.log, prepare=shared_store_mode, tab_owner=lambda tab: tab_owner(home, tab))
         self.front: Front | None = None
         self.stopped = threading.Event()
         self._stopping = threading.Lock()
@@ -127,6 +127,7 @@ class SharedServer:
         with contextlib.suppress(OSError):
             ensure_private_dir(copy_root(self.home))
             write_port(self.home, self.port)
+            write_copilot_config(self.home, self.port, self.token)
         self.log(f"{SERVICE} {self.version} serving http://127.0.0.1:{self.port}/mcp for {self.home}")
         return True
 
@@ -206,6 +207,12 @@ def shared_store_mode() -> None:
 
     set_busy_timeout(SHARED_BUSY_TIMEOUT_MS)
     skip_wake_files_for_local_waiters(True)
+
+
+def tab_owner(home: str, tab: str) -> tuple[int, int | None] | None:
+    from ..messaging.sessions import tab_owner as owner
+
+    return owner(home, tab)
 
 
 def load_host(home: str, log: Callable[[str], None]) -> ToolHost:

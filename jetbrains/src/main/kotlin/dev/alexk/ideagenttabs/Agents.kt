@@ -1,5 +1,6 @@
 package dev.alexk.ideagenttabs
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.IconLoader
@@ -57,6 +58,7 @@ object Agents {
         request: OpenRequest? = null,
         cwd: String? = request?.path?.toString(),
         tabId: String = UUID.randomUUID().toString(),
+        copilot: CopilotHttp? = null,
     ): AgentLaunch =
         planLaunch(
             profile,
@@ -72,10 +74,14 @@ object Agents {
                 searchPath = searchPath,
                 python = codexPython(ideAgentTabsHome(), SystemInfo.isWindows),
                 http = codexHttp(ideAgentTabsHome(), SystemInfo.isWindows, tabId, profile.name),
+                copilot = copilot,
                 claudeSettings = claudeTabSettings(ideAgentTabsHome(), SystemInfo.isWindows),
                 cwd = cwd,
             ),
         )
+
+    fun copilotFor(profile: AgentProfile): CopilotHttp? =
+        if (isCopilotCommand(profile.command)) copilotHttp(ideAgentTabsHome(), SystemInfo.isWindows) else null
 
     fun isInstalled(profile: AgentProfile): Boolean = isInstalled(profile.command, searchPath, SystemInfo.isWindows)
 
@@ -120,6 +126,17 @@ object Agents {
     fun open(project: Project, profile: AgentProfile) {
         val directory = project.basePath ?: System.getProperty("user.home")
         val id = UUID.randomUUID().toString()
-        AgentTabLauncher.open(project, directory, profile, launchFor(profile, cwd = directory, tabId = id), focus = true, id = id)
+        if (!isCopilotCommand(profile.command)) {
+            AgentTabLauncher.open(project, directory, profile, launchFor(profile, cwd = directory, tabId = id), focus = true, id = id)
+            return
+        }
+        val application = ApplicationManager.getApplication()
+        application.executeOnPooledThread {
+            val copilot = copilotFor(profile)
+            application.invokeLater({
+                val launch = launchFor(profile, cwd = directory, tabId = id, copilot = copilot)
+                AgentTabLauncher.open(project, directory, profile, launch, focus = true, id = id)
+            }, project.disposed)
+        }
     }
 }

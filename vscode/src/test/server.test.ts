@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -133,6 +134,31 @@ test('open plans a Codex tab with the id it hands the host', async () => {
     assert.ok(opened.at(-1)!.launch.args.every(a => !a.includes('http_headers_helper')));
     assert.notEqual(opened.at(-1)!.id, last.id);
   } finally {
+    fs.rmSync(mcp, { recursive: true, force: true });
+  }
+});
+
+test('open gives a Copilot tab the shared server only while it answers', async () => {
+  const mcp = path.join(home, 'mcp');
+  const health = http.createServer((_req, res) => res.end(JSON.stringify({ service: 'ide-agent-tabs' })));
+  await new Promise<void>(resolve => health.listen(0, '127.0.0.1', resolve));
+  const port = (health.address() as AddressInfo).port;
+  fs.mkdirSync(mcp, { recursive: true });
+  fs.writeFileSync(path.join(mcp, 'port.json'), JSON.stringify({ port }));
+  const entry = { type: 'http', url: `http://127.0.0.1:${port}/mcp`, headers: {}, tools: ['*'] };
+  fs.writeFileSync(path.join(mcp, 'copilot-http.json'), JSON.stringify({ mcpServers: { 'ide-agent-tabs': entry } }));
+  try {
+    assert.equal((await call('open', { path: dir, agent: 'copilot' })).status, 200);
+    const config = path.join(mcp, 'copilot-http.json');
+    const last = opened.at(-1)!;
+    assert.deepEqual(last.launch.args, ['--additional-mcp-config', `@${process.platform === 'win32' ? config.replace(/\\/g, '/') : config}`]);
+    assert.deepEqual(Object.keys(last.launch.env), ['IDE_AGENT_TABS_CWD']);
+    await new Promise<void>(resolve => health.close(() => resolve()));
+    assert.equal((await call('open', { path: dir, agent: 'copilot' })).status, 200);
+    assert.deepEqual(opened.at(-1)!.launch.args, []);
+    assert.equal((await call('open', { path: dir, agent: 'nobody' })).status, 400);
+  } finally {
+    health.close();
     fs.rmSync(mcp, { recursive: true, force: true });
   }
 });

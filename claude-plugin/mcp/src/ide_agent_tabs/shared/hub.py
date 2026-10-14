@@ -58,7 +58,9 @@ def root_path(responses: object) -> str | None:
 def session_key(identity: Identity) -> str | None:
     if identity.pid is not None:
         return f"pid:{identity.pid}:{identity.pid_start or 0}"
-    return None if identity.client is None else f"client:{identity.client}"
+    if identity.client is not None:
+        return f"client:{identity.client}"
+    return None if identity.tab is None else f"tab:{identity.tab}"
 
 
 def derived_id(key: str) -> str:
@@ -89,8 +91,10 @@ class Hub:
         server_pid: int | None = None,
         log: Callable[[str], None] = lambda _m: None,
         prepare: Callable[[], None] | None = None,
+        tab_owner: Callable[[str], tuple[int, int | None] | None] | None = None,
     ) -> None:
         self.host = host
+        self.tab_owner = tab_owner
         self._prepare = prepare
         self._prepared = threading.Lock()
         self.alive = alive
@@ -167,6 +171,18 @@ class Hub:
                     self._cwds.popitem(last=False)
             return answered
 
+    def _owner_of(self, identity: Identity) -> tuple[int, int | None] | None:
+        if identity.pid is not None:
+            return identity.pid, identity.pid_start
+        if identity.client is not None or identity.tab is None or self.tab_owner is None:
+            return None
+        try:
+            found = self.tab_owner(identity.tab)
+        except Exception as e:  # noqa: BLE001 - an unreadable record leaves the session on the server's pid
+            self.log(f"reading the owner of {identity.tab} failed: {e}")
+            return None
+        return found if found is not None and self.alive(found[0]) else None
+
     def _entry(self, key: str, identity: Identity, params: dict[str, Any]) -> _Entry | dict[str, Any]:
         with self._lock:
             entry = self._entries.get(key)
@@ -175,8 +191,9 @@ class Hub:
         cwd = self._cwd_of(identity, params.get("inputResponses"))
         if cwd is None:
             return {"resultType": "input_required", "inputRequests": {ROOTS_REQUEST: {"method": "roots/list"}}}
-        owned = identity.pid is not None
-        pid = identity.pid if identity.pid is not None else self.server_pid
+        owner = self._owner_of(identity)
+        owned = owner is not None
+        pid = owner[0] if owner is not None else self.server_pid
         with self._lock:
             entry = self._entries.get(key)
             if entry is not None:
@@ -187,7 +204,7 @@ class Hub:
             if self._prepare is not None:
                 self._prepare()
                 self._prepare = None
-        binding = Binding(derived_id(key), identity.agent or "claude", pid, cwd, identity.tab, identity.pid_start)
+        binding = Binding(derived_id(key), identity.agent or "claude", pid, cwd, identity.tab, owner[1] if owner is not None else None)
         try:
             entry.session = self.host.bind(binding)
         except Exception as e:  # noqa: BLE001 - the callers waiting on this entry get the error as a JSON-RPC error

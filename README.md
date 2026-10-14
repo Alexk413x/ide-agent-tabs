@@ -62,7 +62,7 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 |---|---|---|
 | JetBrains plugin | [`jetbrains/`](jetbrains/) | Adds the **New Agent Tab** button and a local HTTP API to IntelliJ IDEA, Android Studio and other JetBrains IDEs. |
 | VS Code extension | [`vscode/`](vscode/) | Adds the same button and API to VS Code and editors built on it. |
-| MCP server | [`claude-plugin/mcp/`](claude-plugin/mcp/); docs, tests and benchmarks in [`mcp/`](mcp/) | Gives an agent tools to open, list and close tabs, to message other sessions, and to hand its work to a new tab. One shared server serves every Claude Code session; other agent CLIs run it over stdio. |
+| MCP server | [`claude-plugin/mcp/`](claude-plugin/mcp/); docs, tests and benchmarks in [`mcp/`](mcp/) | Gives an agent tools to open, list and close tabs, to message other sessions, and to hand its work to a new tab. One shared server serves every Claude Code session, and Codex and Copilot CLI tabs while it runs; other agent CLIs run it over stdio. |
 | Claude Code plugin | [`claude-plugin/`](claude-plugin/) | Bundles the MCP server, the skills and the IDE extensions. |
 
 ## Models, Ori and handoff

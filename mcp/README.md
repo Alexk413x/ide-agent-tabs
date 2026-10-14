@@ -412,6 +412,27 @@ the design doc. The VS Code and JetBrains profiles hold the same strings.
 A Codex session outside a tab, such as one in the Codex desktop app, has no hooks. When its server's
 `IDE_AGENT_TABS_ID` names no open tab, the session's id becomes `codex-<thread id>`.
 
+### Copilot tabs
+
+A Copilot CLI tab connects to the shared server over HTTP when the server answers, and starts no server
+of its own. The tab starts `copilot --additional-mcp-config @~/.ide-agent-tabs/mcp/copilot-http.json`.
+
+- The shared server writes `copilot-http.json` (mode 0600) when it claims its port. It holds an
+  `ide-agent-tabs` entry with the server's URL, the bearer token, and headers that Copilot CLI fills from
+  the tab's `IDE_AGENT_TABS_ID`, `IDE_AGENT_TABS_AGENT` and `IDE_AGENT_TABS_CWD` variables. The entry
+  replaces the stdio entry that `--register copilot` writes, for that session only.
+- The launcher sets `IDE_AGENT_TABS_CWD` to the tab's folder, percent-encoded, and the server uses it
+  as the session's folder.
+- The launcher adds the option only when `port.json` and `copilot-http.json` name the same port and the
+  server answers `GET /health` on it. Otherwise the tab uses the registered stdio server.
+- The session ends when Copilot exits. The `sessionStart` hook that `--register copilot` installs
+  records the Copilot process, and the server checks it every 15 s. Without the hooks, the session lasts
+  until the shared server stops.
+
+For the details, see `copilot_http` and `with_copilot_http` in
+`claude-plugin/mcp/src/ide_agent_tabs/profiles.py`, and [Copilot tabs](../docs/design.md#copilot-tabs) in
+the design doc.
+
 ### Message store
 
 Messages live in one SQLite database, `~/.ide-agent-tabs/messages.db`, that every agent session on the

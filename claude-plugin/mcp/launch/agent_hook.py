@@ -4,6 +4,7 @@ import os
 import sys
 
 STDIN_WAIT_S = 2.0
+OWNER_LOOKUP_S = 2.0
 
 
 def _read_stdin() -> bytes:
@@ -44,12 +45,18 @@ def main() -> None:
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
     from ide_agent_tabs.home import agent_tabs_home
     from ide_agent_tabs.jsjson import stringify
-    from ide_agent_tabs.messaging.hook import run_hook
+    from ide_agent_tabs.messaging.hook import HOOK_EVENTS, run_hook
 
     args = sys.argv[1:]
     cli = args[0] if args else ""
     event = args[1] if len(args) > 1 else ""
-    output = run_hook(cli, event, _parse(_read_stdin()), agent_tabs_home(), tab)
+    process = None
+    if HOOK_EVENTS.get(cli, {}).get(event, {}).get("owner"):
+        from ide_agent_tabs.shared.ancestry import find_agent_process
+
+        found = find_agent_process(None, OWNER_LOOKUP_S)
+        process = None if found is None else (found.pid, max(0, round(found.start_ms)))
+    output = run_hook(cli, event, _parse(_read_stdin()), agent_tabs_home(), tab, agent_process=process)
     if output is not None:
         os.write(1, (stringify(output) + "\n").encode("utf-8"))
 

@@ -138,6 +138,8 @@ def parse_presence(text: str | None) -> Presence | None:
     text_field("agentType", is_agent_type)
     text_field("agentColor", is_agent_color)
     text_field("product")
+    int_field("agentPid", 1)
+    int_field("agentPidStart", 0)
     int_field("mail", 1)
     return out
 
@@ -154,6 +156,12 @@ def is_mod_driven(p: Presence, now: float) -> bool:
 
 def is_complete(p: Presence) -> bool:
     return all(p.get(k) is not None for k in ("pid", "agent", "path", "startedAt"))
+
+
+def tab_owner(home: str, tab: str) -> tuple[int, int | None] | None:
+    p = read_presence(home, tab) or {}
+    pid = p.get("agentPid")
+    return None if pid is None else (pid, p.get("agentPidStart"))
 
 
 def read_presence(home: str, session_id: str) -> Presence | None:

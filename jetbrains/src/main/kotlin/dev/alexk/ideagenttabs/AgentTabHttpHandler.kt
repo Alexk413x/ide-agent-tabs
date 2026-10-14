@@ -56,8 +56,19 @@ class AgentTabHttpHandler : HttpRequestHandler() {
                         Agents.settings.profile(it) ?: throw IllegalArgumentException("unknown agent: $it")
                     } ?: Agents.settings.defaultProfile()
                     val id = UUID.randomUUID().toString()
-                    val launch = Agents.launchFor(profile, open, tabId = id)
-                    onEdt(context) { open(open, profile, launch, id) }
+                    AppExecutorUtil.getAppExecutorService().execute {
+                        val launch = try {
+                            Agents.launchFor(profile, open, tabId = id, copilot = Agents.copilotFor(profile))
+                        } catch (e: IllegalArgumentException) {
+                            respond(context, Reply(400, error(e.message ?: "bad request")))
+                            return@execute
+                        } catch (e: Exception) {
+                            LOG.warn("Agent tab request failed", e)
+                            respond(context, Reply(500, error(e.toString())))
+                            return@execute
+                        }
+                        onEdt(context) { open(open, profile, launch, id) }
+                    }
                 }
                 "close" -> parseCloseId(body).let { onEdt(context) { close(it) } }
                 "input" -> parseInput(body).let { onEdt(context) { input(it) } }

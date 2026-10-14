@@ -488,6 +488,79 @@ class AgentProfilesTest {
         assertEquals(emptyList<String>(), planLaunch(claude, LaunchContext(http = http)).args)
     }
 
+    private fun copilotHome(port: Int? = 47951, configPort: Int? = 47951, prefix: String = "cst-copilot"): Path {
+        val dir = Files.createTempDirectory(prefix)
+        val mcp = Files.createDirectories(dir.resolve("mcp"))
+        if (port != null) Files.writeString(mcp.resolve("port.json"), """{"port": $port}""")
+        if (configPort != null) {
+            val entry = """{"type": "http", "url": "http://127.0.0.1:$configPort/mcp", "headers": {}, "tools": ["*"]}"""
+            Files.writeString(mcp.resolve("copilot-http.json"), """{"mcpServers": {"ide-agent-tabs": $entry}}""")
+        }
+        return dir
+    }
+
+    @Test
+    fun `a Copilot tab uses the shared server when the port, the config and a running server agree`() {
+        val dir = copilotHome()
+        val asked = mutableListOf<Int>()
+        val http = copilotHttp(dir, windows) { asked += it; true }
+        val file = dir.resolve("mcp").resolve("copilot-http.json").toString()
+        assertEquals(CopilotHttp(if (windows) file.replace('\\', '/') else file, 47951), http)
+        assertEquals(listOf(47951), asked)
+    }
+
+    @Test
+    fun `a Copilot tab stays on the stdio server without a server, a port, a matching config or a safe path`() {
+        assertNull(copilotHttp(copilotHome(), windows) { false })
+        assertNull(copilotHttp(copilotHome(port = null), windows) { true })
+        assertNull(copilotHttp(copilotHome(configPort = null), windows) { true })
+        assertNull(copilotHttp(copilotHome(configPort = 47952), windows) { true })
+        assertNull(copilotHttp(copilotHome(prefix = "cst-copilot sp ace"), windows) { true })
+    }
+
+    @Test
+    fun `the health check needs this service on the port`() {
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/health") { exchange ->
+            val body = """{"service": "ide-agent-tabs"}""".toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        val port = server.address.port
+        try {
+            assertTrue(answersHealth(port))
+        } finally {
+            server.stop(0)
+        }
+        assertFalse(answersHealth(port))
+    }
+
+    @Test
+    fun `planLaunch gives a Copilot tab the config file and its folder, and leaves other agents alone`() {
+        val copilot = BUILTIN_PROFILES.first { it.name == "copilot" }
+        val http = CopilotHttp("C:/h/mcp/copilot-http.json", 47951)
+        val folder = "C:\\work\\my repo\\100%"
+        val launch = planLaunch(copilot, LaunchContext(copilot = http, cwd = folder, prompt = "hi", env = mapOf("X" to "1")))
+        assertEquals(listOf("--additional-mcp-config", "@C:/h/mcp/copilot-http.json", "-i"), launch.args)
+        assertEquals(mapOf("X" to "1", CWD_ENV to "C:\\work\\my repo\\100%25"), launch.env)
+        launch.args.forEach { assertFalse(it, Regex("[\\s\"%]").containsMatchIn(it)) }
+        assertEquals(emptyList<String>(), planLaunch(copilot, LaunchContext(cwd = folder)).args)
+        assertEquals(emptyMap<String, String>(), planLaunch(copilot, LaunchContext(cwd = folder)).env)
+        val codex = BUILTIN_PROFILES.first { it.name == "codex" }
+        assertEquals(CODEX_TAB_ARGS, planLaunch(codex, LaunchContext(copilot = http, cwd = "/w")).args)
+        listOf("copilot", "COPILOT.CMD", "C:\\npm\\copilot.ps1", "/usr/local/bin/copilot").forEach { assertTrue(it, isCopilotCommand(it)) }
+        listOf("codex", "copilot-x", "notcopilot").forEach { assertFalse(it, isCopilotCommand(it)) }
+        assertEquals(listOf("--additional-mcp-config", "@C:/h/mcp/copilot-http.json") to emptyMap<String, String>(), withCopilotHttp("copilot", emptyList(), emptyMap(), http, null))
+    }
+
+    @Test
+    fun `the folder header percent-encodes as the Python server copy does`() {
+        assertEquals("C:\\work\\my repo\\100%25", cwdHeader("C:\\work\\my repo\\100%"))
+        assertEquals("/tmp/Zo%C3%AB/%24%7BHOME%7D/a%26b~c", cwdHeader("/tmp/Zoë/\${HOME}/a&b~c"))
+        assertEquals("/tmp/%E6%97%A5%E6%9C%AC", cwdHeader("/tmp/日本"))
+    }
+
     @Test
     fun `a Claude Code tab gets the tab settings file after its profile arguments`() {
         val windows = File.separatorChar == '\\'

@@ -6,6 +6,9 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.Proxy
+import java.net.URI
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
@@ -73,6 +76,7 @@ class LaunchContext(
     val searchPath: String = "",
     val python: List<String>? = null,
     val http: CodexHttp? = null,
+    val copilot: CopilotHttp? = null,
     val claudeSettings: String? = null,
     val cwd: String? = null,
 )
@@ -110,7 +114,9 @@ private fun withoutPrompt(profile: AgentProfile, prompt: String?): AgentProfile 
 
 fun planLaunch(requested: AgentProfile, context: LaunchContext): AgentLaunch {
     val unplanned = withoutPrompt(requested, context.prompt)
-    val codex = unplanned.copy(args = withCodexHttp(unplanned.args, context.http) ?: withCodexPython(unplanned.args, context.python))
+    val codexArgs = withCodexHttp(unplanned.args, context.http) ?: withCodexPython(unplanned.args, context.python)
+    val (copilotArgs, copilotEnv) = withCopilotHttp(unplanned.command, codexArgs, unplanned.env, context.copilot, context.cwd)
+    val codex = unplanned.copy(args = copilotArgs, env = copilotEnv)
     val (ownArgs, callerArgs) = withClaudeSettings(codex.command, codex.args, context.args, context.claudeSettings, context.cwd)
     val profile = codex.copy(args = ownArgs)
     if ((context.via ?: context.setting) == LaunchVia.ORI) {
@@ -214,6 +220,69 @@ fun codexHttp(home: Path, windows: Boolean, tab: String, agent: String): CodexHt
     val homePath = home.toString()
     if (listOf(python, headers, homePath).any { !HTTP_SAFE.matches(it) }) return null
     return CodexHttp(python, headers, port, tab, agent, homePath)
+}
+
+// Same rules as copilot_http and with_copilot_http in claude-plugin/mcp/src/ide_agent_tabs/profiles.py.
+data class CopilotHttp(val config: String, val port: Int)
+
+const val CWD_ENV = "IDE_AGENT_TABS_CWD"
+const val COPILOT_HEALTH_TIMEOUT_MS = 500
+private const val COPILOT_FILE = "copilot-http.json"
+private const val MAX_CWD_CHARS = 1024
+private val COPILOT_COMMAND = Regex("(?:.*[\\\\/])?copilot(?:\\.(?:exe|cmd|bat|ps1))?", RegexOption.IGNORE_CASE)
+private val CWD_SAFE = Regex("[A-Za-z0-9_.~/: \\\\-]")
+private val COPILOT_URL = Regex("http://127\\.0\\.0\\.1:([0-9]{1,5})/mcp")
+
+fun isCopilotCommand(command: String): Boolean = COPILOT_COMMAND.matches(command)
+
+fun cwdHeader(cwd: String): String = buildString {
+    var i = 0
+    while (i < cwd.length) {
+        val char = String(Character.toChars(cwd.codePointAt(i)))
+        if (CWD_SAFE.matches(char)) append(char) else char.toByteArray(Charsets.UTF_8).forEach { append("%%%02X".format(it.toInt() and 0xff)) }
+        i += char.length
+    }
+}
+
+private fun copilotConfigPort(home: Path): Int? = runCatching {
+    val config = JsonParser.parseString(Files.readString(home.resolve("mcp").resolve(COPILOT_FILE))).asJsonObject
+    val url = config.getAsJsonObject("mcpServers").getAsJsonObject("ide-agent-tabs").get("url").asJsonPrimitive
+    if (url.isString) COPILOT_URL.matchEntire(url.asString)?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..65535 } else null
+}.getOrNull()
+
+fun answersHealth(port: Int, timeoutMs: Int = COPILOT_HEALTH_TIMEOUT_MS): Boolean = runCatching {
+    val connection = URI("http://127.0.0.1:$port/health").toURL().openConnection(Proxy.NO_PROXY) as HttpURLConnection
+    connection.connectTimeout = timeoutMs
+    connection.readTimeout = timeoutMs
+    try {
+        val service = connection.takeIf { it.responseCode == 200 }?.inputStream?.bufferedReader()?.use { it.readText() }
+            ?.let { JsonParser.parseString(it).asJsonObject.get("service") }
+        service != null && service.isJsonPrimitive && service.asString == "ide-agent-tabs"
+    } finally {
+        connection.disconnect()
+    }
+}.getOrDefault(false)
+
+fun copilotHttp(home: Path, windows: Boolean, answers: (Int) -> Boolean = { answersHealth(it) }): CopilotHttp? {
+    val port = readPort(home) ?: return null
+    val file = home.resolve("mcp").resolve(COPILOT_FILE).toString()
+    val config = if (windows) file.replace('\\', '/') else file
+    if (copilotConfigPort(home) != port || !HTTP_SAFE.matches(config)) return null
+    return if (answers(port)) CopilotHttp(config, port) else null
+}
+
+// Copilot CLI adds the servers in --additional-mcp-config to its own for one run, and an entry with the registered
+// server's name replaces it, so the tab starts no stdio server.
+fun withCopilotHttp(
+    command: String,
+    args: List<String>,
+    env: Map<String, String>,
+    copilot: CopilotHttp?,
+    cwd: String?,
+): Pair<List<String>, Map<String, String>> {
+    if (copilot == null || !isCopilotCommand(command)) return args to env
+    val folder = if (cwd != null && cwd.length in 1..MAX_CWD_CHARS) mapOf(CWD_ENV to cwdHeader(cwd)) else emptyMap()
+    return (args + listOf("--additional-mcp-config", "@${copilot.config}")) to (env + folder)
 }
 
 // Same rules as claude_tab_settings and with_claude_settings in claude-plugin/mcp/src/ide_agent_tabs/profiles.py.

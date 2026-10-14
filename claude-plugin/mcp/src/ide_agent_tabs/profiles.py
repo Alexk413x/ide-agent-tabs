@@ -5,7 +5,7 @@ import os
 import re
 from collections.abc import Mapping, Sequence
 from types import MappingProxyType
-from typing import Any, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 from .jev.settings import JEV_OFF, JevSettings, parse_jev_settings
 from .jsjson import entries, is_finite, parse, trim, utf16_len
@@ -20,6 +20,7 @@ PLUGIN_ENV_PREFIX = "IDE_AGENT_TABS_"
 STARTUP_ENV = "JEDITERM_SOURCE"
 TAB_ID_ENV = f"{PLUGIN_ENV_PREFIX}ID"
 AGENT_ENV = f"{PLUGIN_ENV_PREFIX}AGENT"
+CWD_ENV = f"{PLUGIN_ENV_PREFIX}CWD"
 CLAUDE_TAB_SETTINGS_FILE = "claude-tab-settings.json"
 ALLOW_RESUME_KEY = "allowResume"
 IDE_START_TIMEOUT_KEY = "ideStartTimeoutSec"
@@ -153,6 +154,50 @@ def codex_http(home: str, windows: bool, tab: str, agent: str) -> CodexHttp | No
     if any(_HTTP_SAFE.match(p) is None for p in (python, headers, home)):
         return None
     return CodexHttp(python, headers, port, tab, agent, home)
+
+
+class CopilotHttp(NamedTuple):
+    config: str
+    port: int
+
+
+COPILOT_HEALTH_TIMEOUT_MS = 500
+MAX_CWD_CHARS = 1024
+_COPILOT_COMMAND = re.compile(r"(?:.*[\\/])?copilot(?:\.(?:exe|cmd|bat|ps1))?\Z", re.IGNORECASE)
+
+
+def is_copilot_command(command: str) -> bool:
+    return _COPILOT_COMMAND.match(command) is not None
+
+
+def cwd_header(cwd: str) -> str:
+    from urllib.parse import quote
+
+    return quote(cwd, safe="/: \\", errors="surrogatepass")
+
+
+def copilot_http(home: str, windows: bool, answers: Callable[[int], bool] | None = None) -> CopilotHttp | None:
+    from .server_copy import copilot_config_path, copilot_config_port, read_port
+
+    port = read_port(home)
+    config = copilot_config_path(home, "win32" if windows else "linux")
+    if port is None or copilot_config_port(home) != port or _HTTP_SAFE.match(config) is None:
+        return None
+    from .shared.client import answers_health
+
+    answered = answers(port) if answers is not None else answers_health(port, COPILOT_HEALTH_TIMEOUT_MS)
+    return CopilotHttp(config, port) if answered else None
+
+
+# Copilot CLI adds the servers in --additional-mcp-config to its own for one run, and an entry with the registered
+# server's name replaces it, so the tab starts no stdio server.
+def with_copilot_http(
+    command: str, args: Sequence[str], env: Mapping[str, str], http: CopilotHttp | None, cwd: str | None
+) -> tuple[tuple[str, ...], Mapping[str, str]]:
+    if http is None or not is_copilot_command(command):
+        return tuple(args), env
+    folder = {CWD_ENV: cwd_header(cwd)} if cwd is not None and 0 < len(cwd) <= MAX_CWD_CHARS else {}
+    return (*args, "--additional-mcp-config", f"@{http.config}"), {**env, **folder}
 
 
 def recorded_python(home: str, windows: bool) -> str | None:

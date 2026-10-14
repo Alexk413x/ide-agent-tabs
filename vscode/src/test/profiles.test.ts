@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
@@ -7,6 +9,7 @@ import {
   AGENTS_FILE,
   AgentProfile,
   AgentSettings,
+  answersHealth,
   BUILTIN_PROFILES,
   CLAUDE_TAB_SETTINGS_FILE,
   claudeTabSettings,
@@ -15,7 +18,11 @@ import {
   codexHttpArg,
   codexPython,
   CONFIG_FILE,
+  copilotHttp,
+  CWD_ENV,
+  cwdHeader,
   findOnPath,
+  isCopilotCommand,
   isInstalled,
   launchOf,
   LaunchContext,
@@ -24,6 +31,7 @@ import {
   readDefaultAgent,
   withCodexHttp,
   withCodexPython,
+  withCopilotHttp,
 } from '../profiles';
 import { BadRequest, checkEnv } from '../request';
 import { DETECTED_FILE, DetectedOri, parseDetected, SHARED_DEFAULTS, userSettingValue, withSharedValue } from '../sharedSettings';
@@ -777,4 +785,64 @@ test('a Claude Code tab that brings its own settings gets one file that merges t
   for (const value of ['{"hooks": []}', '{"hooks": {"Stop": {}}}', '[]']) {
     assert.deepEqual(planLaunch(claude, { ...ctx, model: undefined, args: ['--settings', value] }).args, ['--settings', value], value);
   }
+});
+
+function copilotHome(options: { port?: number | null; configPort?: number | null; prefix?: string } = {}): string {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix ?? 'iat-copilot-'));
+  fs.mkdirSync(path.join(home, 'mcp'));
+  if (options.port !== null) fs.writeFileSync(path.join(home, 'mcp', 'port.json'), JSON.stringify({ port: options.port ?? 47951 }));
+  if (options.configPort !== null) {
+    const entry = { type: 'http', url: `http://127.0.0.1:${options.configPort ?? 47951}/mcp`, headers: {}, tools: ['*'] };
+    fs.writeFileSync(path.join(home, 'mcp', 'copilot-http.json'), JSON.stringify({ mcpServers: { 'ide-agent-tabs': entry } }));
+  }
+  return home;
+}
+
+test('a Copilot tab uses the shared server when the port, the config and a running server agree', async () => {
+  const home = copilotHome();
+  const asked: number[] = [];
+  const http = await copilotHttp(home, onWindows, async port => (asked.push(port), true));
+  const file = path.join(home, 'mcp', 'copilot-http.json');
+  assert.deepEqual(http, { config: onWindows ? file.replace(/\\/g, '/') : file, port: 47951 });
+  assert.deepEqual(asked, [47951]);
+});
+
+test('a Copilot tab stays on the stdio server without a server, a port, a matching config or a safe path', async () => {
+  const yes = async () => true;
+  assert.equal(await copilotHttp(copilotHome(), onWindows, async () => false), undefined);
+  assert.equal(await copilotHttp(copilotHome({ port: null }), onWindows, yes), undefined);
+  assert.equal(await copilotHttp(copilotHome({ configPort: null }), onWindows, yes), undefined);
+  assert.equal(await copilotHttp(copilotHome({ configPort: 47952 }), onWindows, yes), undefined);
+  assert.equal(await copilotHttp(copilotHome({ prefix: 'iat-copilot sp ace-' }), onWindows, yes), undefined);
+});
+
+test('the health check needs this service on the port', async () => {
+  const server = createServer((req, res) => res.end(JSON.stringify({ service: req.url === '/health' ? 'ide-agent-tabs' : 'other' })));
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  assert.equal(await answersHealth(port), true);
+  await new Promise<void>(resolve => server.close(() => resolve()));
+  assert.equal(await answersHealth(port), false);
+});
+
+test('planLaunch gives a Copilot tab the config file and its folder, and leaves other agents alone', () => {
+  const http = { config: 'C:/h/mcp/copilot-http.json', port: 47951 };
+  const folder = 'C:\\work\\my repo\\100%';
+  const launch = planLaunch(copilotProfile, context({ copilot: http, cwd: folder, prompt: 'hi', env: { X: '1' } }));
+  assert.deepEqual(launch.args, ['--additional-mcp-config', '@C:/h/mcp/copilot-http.json', '-i']);
+  assert.deepEqual(launch.env, { X: '1', [CWD_ENV]: 'C:\\work\\my repo\\100%25' });
+  for (const arg of launch.args) assert.doesNotMatch(arg, /[\s"%]/);
+  assert.deepEqual(planLaunch(copilotProfile, context({ cwd: folder })).args, []);
+  assert.deepEqual(planLaunch(copilotProfile, context({ cwd: folder })).env, {});
+  assert.deepEqual(planLaunch(codexProfile, context({ copilot: http, cwd: '/w' })).args, ['--no-daemon']);
+  assert.deepEqual(planLaunch(BUILTIN_PROFILES[1]!, context({ copilot: http, cwd: '/w' })).args, [...CODEX_TAB_ARGS]);
+  for (const command of ['copilot', 'COPILOT.CMD', 'C:\\npm\\copilot.ps1', '/usr/local/bin/copilot']) assert.ok(isCopilotCommand(command), command);
+  for (const command of ['codex', 'copilot-x', 'notcopilot']) assert.ok(!isCopilotCommand(command), command);
+  assert.deepEqual(withCopilotHttp('copilot', [], {}, http, undefined), { args: ['--additional-mcp-config', '@C:/h/mcp/copilot-http.json'], env: {} });
+});
+
+test('the folder header percent-encodes as the Python server copy does', () => {
+  assert.equal(cwdHeader('C:\\work\\my repo\\100%'), 'C:\\work\\my repo\\100%25');
+  assert.equal(cwdHeader('/tmp/Zoë/${HOME}/a&b~c'), '/tmp/Zo%C3%AB/%24%7BHOME%7D/a%26b~c');
+  assert.equal(cwdHeader('/tmp/日本'), '/tmp/%E6%97%A5%E6%9C%AC');
 });

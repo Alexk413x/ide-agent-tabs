@@ -54,7 +54,7 @@ HOOK_EVENTS: dict[str, dict[str, Action]] = {
         "Interrupt": _SETTLED,
     },
     "copilot": {
-        "sessionStart": _STARTED,
+        "sessionStart": {**_STARTED, "owner": True},
         "userPromptSubmitted": {"state": "busy", "prompt": True},
         "preToolUse": _BUSY,
         "notification": _NOTIFICATION,
@@ -172,8 +172,16 @@ def reported_model(data: Mapping[str, Any]) -> dict[str, str]:
     return out
 
 
+# A Copilot tab on the shared server sends no process id, so its start hook records the Copilot process, and the
+# server ends the tab's session when that process exits.
 def run_hook(
-    cli: str, event: str, data: Mapping[str, Any], home: str, session_id: str | None, now: float | None = None
+    cli: str,
+    event: str,
+    data: Mapping[str, Any],
+    home: str,
+    session_id: str | None,
+    now: float | None = None,
+    agent_process: tuple[int, int] | None = None,
 ) -> dict[str, Any] | None:
     if not session_id or not is_session_id(session_id) or not is_hook_cli(cli):
         return None
@@ -216,6 +224,8 @@ def run_hook(
         if input_idle is not None:
             base["inputIdle"] = input_idle
         base.update(reported)
+        if agent_process is not None and action.get("owner"):
+            base["agentPid"], base["agentPidStart"] = agent_process
         learned = any((current or {}).get(k) != v for k, v in reported.items())
         if action.get("stop"):
             nudges = base.get("nudges") or 0

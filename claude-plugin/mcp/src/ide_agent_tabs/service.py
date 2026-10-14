@@ -26,6 +26,8 @@ from .profiles import (
     claude_tab_settings,
     codex_http,
     codex_python,
+    copilot_http,
+    is_copilot_command,
     resolve_focus,
     resolve_settings,
 )
@@ -636,6 +638,7 @@ class Service:
                     cmd_shim=self.is_windows and is_cmd_shim(profile.command, self.ctx.path_var),
                     python=codex_python(self.deps.home, self.is_windows),
                     http=codex_http(self.deps.home, self.is_windows, tab_id, profile.name),
+                    copilot=copilot_http(self.deps.home, self.is_windows) if is_copilot_command(profile.command) else None,
                     claude_settings=claude_tab_settings(self.deps.home, self.is_windows),
                     cwd=request.path,
                 ),

@@ -139,8 +139,8 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def probe(port: int) -> Probe:
-    reply = request(port, "GET", "/health")
+def probe(port: int, timeout_ms: float = HEALTH_TIMEOUT_MS) -> Probe:
+    reply = request(port, "GET", "/health", None, timeout_ms)
     if reply is None:
         return Probe("free")
     try:
@@ -156,6 +156,10 @@ def probe(port: int) -> Probe:
     ):
         return Probe("ours", js_ordered(health))
     return Probe("other")
+
+
+def answers_health(port: int, timeout_ms: float = HEALTH_TIMEOUT_MS) -> bool:
+    return probe(port, timeout_ms).kind == "ours"
 
 
 def verified_state(home: str, port: int, health: dict[str, Any]) -> ServerState | None:

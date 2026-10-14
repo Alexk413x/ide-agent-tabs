@@ -432,6 +432,44 @@ Rules for these arguments:
 - The arguments hold `<` and `>` in the `<session-flags>` keys, so Ori refuses them on Windows with an npm
   Codex (see [Model and Ori](#model-and-ori)).
 
+### Copilot tabs
+
+A Copilot CLI tab connects to the shared server over HTTP and starts no server of its own, when the
+server answers. Otherwise it keeps the stdio server that `--register copilot` writes to
+`~/.copilot/mcp-config.json`.
+
+- **Config file.** When the shared server claims its port, it writes
+  `~/.ide-agent-tabs/mcp/copilot-http.json` (mode 0600) next to `port.json`. The file holds one
+  `mcpServers` entry named `ide-agent-tabs`: `"type": "http"`, the URL `http://127.0.0.1:<port>/mcp`,
+  `"tools": ["*"]`, and the headers `Authorization: Bearer <token>`,
+  `X-Agent-Tabs-Tab: ${IDE_AGENT_TABS_ID}`, `X-Agent-Tabs-Agent: ${IDE_AGENT_TABS_AGENT}` and
+  `X-Agent-Tabs-Cwd: ${IDE_AGENT_TABS_CWD}`. Copilot CLI expands `${VAR}` in a header value from its own
+  environment, which the tab sets. It has no headers helper, and a token in an environment variable would
+  reach every child process, so the token sits in the private file. A server that starts with a new token
+  rewrites the file.
+- **Launch option.** The `copilot` profile has no `args`. At launch, the Python service, the VS Code
+  extension and the JetBrains plugin add `--additional-mcp-config @<copilot-http.json>` after the
+  profile's `args` for a command named `copilot` (or `copilot.exe`, `.cmd`, `.bat` or `.ps1`). Copilot
+  CLI adds those servers to its own for that run, and an entry named `ide-agent-tabs` replaces the
+  registered stdio entry, so the stdio server doesn't start. The launch also sets `IDE_AGENT_TABS_CWD` to
+  the tab's folder, percent-encoded as `headers.py` encodes `X-Agent-Tabs-Cwd`.
+- **When.** The option needs `port.json`, a `copilot-http.json` whose URL names the same port, a server
+  that answers `GET /health` on that port within 500 ms, and a config path without a space, a quote or
+  `%`. Otherwise the tab stays on the stdio server. No launcher starts the server: Claude Code's headers
+  helper and start hook do. The VS Code extension checks the server before it plans the launch, and the
+  JetBrains plugin checks it off the UI thread.
+- **Folder.** Copilot CLI declares no roots capability, so the front takes the session's folder from
+  `X-Agent-Tabs-Cwd`, or the home folder when the variable is unset and the header holds the literal
+  `${IDE_AGENT_TABS_CWD}`.
+- **Session key and end.** Copilot CLI sends no pid, so the server keys the session on its tab id (see
+  [Session identity](#session-identity)). The Copilot `sessionStart` hook finds the Copilot process with
+  the same ancestry lookup as `headers.py` and records its pid and start time in the tab's presence file,
+  as `agentPid` and `agentPidStart`. When the server binds the tab's session, it takes that process as the
+  session's owner, so the session ends within 15 s of Copilot exiting, as a Claude Code session does. A
+  child Copilot started inside a busy turn of the tab doesn't replace the record. Without the record,
+  when the Copilot hooks aren't registered, the session belongs to the server process and ends when the
+  server stops.
+
 ## Button
 
 Every IDE shows a **New Agent Tab** button, and binds **Ctrl+Alt+A** (**⌘⌥A** on macOS) to it.
@@ -667,9 +705,10 @@ when nothing listens, and both wait up to 3 s.
 
 One Python process, `claude-plugin/mcp/launch/shared_server.py`, serves every Claude Code session on the
 machine at `http://127.0.0.1:<port>/mcp`. The port is the plugin option `server_port`, 47828 by default,
-in the 47821-47829 block where each of the author's plugins takes one slot. Codex, Antigravity CLI,
-Copilot CLI and the other agent CLIs keep their stdio server, because a shim per session
-would cost almost as much memory as the server it forwards to.
+in the 47821-47829 block where each of the author's plugins takes one slot. Codex and Copilot CLI tabs
+connect to it when they can (see [Codex tabs](#codex-tabs) and [Copilot tabs](#copilot-tabs)).
+Antigravity CLI and the other agent CLIs keep their stdio server, because a shim per session would cost
+almost as much memory as the server it forwards to.
 
 `claude-plugin/mcp/claude.mcp.json`, named by `mcpServers` in the Claude manifest, declares the server as `"type": "http"` with that URL, a `headersHelper`, and
 `"timeout": 300000`. The helper is
@@ -693,6 +732,9 @@ The process has two parts:
   `agent_tabs_mod`. A request with any other version gets error -32022. A classic client can't be asked
   for its roots, so its folder comes from `X-Agent-Tabs-Cwd`, which the headers helper sends, or the home
   folder when the header is absent.
+  A 2026-07-28 client whose `io.modelcontextprotocol/clientCapabilities` hold no `roots`, such as Copilot
+  CLI, isn't asked for its roots either: its folder comes from `X-Agent-Tabs-Cwd` the same way. On this
+  path, too, the tool list follows `X-Agent-Tabs-Agent`, and Claude Code's list when the header is absent.
 - **The engine** (`shared/engine.py`) loads on the first tool call, with the tool code. It runs each
   session's tools through the same tool layer as the stdio server, so stdio and HTTP sessions run the
   same tool code and argument checks.
@@ -744,7 +786,9 @@ session id or the cwd. So the helper sends:
 The server keys a session on the pid and start time, so a reconnect, a restarted server and the mod's
 own `$.mcp.call` all reach the same session, and a reused pid never inherits a mailbox. A session
 without a pid header, when the lookup failed, is keyed on its client id, and its presence starts over
-on the next connect.
+on the next connect. A session with neither header, such as a Copilot CLI tab, is keyed on its tab id
+(`tab:<id>`). The server owns it by the Copilot process that the tab's `sessionStart` hook recorded, or by
+its own pid when no live process is recorded (see [Copilot tabs](#copilot-tabs)).
 
 A tab session takes its tab id as the session id. A project's `.claude/settings.json` can set
 `IDE_AGENT_TABS_ID`, and a nested `claude -p` inherits it, so the id is only a claim: the server binds it
@@ -1014,9 +1058,10 @@ server copy.
 - `front.py` speaks MCP 2026-07-28 on `socketserver.ThreadingTCPServer` with a small HTTP/1.1 reader.
   `http.server` would load `email`, `mimetypes` and `ssl` and double the start-up. A dropped connection
   cancels its tool call: one thread watches the sockets of open calls for the end of the stream.
-- `hub.py` keys sessions on the pid and start time, else the client id, asks for roots on a client's first
-  call, ends a session when its process exits (checked every 15 s) or `/end` names its pid, and sets the
-  store's shared mode (busy timeout 0, no wake files for waiters in the process) before the first bind.
+- `hub.py` keys sessions on the pid and start time, else the client id, else the tab id, asks for roots on
+  a client's first call, ends a session when its process exits (checked every 15 s) or `/end` names its
+  pid, and sets the store's shared mode (busy timeout 0, no wake files for waiters in the process) before
+  the first bind.
 - Tools come through `host.ToolHost`: `tools_for` and `instructions_for` an agent, and `bind` for one
   session, whose `end` records the session as closed and whose `release` keeps its presence for the next
   server. `engine.py` gives each bound session its own `Messaging`, service, Jev and `mcp_tools.Tools`,
@@ -1378,6 +1423,9 @@ Hook events for each CLI:
 | Codex (local) | The tab's `-c` arguments, as for Codex | As Codex | As Codex | As Codex | As Codex | As Codex |
 
 Pi and OpenCode set no state, and send no reminder or nudge.
+
+Copilot CLI's `sessionStart` hook also records the Copilot process in the tab's presence file, which the
+shared server uses to end a Copilot tab's HTTP session (see [Copilot tabs](#copilot-tabs)).
 
 - The Claude Code plugin ships its hooks. `sync-ides --register agy|copilot|grok|hermes|qwen|goose`
   adds the Antigravity CLI, Copilot CLI, Grok Build, Hermes, Qwen Code and Goose hooks,
@@ -2313,7 +2361,7 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
 | iTerm2 | Unit tests with a stand-in `osascript`: open, list, close, input, quoting, argv passing, and the permission and not-installed errors | A live run |
 | Agent profiles | `claude`, `codex` and `agy` flags checked against each CLI's help | `copilot`; `agy -i` in a tab; `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose` and `codex-local`, none of which is installed on the development machine |
 | Registration of the added agents | Unit tests against temporary homes: the config files and hooks of Grok Build, Pi, Hermes, Qwen Code and Goose are written, left unchanged by a second run and removed, and other entries stay | A live run of any of these CLIs: whether it reads the entry and runs the hooks, `--register` against a real home, Goose's `sh -c` hook on Windows with Git Bash, Hermes' allowlist, and Codex (local) with Ollama |
-| Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>`; interactive Codex 0.158.0 tabs in Antigravity on Windows 11: a message read mid-task through the hooks, and an idle tab woken by the typed line through the `input` route, each answered; Antigravity CLI 1.2.16 headless (`agy -p`) on Windows 11 with a workspace `.agents/` config: `IDE_AGENT_TABS_ID` reaches the server and the hook commands, the MCP client name is `antigravity-client`, `PreInvocation` context reaches the model, `Stop` with `decision: "continue"` keeps the turn going, and `Stop` fires once per turn | The `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; hooks inside a real Copilot CLI session; Antigravity CLI: whether `Stop` fires after Esc, whether the typed wake line submits in its interactive TUI, and `--register agy` against the real `~/.gemini` files |
+| Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>`; interactive Codex 0.158.0 tabs in Antigravity on Windows 11: a message read mid-task through the hooks, and an idle tab woken by the typed line through the `input` route, each answered; Antigravity CLI 1.2.16 headless (`agy -p`) on Windows 11 with a workspace `.agents/` config: `IDE_AGENT_TABS_ID` reaches the server and the hook commands, the MCP client name is `antigravity-client`, `PreInvocation` context reaches the model, `Stop` with `decision: "continue"` keeps the turn going, and `Stop` fires once per turn; Copilot CLI 1.0.95 headless (`copilot -p`) on Windows 11 in a temporary `COPILOT_HOME`, with the `--additional-mcp-config` option a tab gets and a stdio entry registered under the same name: only the shared server's HTTP entry starts, the first request is `server/discover`, `list_sessions` lists the tab's id with agent `copilot` and the tab's folder, the `sessionStart` hook records the Copilot process, and the session ends after Copilot exits | The `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; the other Copilot CLI hooks in an interactive session, and a Copilot tab opened from an IDE; Antigravity CLI: whether `Stop` fires after Esc, whether the typed wake line submits in its interactive TUI, and `--register agy` against the real `~/.gemini` files |
 
 Open, list and close through the MCP server pass for tmux, kitty and WezTerm. No part is tested on a real
 Mac. For the headless delegation commands, see the **Tested** column in

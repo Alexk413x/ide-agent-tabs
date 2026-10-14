@@ -294,7 +294,19 @@ class Messaging:
                 p[key] = cur[key]
         if self.thread_id is not None:
             p["threadId"] = self.thread_id
-        for key in ("handedOffTo", "driver", "modBeat", "nativeName", "via", "project", "model", "effort", "product"):
+        for key in (
+            "handedOffTo",
+            "driver",
+            "modBeat",
+            "nativeName",
+            "via",
+            "project",
+            "model",
+            "effort",
+            "product",
+            "agentPid",
+            "agentPidStart",
+        ):
             if cur.get(key) is not None:
                 p[key] = cur[key]
         p["beatMs"] = self._beat_ms

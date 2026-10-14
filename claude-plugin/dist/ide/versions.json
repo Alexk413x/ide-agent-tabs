@@ -1,8 +1,8 @@
 {
-  "vscode": "0.1.31",
-  "jetbrains": "0.4.14",
+  "vscode": "0.1.32",
+  "jetbrains": "0.4.15",
   "sources": {
-    "vscode": "c3cd2189947d21e4cfeca1d20bd4357127703ac273d3bb6235cb54f794771eb0",
-    "jetbrains": "fc0df2d514c71336c97342cb653b67449cf4bb4e75142e859000274113689f5d"
+    "vscode": "54919fa11aeb76a221136e421eac0c134ae7da5428983279e602df3ca6dc84b5",
+    "jetbrains": "490e9908315470798c3bb0eed132fb49c1b08f5c92d28a16298473db02534d4b"
   }
 }
