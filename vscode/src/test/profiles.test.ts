@@ -789,7 +789,7 @@ test('a Claude Code tab that brings its own settings gets one file that merges t
 });
 
 function copilotHome(options: { port?: number | null; configPort?: number | null; prefix?: string; hooks?: boolean } = {}): string {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), options.prefix ?? 'iat-copilot-'));
+  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), options.prefix ?? 'iat-copilot-'));
   fs.mkdirSync(path.join(home, 'mcp'));
   if (options.port !== null) fs.writeFileSync(path.join(home, 'mcp', 'port.json'), JSON.stringify({ port: options.port ?? 47951 }));
   if (options.configPort !== null) {
