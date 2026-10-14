@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { typeLine } from './input';
 import { editorLocation, launchScripts, revivedTabs, terminalEnv, unixShell, windowsShell } from './launch';
-import { AgentLaunch, AgentProfile, AgentSettings, claudeTabSettings, CONFIG_FILE, codexPython, isInstalled, planLaunch } from './profiles';
+import { AgentLaunch, AgentProfile, AgentSettings, claudeTabSettings, CONFIG_FILE, codexHttp, codexPython, isInstalled, planLaunch } from './profiles';
 import { ENDPOINT_BEAT_MS, beatEndpoint, endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { closestBase } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
@@ -39,6 +39,7 @@ interface Tab extends TabInfo {
 }
 
 interface OpenOptions {
+  id: string;
   launch: AgentLaunch;
   focus: boolean;
 }
@@ -72,13 +73,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return neutralIcon;
   };
 
-  const launchFor = (profile: AgentProfile, cwd?: string) =>
+  const launchFor = (profile: AgentProfile, cwd?: string, id?: string) =>
     planLaunch(profile, {
       setting: settings.shared().launchVia,
       ori: settings.detected().ori,
       windows: isWindows,
       searchPath: searchPath(),
       python: codexPython(home, isWindows),
+      http: id === undefined ? undefined : codexHttp(home, isWindows, id, profile.name),
       claudeSettings: claudeTabSettings(home, isWindows),
       cwd,
     });
@@ -93,9 +95,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   const openTab = (dir: string, project: string, profile: AgentProfile, options: OpenOptions): TabInfo => {
-    const id = randomUUID();
+    const { id, launch } = options;
     const shell = isWindows ? windowsShell(searchPath(), scripts) : unixShell(process.env.SHELL, process.platform === 'darwin', scripts);
-    const { launch } = options;
     const terminal = vscode.window.createTerminal({
       name: launch.via === 'ori' ? `${profile.label} (${VIA_LABEL})` : profile.label,
       cwd: dir,
@@ -113,7 +114,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const openInFolder = (folder: vscode.WorkspaceFolder | undefined, profile: AgentProfile) => {
     const dir = folder ? folderPath(folder) : os.homedir();
-    openTab(dir, folder?.name ?? path.basename(dir), profile, { launch: launchFor(profile, dir), focus: true });
+    const id = randomUUID();
+    openTab(dir, folder?.name ?? path.basename(dir), profile, { id, launch: launchFor(profile, dir, id), focus: true });
   };
 
   const openFromButton = (profile: AgentProfile) => {
@@ -161,10 +163,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       };
     },
     isInstalled: profile => isInstalled(profile.command, searchPath(), isWindows),
-    open: (request, profile, launch) => {
+    open: (request, profile, launch, id) => {
       const folders = fileFolders();
       if (folders.length === 0) return undefined;
-      return openTab(request.path, projectOf(request.path), profile, { launch, focus: request.focus });
+      return openTab(request.path, projectOf(request.path), profile, { id, launch, focus: request.focus });
     },
     close: id => {
       const tab = tabs.get(id);

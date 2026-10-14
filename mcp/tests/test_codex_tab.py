@@ -11,9 +11,11 @@ from typing import Any
 
 from ide_agent_tabs.mcp_tools import HOOK_TOOL, SERVER_NAME
 from ide_agent_tabs.messaging.hook import HOOK_EVENTS
-from ide_agent_tabs.profiles import BUILTIN_PROFILES, CODEX_TAB_ARGS
+from ide_agent_tabs.profiles import BUILTIN_PROFILES, CODEX_TAB_ARGS, codex_http, codex_http_arg, with_codex_http
+from ide_agent_tabs.shared.headers import option_env
 from support import ROOT, temp_home
 
+WINDOWS = sys.platform == "win32"
 HOOK_TIMEOUT_S = 10
 INTERRUPT_TIMEOUT_S = 3
 
@@ -125,6 +127,68 @@ class CodexTabTest(unittest.TestCase):
             with self.subTest(arg=arg[:60]):
                 self.assertIn(literal, vscode, "vscode/src/profiles.ts lacks the argument")
                 self.assertIn(literal.replace("$", "\\$"), kotlin, "AgentProfiles.kt lacks the argument")
+
+
+class CodexHttpTest(unittest.TestCase):
+    def home(self, port: int | None = 47828, stub: bool = True, python: str | None = None) -> str:
+        home = temp_home(self, "iat-codex-http-")
+        mcp = os.path.join(home, "mcp")
+        os.makedirs(os.path.join(mcp, "py", "launch"))
+        if python is None:
+            python = os.path.join(home, "python.exe")
+            with open(python, "w", encoding="utf-8") as f:
+                f.write("")
+        with open(os.path.join(mcp, "python.json"), "w", encoding="utf-8") as f:
+            json.dump({"python": python}, f)
+        if port is not None:
+            with open(os.path.join(mcp, "port.json"), "w", encoding="utf-8") as f:
+                json.dump({"port": port}, f)
+        if stub:
+            with open(os.path.join(mcp, "py", "launch", "headers.py"), "w", encoding="utf-8") as f:
+                f.write("")
+        return home
+
+    def test_a_tab_uses_the_shared_server_when_the_copy_the_port_and_the_interpreter_are_recorded(self) -> None:
+        home = self.home(port=47831)
+        http = codex_http(home, WINDOWS, "tab-1", "codex")
+        assert http is not None
+        self.assertEqual((http.port, http.tab, http.agent, http.home), (47831, "tab-1", "codex", home))
+        arg = codex_http_arg(http)
+        self.assertTrue(arg.startswith("mcp_servers.ide-agent-tabs={ url = 'http://127.0.0.1:47831/mcp', http_headers_helper = '"))
+        self.assertIn(" -I -S ", arg)
+        self.assertTrue(
+            arg.endswith(f"--tab tab-1 --agent codex --port 47831 --home {home}', startup_timeout_sec = 30, tool_timeout_sec = 660 }}")
+        )
+
+    def test_a_tab_stays_on_the_stdio_server_without_a_port_a_headers_stub_or_a_safe_path(self) -> None:
+        self.assertIsNone(codex_http(self.home(port=None), WINDOWS, "tab-1", "codex"))
+        self.assertIsNone(codex_http(self.home(stub=False), WINDOWS, "tab-1", "codex"))
+        self.assertIsNone(codex_http(self.home(port=47828), WINDOWS, "tab 1", "codex"))
+        spaced = self.home(python=os.path.join(temp_home(self, "iat-sp ace-"), "python.exe"))
+        self.assertIsNone(codex_http(spaced, WINDOWS, "tab-1", "codex"))
+
+    def test_only_the_server_argument_changes_and_nothing_in_it_needs_quoting_through_a_shell(self) -> None:
+        http = codex_http(self.home(), WINDOWS, "tab-1", "codex-local")
+        assert http is not None
+        swapped = with_codex_http(CODEX_TAB_ARGS, http)
+        assert swapped is not None
+        self.assertEqual([a for a, b in zip(swapped, CODEX_TAB_ARGS) if a != b], [codex_http_arg(http)])
+        self.assertIsNone(with_codex_http(CODEX_TAB_ARGS, None))
+        self.assertIsNone(with_codex_http(("--other",), http))
+        self.assertNotRegex(codex_http_arg(http), r"[\"%!\n]")
+
+    def test_the_helper_takes_the_tab_the_agent_the_port_and_the_home_as_arguments(self) -> None:
+        got = option_env(["--tab", "t1", "--agent", "codex", "--port", "47831", "--home", "/h", "--other", "x", "--dangling"])
+        self.assertEqual(
+            got,
+            {
+                "IDE_AGENT_TABS_ID": "t1",
+                "IDE_AGENT_TABS_AGENT": "codex",
+                "CLAUDE_PLUGIN_OPTION_SERVER_PORT": "47831",
+                "IDE_AGENT_TABS_HOME": "/h",
+            },
+        )
+        self.assertEqual(option_env([]), {})
 
 
 if __name__ == "__main__":

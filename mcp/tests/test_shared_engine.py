@@ -10,7 +10,7 @@ from ide_agent_tabs.clock import now_iso
 from ide_agent_tabs.messaging.sessions import read_presence, update_presence
 from ide_agent_tabs.shared.engine import Engine
 from ide_agent_tabs.shared.hub import derived_id
-from shared_support import McpHttp, pid_headers, reset_store_mode, serve
+from shared_support import McpHttp, pid_headers, request, reset_store_mode, serve
 from support import temp_home
 
 
@@ -30,6 +30,24 @@ class EngineTest(unittest.TestCase):
         self.assertNotIn("agent_tabs_hook", listed)
         self.assertFalse(any(n.startswith("jev_") for n in listed))
         self.assertIn("list_sessions", self.client(1).rpc("server/discover").json["result"]["instructions"])
+
+    def test_a_codex_session_over_the_classic_path_runs_the_codex_only_hook_tool(self) -> None:
+        headers = {
+            "Authorization": f"Bearer {self.server.token}",
+            "Accept": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            "User-Agent": "codex-mcp-client/0.162.1",
+            **pid_headers(os.getpid(), 9, x_agent_tabs_agent="codex"),
+        }
+        hook = {"event": "UserPromptSubmit", "session_id": "thread-9", "turn_id": "turn-1"}
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "agent_tabs_hook", "arguments": hook}})
+        reply = request(self.server.port, "/mcp", headers=headers, body=body)
+        self.assertEqual(reply.status, 200, reply.text)
+        self.assertNotIn("isError", reply.json["result"], reply.text)
+        listed = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        names = [t["name"] for t in request(self.server.port, "/mcp", headers=headers, body=listed).json["result"]["tools"]]
+        self.assertIn("agent_tabs_hook", names)
+        self.assertNotIn("agent_tabs_mod", names)
 
     def test_two_sessions_message_each_other_through_the_real_tools(self) -> None:
         a, b = self.client(1), self.client(2)

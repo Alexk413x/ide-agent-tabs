@@ -26,6 +26,7 @@ def make_source(root: str, version: str = "0.9.0", server: str = SERVER_SCRIPT) 
     write(os.path.join(mcp, "src", "ide_agent_tabs", "catalog.json"), "{}\n")
     write(os.path.join(mcp, "launch", "mcp_server.py"), server)
     write(os.path.join(mcp, "launch", "agent_hook.py"), "import sys\nsys.stdout.write('hook ' + ' '.join(sys.argv[1:]))\n")
+    write(os.path.join(mcp, "launch", "headers.py"), "print('{}')\n")
     write(os.path.join(mcp, "launch", "agent-tabs"), "#!/bin/sh\n")
     scripts = os.path.join(root, "plugin", "dist", "launch")
     for name in ("agent-launch.ps1", "agent-launch.sh", "agent-launch.fish"):

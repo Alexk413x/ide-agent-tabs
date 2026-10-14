@@ -19,6 +19,7 @@ HEADER_TAB = "x-agent-tabs-tab"
 HEADER_AGENT = "x-agent-tabs-agent"
 HEADER_PID = "x-agent-tabs-pid"
 HEADER_PID_START = "x-agent-tabs-pid-start"
+HEADER_CWD = "x-agent-tabs-cwd"
 _PORT = re.compile("[0-9]{1,5}")
 _TOKEN = re.compile("[0-9a-f]{64}")
 _LOOPBACK_URL = re.compile(r"http://127\.0\.0\.1:([0-9]{1,5})(?:[/?#].*)?", re.IGNORECASE | re.DOTALL)

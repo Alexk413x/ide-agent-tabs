@@ -4,6 +4,7 @@ import os
 import re
 import threading
 from collections.abc import Mapping
+from urllib.parse import quote
 
 from ..home import agent_tabs_home
 from ..version import PACKAGE_VERSION
@@ -14,8 +15,23 @@ from .state import DEFAULT_PORT, PORT_OPTION_ENV, SERVER_LAUNCHER, parse_port, p
 # Claude Code gives a headers helper 10 s, and a helper that prints no token gets the server marked as needing
 # auth until the user clears it; so the helper waits for a slow first start up to well inside that limit.
 HELPER_START_WAIT_MS = 7_000
+MAX_CWD_CHARS = 1024
 _TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _AGENT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
+
+
+# Codex hands a headers helper a stripped environment, so a Codex tab passes what Claude Code passes in the
+# environment as arguments: --tab, --agent, --port and --home.
+_OPTION_ENV = {"--tab": "IDE_AGENT_TABS_ID", "--agent": "IDE_AGENT_TABS_AGENT", "--port": PORT_OPTION_ENV, "--home": "IDE_AGENT_TABS_HOME"}
+
+
+def option_env(argv: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for flag, value in zip(argv[::2], argv[1::2]):
+        name = _OPTION_ENV.get(flag)
+        if name is not None:
+            out[name] = value
+    return out
 
 
 def launcher_path(plugin_root: str) -> str:
@@ -30,6 +46,7 @@ def helper_headers(
     lookup_timeout_s: float = LOOKUP_TIMEOUT_S,
     wait_ms: float = HELPER_START_WAIT_MS,
     version: str = PACKAGE_VERSION,
+    launcher: str | None = None,
 ) -> dict[str, str]:
     port = port_from_url(env.get("CLAUDE_CODE_MCP_SERVER_URL")) or parse_port(env.get(PORT_OPTION_ENV)) or DEFAULT_PORT
     home = agent_tabs_home(env)
@@ -40,6 +57,12 @@ def helper_headers(
     agent = env.get("IDE_AGENT_TABS_AGENT")
     if agent is not None and _AGENT_NAME.fullmatch(agent):
         headers["X-Agent-Tabs-Agent"] = agent
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        cwd = ""
+    if cwd and len(cwd) <= MAX_CWD_CHARS:
+        headers["X-Agent-Tabs-Cwd"] = quote(cwd, safe="/: \\")
     found: list[ProcessInfo | None] = [None]
 
     def lookup() -> None:
@@ -48,7 +71,7 @@ def helper_headers(
     finder = threading.Thread(target=lookup, daemon=True)
     finder.start()
     try:
-        ensured = ensure_server(server_command(launcher_path(plugin_root), port), port, home, version, wait_ms, env)
+        ensured = ensure_server(server_command(launcher or launcher_path(plugin_root), port), port, home, version, wait_ms, env)
     except Exception:  # noqa: BLE001 - the helper always prints headers; a missing token is reported by the server's 403
         ensured = None
     finder.join(lookup_timeout_s)

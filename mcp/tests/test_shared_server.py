@@ -15,7 +15,7 @@ from ide_agent_tabs.shared.host import Binding, BoundSession, Catalog, Progress
 from ide_agent_tabs.shared.hub import Identity, derived_id, root_path, session_key
 from ide_agent_tabs.shared.server import IDLE_EXIT_MS, SharedServer
 from ide_agent_tabs.shared.state import port_from_url, read_state, state_path
-from shared_support import PROTOCOL, McpHttp, free_port, pid_headers, request, reset_store_mode, serve
+from shared_support import PROTOCOL, McpHttp, Reply, free_port, pid_headers, request, reset_store_mode, serve
 from store_host import StoreHost
 from support import temp_home
 
@@ -94,10 +94,11 @@ class FrontTest(unittest.TestCase):
         self.assertIn("jev_ask", [t["name"] for t in client.rpc("tools/list").json["result"]["tools"]])
         self.assertEqual(client.rpc("resources/list").json["result"]["resources"], [])
         self.assertEqual(client.rpc("ping").json["result"]["resultType"], "complete")
-        classic = client.rpc("initialize", {}, {"mcp-protocol-version": "2025-11-25"})
-        self.assertEqual(classic.status, 400)
-        self.assertEqual(classic.json["error"]["code"], -32022)
-        self.assertEqual(classic.json["error"]["data"], {"supported": [PROTOCOL], "requested": "2025-11-25"})
+        unknown = client.rpc("tools/list", {}, {"mcp-protocol-version": "2024-01-01"})
+        self.assertEqual(unknown.status, 400)
+        self.assertEqual(unknown.json["error"]["code"], -32022)
+        self.assertEqual(unknown.json["error"]["data"]["requested"], "2024-01-01")
+        self.assertEqual(unknown.json["error"]["data"]["supported"][0], PROTOCOL)
         self.assertEqual(client.rpc("tools/list", {}, {"mcp-method": "tools/call"}).json["error"]["code"], -32020)
         self.assertEqual(client.rpc("tools/call", {"name": "x"}, {"mcp-name": "y"}).json["error"]["code"], -32020)
         self.assertEqual(client.rpc("nothing/here").status, 404)
@@ -111,6 +112,54 @@ class FrontTest(unittest.TestCase):
         self.assertEqual(
             request(self.port, "/mcp", headers={**token, "mcp-method": "tools/list"}, body=no_meta).json["error"]["code"], -32602
         )
+
+    def classic(self, method: str, params: dict[str, Any] | None = None, version: str | None = None, **extra: str) -> Reply:
+        headers = {
+            "Authorization": f"Bearer {self.server.token}",
+            "Accept": "text/event-stream, application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "codex-mcp-client/0.162.1",
+            **{k.replace("_", "-"): v for k, v in extra.items()},
+        }
+        if version is not None:
+            headers["mcp-protocol-version"] = version
+        body = {"jsonrpc": "2.0", "id": 0, "method": method, "params": params or {}}
+        return request(self.port, "/mcp", headers=headers, body=json.dumps(body))
+
+    def test_a_classic_client_initializes_lists_tools_and_calls_one_without_a_roots_request(self) -> None:
+        init = {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "codex-mcp-client", "version": "1"}}
+        opened = self.classic("initialize", init)
+        self.assertEqual(opened.status, 200)
+        result = opened.json["result"]
+        self.assertEqual(result["protocolVersion"], "2025-06-18")
+        self.assertEqual(result["serverInfo"], {"name": "ide-agent-tabs", "version": "test"})
+        self.assertIn("list_sessions", result["instructions"])
+        self.assertNotIn("resultType", result)
+        newer = self.classic("initialize", {**init, "protocolVersion": "2099-01-01"}).json["result"]
+        self.assertEqual(newer["protocolVersion"], "2025-11-25")
+        self.assertEqual(self.classic("initialize", {}).json["error"]["code"], -32602)
+        headers = {"Authorization": f"Bearer {self.server.token}", "Accept": "application/json", "mcp-protocol-version": "2025-06-18"}
+        notified = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        self.assertEqual(request(self.port, "/mcp", headers=headers, body=notified).status, 202)
+        listed = [t["name"] for t in self.classic("tools/list", version="2025-06-18").json["result"]["tools"]]
+        self.assertIn("send_message", listed)
+        self.assertIn("agent_tabs_hook", listed)
+        self.assertNotIn("agent_tabs_mod", listed)
+        self.assertEqual(self.classic("ping", version="2025-06-18").json["result"], {})
+        self.assertEqual(self.classic("resources/list", version="2025-06-18").json["result"], {"resources": []})
+        self.assertEqual(self.classic("nothing/here", version="2025-06-18").json["error"]["code"], -32601)
+        folder = temp_home(self, "iat-shared-cwd-")
+        identity = pid_headers(os.getpid(), 4321, x_agent_tabs_agent="codex", x_agent_tabs_cwd=folder.replace(" ", "%20"))
+        called = self.classic("tools/call", {"name": "list_sessions", "arguments": {}}, "2025-06-18", **identity).json["result"]
+        self.assertNotIn("resultType", called)
+        sessions = json.loads(called["content"][0]["text"])["sessions"]
+        me = next(s for s in sessions if s["self"])
+        self.assertEqual(me["id"], derived_id(f"pid:{os.getpid()}:4321"))
+        self.assertEqual(os.path.normcase(os.path.realpath(me["path"])), os.path.normcase(os.path.realpath(folder)))
+        without = pid_headers(os.getpid(), 4322, x_agent_tabs_agent="codex")
+        homed = self.classic("tools/call", {"name": "list_sessions", "arguments": {}}, "2025-06-18", **without).json["result"]
+        self.assertNotIn("resultType", homed)
+        self.assertEqual(self.server.hub.size, 2)
 
     def test_the_first_tool_call_asks_for_roots_and_the_session_keeps_its_folder_pid_and_start_time(self) -> None:
         cwd = temp_home(self, "iat-shared-cwd-")

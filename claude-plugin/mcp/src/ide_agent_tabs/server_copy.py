@@ -21,7 +21,9 @@ VERSION_FILE = "version.json"
 PYTHON_FILE = "python.json"
 SERVER_ENTRY = "mcp_server.py"
 HOOK_ENTRY = "agent_hook.py"
-STUB_ENTRIES = (SERVER_ENTRY, HOOK_ENTRY)
+HEADERS_ENTRY = "headers.py"
+PORT_FILE = "port.json"
+STUB_ENTRIES = (SERVER_ENTRY, HOOK_ENTRY, HEADERS_ENTRY)
 OLD_SERVER_FILE = "mcp-server.mjs"
 OLD_HOOK_FILE = "agent-hook.mjs"
 OLD_FILES = (OLD_SERVER_FILE, OLD_HOOK_FILE, "THIRD_PARTY_NOTICES.txt")
@@ -90,6 +92,10 @@ def server_copy_path(home: str, platform: str) -> str:
 
 def hook_copy_path(home: str, platform: str) -> str:
     return slashes(os.path.join(copy_dir(home), LAUNCH_DIR, HOOK_ENTRY), platform)
+
+
+def headers_copy_path(home: str, platform: str) -> str:
+    return slashes(os.path.join(copy_dir(home), LAUNCH_DIR, HEADERS_ENTRY), platform)
 
 
 def old_server_path(home: str, platform: str) -> str:
@@ -245,3 +251,13 @@ def write_python(home: str, python: str) -> bool:
         return False
     write_atomically(python_file(home), stringify({"python": python}, 2) + "\n")
     return True
+
+
+def read_port(home: str) -> int | None:
+    value = (_read_json(os.path.join(copy_root(home), PORT_FILE)) or {}).get("port")
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 < value <= 65535 else None
+
+
+def write_port(home: str, port: int) -> None:
+    if read_port(home) != port:
+        write_atomically(os.path.join(copy_root(home), PORT_FILE), stringify({"port": port}, 2) + "\n")

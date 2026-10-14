@@ -9,13 +9,13 @@ import { newToken } from '../registry';
 import { checkRevealTarget, OpenRequest, RevealDeps } from '../request';
 import { apiUrl, createApiServer, Host, listen, route, systemReveal, TabInfo } from '../server';
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-server-'));
+const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-server-'));
 const home = path.join(dir, 'home');
 fs.mkdirSync(home);
 fs.writeFileSync(path.join(home, 'agents.json'), JSON.stringify({ probe: { label: 'Probe', command: 'probe-cli', promptFlag: '-p' } }));
 const token = newToken();
 const settings = new AgentSettings(home, () => {});
-const opened: { request: OpenRequest; profile: AgentProfile; launch: AgentLaunch }[] = [];
+const opened: { request: OpenRequest; profile: AgentProfile; launch: AgentLaunch; id: string }[] = [];
 const tabs = new Map<string, TabInfo>();
 const typed: { id: string; text: string }[] = [];
 let folderOpen = true;
@@ -25,9 +25,9 @@ let revealWorks = true;
 const host: Host = {
   info: () => ({ ide: 'vscode', product: 'Test Code', version: '1.100.0', pid: 7, projects: [{ name: 'repo', path: dir, focused: true }] }),
   isInstalled: p => p.name === 'probe',
-  open: (request, profile, launch) => {
+  open: (request, profile, launch, id) => {
     if (!folderOpen) return undefined;
-    opened.push({ request, profile, launch });
+    opened.push({ request, profile, launch, id });
     const tab = { id: `tab-${tabs.size + 1}`, agent: profile.name, project: 'repo', path: request.path };
     tabs.set(tab.id, tab);
     return tab;
@@ -113,6 +113,28 @@ test('open, list, close, and close again', async () => {
   assert.equal(again.json.ok, false);
   assert.match(again.json.error, /no open agent tab/);
   assert.deepEqual((await call('list', {})).json, { ok: true, tabs: [] });
+});
+
+test('open plans a Codex tab with the id it hands the host', async () => {
+  const mcp = path.join(home, 'mcp');
+  const python = path.join(home, 'python.exe');
+  fs.mkdirSync(path.join(mcp, 'py', 'launch'), { recursive: true });
+  fs.writeFileSync(python, '');
+  fs.writeFileSync(path.join(mcp, 'python.json'), JSON.stringify({ python }));
+  fs.writeFileSync(path.join(mcp, 'port.json'), JSON.stringify({ port: 47831 }));
+  fs.writeFileSync(path.join(mcp, 'py', 'launch', 'headers.py'), '');
+  try {
+    assert.equal((await call('open', { path: dir, agent: 'codex' })).status, 200);
+    const last = opened.at(-1)!;
+    assert.match(last.id, /^[0-9a-f-]{36}$/);
+    assert.ok(last.launch.args.some(a => a.includes("url = 'http://127.0.0.1:47831/mcp'") && a.includes(` --tab ${last.id} --agent codex `)));
+    fs.rmSync(path.join(mcp, 'port.json'));
+    assert.equal((await call('open', { path: dir, agent: 'codex' })).status, 200);
+    assert.ok(opened.at(-1)!.launch.args.every(a => !a.includes('http_headers_helper')));
+    assert.notEqual(opened.at(-1)!.id, last.id);
+  } finally {
+    fs.rmSync(mcp, { recursive: true, force: true });
+  }
 });
 
 test('input types into an open tab and 404s once it closes', async () => {
@@ -242,7 +264,7 @@ test('reveal shows a known folder through the host and refuses anything else', a
   assert.equal(okReply.status, 200);
   assert.deepEqual(okReply.json, { ok: true, path: fs.realpathSync.native(dir) });
   assert.deepEqual(revealed, [fs.realpathSync.native(dir)]);
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-outside-'));
+  const outside = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-outside-'));
   for (const [body, error] of [
     [{}, 'path is required'],
     [{ path: 'relative/dir' }, 'path must be absolute: relative/dir'],
@@ -277,7 +299,7 @@ test('reveal resolves links first, refuses one that lands outside the known fold
   assert.throws(() => checkRevealTarget('/work/repo', [], deps('linux')), /not a folder of this window/);
   if (process.platform !== 'win32') {
     const linked = path.join(dir, 'away');
-    fs.symlinkSync(fs.mkdtempSync(path.join(os.tmpdir(), 'iat-away-')), linked);
+    fs.symlinkSync(fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-away-')), linked);
     assert.throws(() => checkRevealTarget(linked, [dir], systemReveal), /is not a folder of this window/);
   }
 });

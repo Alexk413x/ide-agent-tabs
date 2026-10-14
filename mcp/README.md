@@ -401,7 +401,14 @@ Codex tab runs in its own process instead. The tab needs Codex 0.158 or later, a
   MCP connection, so no process starts and no console window opens. The options also trust the five
   hooks, so Codex runs them without a `/hooks` review.
 
-For the exact options, see `CODEX_TAB_ARGS` and `codex_python` in
+When the shared server has run on this machine, a Codex tab connects to it instead and starts no server of
+its own. The tab's server option is then `url = 'http://127.0.0.1:<port>/mcp'` with an
+`http_headers_helper` that runs `headers.py` from the server copy and passes the tab id, agent, port and
+home as arguments, because Codex gives the helper no environment. The port comes from
+`~/.ide-agent-tabs/mcp/port.json`, which the server writes. A path with a space, a quote or `%`, or a
+missing port, interpreter or `headers.py`, keeps the tab on the stdio server above.
+
+For the exact options, see `CODEX_TAB_ARGS`, `codex_python` and `codex_http` in
 `claude-plugin/mcp/src/ide_agent_tabs/profiles.py`, and [Codex tabs](../docs/design.md#codex-tabs) in
 the design doc. The VS Code and JetBrains profiles hold the same strings.
 

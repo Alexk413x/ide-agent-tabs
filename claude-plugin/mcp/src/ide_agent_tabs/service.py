@@ -24,6 +24,7 @@ from .profiles import (
     TAB_ID_ENV,
     AgentSettings,
     claude_tab_settings,
+    codex_http,
     codex_python,
     resolve_focus,
     resolve_settings,
@@ -619,6 +620,7 @@ class Service:
                 raise ToolError(f"unknown agent: {request.agent}")
             profile = found
         detection = read_detection(self.deps.home)
+        tab_id = (self.deps.new_id or random_uuid)()
         try:
             plan = plan_launch(
                 profile,
@@ -633,13 +635,14 @@ class Service:
                     via=request.via,
                     cmd_shim=self.is_windows and is_cmd_shim(profile.command, self.ctx.path_var),
                     python=codex_python(self.deps.home, self.is_windows),
+                    http=codex_http(self.deps.home, self.is_windows, tab_id, profile.name),
                     claude_settings=claude_tab_settings(self.deps.home, self.is_windows),
                     cwd=request.path,
                 ),
             )
         except ValueError as e:
             raise ToolError(error_text(e)) from e
-        spec = launch_spec((self.deps.new_id or random_uuid)(), request.path, plan.launch)
+        spec = launch_spec(tab_id, request.path, plan.launch)
         remove_stale_files(os.path.join(self.deps.home, "launch"), [".json", ".spec"], SPEC_MAX_AGE_MS)
         power_shell = self._power_shell(settings.terminal.shell)
         ctx = self.ctx if power_shell is None else self.ctx.with_power_shell(power_shell)
