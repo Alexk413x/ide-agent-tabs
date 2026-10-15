@@ -113,16 +113,48 @@ export interface AgentEntry {
   via?: 'ori';
 }
 
+export type EntryToggles = Pick<SharedSettings, 'showOriAgents' | 'showLmStudioAgents' | 'showOllamaAgents'>;
+
+export interface LocalVariant {
+  name: string;
+  base: string;
+  toggle: 'showLmStudioAgents' | 'showOllamaAgents';
+}
+
+export const LOCAL_VARIANTS: readonly LocalVariant[] = [
+  { name: 'codex-lmstudio', base: 'codex', toggle: 'showLmStudioAgents' },
+  { name: 'codex-ollama', base: 'codex', toggle: 'showOllamaAgents' },
+];
+
+export const AGENT_ALIASES: ReadonlyMap<string, string> = new Map([['codex-local', 'codex-ollama']]);
+
+export function findProfile(profiles: readonly AgentProfile[], name: string | undefined): AgentProfile | undefined {
+  if (name === undefined) return undefined;
+  const exact = profiles.find(p => p.name === name);
+  const alias = AGENT_ALIASES.get(name);
+  return exact ?? (alias === undefined ? undefined : profiles.find(p => p.name === alias));
+}
+
+export function variantShown(name: string, toggles: EntryToggles): boolean {
+  const variant = LOCAL_VARIANTS.find(v => v.name === name);
+  return variant === undefined || toggles[variant.toggle];
+}
+
 export function agentEntries(
   profiles: readonly AgentProfile[],
   ori: DetectedOri | null,
-  showOri: boolean,
+  toggles: EntryToggles,
   installed: (p: AgentProfile) => boolean,
 ): AgentEntry[] {
   const entries: AgentEntry[] = [];
   for (const p of profiles) {
+    if (LOCAL_VARIANTS.some(v => v.name === p.name)) continue;
     if (installed(p)) entries.push({ name: p.name, label: p.label, profile: p });
-    if (showOri && oriLaunchable(p.name, ori)) entries.push({ name: `${ORI_PREFIX}${p.name}`, label: `Ori - ${p.label}`, profile: p, via: 'ori' });
+    if (toggles.showOriAgents && oriLaunchable(p.name, ori)) entries.push({ name: `${ORI_PREFIX}${p.name}`, label: `${p.label} - Ori`, profile: p, via: 'ori' });
+    for (const v of LOCAL_VARIANTS) {
+      const local = v.base === p.name && toggles[v.toggle] ? findProfile(profiles, v.name) : undefined;
+      if (local !== undefined && installed(local)) entries.push({ name: local.name, label: local.label, profile: local });
+    }
   }
   return entries;
 }
@@ -459,7 +491,8 @@ export const BUILTIN_PROFILES: readonly AgentProfile[] = Object.freeze([
   profile('qwen', 'Qwen Code', 'qwen', { promptFlag: '-i', modelFlag: '-m' }),
   profile('goose', 'Goose', 'goose', { args: ['run', '-s'], promptFlag: '-t', modelFlag: '--model' }),
   // Without --local-provider, --oss stops at a picker between LM Studio and Ollama.
-  profile('codex-local', 'Codex (local)', 'codex', { args: [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama'], modelFlag: '-m' }),
+  profile('codex-lmstudio', 'Codex - LM Studio', 'codex', { args: [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'lmstudio'], modelFlag: '-m' }),
+  profile('codex-ollama', 'Codex - Ollama', 'codex', { args: [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama'], modelFlag: '-m' }),
 ]);
 
 export function parseProfiles(text: string): AgentProfile[] {
@@ -560,14 +593,14 @@ export class AgentSettings {
   }
 
   profile(name: string): AgentProfile | undefined {
-    return this.profiles().find(p => p.name === name);
+    return findProfile(this.profiles(), name);
   }
 
   defaultProfile(): AgentProfile {
     const all = this.profiles();
     const preferred = this.preferred();
     const configured = this.sharedDefault();
-    return all.find(p => p.name === preferred) ?? all.find(p => p.name === configured) ?? all.find(p => p.name === DEFAULT_AGENT)!;
+    return findProfile(all, preferred) ?? findProfile(all, configured) ?? all.find(p => p.name === DEFAULT_AGENT)!;
   }
 
   setDefaultAgent(name: string): void {

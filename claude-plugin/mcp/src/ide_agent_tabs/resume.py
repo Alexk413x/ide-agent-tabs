@@ -8,7 +8,7 @@ from .clock import now_ms
 from .closed import ClosedSession, ended_ms, read_closed, resumable_id
 from .jsjson import JS_SPACE, js_round, number, utf16_len, utf16_slice
 from .launch_plan import is_model
-from .profiles import ALLOW_RESUME_KEY, CONFIG_FILE, AgentSettings
+from .profiles import ALLOW_RESUME_KEY, CONFIG_FILE, AgentSettings, canonical_agent
 from .service import ToolError
 
 CACHE_MS = 5 * 60_000
@@ -21,7 +21,8 @@ _NOT_ALNUM = re.compile(r"[^A-Za-z0-9]")
 RESUME_ARGS: dict[str, Callable[[str], list[str]]] = {
     "claude": lambda i: ["--resume", i],
     "codex": lambda i: ["resume", i],
-    "codex-local": lambda i: ["resume", i],
+    "codex-lmstudio": lambda i: ["resume", i],
+    "codex-ollama": lambda i: ["resume", i],
     "agy": lambda i: ["--conversation", i],
 }
 
@@ -168,7 +169,7 @@ class Resumes:
                     "effort": r["effort"],
                     "where": r["product"],
                     "preview": r["preview"],
-                    "resumable": r["agent"] in RESUME_ARGS,
+                    "resumable": canonical_agent(r["agent"]) in RESUME_ARGS,
                 }
                 for r in records
             ],
@@ -194,7 +195,7 @@ class Resumes:
                 "Turn it on in the IDE settings, or start a fresh session with handoff."
             )
         r = self._find(given["id"])
-        args = RESUME_ARGS.get(r["agent"])
+        args = RESUME_ARGS.get(canonical_agent(r["agent"]))
         short = utf16_slice(r["id"], 0, 8)
         if args is None:
             raise ToolError(

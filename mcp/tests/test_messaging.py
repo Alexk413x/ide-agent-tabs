@@ -217,6 +217,8 @@ class NamesTest(unittest.TestCase):
         self.assertEqual(harness_of("codex", "ori"), "Codex via OpenRouter")
         self.assertEqual(harness_of("codex", "direct"), "Codex")
         self.assertEqual(harness_of("zed-agent"), "zed-agent")
+        self.assertEqual(harness_of("codex-local"), "Codex - Ollama")
+        self.assertEqual(harness_of("codex-lmstudio", "direct"), "Codex - LM Studio")
 
 
 class EffectiveStateTest(unittest.TestCase):
@@ -916,6 +918,20 @@ class ListSessionsTest(unittest.TestCase):
         stale = made[0].list_sessions()["sessions"][0]
         self.assertEqual([stale["name"], stale["route"]], ["plugins-fa [6a3948]", "agent-tabs"])
         self.assertEqual(stale["nativeName"], "plugins-fa [6a3948]")
+
+    def test_the_local_codex_agents_and_codex_local_sort_after_goose(self) -> None:
+        home = temp_home(self)
+        made = [
+            session(self, home, "tab-o", "codex-ollama", 1),
+            session(self, home, "tab-l", "codex-local", 2),
+            session(self, home, "tab-z", "zed-agent", 3),
+            session(self, home, "tab-s", "codex-lmstudio", 4),
+            session(self, home, "tab-g", "goose", 5),
+        ]
+        rows = made[0].list_sessions()["sessions"]
+        agents = [r["agent"] for r in rows]
+        self.assertEqual(agents[:2] + agents[4:], ["goose", "codex-lmstudio", "zed-agent"])
+        self.assertEqual(sorted(agents[2:4]), ["codex-local", "codex-ollama"], "codex-local ranks as codex-ollama")
 
     def test_where_shows_the_stored_ide_product_when_the_endpoint_is_gone_refreshes_it_when_the_tab_is_re_adopted_and_is_none_when_unknown(
         self,

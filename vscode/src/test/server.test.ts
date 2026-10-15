@@ -96,7 +96,7 @@ test('agents lists every profile with the default and installed flags', async ()
   assert.equal(status, 200);
   assert.equal(json.default, 'claude');
   assert.deepEqual(json.agents.at(-1), { name: 'probe', label: 'Probe', command: 'probe-cli', installed: true });
-  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'probe']);
+  assert.deepEqual(json.agents.map((a: { name: string }) => a.name), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-lmstudio', 'codex-ollama', 'probe']);
 });
 
 test('open, list, close, and close again', async () => {
@@ -251,6 +251,19 @@ test('open takes an ori: agent name as the base agent through Ori', async () => 
     assert.equal((await call('open', { path: dir, agent: 'ori:nobody' })).json.error, 'unknown agent: nobody');
   } finally {
     fs.rmSync(path.join(home, 'detected.json'), { force: true });
+  }
+});
+
+test('open takes the local Codex rows and the codex-local alias whatever the toggles say', async () => {
+  for (const [agent, opens, provider] of [
+    ['codex-lmstudio', 'codex-lmstudio', 'lmstudio'],
+    ['codex-ollama', 'codex-ollama', 'ollama'],
+    ['codex-local', 'codex-ollama', 'ollama'],
+  ]) {
+    const { status, json } = await call('open', { path: dir, agent });
+    assert.equal(status, 200, agent);
+    assert.equal(json.agent, opens);
+    assert.deepEqual([opened.at(-1)?.profile.name, opened.at(-1)?.launch.command, opened.at(-1)?.launch.args.slice(-3)], [opens, 'codex', ['--oss', '--local-provider', provider]]);
   }
 });
 

@@ -10,7 +10,7 @@ from .files import read_text_if_exists, remove_stale_files, write_atomically
 from .jsjson import is_finite, is_number, is_safe_integer, parse, stringify, trim, utf16_len, utf16_slice
 from .messaging.sessions import VIAS, is_session_id
 from .messaging.store import KEEP_MS
-from .profiles import BUILTIN_PROFILES
+from .profiles import BUILTIN_PROFILES, CODEX_AGENTS, canonical_agent
 from .winapi import open_shared_read
 
 CLOSED_DIR = "history"
@@ -55,7 +55,7 @@ def closed_path(home: str, session_id: str) -> str:
 
 def resumable_id(p: Presence) -> str | None:
     agent = p.get("agent")
-    if agent in ("codex", "codex-local"):
+    if isinstance(agent, str) and canonical_agent(agent) in CODEX_AGENTS:
         found = p.get("threadId") if p.get("threadId") is not None else p.get("owner")
     else:
         found = p.get("owner")
@@ -63,7 +63,7 @@ def resumable_id(p: Presence) -> str | None:
 
 
 def label_of(agent: str) -> str:
-    return next((p.label for p in BUILTIN_PROFILES if p.name == agent), agent)
+    return next((p.label for p in BUILTIN_PROFILES if p.name == canonical_agent(agent)), agent)
 
 
 def preview_of(text: str) -> str | None:
@@ -219,7 +219,7 @@ def codex_usage(dirs: TranscriptDirs, session_id: str) -> Usage:
 def usage_of(dirs: TranscriptDirs, agent: str, folder: str, session_id: str) -> Usage:
     if agent == "claude":
         return claude_usage(dirs, folder, session_id)
-    if agent in ("codex", "codex-local"):
+    if canonical_agent(agent) in CODEX_AGENTS:
         return codex_usage(dirs, session_id)
     return _NO_USAGE
 

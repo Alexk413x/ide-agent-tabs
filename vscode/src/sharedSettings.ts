@@ -24,6 +24,8 @@ export interface SharedSettings {
   closeAfterHandoff: boolean;
   allowResume: boolean;
   showOriAgents: boolean;
+  showLmStudioAgents: boolean;
+  showOllamaAgents: boolean;
   focusNewTabs: FocusNewTabs;
   claudeMod: ClaudeMod;
 }
@@ -37,6 +39,8 @@ export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
   closeAfterHandoff: true,
   allowResume: true,
   showOriAgents: false,
+  showLmStudioAgents: false,
+  showOllamaAgents: false,
   focusNewTabs: AUTO,
   claudeMod: 'on',
 });
@@ -88,6 +92,8 @@ export function readSharedSettings(text: string, file: string): Partial<SharedSe
   if (typeof root.closeAfterHandoff === 'boolean') found.closeAfterHandoff = root.closeAfterHandoff;
   if (typeof root.allowResume === 'boolean') found.allowResume = root.allowResume;
   if (typeof root.showOriAgents === 'boolean') found.showOriAgents = root.showOriAgents;
+  if (typeof root.showLmStudioAgents === 'boolean') found.showLmStudioAgents = root.showLmStudioAgents;
+  if (typeof root.showOllamaAgents === 'boolean') found.showOllamaAgents = root.showOllamaAgents;
   const focusNewTabs = oneOf(FOCUS_NEW_TABS, root.focusNewTabs);
   if (focusNewTabs !== undefined) found.focusNewTabs = focusNewTabs;
   const claudeMod = oneOf(CLAUDE_MOD, root.claudeMod);

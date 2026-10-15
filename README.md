@@ -37,8 +37,8 @@ the new plugin as a normal plugin update.
   or tmux on macOS; Ghostty, kitty, WezTerm or tmux on Linux. iTerm2 and Ghostty on macOS need the
   Automation permission that macOS asks for on the first tab.
 - At least one agent CLI, such as Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi,
-  Hermes, OpenCode, Qwen Code or Goose. Codex (local) runs Codex with a local Ollama model and needs
-  Ollama 0.13.4 or later.
+  Hermes, OpenCode, Qwen Code or Goose. Codex - LM Studio and Codex - Ollama run Codex with a local model
+  and need LM Studio, or Ollama 0.13.4 or later.
 
 ## Where it works
 
@@ -69,14 +69,18 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 
 - **Model.** `open_tab` takes a `model` and passes it with the agent's model flag: `--model` for Claude
   Code, Antigravity CLI, Copilot CLI, Pi and Goose, and `-m` for Codex, Grok Build, Hermes,
-  OpenCode, Qwen Code and Codex (local). A custom profile sets `modelFlag` in
+  OpenCode, Qwen Code, Codex - LM Studio and Codex - Ollama. A custom profile sets `modelFlag` in
   `~/.ide-agent-tabs/agents.json`. A model for a profile without one is an error.
 - **Ori.** With Ori installed, `open_tab` takes `via: "ori"` to start a supported agent with
   `ori <agent>`. Ori bills model usage through OpenRouter. The setting **Launch through OpenRouter (Ori)**
   (`launchVia` in `config.json`) makes it the default. It is off by default and shows only when Ori is
   detected. To keep both, turn on **Show Ori agents** (`showOriAgents`): the agent menus and
-  `list_agents` then show an entry such as **Ori - Claude Code** under each agent Ori can launch, and
+  `list_agents` then show an entry such as **Claude Code - Ori** under each agent Ori can launch, and
   `open_tab` takes `agent: "ori:claude"`. See [Model and Ori](mcp/README.md#model-and-ori).
+- **Local models.** **Show LM Studio agents** (`showLmStudioAgents`) and **Show Ollama agents**
+  (`showOllamaAgents`), both off by default, list **Codex - LM Studio** and **Codex - Ollama** under
+  Codex. `open_tab` takes `codex-lmstudio` and `codex-ollama` either way, and `codex-local` still opens
+  `codex-ollama`. See [Local Codex entries](mcp/README.md#local-codex-entries).
 - **Handoff.** The `handoff` tool and skill move a session's work to a new tab with a written brief, then
   close the old tab once both sessions confirm. The `closeAfterHandoff` setting, on by default, controls
   the close. See [Handoff](mcp/README.md#handoff).
@@ -89,9 +93,9 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
 ## Agents
 
 The built-in agents are Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi,
-Hermes, and the agents built for local models: OpenCode, Qwen Code, Goose and Codex (local). Grok Build,
-Pi, Hermes, OpenCode, Qwen Code, Goose and Codex (local) come from each CLI's documentation and haven't had
-a live test. Crush and Prime Agent aren't included. See [Agent support](mcp/README.md#agent-support) for
+Hermes, and the agents built for local models: OpenCode, Qwen Code, Goose, Codex - LM Studio and Codex -
+Ollama. Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose and the two local Codex profiles come from each
+CLI's documentation and haven't had a live test. Crush and Prime Agent aren't included. See [Agent support](mcp/README.md#agent-support) for
 what each agent gets and why.
 
 ## Design

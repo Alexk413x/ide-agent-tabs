@@ -60,6 +60,8 @@ data class SharedSettings(
     val closeAfterHandoff: Boolean = true,
     val allowResume: Boolean = true,
     val showOriAgents: Boolean = false,
+    val showLmStudioAgents: Boolean = false,
+    val showOllamaAgents: Boolean = false,
     val focusNewTabs: FocusNewTabs = FocusNewTabs.AUTO_FOCUS,
     val claudeMod: Boolean = true,
 )
@@ -87,6 +89,8 @@ fun readSharedSettings(text: String): SharedSettings {
         closeAfterHandoff = root.booleanOrNull("closeAfterHandoff") ?: true,
         allowResume = root.booleanOrNull("allowResume") ?: true,
         showOriAgents = root.booleanOrNull("showOriAgents") ?: false,
+        showLmStudioAgents = root.booleanOrNull("showLmStudioAgents") ?: false,
+        showOllamaAgents = root.booleanOrNull("showOllamaAgents") ?: false,
         focusNewTabs = FocusNewTabs.of(root.stringOrNull("focusNewTabs")) ?: FocusNewTabs.AUTO_FOCUS,
         claudeMod = root.stringOrNull("claudeMod") != CLAUDE_MOD_OFF,
     )

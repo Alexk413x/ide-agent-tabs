@@ -24,6 +24,7 @@ import {
   CWD_ENV,
   cwdHeader,
   findOnPath,
+  findProfile,
   isCopilotCommand,
   isInstalled,
   launchOf,
@@ -36,7 +37,7 @@ import {
   withCopilotHttp,
 } from '../profiles';
 import { BadRequest, checkEnv } from '../request';
-import { DETECTED_FILE, DetectedOri, parseDetected, SHARED_DEFAULTS, userSettingValue, withSharedValue } from '../sharedSettings';
+import { DETECTED_FILE, DetectedOri, parseDetected, SHARED_DEFAULTS, SharedSettings, userSettingValue, withSharedValue } from '../sharedSettings';
 
 function fixture() {
   const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-agents-'));
@@ -55,19 +56,20 @@ function fixture() {
 test('built-in profiles match the design', () => {
   const { settings, warnings } = fixture();
   const profiles = settings.profiles();
-  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
+  assert.deepEqual(profiles.map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-lmstudio', 'codex-ollama']);
   assert.deepEqual(profiles.map(p => p.label), [
-    'Claude Code', 'Codex', 'Antigravity CLI', 'Copilot CLI', 'Grok Build', 'Pi', 'Hermes', 'OpenCode', 'Qwen Code', 'Goose', 'Codex (local)',
+    'Claude Code', 'Codex', 'Antigravity CLI', 'Copilot CLI', 'Grok Build', 'Pi', 'Hermes', 'OpenCode', 'Qwen Code', 'Goose', 'Codex - LM Studio', 'Codex - Ollama',
   ]);
-  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex']);
+  assert.deepEqual(profiles.map(p => p.command), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex', 'codex']);
   assert.deepEqual(profiles.map(p => p.promptFlag), [
-    undefined, undefined, '-i', '-i', undefined, undefined, '-q', '--prompt', '-i', '-t', undefined,
+    undefined, undefined, '-i', '-i', undefined, undefined, '-q', '--prompt', '-i', '-t', undefined, undefined,
   ]);
-  assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0, 0, 0, 1, 0, 0, 2, CODEX_TAB_ARGS.length + 3]);
+  assert.deepEqual(profiles.map(p => p.args.length), [0, CODEX_TAB_ARGS.length, 0, 0, 0, 0, 1, 0, 0, 2, CODEX_TAB_ARGS.length + 3, CODEX_TAB_ARGS.length + 3]);
   assert.deepEqual(profiles[1]!.args, CODEX_TAB_ARGS);
   assert.deepEqual(profiles[6]!.args, ['chat']);
   assert.deepEqual(profiles[9]!.args, ['run', '-s']);
-  assert.deepEqual(profiles[10]!.args, [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama']);
+  assert.deepEqual(profiles[10]!.args, [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'lmstudio']);
+  assert.deepEqual(profiles[11]!.args, [...CODEX_TAB_ARGS, '--oss', '--local-provider', 'ollama']);
   assert.deepEqual(profiles[1]!.args.slice(0, 2), ['--no-daemon', '-c']);
   assert.equal(settings.defaultProfile().name, 'claude');
   assert.deepEqual(warnings, []);
@@ -106,7 +108,7 @@ test('agents file overrides a built-in by name and adds new profiles', () => {
     },
     "bare": {"command": "bare-cli"}
   }`);
-  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local', 'opencode-local', 'bare']);
+  assert.deepEqual(settings.profiles().map(p => p.name), ['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-lmstudio', 'codex-ollama', 'opencode-local', 'bare']);
   assert.deepEqual(settings.profile('codex'), profile('codex', 'Codex (fast)', 'codex', { args: ['--model', 'o4'], promptFlag: undefined, modelFlag: undefined, icon: undefined }));
   assert.deepEqual(
     settings.profile('opencode-local'),
@@ -283,14 +285,14 @@ test('shared settings default when config.json is missing or lacks the keys', ()
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
   assert.deepEqual(settings.sharedFound(), {});
   write(CONFIG_FILE, '{"defaultAgent": "codex"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last', launchVia: 'direct', closeAfterHandoff: true, allowResume: true, showOriAgents: false, focusNewTabs: 'auto', claudeMod: 'on' });
+  assert.deepEqual(settings.shared(), { tabRouting: 'project', terminal: 'auto', shell: 'auto', terminalWindow: 'last', launchVia: 'direct', closeAfterHandoff: true, allowResume: true, showOriAgents: false, showLmStudioAgents: false, showOllamaAgents: false, focusNewTabs: 'auto', claudeMod: 'on' });
   assert.deepEqual(warnings, []);
 });
 
 test('shared settings read the seven keys and drop invalid values', () => {
   const { settings, write, warnings } = fixture();
   write(CONFIG_FILE, '{"tabRouting": "caller", "terminal": "wezterm", "shell": "/opt/pwsh", "terminalWindow": "dedicated", "launchVia": "ori"}');
-  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated', launchVia: 'ori', closeAfterHandoff: true, allowResume: true, showOriAgents: false, focusNewTabs: 'auto', claudeMod: 'on' });
+  assert.deepEqual(settings.shared(), { tabRouting: 'caller', terminal: 'wezterm', shell: '/opt/pwsh', terminalWindow: 'dedicated', launchVia: 'ori', closeAfterHandoff: true, allowResume: true, showOriAgents: false, showLmStudioAgents: false, showOllamaAgents: false, focusNewTabs: 'auto', claudeMod: 'on' });
   write(CONFIG_FILE, '{"tabRouting": "nowhere", "terminal": 3, "shell": " ", "terminalWindow": "", "launchVia": "both"}');
   assert.deepEqual(settings.sharedFound(), { shell: 'auto' });
   assert.deepEqual(settings.shared(), SHARED_DEFAULTS);
@@ -375,7 +377,7 @@ test('built-in profiles carry the model flag of each CLI', () => {
     BUILTIN_PROFILES.map(p => [p.name, p.modelFlag]),
     [
       ['claude', '--model'], ['codex', '-m'], ['agy', '--model'], ['copilot', '--model'], ['grok', '-m'], ['pi', '--model'],
-      ['hermes', '-m'], ['opencode', '-m'], ['qwen', '-m'], ['goose', '--model'], ['codex-local', '-m'],
+      ['hermes', '-m'], ['opencode', '-m'], ['qwen', '-m'], ['goose', '--model'], ['codex-lmstudio', '-m'], ['codex-ollama', '-m'],
     ],
   );
 });
@@ -406,17 +408,63 @@ test('showOriAgents is a shared flag that defaults to off and saves only when on
   assert.equal(withSharedValue(undefined, CONFIG_FILE, 'showOriAgents', true), '{\n  "showOriAgents": true\n}\n');
 });
 
+const toggles = (on: Partial<SharedSettings> = {}) => ({ ...SHARED_DEFAULTS, ...on });
+
+test('the local toggles are shared flags that default to off and save only when on', () => {
+  const { settings, write } = fixture();
+  for (const key of ['showLmStudioAgents', 'showOllamaAgents'] as const) {
+    assert.equal(settings.shared()[key], false);
+    write(CONFIG_FILE, `{"${key}": true}`);
+    assert.equal(settings.shared()[key], true);
+    write(CONFIG_FILE, `{"${key}": "yes"}`);
+    assert.deepEqual(settings.sharedFound(), {});
+    assert.equal(withSharedValue(`{"${key}": true}`, CONFIG_FILE, key, false), '{}\n');
+    assert.equal(withSharedValue(undefined, CONFIG_FILE, key, true), `{\n  "${key}": true\n}\n`);
+  }
+});
+
 test('agent entries put an Ori entry under each agent Ori can launch, only when shown', () => {
   const qwen = profile('qwen', 'Qwen Code', 'qwen');
   const all = [claudeProfile, qwen, codexProfile, profile('copilot', 'Copilot CLI', 'copilot')];
   const ori: DetectedOri = { ...oriAll, agents: ['claude', 'codex', 'qwen'] };
   const installed = (p: AgentProfile) => p.name !== 'codex';
-  const names = (shown: boolean, detected: DetectedOri | null = ori) => agentEntries(all, detected, shown, installed).map(e => e.name);
+  const names = (shown: boolean, detected: DetectedOri | null = ori) => agentEntries(all, detected, toggles({ showOriAgents: shown }), installed).map(e => e.name);
   assert.deepEqual(names(false), ['claude', 'qwen', 'copilot']);
   assert.deepEqual(names(true), ['claude', 'ori:claude', 'qwen', 'ori:codex', 'copilot']);
   assert.deepEqual(names(true, null), ['claude', 'qwen', 'copilot']);
-  const entry = agentEntries(all, ori, true, installed)[1];
-  assert.deepEqual(entry, { name: 'ori:claude', label: 'Ori - Claude Code', profile: claudeProfile, via: 'ori' });
+  const entry = agentEntries(all, ori, toggles({ showOriAgents: true }), installed)[1];
+  assert.deepEqual(entry, { name: 'ori:claude', label: 'Claude Code - Ori', profile: claudeProfile, via: 'ori' });
+});
+
+test('agent entries put the local Codex rows under Codex after its Ori entry, each only when its toggle is on', () => {
+  const ori: DetectedOri = { ...oriAll, agents: ['claude', 'codex'] };
+  const installed = (p: AgentProfile) => p.command === 'codex';
+  const names = (on: Partial<SharedSettings>) => agentEntries(BUILTIN_PROFILES, ori, toggles(on), installed).map(e => e.name);
+  assert.deepEqual(names({}), ['codex']);
+  assert.deepEqual(names({ showLmStudioAgents: true }), ['codex', 'codex-lmstudio']);
+  assert.deepEqual(names({ showOllamaAgents: true }), ['codex', 'codex-ollama']);
+  assert.deepEqual(names({ showOriAgents: true, showLmStudioAgents: true, showOllamaAgents: true }), [
+    'ori:claude', 'codex', 'ori:codex', 'codex-lmstudio', 'codex-ollama',
+  ]);
+  const all = toggles({ showLmStudioAgents: true, showOllamaAgents: true });
+  assert.deepEqual(agentEntries(BUILTIN_PROFILES, null, all, () => false), []);
+  const local = agentEntries(BUILTIN_PROFILES, null, all, installed).slice(1).map(e => [e.name, e.label, e.profile.args.at(-1), e.via]);
+  assert.deepEqual(local, [['codex-lmstudio', 'Codex - LM Studio', 'lmstudio', undefined], ['codex-ollama', 'Codex - Ollama', 'ollama', undefined]]);
+});
+
+test('codex-local finds the Ollama profile unless a profile has that name, and a custom profile overrides a local row in place', () => {
+  assert.equal(findProfile(BUILTIN_PROFILES, 'codex-local')?.name, 'codex-ollama');
+  assert.equal(findProfile(BUILTIN_PROFILES, 'nothing'), undefined);
+  const { settings, writeAgents, write } = fixture();
+  write(CONFIG_FILE, '{"defaultAgent": "codex-local"}');
+  assert.equal(settings.profile('codex-local')?.name, 'codex-ollama');
+  assert.equal(settings.defaultProfile().name, 'codex-ollama');
+  writeAgents('{"codex-ollama": {"label": "My Ollama", "command": "codex", "args": ["--oss"]}, "codex-local": {"command": "old-local"}}');
+  assert.equal(settings.profile('codex-local')?.command, 'old-local');
+  assert.equal(settings.defaultProfile().command, 'old-local');
+  const names = agentEntries(settings.profiles(), null, toggles({ showOllamaAgents: true }), () => true).map(e => [e.name, e.label]);
+  assert.deepEqual(names.slice(1, 4), [['codex', 'Codex'], ['codex-ollama', 'My Ollama'], ['agy', 'Antigravity CLI']]);
+  assert.deepEqual(names.at(-1), ['codex-local', 'codex-local']);
 });
 const claudeProfile = profile('claude', 'Claude Code', 'claude', { modelFlag: '--model' });
 const codexProfile = profile('codex', 'Codex', 'codex', { args: ['--no-daemon'], modelFlag: '-m' });
@@ -720,7 +768,7 @@ test('a Codex tab stays on the stdio server without a port, a headers stub or a 
 });
 
 test('withCodexHttp changes only the server argument', () => {
-  const http = codexHttp(httpHome(), onWindows, 'tab-1', 'codex-local')!;
+  const http = codexHttp(httpHome(), onWindows, 'tab-1', 'codex-ollama')!;
   const swapped = withCodexHttp(CODEX_TAB_ARGS, http)!;
   assert.deepEqual(swapped.filter((a, i) => a !== CODEX_TAB_ARGS[i]), [codexHttpArg(http)]);
   assert.equal(swapped.length, CODEX_TAB_ARGS.length);

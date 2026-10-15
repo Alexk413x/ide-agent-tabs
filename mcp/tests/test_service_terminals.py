@@ -202,6 +202,20 @@ class TerminalRoutingTest(unittest.TestCase):
         with self.assertRaisesRegex(ToolError, "^claude can't launch through Ori: Ori isn't installed$"):
             s.service.open_tab({"path": s.work, "agent": "ori:claude", "ide": "fake-term"})
 
+    def test_the_local_codex_rows_and_the_codex_local_alias_open_whatever_the_toggles_say(self) -> None:
+        s = Setup(self)
+        for agent, opens, provider in (
+            ("codex-lmstudio", "codex-lmstudio", "lmstudio"),
+            ("codex-ollama", "codex-ollama", "ollama"),
+            ("codex-local", "codex-ollama", "ollama"),
+        ):
+            with self.subTest(agent=agent):
+                opened = s.service.open_tab({"path": s.work, "agent": agent, "ide": "fake-term"})
+                self.assertEqual(opened["agent"], opens)
+                spec = s.terminal.opened[-1][0]
+                self.assertEqual((spec.agent, spec.command), (opens, "codex"))
+                self.assertEqual(spec.args[-3:], ["--oss", "--local-provider", provider])
+
     def test_a_tab_opened_without_a_prompt_counts_as_idle_once_it_has_had_time_to_start(self) -> None:
         s = Setup(self)
         ide = fake_ide(self, product="Fake Studio", projects=[{"name": "proj", "path": s.work, "focused": True}])

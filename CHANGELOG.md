@@ -3,6 +3,37 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.7
+
+Plugin and MCP server 0.9.7, with VS Code extension 0.1.34 and JetBrains plugin 0.4.17 bundled.
+
+### Added
+
+- Two profiles that name their local backend replace `codex-local`: `codex-lmstudio` (**Codex - LM
+  Studio**, `--oss --local-provider lmstudio`) and `codex-ollama` (**Codex - Ollama**, `--oss
+  --local-provider ollama`). Both are Codex tabs with the Codex tab arguments, `-m` for the model and
+  the shared HTTP server, as `codex-local` had.
+- The `showLmStudioAgents` and `showOllamaAgents` settings in `config.json` (**Show LM Studio agents**
+  and **Show Ollama agents**, off by default) list `codex-lmstudio` and `codex-ollama` under Codex, after
+  its Ori entry, in `list_agents` and in the VS Code and JetBrains agent menus. `list_agents` returns
+  each setting as `true` after `showOriAgents` only when it is on. Each IDE shows the settings as
+  checkboxes next to **Show Ori agents**: `ideAgentTabs.showLmStudioAgents` and
+  `ideAgentTabs.showOllamaAgents` in VS Code, and on the JetBrains Agent Tabs page.
+- `open_tab`, `handoff`, `resume_tab` and the IDEs' `open` take `codex-lmstudio` and `codex-ollama`
+  whatever the settings say.
+
+### Changed
+
+- Ori entries read `<agent label> - Ori`, such as **Claude Code - Ori**, instead of **Ori - Claude
+  Code**, so every launch-mode entry reads `<agent label> - <mode>`. The `ori:<name>` names and
+  `showOriAgents` stay.
+- `list_agents` and the agent menus no longer list a local Codex row by default. Before, they listed
+  **Codex (local)** (`codex-local`) for everyone; turn on **Show Ollama agents** to list its successor,
+  `codex-ollama`.
+- `codex-local` is an alias of `codex-ollama` wherever an agent name is accepted: `open_tab`, `handoff`,
+  `resume_tab`, the IDEs' `open`, `defaultAgent`, closed-session records and the `list_sessions` order.
+  An `agents.json` profile named `codex-local` is a custom profile, and the name then opens it.
+
 ## 0.9.6
 
 Plugin and MCP server 0.9.6, with VS Code extension 0.1.33 and JetBrains plugin 0.4.16 bundled.

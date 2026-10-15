@@ -120,6 +120,23 @@ class ClosedRecordTest(unittest.TestCase):
         assert record is not None
         self.assertEqual((record["id"], record["tokens"], record["harness"]), (CODEX_ID, 1234, "Codex"))
 
+    def test_a_local_codex_session_is_recorded_from_its_codex_thread(self) -> None:
+        dirs = dirs_in(temp_home(self))
+        day = os.path.join(dirs.codex, "sessions", "2026", "10", "04")
+        os.makedirs(day)
+        line = {"payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 99}}}}
+        with open(os.path.join(day, f"rollout-2026-10-04T10-00-00-{CODEX_ID}.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps(line))
+        for agent, harness in (
+            ("codex-local", "Codex - Ollama"),
+            ("codex-ollama", "Codex - Ollama"),
+            ("codex-lmstudio", "Codex - LM Studio"),
+        ):
+            with self.subTest(agent=agent):
+                record = closed.closed_record(presence(agent=agent, owner="x", threadId=CODEX_ID), NOW, dirs)
+                assert record is not None
+                self.assertEqual((record["id"], record["tokens"], record["harness"]), (CODEX_ID, 99, harness))
+
     def test_read_closed_drops_old_and_sorts_newest_first(self) -> None:
         home = temp_home(self)
         os.makedirs(os.path.join(home, closed.CLOSED_DIR))
@@ -204,6 +221,19 @@ class ResumesTest(unittest.TestCase):
         self.assertEqual(
             list(result), ["resumed", "id", "agent", "folder", "tokens", "size", "age", "endedAt", "tab", "ide", "product", "model", "cost"]
         )
+
+    def test_a_codex_local_record_reopens_as_a_codex_session(self) -> None:
+        resumes, opened = self.setup(id=CODEX_ID, agent="codex-local", model="qwen3")
+        self.assertTrue(resumes.list()["sessions"][0]["resumable"])
+        resumes.resume({"id": CODEX_ID})
+        self.assertEqual(
+            opened, [{"path": "/work/app", "agent": "codex-local", "args": ["resume", CODEX_ID], "model": "qwen3", "ide": "jetbrains-1"}]
+        )
+        for agent in ("codex-lmstudio", "codex-ollama"):
+            with self.subTest(agent=agent):
+                resumes, opened = self.setup(id=CODEX_ID, agent=agent)
+                resumes.resume({"id": CODEX_ID})
+                self.assertEqual(opened[0]["args"], ["resume", CODEX_ID])
 
     def test_an_expensive_session_asks_first(self) -> None:
         resumes, opened = self.setup(tokens=80_000, endedAt=iso(NOW - 30 * MINUTE))

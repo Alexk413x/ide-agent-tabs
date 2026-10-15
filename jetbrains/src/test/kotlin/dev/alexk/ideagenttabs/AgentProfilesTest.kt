@@ -32,25 +32,29 @@ class AgentProfilesTest {
     @Test
     fun `built-in profiles match the design`() {
         assertEquals(
-            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local"),
+            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-lmstudio", "codex-ollama"),
             settings.profiles().map { it.name },
         )
         assertEquals(
-            listOf("Claude Code", "Codex", "Antigravity CLI", "Copilot CLI", "Grok Build", "Pi", "Hermes", "OpenCode", "Qwen Code", "Goose", "Codex (local)"),
+            listOf(
+                "Claude Code", "Codex", "Antigravity CLI", "Copilot CLI", "Grok Build", "Pi", "Hermes", "OpenCode", "Qwen Code", "Goose",
+                "Codex - LM Studio", "Codex - Ollama",
+            ),
             settings.profiles().map { it.label },
         )
         assertEquals(
-            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex"),
+            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex", "codex"),
             settings.profiles().map { it.command },
         )
         assertEquals(
-            listOf(null, null, "-i", "-i", null, null, "-q", "--prompt", "-i", "-t", null),
+            listOf(null, null, "-i", "-i", null, null, "-q", "--prompt", "-i", "-t", null, null),
             settings.profiles().map { it.promptFlag },
         )
         assertEquals(
             listOf(
                 emptyList(), CODEX_TAB_ARGS, emptyList(), emptyList(), emptyList(), emptyList(),
-                listOf("chat"), emptyList(), emptyList(), listOf("run", "-s"), CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "ollama"),
+                listOf("chat"), emptyList(), emptyList(), listOf("run", "-s"),
+                CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "lmstudio"), CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "ollama"),
             ),
             settings.profiles().map { it.args },
         )
@@ -76,7 +80,10 @@ class AgentProfilesTest {
         )
         val profiles = settings.profiles()
         assertEquals(
-            listOf("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local", "opencode-local", "bare"),
+            listOf(
+                "claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-lmstudio", "codex-ollama", "opencode-local",
+                "bare",
+            ),
             profiles.map { it.name },
         )
         assertEquals(AgentProfile("codex", "Codex (fast)", "codex", listOf("--model", "o4")), settings.profile("codex"))
@@ -228,7 +235,8 @@ class AgentProfilesTest {
         assertEquals(
             listOf(
                 "claude" to "--model", "codex" to "-m", "agy" to "--model", "copilot" to "--model", "grok" to "-m", "pi" to "--model",
-                "hermes" to "-m", "opencode" to "-m", "qwen" to "-m", "goose" to "--model", "codex-local" to "-m",
+                "hermes" to "-m", "opencode" to "-m", "qwen" to "-m", "goose" to "--model", "codex-lmstudio" to "-m",
+                "codex-ollama" to "-m",
             ),
             BUILTIN_PROFILES.map { it.name to it.modelFlag },
         )
@@ -270,11 +278,47 @@ class AgentProfilesTest {
         val all = listOf(claude, qwen, codex, AgentProfile("copilot", "Copilot CLI", "copilot"))
         val ori = DetectedOri("/x/ori", "0.14.3", listOf("claude", "codex", "qwen"))
         val installed = { p: AgentProfile -> p.name != "codex" }
-        fun names(shown: Boolean, detected: DetectedOri? = ori) = agentEntries(all, detected, shown, installed).map { it.name }
+        fun names(shown: Boolean, detected: DetectedOri? = ori) = agentEntries(all, detected, SharedSettings(showOriAgents = shown), installed).map { it.name }
         assertEquals(listOf("claude", "qwen", "copilot"), names(false))
         assertEquals(listOf("claude", "ori:claude", "qwen", "ori:codex", "copilot"), names(true))
         assertEquals(listOf("claude", "qwen", "copilot"), names(true, null))
-        assertEquals(AgentEntry("ori:claude", "Ori - Claude Code", claude, LaunchVia.ORI), agentEntries(all, ori, true, installed)[1])
+        assertEquals(AgentEntry("ori:claude", "Claude Code - Ori", claude, LaunchVia.ORI), agentEntries(all, ori, SharedSettings(showOriAgents = true), installed)[1])
+    }
+
+    @Test
+    fun `agent entries put the local Codex rows under Codex after its Ori entry, each only when its toggle is on`() {
+        val ori = DetectedOri("/x/ori", "0.14.3", listOf("claude", "codex"))
+        val installed = { p: AgentProfile -> p.command == "codex" }
+        fun names(toggles: SharedSettings) = agentEntries(BUILTIN_PROFILES, ori, toggles, installed).map { it.name }
+        assertEquals(listOf("codex"), names(SharedSettings()))
+        assertEquals(listOf("codex", "codex-lmstudio"), names(SharedSettings(showLmStudioAgents = true)))
+        assertEquals(listOf("codex", "codex-ollama"), names(SharedSettings(showOllamaAgents = true)))
+        assertEquals(
+            listOf("ori:claude", "codex", "ori:codex", "codex-lmstudio", "codex-ollama"),
+            names(SharedSettings(showOriAgents = true, showLmStudioAgents = true, showOllamaAgents = true)),
+        )
+        val both = SharedSettings(showLmStudioAgents = true, showOllamaAgents = true)
+        assertEquals(emptyList<AgentEntry>(), agentEntries(BUILTIN_PROFILES, null, both, { false }))
+        assertEquals(
+            listOf(Triple("codex-lmstudio", "Codex - LM Studio", "lmstudio"), Triple("codex-ollama", "Codex - Ollama", "ollama")),
+            agentEntries(BUILTIN_PROFILES, null, both, installed).drop(1).map { Triple(it.name, it.label, it.profile.args.last()) },
+        )
+        assertTrue(agentEntries(BUILTIN_PROFILES, null, both, installed).all { it.via == null })
+    }
+
+    @Test
+    fun `codex-local finds the Ollama profile unless a profile has that name, and a custom profile overrides a local row in place`() {
+        assertEquals("codex-ollama", findProfile(BUILTIN_PROFILES, "codex-local")?.name)
+        assertNull(findProfile(BUILTIN_PROFILES, "nothing"))
+        write(CONFIG_FILE, """{"defaultAgent": "codex-local"}""")
+        assertEquals("codex-ollama", settings.profile("codex-local")?.name)
+        assertEquals("codex-ollama", settings.defaultProfile().name)
+        writeAgents("""{"codex-ollama": {"label": "My Ollama", "command": "codex", "args": ["--oss"]}, "codex-local": {"command": "old-local"}}""")
+        assertEquals("old-local", settings.profile("codex-local")?.command)
+        assertEquals("old-local", settings.defaultProfile().command)
+        val rows = agentEntries(settings.profiles(), null, SharedSettings(showOllamaAgents = true)) { true }.map { it.name to it.label }
+        assertEquals(listOf("codex" to "Codex", "codex-ollama" to "My Ollama", "agy" to "Antigravity CLI"), rows.subList(1, 4))
+        assertEquals("codex-local" to "codex-local", rows.last())
     }
 
     @Test
@@ -476,7 +520,7 @@ class AgentProfilesTest {
 
     @Test
     fun `withCodexHttp changes only the server argument`() {
-        val http = codexHttp(httpHome(), windows, "tab-1", "codex-local")!!
+        val http = codexHttp(httpHome(), windows, "tab-1", "codex-ollama")!!
         val swapped = withCodexHttp(CODEX_TAB_ARGS, http)!!
         assertEquals(CODEX_TAB_ARGS.size, swapped.size)
         assertEquals(listOf(codexHttpArg(http)), swapped.filterIndexed { i, arg -> arg != CODEX_TAB_ARGS[i] })

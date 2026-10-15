@@ -73,13 +73,6 @@
       "command": "goose",
       "installed": false,
       "model": true
-    },
-    {
-      "name": "codex-local",
-      "label": "Codex (local)",
-      "command": "codex",
-      "installed": false,
-      "model": true
     }
   ],
   "launchVia": "direct"

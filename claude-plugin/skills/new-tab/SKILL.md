@@ -1,6 +1,6 @@
 ---
 name: new-tab
-description: Open a new agent session (Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose, Codex (local), or a custom profile) in an IDE editor tab or a terminal tab, optionally in another folder and with a first message. Also lists and closes those tabs, and reopens a closed session. Use when the user asks to open a new tab, session or agent somewhere, to see which agent tabs are open, to close one, or to reopen or resume a session that ended. Not for opening a file or a web page in a tab.
+description: Open a new agent session (Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose, Codex - LM Studio, Codex - Ollama, or a custom profile) in an IDE editor tab or a terminal tab, optionally in another folder and with a first message. Also lists and closes those tabs, and reopens a closed session. Use when the user asks to open a new tab, session or agent somewhere, to see which agent tabs are open, to close one, or to reopen or resume a session that ended. Not for opening a file or a web page in a tab.
 argument-hint: "[agent] [folder] [-- first message]"
 allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" list-ides)
 ---
@@ -18,7 +18,7 @@ Arguments: `$ARGUMENTS`
 
 - Everything after a standalone `--` is the first message. It is optional.
 - Before `--`: an agent name (a profile such as `claude`, `codex`, `agy`, `copilot`, `grok`, `pi`, `hermes`,
-  `opencode`, `qwen`, `goose`, `codex-local`, or a custom one)
+  `opencode`, `qwen`, `goose`, `codex-lmstudio`, `codex-ollama`, or a custom one)
   and a folder. Either can be missing. Call `list_agents` when you need to tell a profile name from a
   folder name.
 - No folder means the current working directory. Resolve a relative folder to an absolute path and check
@@ -58,9 +58,14 @@ directly. `list_agents` marks the agents Ori can launch with `ori: true`, and `l
 setting that applies when you pass no `via`. A result with `via: "ori"` started through Ori.
 
 When the user turned on `showOriAgents`, `list_agents` also lists an entry such as `ori:claude`
-(`Ori - Claude Code`, with `via: "ori"` and `base: "claude"`) after each agent Ori can launch. Pass
+(`Claude Code - Ori`, with `via: "ori"` and `base: "claude"`) after each agent Ori can launch. Pass
 that name as `agent` when the user picks the Ori entry; it opens the base agent through Ori, in a tab of
 its own next to any direct tab. Don't pass `via: "direct"` with an `ori:` name.
+
+`codex-lmstudio` (`Codex - LM Studio`) and `codex-ollama` (`Codex - Ollama`) run Codex with a local
+model in LM Studio or Ollama. `list_agents` lists them under Codex only when the user turned on
+`showLmStudioAgents` or `showOllamaAgents`, but `open_tab` opens them either way. `codex-local` still
+opens `codex-ollama`.
 
 Report the folder, where the tab opened (IDE and project, or terminal), the agent, the model when you
 passed one, `via` when it is `ori`, and the tab id.

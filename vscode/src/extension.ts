@@ -21,14 +21,15 @@ import {
   isInstalled,
   ORI_PROFILES,
   planLaunch,
+  variantShown,
 } from './profiles';
 import { ENDPOINT_BEAT_MS, beatEndpoint, endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { BadRequest, closestBase, ORI_PREFIX } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
 import { AUTO, LaunchVia, SHARED_DEFAULTS, SharedSettings, userSettingValue } from './sharedSettings';
 
-const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-local']);
-const ICON_FILES: Record<string, string> = { 'codex-local': 'codex' };
+const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-lmstudio', 'codex-ollama']);
+const ICON_FILES: Record<string, string> = { 'codex-lmstudio': 'codex', 'codex-ollama': 'codex' };
 
 const commandKey = (name: string) => name.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
 
@@ -41,6 +42,8 @@ const SHARED_SETTING_NAMES: Record<keyof SharedSettings, string> = {
   closeAfterHandoff: 'closeAfterHandoff',
   allowResume: 'allowResume',
   showOriAgents: 'showOriAgents',
+  showLmStudioAgents: 'showLmStudioAgents',
+  showOllamaAgents: 'showOllamaAgents',
   focusNewTabs: 'focusNewTabs',
   claudeMod: 'claudeMod',
 };
@@ -154,7 +157,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   const entries = () =>
-    agentEntries(settings.profiles(), settings.detected().ori, settings.shared().showOriAgents, p => isInstalled(p.command, searchPath(), isWindows));
+    agentEntries(settings.profiles(), settings.detected().ori, settings.shared(), p => isInstalled(p.command, searchPath(), isWindows));
 
   const opensOnStartup = (folder: vscode.WorkspaceFolder) => {
     const mode = config().get<string>('openOnStartup', 'claudeFolder');
@@ -230,7 +233,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const escape = (text: string) => text.replace(/[\\`*_{}[\]()#+\-.!|<>]/g, '\\$&');
     const all = settings.profiles();
     const installed = all.filter(p => isInstalled(p.command, searchPath(), isWindows));
-    const missing = all.filter(p => !installed.includes(p));
+    const shared = settings.shared();
+    const missing = all.filter(p => !installed.includes(p) && variantShown(p.name, shared));
     const listed = entries();
     const dark = [vscode.ColorThemeKind.Dark, vscode.ColorThemeKind.HighContrast].includes(vscode.window.activeColorTheme.kind);
     const iconFor = (p: AgentProfile) => {
@@ -250,7 +254,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       return `${img}[${escape(entry.label)}](command:ideAgentTabs.openAgent?${args})${via}`;
     });
     for (const name of BUILTIN_ICONS) {
-      void vscode.commands.executeCommand('setContext', `ideAgentTabs.installed.${commandKey(name)}`, installed.some(p => p.name === name));
+      void vscode.commands.executeCommand('setContext', `ideAgentTabs.installed.${commandKey(name)}`, listed.some(e => e.via === undefined && e.profile.name === name));
     }
     for (const name of ORI_MENU_AGENTS) {
       void vscode.commands.executeCommand('setContext', `ideAgentTabs.ori.${commandKey(name)}`, listed.some(e => e.via === 'ori' && e.profile.name === name));

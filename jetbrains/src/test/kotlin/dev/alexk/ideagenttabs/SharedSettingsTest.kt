@@ -205,6 +205,27 @@ class SharedSettingsTest {
     }
 
     @Test
+    fun `the local toggles default to off, read a boolean and save only when on`() {
+        val toggles = listOf<Triple<String, (SharedSettings) -> Boolean, (Boolean) -> Boolean>>(
+            Triple("showLmStudioAgents", { it.showLmStudioAgents }, settings::setShowLmStudioAgents),
+            Triple("showOllamaAgents", { it.showOllamaAgents }, settings::setShowOllamaAgents),
+        )
+        for ((key, read, save) in toggles) {
+            Files.deleteIfExists(config)
+            assertFalse(read(settings.shared()))
+            write(CONFIG_FILE, """{"$key": true}""")
+            assertTrue(read(settings.shared()))
+            write(CONFIG_FILE, """{"$key": "true"}""")
+            assertFalse(read(settings.shared()))
+            Files.writeString(config, """{"defaultAgent": "codex"}""")
+            assertTrue(save(true))
+            assertEquals(JsonParser.parseString("""{"defaultAgent": "codex", "$key": true}"""), saved())
+            assertTrue(save(false))
+            assertEquals(JsonParser.parseString("""{"defaultAgent": "codex"}"""), saved())
+        }
+    }
+
+    @Test
     fun `closeAfterHandoff leaves a broken config alone`() {
         Files.writeString(config, "{broken")
         assertFalse(settings.setCloseAfterHandoff(false))

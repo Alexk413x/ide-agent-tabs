@@ -442,7 +442,7 @@ class AgentsTest(unittest.TestCase):
         )
         return s
 
-    def test_list_agents_without_show_ori_agents_keeps_its_output(self) -> None:
+    def test_list_agents_with_every_variant_toggle_off_lists_each_agent_once(self) -> None:
         def row(name: str, label: str, ori: bool = False) -> dict[str, Any]:
             return {"name": name, "label": label, "command": name, "installed": False, "model": True, **({"ori": True} if ori else {})}
 
@@ -459,11 +459,11 @@ class AgentsTest(unittest.TestCase):
                 row("opencode", "OpenCode"),
                 row("qwen", "Qwen Code"),
                 row("goose", "Goose"),
-                {**row("codex-local", "Codex (local)"), "command": "codex"},
             ],
             "launchVia": "direct",
         }
-        for config in ({}, {"showOriAgents": False}):
+        off = {"showOriAgents": False, "showLmStudioAgents": False, "showOllamaAgents": False}
+        for config in ({}, off):
             with self.subTest(config=config):
                 listed = self.ori_setup(config).service.list_agents()
                 self.assertEqual(jsjson.stringify(listed), jsjson.stringify(expected))
@@ -473,12 +473,12 @@ class AgentsTest(unittest.TestCase):
         names = [a["name"] for a in listed["agents"]]
         self.assertEqual(names[:4], ["claude", "ori:claude", "codex", "ori:codex"])
         self.assertNotIn("ori:qwen", names, "Ori lists qwen, but has no qwen launcher")
-        self.assertEqual(len(names), 13)
+        self.assertEqual(len(names), 12)
         self.assertEqual(
             listed["agents"][1],
             {
                 "name": "ori:claude",
-                "label": "Ori - Claude Code",
+                "label": "Claude Code - Ori",
                 "command": "ori",
                 "installed": True,
                 "model": True,
@@ -488,6 +488,58 @@ class AgentsTest(unittest.TestCase):
         )
         self.assertEqual(list(listed), ["default", "agents", "launchVia", "showOriAgents"])
         self.assertIs(listed["showOriAgents"], True)
+
+    def test_each_local_toggle_lists_its_codex_row_under_codex_after_the_ori_row(self) -> None:
+        cases = [
+            ({"showLmStudioAgents": True}, ["codex", "codex-lmstudio", "agy"], ["showLmStudioAgents"]),
+            ({"showOllamaAgents": True}, ["codex", "codex-ollama", "agy"], ["showOllamaAgents"]),
+            ({"showLmStudioAgents": True, "showOllamaAgents": True}, ["codex", "codex-lmstudio", "codex-ollama", "agy"], None),
+            (
+                {"showOriAgents": True, "showLmStudioAgents": True, "showOllamaAgents": True},
+                ["codex", "ori:codex", "codex-lmstudio", "codex-ollama", "agy"],
+                ["showOriAgents", "showLmStudioAgents", "showOllamaAgents"],
+            ),
+        ]
+        for config, around_codex, keys in cases:
+            with self.subTest(config=config):
+                listed = self.ori_setup(config).service.list_agents()
+                names = [a["name"] for a in listed["agents"]]
+                start = names.index("codex")
+                self.assertEqual(names[start : start + len(around_codex)], around_codex)
+                local = ("codex-local", "codex-lmstudio", "codex-ollama")
+                self.assertEqual([n for n in names if n in local], [n for n in around_codex if n in local])
+                if keys is not None:
+                    self.assertEqual(list(listed), ["default", "agents", "launchVia", *keys])
+
+    def test_a_local_row_is_installed_when_codex_is_installed(self) -> None:
+        bin_dir = temp_home(self, "iat-bin-")
+        s = Setup(self, config={"showLmStudioAgents": True, "showOllamaAgents": True}, env={"PATH": bin_dir})
+        rows = {a["name"]: a for a in s.service.list_agents()["agents"]}
+        self.assertEqual(
+            rows["codex-lmstudio"],
+            {"name": "codex-lmstudio", "label": "Codex - LM Studio", "command": "codex", "installed": False, "model": True},
+        )
+        write(os.path.join(bin_dir, "codex"), "")
+        rows = {a["name"]: a for a in s.service.list_agents()["agents"]}
+        self.assertEqual([rows[n]["installed"] for n in ("codex", "codex-lmstudio", "codex-ollama", "claude")], [True, True, True, False])
+        self.assertEqual(rows["codex-ollama"]["label"], "Codex - Ollama")
+
+    def test_a_custom_profile_overrides_a_local_row_in_place_and_codex_local_stays_its_own_profile(self) -> None:
+        s = Setup(self, config={"showOllamaAgents": True})
+        write(
+            os.path.join(s.home, "agents.json"),
+            {"codex-ollama": {"label": "My Ollama", "command": "codex", "args": ["--oss"]}, "codex-local": {"command": "old-local"}},
+        )
+        listed = s.service.list_agents()
+        names = [a["name"] for a in listed["agents"]]
+        self.assertEqual(names[names.index("codex") : names.index("codex") + 3], ["codex", "codex-ollama", "agy"])
+        self.assertEqual(names[-1], "codex-local")
+        self.assertEqual(listed["agents"][names.index("codex-ollama")]["label"], "My Ollama")
+        self.assertEqual(
+            listed["agents"][-1],
+            {"name": "codex-local", "label": "codex-local", "command": "old-local", "installed": False, "model": False},
+        )
+        self.assertNotIn("codex-lmstudio", names)
 
     def test_show_ori_agents_lists_no_ori_entry_without_ori(self) -> None:
         s = Setup(self, config={"showOriAgents": True})

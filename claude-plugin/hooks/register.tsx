@@ -40,7 +40,9 @@ const AGENT_LABELS: Record<string, string> = {
   opencode: 'OpenCode',
   qwen: 'Qwen Code',
   goose: 'Goose',
-  'codex-local': 'Codex local',
+  'codex-lmstudio': 'Codex - LM Studio',
+  'codex-ollama': 'Codex - Ollama',
+  'codex-local': 'Codex - Ollama',
 }
 
 const selfRef = { plugin: 'ide-agent-tabs', key: 'self' } as const

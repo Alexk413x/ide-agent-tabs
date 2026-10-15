@@ -76,8 +76,22 @@ class AgentTabsConfigurable : BoundConfigurable("Agent Tabs") {
                         .bindSelected({ Agents.settings.shared().showOriAgents }, { value ->
                             if (value != Agents.settings.shared().showOriAgents) saved(Agents.settings.setShowOriAgents(value))
                         })
-                        .comment("List an Ori entry, such as Ori - Claude Code, under each agent that Ori can launch, in the New Agent Tab menus and in list_agents. It opens the agent with <code>ori &lt;agent&gt;</code> in its own tab.")
+                        .comment("List an Ori entry, such as Claude Code - Ori, under each agent that Ori can launch, in the New Agent Tab menus and in list_agents. It opens the agent with <code>ori &lt;agent&gt;</code> in its own tab.")
                 }
+            }
+            row {
+                checkBox("Show LM Studio agents")
+                    .bindSelected({ Agents.settings.shared().showLmStudioAgents }, { value ->
+                        if (value != Agents.settings.shared().showLmStudioAgents) saved(Agents.settings.setShowLmStudioAgents(value))
+                    })
+                    .comment("List Codex - LM Studio under Codex, in the New Agent Tab menus and in list_agents. It opens Codex with <code>--oss --local-provider lmstudio</code>, which runs a local model in LM Studio.")
+            }
+            row {
+                checkBox("Show Ollama agents")
+                    .bindSelected({ Agents.settings.shared().showOllamaAgents }, { value ->
+                        if (value != Agents.settings.shared().showOllamaAgents) saved(Agents.settings.setShowOllamaAgents(value))
+                    })
+                    .comment("List Codex - Ollama under Codex, in the New Agent Tab menus and in list_agents. It opens Codex with <code>--oss --local-provider ollama</code>, which runs a local model in Ollama 0.13.4 or later.")
             }
             row {
                 checkBox("Close the old tab after a handoff")
