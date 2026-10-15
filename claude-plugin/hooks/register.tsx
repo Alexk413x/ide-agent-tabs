@@ -20,6 +20,7 @@ const MOD_TOOL = 'agent_tabs_mod'
 const POLL_MS = 2_000
 const BEAT_MS = 60_000
 const RETRY_MS = 30_000
+const CONTINUING: readonly string[] = ['clear', 'resume']
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const NATIVE_NAME = /This session is (.+?) —/
 const PEER_TOOLS = /^mcp__(plugin_ide-agent-tabs_)?ide-agent-tabs__(send_message|read_messages|wait_for_message|list_sessions|agent_tabs_mod)$/
@@ -63,6 +64,7 @@ const OPEN_TOOL_NAME = 'open_agent_messages'
 const OPEN_TOOL = /^mcp__ide-agent-tabs__open_agent_messages$/
 const PANE_COMMAND = /^agent-messages$/
 const PANE_TITLE = 'Agent Tabs Messages'
+const MOD_OFF = "The Agent Tabs mod isn't running in this session: claudeMod is off, or the Agent Tabs server isn't connected."
 const WIDEN_NOTICE = 'Widen Window to Display Pane'
 const PANE_ROWS = 18
 const PANE_OPEN = { id: PANE, title: PANE_TITLE, focus: true, closeOnEscape: true, holdToasts: true, rows: PANE_ROWS } as const
@@ -600,9 +602,11 @@ async function report($: EngineInterface, state: AgentTabsActivity) {
 }
 
 async function beat($: EngineInterface) {
-  const { value: me } = await $.state.get(selfRef)
+  const me = await self($)
+  if (!me?.isDriver) return
   const { value: state = 'idle' } = await $.state.get(activityRef)
-  if (me?.isDriver) await callMod($, me.server, { op: 'presence', state }).catch(() => undefined)
+  const reply = (await callMod($, me.server, { op: 'presence', state }).catch(() => undefined)) as PresenceReply | undefined
+  if (reply?.driver === false) await callMod($, me.server, { op: 'presence', driver: true, nativeName: me.name, state }).catch(() => undefined)
 }
 
 export function modelInfo(model: unknown, effort: unknown): ModelInfo {
@@ -745,7 +749,7 @@ const inbox = { delivering: false, retryAt: 0, shown: '', unread: 0 }
 let timers: { cancel: () => void }[] = []
 
 async function poll($: EngineInterface) {
-  const { value: me } = await $.state.get(selfRef)
+  const me = await self($)
   if (!me?.isDriver) return
   const unread = (await callMod($, me.server, { op: 'unread' }).catch(() => undefined)) as UnreadReply | undefined
   if (unread === undefined) return
@@ -771,6 +775,68 @@ async function poll($: EngineInterface) {
   } finally {
     inbox.delivering = false
   }
+}
+
+let begun = false
+let booting: Promise<AgentTabsSelf | null> | undefined
+
+async function begin($: EngineInterface, cwd: string | undefined): Promise<AgentTabsSelf | null> {
+  begun = true
+  sessionCwd.current = cwd ?? sessionCwd.current ?? (await $.session.cwd().catch(() => undefined))
+  for (const t of timers) t.cancel()
+  timers = []
+  agentNoted.type = ''
+  const me = await boot($).catch(() => null)
+  await $.env.set('IDE_AGENT_TABS_MOD', me?.isDriver ? me.id : undefined)
+  inbox.shown = ''
+  await $.state.set(inboxRef, null)
+  if (me === null) {
+    await $.state.set(selfRef, null)
+    return null
+  }
+  const configured = ((await $.settings.read().catch(() => ({}))) as { agent?: unknown }).agent
+  await noteAgent($, agentNoted.pending ?? configured, sessionCwd.current)
+  if (me.isDriver) {
+    timers.push($.clock.every(BEAT_MS, () => void beat($)))
+    timers.push($.clock.every(POLL_MS, () => void poll($).catch(() => undefined)))
+  }
+  for (const name of PANE_COMMANDS) {
+    await $.command.register({ name, description: 'Show or hide the Agent Tabs Messages pane: agents, and the messages each sent or received' }).catch(() => undefined)
+  }
+  await $.tool
+    .register({
+      name: OPEN_TOOL_NAME,
+      description:
+        "Open the user's Agent Tabs Messages pane. Call it only when the user asks to see agent messages, the agents pane, or one agent's messages. With agent (a name from ListAgents), it opens on that agent's messages.",
+      inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'A session name from ListAgents' } } },
+    })
+    .catch(() => undefined)
+  $.ui.invalidate('tool.describe')
+  const { value: open = false } = await $.state.get(paneOpenRef)
+  if (open && (await $.ui.panes()).some(pane => pane.id === PANE)) await showPane($)
+  else if (open) await $.state.set(paneOpenRef, false)
+  return me
+}
+
+function restart($: EngineInterface, cwd: string | undefined): Promise<AgentTabsSelf | null> {
+  const prior = booting
+  const run = (async () => {
+    await prior?.catch(() => null)
+    return begin($, cwd)
+  })().finally(() => {
+    if (booting === run) booting = undefined
+  })
+  booting = run
+  return run
+}
+
+// $.state belongs to one conversation: after /clear or /resume it reads empty and no session.start fires,
+// and /reload-plugins drops the timers without one. The first hook that needs the mod then starts it again.
+async function self($: EngineInterface): Promise<AgentTabsSelf | null> {
+  if (booting !== undefined) return booting
+  const { value } = await $.state.get(selfRef)
+  if (begun && value !== undefined) return value
+  return booting ?? restart($, undefined)
 }
 
 export const shortModel = (model: string) => model.replace(MODEL_VENDOR, '')
@@ -917,7 +983,7 @@ async function readListing($: EngineInterface): Promise<string | undefined> {
 }
 
 async function logNative($: EngineInterface, args: Record<string, unknown>) {
-  const { value: me } = await $.state.get(selfRef)
+  const me = await self($)
   if (me) await callMod($, me.server, { op: 'log', ...args, at: await $.clock.now() }).catch(() => undefined)
 }
 
@@ -1373,44 +1439,13 @@ export function detailChips(width: number): ListProps {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
-    sessionCwd.current = e.cwd
-    for (const t of timers) t.cancel()
-    timers = []
-    const me = await boot($).catch(() => null)
-    await $.env.set('IDE_AGENT_TABS_MOD', me?.isDriver ? me.id : undefined)
-    inbox.shown = ''
-    await $.state.set(inboxRef, null)
-    if (me === null) {
-      await $.state.set(selfRef, null)
-      return started
-    }
-    const configured = ((await $.settings.read().catch(() => ({}))) as { agent?: unknown }).agent
-    await noteAgent($, agentNoted.pending ?? configured, e.cwd)
-    if (me.isDriver) {
-      timers.push($.clock.every(BEAT_MS, () => void beat($)))
-      timers.push($.clock.every(POLL_MS, () => void poll($).catch(() => undefined)))
-    }
-    for (const name of PANE_COMMANDS) {
-      await $.command.register({ name, description: 'Show or hide the Agent Tabs Messages pane: agents, and the messages each sent or received' }).catch(() => undefined)
-    }
-    await $.tool
-      .register({
-        name: OPEN_TOOL_NAME,
-        description:
-          "Open the user's Agent Tabs Messages pane. Call it only when the user asks to see agent messages, the agents pane, or one agent's messages. With agent (a name from ListAgents), it opens on that agent's messages.",
-        inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'A session name from ListAgents' } } },
-      })
-      .catch(() => undefined)
-    $.ui.invalidate('tool.describe')
-    const { value: open = false } = await $.state.get(paneOpenRef)
-    if (open && (await $.ui.panes()).some(pane => pane.id === PANE)) await showPane($)
-    else if (open) await $.state.set(paneOpenRef, false)
+    await restart($, e.cwd)
     return started
   })
 
   on('session.end', async ($, e, next) => {
     const { value: me } = await $.state.get(selfRef)
-    if (me?.isDriver && e.reason !== 'clear') {
+    if (me?.isDriver && !CONTINUING.includes(e.reason)) {
       await $.env.set('IDE_AGENT_TABS_MOD', undefined)
       await callMod($, me.server, { op: 'presence', driver: false }).catch(() => undefined)
       $.ui.status(undefined)
@@ -1420,6 +1455,7 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    await self($)
     await report($, 'busy')
     await noteModel($, modelInfo(await $.session.model().catch(() => undefined), undefined))
     return next(e)
@@ -1432,6 +1468,7 @@ export const register: Register = on => {
 
   on('classic.SessionStart', async ($, e, next) => {
     const started = await next(e)
+    if (begun) await self($)
     await noteAgent($, e.agent_type, sessionCwd.current ?? e.cwd)
     return started
   })
@@ -1471,7 +1508,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'ListAgents' }, async ($, e, next) => {
     const ran = await next(e)
     if (ran.deny !== undefined || ran.isError || next.origin.plugin === $.plugin.name) return ran
-    const { value: me } = await $.state.get(selfRef)
+    const me = await self($)
     if (!me) return ran
     const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
     const listing = (ran.result as { listing?: unknown } | undefined)?.listing
@@ -1487,7 +1524,7 @@ export const register: Register = on => {
   })
 
   on('session.send', async ($, e, next) => {
-    const { value: me } = await $.state.get(selfRef)
+    const me = await self($)
     if (!me) return next(e)
     const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
     const target = bridgeTarget(rows, e.to)
@@ -1512,10 +1549,10 @@ export const register: Register = on => {
   on('tool.check', { tool: OPEN_TOOL }, () => ({ decision: 'allow' }))
 
   on('tool.call', { tool: OPEN_TOOL }, async ($, e) => {
-    const { value: me } = await $.state.get(selfRef)
+    const me = await self($)
     // Core validates `result` against a registered tool's output shape: a string, an array or undefined, never an object.
     const answer = (text: string) => ({ result: text, text })
-    if (!me) return answer('The Agent Tabs mod is not running in this session.')
+    if (!me) return answer(MOD_OFF)
     const agent = typeof (e as { agent?: unknown }).agent === 'string' ? ((e as { agent: string }).agent).trim() : ''
     if (agent === '') {
       const opened = await openPaneOn($, { view: 'agents', agent: null, message: null })
@@ -1595,9 +1632,9 @@ export const register: Register = on => {
     return received
   })
 
-  on('command.run', { command: PANE_COMMAND }, async ($, e, next) => {
-    const { value: me } = await $.state.get(selfRef)
-    if (!me) return next(e)
+  on('command.run', { command: PANE_COMMAND }, async $ => {
+    const me = await self($)
+    if (!me) return { text: MOD_OFF }
     if ((await $.ui.panes()).some(pane => pane.id === PANE)) {
       await $.ui.close({ id: PANE })
       return { text: `${PANE_TITLE} pane closed.` }
