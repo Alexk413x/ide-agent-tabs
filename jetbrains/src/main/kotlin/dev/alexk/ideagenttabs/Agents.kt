@@ -44,8 +44,6 @@ object Agents {
 
     private val neutralButtonIcon: Icon = IconLoader.getIcon("/icons/agentTab_new.svg", Agents::class.java)
 
-    val viaIcon: Icon = IconLoader.getIcon("/icons/openrouter.svg", Agents::class.java)
-
     private val badge: Icon = IconLoader.getIcon("/icons/newBadge.svg", Agents::class.java)
 
     private val customIcons = ConcurrentHashMap<String, Icon>()

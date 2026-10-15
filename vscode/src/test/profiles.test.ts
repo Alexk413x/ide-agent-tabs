@@ -97,6 +97,15 @@ test('the manifest wires every built-in profile and its icons', () => {
   }
 });
 
+test('the manifest has no launchVia setting', () => {
+  const root = path.resolve(__dirname, '..', '..');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const properties = manifest.contributes.configuration.flatMap((c: { properties: object }) => Object.keys(c.properties));
+  assert.ok(properties.includes('ideAgentTabs.showOriAgents'));
+  assert.ok(!properties.includes('ideAgentTabs.launchVia'));
+  assert.ok(!manifest.capabilities.untrustedWorkspaces.restrictedConfigurations.includes('ideAgentTabs.launchVia'));
+});
+
 test('agents file overrides a built-in by name and adds new profiles', () => {
   const { settings, warnings, writeAgents } = fixture();
   writeAgents(`{
@@ -603,15 +612,13 @@ test('detection reads the Ori entry and is null without it', () => {
   assert.deepEqual(parseDetected('{"ori": {"path": "/x/ori"}}').ori, { path: '/x/ori', version: undefined, agents: [] });
 });
 
-test('launchVia saves to config.json, defaults to direct and keeps other keys', () => {
+test('a launchVia value in config.json is read and survives writes to other keys', () => {
   const { settings, home, write } = fixture();
   assert.equal(settings.shared().launchVia, 'direct');
   write(CONFIG_FILE, '{"defaultAgent": "codex", "launchVia": "ori"}');
   assert.equal(settings.shared().launchVia, 'ori');
-  assert.ok(settings.setShared('launchVia', 'direct'));
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, CONFIG_FILE), 'utf8')), { defaultAgent: 'codex', launchVia: 'direct' });
-  assert.equal(userSettingValue('launchVia', { globalValue: 'ori', workspaceValue: 'direct' }), 'ori');
-  assert.equal(userSettingValue('launchVia', { workspaceValue: 'ori' }), 'direct');
+  assert.ok(settings.setShared('allowResume', false));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, CONFIG_FILE), 'utf8')), { defaultAgent: 'codex', launchVia: 'ori', allowResume: false });
 });
 
 test('closeAfterHandoff defaults to true, reads a boolean and drops other values', () => {

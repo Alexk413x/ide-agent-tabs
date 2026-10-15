@@ -121,7 +121,6 @@ Open **Settings > Tools > Agent Tabs**.
 | Setting | Description |
 |---|---|
 | Default agent | The agent that **New Agent Tab** opens. Saved in `~/.ide-agent-tabs/config.json`. |
-| Launch through OpenRouter (Ori) | `direct` or `ori`. With `ori`, supported agents start as `ori <agent>`, which bills model usage through OpenRouter, and the menus and tab names carry "via OpenRouter". An agent that Ori can't launch starts directly. Shown only when Ori (`ori`) is installed. Saved as `launchVia`. |
 | Show Ori agents | Lists an **&lt;agent&gt; - Ori** entry under each agent that Ori can launch, in the agent menus and in `list_agents`. It opens the agent with `ori <agent>` in its own tab, next to a direct tab of the same agent. Shown only when Ori (`ori`) is installed. Saved as `showOriAgents`, written only when on. |
 | Show LM Studio agents | Lists **Codex - LM Studio** under Codex, in the agent menus and in `list_agents`. It opens Codex with `--oss --local-provider lmstudio`, which runs a local model in LM Studio. Saved as `showLmStudioAgents`, written only when on. |
 | Show Ollama agents | Lists **Codex - Ollama** under Codex, in the agent menus and in `list_agents`. It opens Codex with `--oss --local-provider ollama`, which runs a local model in Ollama 0.13.4 or later. Saved as `showOllamaAgents`, written only when on. |

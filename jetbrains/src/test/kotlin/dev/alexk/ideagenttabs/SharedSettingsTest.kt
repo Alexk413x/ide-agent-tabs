@@ -142,12 +142,19 @@ class SharedSettingsTest {
     }
 
     @Test
-    fun `launchVia saves to config and keeps other keys`() {
+    fun `a launchVia value in config survives writes to other keys`() {
         Files.writeString(config, """{"defaultAgent": "codex", "launchVia": "ori"}""")
-        assertTrue(settings.setLaunchVia(LaunchVia.DIRECT))
-        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex", "launchVia": "direct"}"""), saved())
-        assertTrue(settings.setLaunchVia(LaunchVia.ORI))
-        assertEquals("ori", saved().get("launchVia").asString)
+        assertTrue(settings.setClaudeMod(false))
+        assertTrue(settings.setShowOriAgents(true))
+        assertEquals(JsonParser.parseString("""{"defaultAgent": "codex", "launchVia": "ori", "claudeMod": "off", "showOriAgents": true}"""), saved())
+    }
+
+    @Test
+    fun `no settings method writes launchVia`() {
+        val writers = AgentSettings::class.java.methods.filter { method ->
+            method.name.contains("LaunchVia", ignoreCase = true) || method.parameterTypes.any { it == LaunchVia::class.java }
+        }
+        assertEquals(emptyList<String>(), writers.map { it.name })
     }
 
     @Test

@@ -30,9 +30,9 @@ enum class TerminalWindow(val value: String, val label: String) {
     }
 }
 
-enum class LaunchVia(val value: String, val label: String) {
-    DIRECT("direct", "Directly"),
-    ORI("ori", "Through Ori"),
+enum class LaunchVia(val value: String) {
+    DIRECT("direct"),
+    ORI("ori"),
     ;
 
     companion object {

@@ -13,6 +13,7 @@ import {
   readSharedSettings,
   SHARED_DEFAULTS,
   SharedSettings,
+  SyncedSetting,
   withSharedValue,
 } from './sharedSettings';
 
@@ -617,7 +618,7 @@ export class AgentSettings {
     }
   }
 
-  setShared(key: keyof SharedSettings, value: string | boolean): boolean {
+  setShared(key: SyncedSetting, value: string | boolean): boolean {
     try {
       let existing: string | undefined;
       try {

@@ -3,6 +3,19 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.8
+
+Plugin and MCP server 0.9.8, with VS Code extension 0.1.35 and JetBrains plugin 0.4.18 bundled.
+
+### Removed
+
+- The **Launch through OpenRouter (Ori)** setting leaves both IDE settings screens: `ideAgentTabs.launchVia`
+  in VS Code and the combo box on the JetBrains Agent Tabs page. The Ori entries, such as **Claude Code -
+  Ori**, replace it; turn on **Show Ori agents** to list them. Both IDEs no longer write `launchVia`.
+- `launchVia` stays a key in `config.json`. The server still reads it, and the IDEs still read an existing
+  value, so `"launchVia": "ori"` keeps starting supported agents through Ori. Edit `config.json` to change
+  it. `open_tab` still takes `via`, and `list_agents` still returns `launchVia`.
+
 ## 0.9.7
 
 Plugin and MCP server 0.9.7, with VS Code extension 0.1.34 and JetBrains plugin 0.4.17 bundled.
