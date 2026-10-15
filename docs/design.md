@@ -1604,10 +1604,19 @@ defers it behind ToolSearch with a description that says it's internal.
   wake line into it. It returns `delivery: "queued"` with a `note` that the recipient's mod delivers the
   message once the session is idle. A new delivery value would break agents that expect `woken` or
   `queued`.
-- The mod sends `presence` every 60 seconds. A mod that stops without cleanup, such as one that failed
-  to reload, leaves a `modBeat` that ages past 3 minutes. The hooks and wake lines then resume, and the
-  session is listed under its id again.
-- `session.end` hands the tab back with `driver: false`, except on `/clear`, where the same mod goes on.
+- The mod sends `presence` every 60 seconds. When the reply says the session isn't the driver, such as
+  after the server ended the session on `/resume`, the beat claims the tab again. A mod that stops
+  without cleanup, such as one that failed to reload, leaves a `modBeat` that ages past 3 minutes. The
+  hooks and wake lines then resume, and the session is listed under its id again.
+- `session.end` hands the tab back with `driver: false`, except on `/clear` and `/resume`, where the
+  process and the mod go on.
+- Claude Code 2.1.300 keeps `$.state` per conversation. After `/clear` or `/resume` every value of the
+  mod reads as never written, and no `session.start` fires for the new conversation. `/reload-plugins`
+  keeps the state but drops the mod's timers, and fires no `session.start` either. So the first hook
+  that needs the mod's session starts it again, as `session.start` does: the poll timer, `turn.start`,
+  `classic.SessionStart`, the `ListAgents` and `SendMessage` hooks, the native log, `/agent-messages`
+  and `open_agent_messages`. Render hooks and `tool.describe` only read the state. The restart runs
+  once, however many hooks ask, and starts no second one while it runs.
 - A server that replaces a dead one drops the dead session's `driver`, `modBeat` and `nativeName`.
 - With the module absent, as on a Claude Code build without function hooks, nothing sets `driver`, and
   the command hooks and wake lines work as in 0.6.0.
@@ -1930,8 +1939,10 @@ Data:
 #### Turning the mod off
 
 `config.json` key `claudeMod`: `"on"` (default) or `"off"`. The mod reads it through the `settings` op
-at `session.start`. With `off` it does nothing: no driver claim, no polling, no `ListAgents` merge, no
-deferral, no card, no command and no native log, so the command hooks and wake lines work as in 0.6.0.
+at `session.start` and when it starts again (see [Handover](#handover)). With `off` it does nothing: no
+driver claim, no polling, no `ListAgents` merge, no deferral, no card, no command and no native log, so the
+command hooks and wake lines work as in 0.6.0. A `/agent-messages` that an earlier start registered
+answers that the mod isn't running.
 VS Code (`ideAgentTabs.claudeMod`, in the **Agent Tabs** section, machine scope, user level only),
 JetBrains (a checkbox on the main settings page) and the setup skill set it. Sessions that start after
 the change pick it up.
@@ -1948,7 +1959,9 @@ keep working when the model calls them.
 the `ListAgents` list (folder groups, alignment and cuts, order, the Claude join, the cloud group, the
 left-out count and the fallback), model and effort reports, `SendMessage` routing both ways, by short
 name and for every listed name, inbound delivery when idle and when busy,
-release after a failed submit, the permission rule, tool deferral, the self row, the native-style names, the agent type and colour lookup and its pane drawing, the 0.5.3 join (a unique match, an
+release after a failed submit, the permission rule, tool deferral, a new conversation after `/resume`
+and `/clear` (the tab stays claimed, mail, states and `SendMessage` resume, `/agent-messages` opens the
+pane, and says why when the mod is off) and the beat that claims a lost tab again, the self row, the native-style names, the agent type and colour lookup and its pane drawing, the 0.5.3 join (a unique match, an
 ambiguous match, a time mismatch and a slug mismatch), the Remote Control group, the card and its **Open in Agent
 Tabs** button on the terminal and desktop surfaces, the unread band appearing, opening the newest sender
 and hiding, the toast text, the pane's host and folder grouping, the list Client's hover, focus keys and clicks (pointer `move`, `down`, `up` and `leave`, and `down`, `up` and `return` through the kit), the Buttons on VS Code and mobile, the folder hover card and press (the

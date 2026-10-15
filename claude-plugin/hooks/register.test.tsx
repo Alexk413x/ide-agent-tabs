@@ -190,6 +190,7 @@ function world(on: On, options: WorldOptions = {}) {
   const counts = { listAgents: 0 }
   const model = { current: 'claude-opus-5-5' }
   const mail = { unread: [...(options.unread ?? [])], held: [] as string[], read: [] as string[] }
+  const claim = { lost: false }
   const clock = mock.clock(on, { now: NOW })
   const panes = { open: [] as string[], opened: [] as unknown[], closed: [] as unknown[], commands: [] as string[], filled: [] as string[] }
   const runs: string[][] = []
@@ -293,7 +294,8 @@ function world(on: On, options: WorldOptions = {}) {
     const fail = (text: string) => ({ value: { content: [{ type: 'text', text }], isError: true } })
     switch (e.args.op) {
       case 'presence':
-        return ok({ id: options.tab ?? 's-000000000001', tab: options.tab !== undefined, driver: options.tab !== undefined && e.args.driver !== false })
+        if (e.args.driver === true) claim.lost = false
+        return ok({ id: options.tab ?? 's-000000000001', tab: options.tab !== undefined, driver: options.tab !== undefined && e.args.driver !== false && !claim.lost })
       case 'unread':
         return ok({ count: mail.unread.length, senders: unreadSenders() })
       case 'sessions':
@@ -359,7 +361,24 @@ function world(on: On, options: WorldOptions = {}) {
   })
   const ops = (op: string) => calls.filter(c => c.args.op === op)
   const release = () => hung.splice(0).forEach(r => r())
-  return { calls, ops, statuses, toasts, copies, submitted, native, counts, mail, clock, model, panes, envSet, runs, pieces, release }
+  return { calls, ops, statuses, toasts, copies, submitted, native, counts, mail, claim, clock, model, panes, envSet, runs, pieces, release }
+}
+
+// Claude Code keeps $.state per conversation: after /clear or /resume every value of the mod reads as never written.
+function conversations(on: On) {
+  const fresh = { on: false, written: new Set<string>() }
+  on('state.get', (_$, e, next) => (fresh.on && e.plugin === 'ide-agent-tabs' && !fresh.written.has(e.key) ? { value: { value: undefined, version: 0 } } : next(e)))
+  on('state.set', async (_$, e, next) => {
+    const set = await next(e)
+    if (fresh.on && e.plugin === 'ide-agent-tabs') fresh.written.add(e.key)
+    return set
+  })
+  return {
+    next: () => {
+      fresh.on = true
+      fresh.written.clear()
+    },
+  }
 }
 
 async function start($: Engine) {
@@ -1439,6 +1458,71 @@ describe('classic hook marker', () => {
     expect(w.envSet).toEqual([{ name: 'IDE_AGENT_TABS_MOD', value: 'tab-c' }])
     await $.session.end({ reason: 'exit' } as never)
     expect(w.envSet.at(-1)).toEqual({ name: 'IDE_AGENT_TABS_MOD' })
+  })
+})
+
+describe('a new conversation and a reload', () => {
+  test('/resume keeps the tab claimed, and the mod starts again in the resumed conversation', async ($, on) => {
+    const w = world(on, { tab: 'tab-c' })
+    const talk = conversations(on)
+    await start($)
+    talk.next()
+    await $.session.end({ reason: 'resume' } as never)
+    expect(w.ops('presence').some(c => c.args.driver === false)).toBe(false)
+    expect(w.envSet.some(s => s.value === undefined)).toBe(false)
+    await $.classic.SessionStart({ source: 'resume' } as never)
+    expect(w.ops('presence').filter(c => c.args.driver === true)).toHaveLength(2)
+    expect(w.envSet.at(-1)).toEqual({ name: 'IDE_AGENT_TABS_MOD', value: 'tab-c' })
+    const listed = await $.tool.call({ tool: 'ListAgents' })
+    expect((listed.result as { listing: string }).listing).toBe(MERGED)
+  })
+
+  test('after /clear the next poll starts the mod again and delivers the mail that waits', async ($, on) => {
+    const w = world(on, { tab: 'tab-c' })
+    const talk = conversations(on)
+    await start($)
+    talk.next()
+    await $.session.end({ reason: 'clear' } as never)
+    w.mail.unread.push('1-m-0123456789abcdef.json')
+    await w.clock.advance(2_000)
+    await w.clock.settle()
+    expect(w.submitted).toEqual([FRAMED])
+    expect(w.ops('ack')).toHaveLength(1)
+  })
+
+  test('after /clear the next prompt reports busy again, and SendMessage bridges again', async ($, on) => {
+    const w = world(on, { tab: 'tab-c' })
+    const talk = conversations(on)
+    await start($)
+    talk.next()
+    await $.session.end({ reason: 'clear' } as never)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    expect(w.ops('presence').at(-1)!.args).toEqual({ op: 'presence', state: 'busy' })
+    expect(await $.session.send({ to: 'codex-1a2b', text: 'still bridged', origin: MODEL })).toEqual({ isDelivered: true })
+    expect(w.ops('send')).toHaveLength(1)
+  })
+
+  test('/agent-messages opens the pane when the state is empty but the command is still registered', async ($, on) => {
+    const w = world(on, { tab: 'tab-c' })
+    const talk = conversations(on)
+    await start($)
+    talk.next()
+    expect(await openPane($)).toEqual({ text: 'Agent Tabs Messages pane opened.' })
+    expect(w.panes.open).toEqual(['agent-tabs'])
+  })
+
+  test('/agent-messages says why when the mod is off', async ($, on) => {
+    world(on, { tab: 'tab-c', claudeMod: 'off' })
+    await start($)
+    expect(await openPane($)).toEqual({ text: "The Agent Tabs mod isn't running in this session: claudeMod is off, or the Agent Tabs server isn't connected." })
+  })
+
+  test('a beat that finds the claim gone claims the tab again', async ($, on) => {
+    const w = world(on, { tab: 'tab-c' })
+    await start($)
+    w.claim.lost = true
+    await w.clock.advance(60_000)
+    expect(w.ops('presence').at(-1)!.args).toEqual({ op: 'presence', driver: true, nativeName: NATIVE, state: 'idle' })
   })
 })
 

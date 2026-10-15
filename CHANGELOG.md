@@ -3,6 +3,22 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.9
+
+Plugin and MCP server 0.9.9.
+
+### Fixed
+
+- The Claude Code mod keeps driving a tab after `/resume` and `/clear`. Claude Code 2.1.300 keeps the
+  mod's `$.state` per conversation and fires no `session.start` for the conversation that follows, so the
+  mod lost its session and stopped polling, beating and merging `ListAgents`. `/resume` also handed the
+  tab back to the classic hooks. The mod now hands the tab back only when the session ends, and the first
+  hook that needs it after a new conversation or a `/reload-plugins` starts it again and claims the tab.
+- `/agent-messages` opens the pane after `/resume`, `/clear` or `/reload-plugins` instead of failing with
+  "no command.run hook answered it". With the mod off, it says why.
+- A presence beat that finds the claim gone, as after the server ended the session on `/resume`, claims
+  the tab again.
+
 ## 0.9.8
 
 Plugin and MCP server 0.9.8, with VS Code extension 0.1.35 and JetBrains plugin 0.4.18 bundled.
