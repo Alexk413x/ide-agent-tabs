@@ -579,8 +579,6 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
 
     fun setTerminalWindow(value: TerminalWindow): Boolean = saveShared("terminalWindow", value.value)
 
-    fun setLaunchVia(value: LaunchVia): Boolean = saveShared("launchVia", value.value)
-
     fun setFocusNewTabs(value: FocusNewTabs): Boolean = saveShared("focusNewTabs", value.value)
 
     fun setClaudeMod(on: Boolean): Boolean = saveShared("claudeMod", if (on) AUTO else CLAUDE_MOD_OFF)

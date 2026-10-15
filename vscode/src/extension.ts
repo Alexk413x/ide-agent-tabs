@@ -26,19 +26,18 @@ import {
 import { ENDPOINT_BEAT_MS, beatEndpoint, endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from './registry';
 import { BadRequest, closestBase, ORI_PREFIX } from './request';
 import { apiUrl, createApiServer, Host, listen, TabInfo } from './server';
-import { AUTO, LaunchVia, SHARED_DEFAULTS, SharedSettings, userSettingValue } from './sharedSettings';
+import { AUTO, LaunchVia, SHARED_DEFAULTS, SharedSettings, SyncedSetting, userSettingValue } from './sharedSettings';
 
 const BUILTIN_ICONS = new Set(['claude', 'codex', 'agy', 'copilot', 'grok', 'pi', 'hermes', 'opencode', 'qwen', 'goose', 'codex-lmstudio', 'codex-ollama']);
 const ICON_FILES: Record<string, string> = { 'codex-lmstudio': 'codex', 'codex-ollama': 'codex' };
 
 const commandKey = (name: string) => name.replace(/-(\w)/g, (_, c: string) => c.toUpperCase());
 
-const SHARED_SETTING_NAMES: Record<keyof SharedSettings, string> = {
+const SHARED_SETTING_NAMES: Record<SyncedSetting, string> = {
   tabRouting: 'openNewTabsIn',
   terminal: 'preferredTerminal',
   shell: 'windowsShell',
   terminalWindow: 'terminalWindow',
-  launchVia: 'launchVia',
   closeAfterHandoff: 'closeAfterHandoff',
   allowResume: 'allowResume',
   showOriAgents: 'showOriAgents',
@@ -48,7 +47,7 @@ const SHARED_SETTING_NAMES: Record<keyof SharedSettings, string> = {
   claudeMod: 'claudeMod',
 };
 
-const SHARED_KEYS = Object.keys(SHARED_SETTING_NAMES) as (keyof SharedSettings)[];
+const SHARED_KEYS = Object.keys(SHARED_SETTING_NAMES) as SyncedSetting[];
 
 interface Choice extends vscode.QuickPickItem {
   value: string | undefined;
@@ -294,7 +293,7 @@ New tab: **${process.platform === 'darwin' ? '⌘⌥A' : 'Ctrl+Alt+A'}**` : 'No 
       .then(undefined, e => log.warn(`Could not update ideAgentTabs.defaultAgent: ${(e as Error).message}`));
   };
 
-  const sharedValue = <K extends keyof SharedSettings>(key: K): SharedSettings[K] =>
+  const sharedValue = <K extends SyncedSetting>(key: K): SharedSettings[K] =>
     userSettingValue(key, config().inspect<SharedSettings[K]>(SHARED_SETTING_NAMES[key]));
 
   const shareSettings = () => {

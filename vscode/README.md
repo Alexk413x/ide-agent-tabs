@@ -73,7 +73,6 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 | --- | --- | --- |
 | `ideAgentTabs.defaultAgent` | `claude`, `codex`, `agy`, `copilot`, `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-lmstudio`, `codex-ollama` | `claude` |
 | `ideAgentTabs.openOnStartup` | `claudeFolder` (the project has a `.claude` folder), `always`, `never` | `claudeFolder` |
-| `ideAgentTabs.launchVia` | `direct`, `ori` (start supported agents with `ori <agent>`, which bills model usage through OpenRouter). Needs Ori (`ori`) installed. | `direct` |
 | `ideAgentTabs.showOriAgents` | `true` (list an **&lt;agent&gt; - Ori** entry under each agent that Ori can launch, in the agent menus and in `list_agents`; it opens the agent with `ori <agent>` in its own tab), `false`. Needs Ori (`ori`) installed. | `false` |
 | `ideAgentTabs.showLmStudioAgents` | `true` (list **Codex - LM Studio** under Codex, in the agent menus and in `list_agents`; it opens Codex with `--oss --local-provider lmstudio`), `false`. Needs LM Studio running. | `false` |
 | `ideAgentTabs.showOllamaAgents` | `true` (list **Codex - Ollama** under Codex, in the agent menus and in `list_agents`; it opens Codex with `--oss --local-provider ollama`), `false`. Needs Ollama 0.13.4 or later. | `false` |
@@ -106,10 +105,11 @@ The terminal and shell settings are text settings, because VS Code fixes a dropd
 **Agent Tabs: Choose Windows Shell…**) that lists the options in `~/.ide-agent-tabs/detected.json`, plus
 **Automatic** and, for the shell, **Custom path…**.
 
-`ideAgentTabs.launchVia` is user-level only, like the terminal settings, and stays in sync with `launchVia` in
-`config.json`. When it is `ori`, the status bar tooltip and the **New Agent Tab With…** menu tag the agents
-that start through Ori with "via OpenRouter", and the tab name carries the same tag. An agent that Ori can't
-launch starts directly. A request's `via` field overrides the setting for one tab.
+The extension has no setting for `launchVia`. It stays a key in `~/.ide-agent-tabs/config.json`, and the
+extension reads an existing value and never writes it. When it is `ori`, the status bar tooltip and the
+**New Agent Tab With…** menu tag the agents that start through Ori with "via OpenRouter", and the tab name
+carries the same tag. An agent that Ori can't launch starts directly. A request's `via` field overrides
+the key for one tab. To pick Ori per tab, turn on `ideAgentTabs.showOriAgents`.
 
 The editor title button, the status bar item and startup all use `ideAgentTabs.defaultAgent`. The
 setting stays in sync with `defaultAgent` in `~/.ide-agent-tabs/config.json`, so a change in the JetBrains

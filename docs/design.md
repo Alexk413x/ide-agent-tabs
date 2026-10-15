@@ -347,7 +347,8 @@ model option; open it without model, or set modelFlag for it in agents.json`.
 
 Ori is a launcher that starts an agent and bills its model usage through OpenRouter. A tab starts through
 Ori when the request sets `via: "ori"`, or when `launchVia` in `config.json` is `ori` and the request
-sets no `via`. An explicit `via` beats the setting.
+sets no `via`. An explicit `via` beats the key. `launchVia` is a `config.json` key only: the VS Code and
+JetBrains settings have no control for it, and both IDEs read an existing value.
 
 - The command is `ori`. Its arguments are the agent's name, `--model <model>` when the request names a
   model, the profile's `args`, the caller's `args`, and the prompt last. Ori's `--model` takes an
@@ -356,7 +357,7 @@ sets no `via`. An explicit `via` beats the setting.
   ones that `ori harness list --json` reports as installed. The profile's name must be one of these. Of
   the built-in profiles, that leaves `claude`, `codex`, `grok`, `hermes`, `opencode` and `pi`. Qwen Code,
   Goose and the two local Codex profiles always start directly. `prime-agent` has no profile.
-- When the setting asks for Ori and Ori can't launch the agent, the tab starts directly, with no error.
+- When `launchVia` asks for Ori and Ori can't launch the agent, the tab starts directly, with no error.
   When the request asks with `via: "ori"`, the open fails with `<agent> can't launch through Ori: <reason>`.
 - The tab's identity stays the inner agent: `IDE_AGENT_TABS_AGENT` is `claude` or `codex`, so hooks, wake
   rules and messaging use that agent's rules. The `open` reply and the `open_tab` result carry `via:
@@ -365,14 +366,13 @@ sets no `via`. An explicit `via` beats the setting.
   `.cmd` shim, as an npm install of Codex is. The server and the IDEs check the profile's and the
   caller's arguments before they launch through Ori.
 - `list_agents` reports `model: true` for a profile with a `modelFlag`, `ori: true` for a profile Ori can
-  launch, and the `launchVia` setting. The VS Code and JetBrains settings offer `launchVia` only when
-  `detected.json` has an `ori` entry. A tab started through Ori carries a "via OpenRouter" tag in menus
+  launch, and the `launchVia` value. A tab started through Ori carries a "via OpenRouter" tag in menus
   and tab names.
 
 #### Ori entries
 
 The `showOriAgents` setting lists Ori as a separate entry for each agent it can launch, so a user or an
-agent picks "Claude Code" or "Claude Code - Ori" instead of changing `launchVia`. It is off by default
+agent picks "Claude Code" or "Claude Code - Ori" per tab. It is off by default
 and changes only what is listed.
 
 - With `showOriAgents` on, `list_agents` puts a row right after each row that has `ori: true`:
@@ -651,11 +651,10 @@ its own, such as a peer test or delegated work, passes no `focus`. With `auto`, 
 `never` decide alone and ignore it. The New Agent Tab button and the open-on-startup tab don't use the setting; they always take focus. What
 `focus: false` does depends on the host; see [Focus](#focus).
 
-Seven more settings in `config.json` don't depend on where a tab opens:
+Six more settings in `config.json` don't depend on where a tab opens:
 
 | Setting | Key | Values | Default |
 |---|---|---|---|
-| Launch through OpenRouter (Ori) | `launchVia` | `direct`: start each agent with its own command. `ori`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `direct` |
 | Show Ori agents | `showOriAgents` | `true`: list a `<label> - Ori` entry under each agent Ori can launch, in the IDE menus and in `list_agents`. `false`: list each agent once. See [Ori entries](#ori-entries). | `false` |
 | Show LM Studio agents | `showLmStudioAgents` | `true`: list Codex - LM Studio (`codex-lmstudio`) under Codex, in the IDE menus and in `list_agents`. `false`: don't list it. See [Launch-mode entries](#launch-mode-entries). | `false` |
 | Show Ollama agents | `showOllamaAgents` | `true`: list Codex - Ollama (`codex-ollama`) under Codex, in the IDE menus and in `list_agents`. `false`: don't list it. See [Launch-mode entries](#launch-mode-entries). | `false` |
@@ -663,14 +662,16 @@ Seven more settings in `config.json` don't depend on where a tab opens:
 | Allow resuming closed sessions | `allowResume` | `true`: `resume_tab` reopens closed sessions. `false`: it refuses every call. See [Resume](#resume). | `true` |
 | Wait for a started IDE | `ideStartTimeoutSec` | Seconds to wait for an IDE that `open_tab`, `handoff` or `resume_tab` started by name to register, above 0 and at most 3600. After that the tab opens in the fallback. Only `config.json` sets it. | `180` |
 
-VS Code shows the first six in the **Agent Tabs** section, as `ideAgentTabs.launchVia`,
-`ideAgentTabs.showOriAgents`, `ideAgentTabs.showLmStudioAgents`, `ideAgentTabs.showOllamaAgents`,
+VS Code shows the first five in the **Agent Tabs** section, as `ideAgentTabs.showOriAgents`, `ideAgentTabs.showLmStudioAgents`, `ideAgentTabs.showOllamaAgents`,
 `ideAgentTabs.closeAfterHandoff` and `ideAgentTabs.allowResume`. JetBrains shows them on the Agent Tabs
-page, `launchVia`, **Show Ori agents**, **Show LM Studio agents** and **Show Ollama agents** next to
+page, **Show Ori agents**, **Show LM Studio agents** and **Show Ollama agents** next to
 **Default agent**, and writes `allowResume` only when it is off and the three show settings only when
-they are on. Both IDEs show
-`launchVia` only when `detected.json` has an `ori` entry; JetBrains shows **Show Ori agents** only then too. The server treats a value it doesn't know
+they are on. JetBrains shows **Show Ori agents** only when `detected.json` has an `ori` entry. The server treats a value it doesn't know
 as the default, as for the tab settings.
+
+`launchVia` stays a `config.json` key that the server reads, and neither IDE has a setting for it. Both IDEs
+read an existing value when they open a tab, so a `launchVia` of `ori` keeps starting supported agents
+through Ori. They never write the key, and they keep the value the file holds.
 
 The VS Code settings have machine scope, so only the user-level value reaches `config.json`. A workspace's
 `.vscode/settings.json` can't set the shell or the terminal, and an untrusted workspace can't change them.
@@ -2124,7 +2125,7 @@ Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before eac
   Plugins > ⚙ > Manage Plugin Repositories**, then install **Agent Tabs** from the **Marketplace** tab
   and restart the IDE;
 - reports which agent CLIs are installed, and writes the default agent to `~/.ide-agent-tabs/config.json`;
-- shows the tab settings, `launchVia`, `closeAfterHandoff` and `allowResume` (see [Settings](#settings)) and writes the
+- shows the tab settings, `closeAfterHandoff` and `allowResume` (see [Settings](#settings)) and writes the
   ones the user changes, including the preferred terminal, to `~/.ide-agent-tabs/config.json`;
 - registers the MCP server with the other agent CLIs the user picks (Codex, Antigravity CLI, Copilot CLI,
   Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose) with `agent-tabs sync-ides --register <agent>…`;
@@ -2408,7 +2409,7 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
   This is by design: it is the same power as running the agent yourself.
 - The server never passes caller text through a shell parser.
 - A tab started through Ori sends the agent's model traffic through OpenRouter, and OpenRouter bills
-  it. That is why `launchVia` is off by default.
+  it. That is why `launchVia` is `direct` by default.
 - A message's text never reaches a command line or a terminal. The only line the server types into a
   session is the fixed wake line, built from the sender's cleaned agent name and id.
 - Any process of your user can write to the message database, as it can open tabs. Every agent treats a message

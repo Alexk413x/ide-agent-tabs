@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "publisher": "alexk413x",
   "license": "LicenseRef-No-Resale-1.0",
   "repository": {
@@ -31,8 +31,7 @@
       "supported": true,
       "restrictedConfigurations": [
         "ideAgentTabs.preferredTerminal",
-        "ideAgentTabs.windowsShell",
-        "ideAgentTabs.launchVia"
+        "ideAgentTabs.windowsShell"
       ]
     },
     "virtualWorkspaces": false
@@ -114,59 +113,40 @@
             "description": "When to open the default agent in an editor tab without a click.",
             "order": 2
           },
-          "ideAgentTabs.launchVia": {
-            "type": "string",
-            "scope": "machine",
-            "default": "direct",
-            "enum": [
-              "direct",
-              "ori"
-            ],
-            "enumItemLabels": [
-              "Directly",
-              "Through Ori"
-            ],
-            "enumDescriptions": [
-              "Start each agent with its own command.",
-              "Start supported agents with `ori <agent>`."
-            ],
-            "markdownDescription": "Launch through OpenRouter (Ori). Start supported agents with `ori <agent>`, which bills model usage through OpenRouter. Needs Ori (`ori`) installed.",
-            "order": 3
-          },
           "ideAgentTabs.showOriAgents": {
             "type": "boolean",
             "scope": "machine",
             "default": false,
             "markdownDescription": "Show Ori agents. List an Ori entry under each agent that Ori (`ori`) can launch, such as `Claude Code - Ori`, in the New Agent Tab menus and in `list_agents`. An Ori entry opens the agent with `ori <agent>`, billed through OpenRouter, in its own tab next to the normal one. Needs Ori installed.",
-            "order": 4
+            "order": 3
           },
           "ideAgentTabs.showLmStudioAgents": {
             "type": "boolean",
             "scope": "machine",
             "default": false,
             "markdownDescription": "Show LM Studio agents. List `Codex - LM Studio` under Codex in the New Agent Tab menus and in `list_agents`. It opens Codex with `--oss --local-provider lmstudio`, which runs a local model in LM Studio. Needs Codex installed and LM Studio running.",
-            "order": 5
+            "order": 4
           },
           "ideAgentTabs.showOllamaAgents": {
             "type": "boolean",
             "scope": "machine",
             "default": false,
             "markdownDescription": "Show Ollama agents. List `Codex - Ollama` under Codex in the New Agent Tab menus and in `list_agents`. It opens Codex with `--oss --local-provider ollama`, which runs a local model in Ollama. Needs Codex installed and Ollama 0.13.4 or later running.",
-            "order": 6
+            "order": 5
           },
           "ideAgentTabs.closeAfterHandoff": {
             "type": "boolean",
             "scope": "machine",
             "default": true,
             "markdownDescription": "Close the old tab after a handoff. After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off.",
-            "order": 7
+            "order": 6
           },
           "ideAgentTabs.allowResume": {
             "type": "boolean",
             "scope": "machine",
             "default": true,
             "markdownDescription": "Allow resuming closed sessions. Agents can reopen a Claude Code, Codex or Antigravity CLI session that ended in the last 7 days with `resume_tab`. A resume past the prompt cache re-reads the whole history at full price, so the agent asks you first. Off refuses every resume.",
-            "order": 8
+            "order": 7
           },
           "ideAgentTabs.claudeMod": {
             "type": "string",
@@ -185,7 +165,7 @@
               "Claude Code sessions use the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0."
             ],
             "markdownDescription": "Use the Claude Code mod (in-process messaging). Takes effect in Claude Code sessions that start after the change.",
-            "order": 9
+            "order": 8
           }
         },
         "order": 1

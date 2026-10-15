@@ -72,9 +72,10 @@ the messaging hooks do nothing outside an agent tab, so a hook that runs in the 
   OpenCode, Qwen Code, Codex - LM Studio and Codex - Ollama. A custom profile sets `modelFlag` in
   `~/.ide-agent-tabs/agents.json`. A model for a profile without one is an error.
 - **Ori.** With Ori installed, `open_tab` takes `via: "ori"` to start a supported agent with
-  `ori <agent>`. Ori bills model usage through OpenRouter. The setting **Launch through OpenRouter (Ori)**
-  (`launchVia` in `config.json`) makes it the default. It is off by default and shows only when Ori is
-  detected. To keep both, turn on **Show Ori agents** (`showOriAgents`): the agent menus and
+  `ori <agent>`. Ori bills model usage through OpenRouter. The `launchVia` key in `config.json` makes it
+  the default for every tab that passes no `via`. It is `direct` by default, and no IDE setting
+  shows it. To pick per tab, turn on **Show Ori agents** (`showOriAgents`), which shows only when Ori is
+  detected: the agent menus and
   `list_agents` then show an entry such as **Claude Code - Ori** under each agent Ori can launch, and
   `open_tab` takes `agent: "ori:claude"`. See [Model and Ori](mcp/README.md#model-and-ori).
 - **Local models.** **Show LM Studio agents** (`showLmStudioAgents`) and **Show Ollama agents**

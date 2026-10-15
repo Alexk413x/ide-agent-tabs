@@ -60,17 +60,6 @@ class AgentTabsConfigurable : BoundConfigurable("Agent Tabs") {
                     .comment("Every IDE with Agent Tabs shares this setting, saved in ${configFile()}.")
             }
             if (detected.ori != null) {
-                row("Launch through OpenRouter (Ori):") {
-                    comboBox(LaunchVia.entries, listCellRenderer {
-                        val via = value ?: return@listCellRenderer
-                        if (via == LaunchVia.ORI) icon(Agents.viaIcon)
-                        text(via.label)
-                    })
-                        .bindItem({ Agents.settings.shared().launchVia }, { value ->
-                            if (value != null && value != Agents.settings.shared().launchVia) saved(Agents.settings.setLaunchVia(value))
-                        })
-                        .comment("Start supported agents with <code>ori &lt;agent&gt;</code>, which bills model usage through OpenRouter.")
-                }
                 row {
                     checkBox("Show Ori agents")
                         .bindSelected({ Agents.settings.shared().showOriAgents }, { value ->

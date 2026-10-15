@@ -84,15 +84,15 @@ unchanged.
   server passes `--model <model>` to Ori, which takes an OpenRouter model id and replaces the agent's
   own model flag.
 
-The `launchVia` setting in `config.json` (**Launch through OpenRouter (Ori)**) sets `via` for every tab
-that doesn't pass one. It is `direct` by default. The VS Code and JetBrains settings show it only when
-Ori is detected. An explicit `via` beats the setting.
+The `launchVia` key in `config.json` sets `via` for every tab that doesn't pass one. It is `direct` by
+default. Only `config.json` sets it: the VS Code and JetBrains settings have no control for it, and
+they still read an existing value. An explicit `via` beats the key.
 
 Ori launches only these agents, and only the ones Ori lists as installed: `claude`, `codex`, `grok`,
 `hermes`, `opencode`, `pi` and `prime-agent`. Of the built-in profiles, that leaves `claude`, `codex`,
 `grok`, `hermes`, `opencode` and `pi`; Qwen Code, Goose and the local Codex profiles always start directly, and
-`prime-agent` has no profile. `list_agents` marks each one with `ori: true`. When the
-setting is `ori` and Ori can't launch the agent, the tab starts directly. When `via: "ori"` is explicit
+`prime-agent` has no profile. `list_agents` marks each one with `ori: true`. When
+`launchVia` is `ori` and Ori can't launch the agent, the tab starts directly. When `via: "ori"` is explicit
 and Ori can't launch the agent, the call fails with `<agent> can't launch through Ori: <reason>`.
 
 The agent keeps its own identity. `IDE_AGENT_TABS_AGENT` stays `claude` or `codex`, so hooks, wake-ups
@@ -100,7 +100,7 @@ and messaging follow that agent's rules.
 
 #### Ori entries
 
-To pick between an agent and the same agent through Ori without changing `launchVia`, set
+To pick between an agent and the same agent through Ori per tab, set
 `showOriAgents` to `true` in `config.json` (**Show Ori agents** in the IDE settings). It is off by
 default and changes only what is listed:
 

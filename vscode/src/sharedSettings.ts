@@ -30,6 +30,8 @@ export interface SharedSettings {
   claudeMod: ClaudeMod;
 }
 
+export type SyncedSetting = Exclude<keyof SharedSettings, 'launchVia'>;
+
 export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
   tabRouting: 'project',
   terminal: AUTO,
@@ -101,7 +103,7 @@ export function readSharedSettings(text: string, file: string): Partial<SharedSe
   return found;
 }
 
-export function withSharedValue(existing: string | undefined, file: string, key: keyof SharedSettings, value: string | boolean): string {
+export function withSharedValue(existing: string | undefined, file: string, key: SyncedSetting, value: string | boolean): string {
   const root = existing === undefined || existing.trim() === '' ? {} : parseObject(existing, file);
   if (typeof value === 'boolean') {
     if (value === SHARED_DEFAULTS[key]) delete root[key];
@@ -149,7 +151,7 @@ export interface InspectedSetting {
   workspaceFolderValue?: unknown;
 }
 
-export function userSettingValue<K extends keyof SharedSettings>(key: K, inspected: InspectedSetting | undefined): SharedSettings[K] {
+export function userSettingValue<K extends SyncedSetting>(key: K, inspected: InspectedSetting | undefined): SharedSettings[K] {
   const value = inspected?.globalValue;
   const fallback = SHARED_DEFAULTS[key];
   if (typeof fallback === 'boolean') return (typeof value === 'boolean' ? value : fallback) as SharedSettings[K];

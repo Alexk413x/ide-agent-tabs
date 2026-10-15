@@ -55,7 +55,7 @@ for it instead of ignoring the model.
 
 Pass `via` only when the user asks to launch through Ori (OpenRouter, billed there) or to launch
 directly. `list_agents` marks the agents Ori can launch with `ori: true`, and `launchVia` shows the
-setting that applies when you pass no `via`. A result with `via: "ori"` started through Ori.
+`config.json` value that applies when you pass no `via`. A result with `via: "ori"` started through Ori.
 
 When the user turned on `showOriAgents`, `list_agents` also lists an entry such as `ori:claude`
 (`Claude Code - Ori`, with `via: "ori"` and `base: "claude"`) after each agent Ori can launch. Pass

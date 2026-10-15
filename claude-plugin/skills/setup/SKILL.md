@@ -222,7 +222,6 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
 
 | Setting | Key | Values | Default |
 |---|---|---|---|
-| Launch through OpenRouter (Ori) | `launchVia` | `direct`, `ori` | `direct` |
 | Show Ori agents | `showOriAgents` | `true`, `false` | `false` |
 | Show LM Studio agents | `showLmStudioAgents` | `true`, `false` | `false` |
 | Show Ollama agents | `showOllamaAgents` | `true`, `false` | `false` |
@@ -230,18 +229,14 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
 | Allow resuming closed sessions | `allowResume` | `true`, `false` | `true` |
 | Use the Claude Code mod (in-process messaging) | `claudeMod` | `on`, `off` | `on` |
 
-- Launch through OpenRouter (Ori): Start supported agents with `ori <agent>`, which bills model usage
-  through OpenRouter. Offer it only when `~/.ide-agent-tabs/detected.json` has a non-null `ori`, or
-  `list_agents` shows `ori: true` for an agent. Ori launches `claude`, `codex`, `grok`, `hermes`,
-  `opencode`, `pi` and `prime-agent`, only those it lists as installed. When Ori can't launch an agent,
-  the tab starts directly. Tell the user that usage through Ori is billed through OpenRouter, and keep
-  the setting `direct` unless they ask for `ori`. An `open_tab` call with `via` overrides it. A
-  Codex tab doesn't launch through Ori with an npm Codex on Windows, and `ori claude` may fail with
-  `401 Missing Authentication header` in Ori 0.14.3; both are Ori limits.
 - Show Ori agents: With `true`, the agent menus and `list_agents` list an entry such as
-  **Claude Code - Ori** (`ori:claude`) under each agent Ori can launch, so the user picks per tab
-  instead of changing `launchVia`. Offer it under the same condition as `launchVia`. It changes only
-  what is listed.
+  **Claude Code - Ori** (`ori:claude`) under each agent Ori can launch, so the user picks per tab.
+  Offer it only when `~/.ide-agent-tabs/detected.json` has a non-null `ori`, or `list_agents` shows
+  `ori: true` for an agent. Ori launches `claude`, `codex`, `grok`, `hermes`, `opencode`, `pi` and
+  `prime-agent`, only those it lists as installed. Tell the user that usage through Ori is billed
+  through OpenRouter. It changes only what is listed. A Codex tab doesn't launch through Ori with an
+  npm Codex on Windows, and `ori claude` may fail with `401 Missing Authentication header` in Ori
+  0.14.3; both are Ori limits.
 - Show LM Studio agents, Show Ollama agents: With `true`, the agent menus and `list_agents` list
   **Codex - LM Studio** (`codex-lmstudio`) or **Codex - Ollama** (`codex-ollama`) under Codex, after
   its Ori entry. Each runs Codex with `--oss --local-provider lmstudio` or `ollama`, so a local model
@@ -260,15 +255,19 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
   sessions that start after the change pick it up. Suggest `off` only when the user reports a problem
   with the mod.
 
+`launchVia` (`direct` or `ori`) is a `config.json` key with no IDE setting. With `ori`, supported agents
+start as `ori <agent>` unless the request passes `via`. Set it only when the user asks to start every
+agent through Ori, and keep `direct` otherwise.
+
 To change a setting, use the IDE settings or edit `config.json` and keep every other key:
 
 - VS Code and editors built on it: **Settings > Extensions > Agent Tabs**, in the sections **Agent Tabs:
   IDE tabs** and **Agent Tabs: Terminal tabs**. The terminal and shell settings have a **Choose…** link
-  that lists the detected options. The launch, handoff and resume settings are in the **Agent Tabs** section,
-  and the launch setting shows only when Ori is detected.
+  that lists the detected options. The agent list, handoff and resume settings are in the **Agent Tabs**
+  section.
 - JetBrains IDEs: **Settings > Tools > Agent Tabs**, in the groups **IDE tabs** and **Terminal tabs**.
-  The Shell row shows on Windows only. The launch setting sits next to **Default agent** and shows only
-  when Ori is detected.
+  The Shell row shows on Windows only. The agent list settings sit under **Default agent**, and **Show Ori
+  agents** shows only when Ori is detected.
 
 The lists of terminals and PowerShell installs come from `~/.ide-agent-tabs/detected.json`, which the
 MCP server writes. `"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" list-ides` prints the same `terminals`, and on
