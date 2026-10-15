@@ -1,6 +1,6 @@
 ---
 name: message
-description: Split work with another live agent session (Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose or Codex (local)) by messaging it through Agent Tabs, and answer messages from other sessions. Use when the user asks to hand part of a task to another session or agent, to ask another session something, to coordinate with "the Codex tab" or similar, or when a notice says unread Agent Tabs messages wait.
+description: Split work with another live agent session (Claude Code, Codex, Antigravity CLI, Copilot CLI, Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose, Codex - LM Studio or Codex - Ollama) by messaging it through Agent Tabs, and answer messages from other sessions. Use when the user asks to hand part of a task to another session or agent, to ask another session something, to coordinate with "the Codex tab" or similar, or when a notice says unread Agent Tabs messages wait.
 argument-hint: "[session or agent] <request>"
 ---
 

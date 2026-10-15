@@ -102,12 +102,28 @@ fun oriLaunchable(name: String, ori: DetectedOri?): Boolean = ori != null && nam
 // Same rows as list_agents in claude-plugin/mcp/src/ide_agent_tabs/service.py, less the agents that aren't installed.
 data class AgentEntry(val name: String, val label: String, val profile: AgentProfile, val via: LaunchVia? = null)
 
-fun agentEntries(profiles: List<AgentProfile>, ori: DetectedOri?, showOri: Boolean, installed: (AgentProfile) -> Boolean): List<AgentEntry> =
-    profiles.flatMap { p ->
+class LocalVariant(val name: String, val base: String, val shown: (SharedSettings) -> Boolean)
+
+val LOCAL_VARIANTS = listOf(
+    LocalVariant("codex-lmstudio", "codex") { it.showLmStudioAgents },
+    LocalVariant("codex-ollama", "codex") { it.showOllamaAgents },
+)
+
+val AGENT_ALIASES = mapOf("codex-local" to "codex-ollama")
+
+fun findProfile(profiles: List<AgentProfile>, name: String?): AgentProfile? {
+    if (name == null) return null
+    return profiles.firstOrNull { it.name == name } ?: AGENT_ALIASES[name]?.let { alias -> profiles.firstOrNull { it.name == alias } }
+}
+
+fun agentEntries(profiles: List<AgentProfile>, ori: DetectedOri?, toggles: SharedSettings, installed: (AgentProfile) -> Boolean): List<AgentEntry> =
+    profiles.filter { p -> LOCAL_VARIANTS.none { it.name == p.name } }.flatMap { p ->
         listOfNotNull(
             AgentEntry(p.name, p.label, p).takeIf { installed(p) },
-            AgentEntry("$ORI_PREFIX${p.name}", "Ori - ${p.label}", p, LaunchVia.ORI).takeIf { showOri && oriLaunchable(p.name, ori) },
-        )
+            AgentEntry("$ORI_PREFIX${p.name}", "${p.label} - Ori", p, LaunchVia.ORI).takeIf { toggles.showOriAgents && oriLaunchable(p.name, ori) },
+        ) + LOCAL_VARIANTS.filter { it.base == p.name && it.shown(toggles) }.mapNotNull { v ->
+            findProfile(profiles, v.name)?.takeIf(installed)?.let { AgentEntry(it.name, it.label, it) }
+        }
     }
 
 private fun oriRefusal(profile: AgentProfile, context: LaunchContext, oriArgs: List<String>): String? {
@@ -395,7 +411,8 @@ val BUILTIN_PROFILES = listOf(
     AgentProfile("qwen", "Qwen Code", "qwen", promptFlag = "-i", modelFlag = "-m"),
     AgentProfile("goose", "Goose", "goose", listOf("run", "-s"), promptFlag = "-t", modelFlag = "--model"),
     // Without --local-provider, --oss stops at a picker between LM Studio and Ollama.
-    AgentProfile("codex-local", "Codex (local)", "codex", CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "ollama"), modelFlag = "-m"),
+    AgentProfile("codex-lmstudio", "Codex - LM Studio", "codex", CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "lmstudio"), modelFlag = "-m"),
+    AgentProfile("codex-ollama", "Codex - Ollama", "codex", CODEX_TAB_ARGS + listOf("--oss", "--local-provider", "ollama"), modelFlag = "-m"),
 )
 
 fun parseProfiles(text: String): List<AgentProfile> {
@@ -528,11 +545,11 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
         return value
     }
 
-    fun profile(name: String): AgentProfile? = profiles().firstOrNull { it.name == name }
+    fun profile(name: String): AgentProfile? = findProfile(profiles(), name)
 
     fun defaultProfile(): AgentProfile {
         val all = profiles()
-        return all.firstOrNull { it.name == configuredDefault() } ?: all.first { it.name == DEFAULT_AGENT }
+        return findProfile(all, configuredDefault()) ?: all.first { it.name == DEFAULT_AGENT }
     }
 
     fun setDefaultAgent(name: String): Boolean = try {
@@ -573,6 +590,10 @@ class AgentSettings(private val home: Path, private val warn: (String) -> Unit) 
     fun setAllowResume(value: Boolean): Boolean = saveFlag("allowResume", value, default = true)
 
     fun setShowOriAgents(value: Boolean): Boolean = saveFlag("showOriAgents", value, default = false)
+
+    fun setShowLmStudioAgents(value: Boolean): Boolean = saveFlag("showLmStudioAgents", value, default = false)
+
+    fun setShowOllamaAgents(value: Boolean): Boolean = saveFlag("showOllamaAgents", value, default = false)
 
     private fun saveFlag(key: String, value: Boolean, default: Boolean): Boolean = try {
         val existing = if (Files.isRegularFile(configFile)) Files.readString(configFile) else null

@@ -175,10 +175,11 @@ config and would open a console window each time it starts the server.
 4. Tell the user to restart open sessions of those agents, so they load the server and the hooks. Tell
    them that Codex sessions get messaging hooks only in Codex agent tabs.
 
-   Tell them also that Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose and Codex (local) are untested:
+   Tell them also that Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose, Codex - LM Studio and Codex - Ollama are untested:
    they come from each CLI's documentation. Pi and OpenCode get no hooks, so a session of either reads a
    message only when it calls `read_messages` or `wait_for_message`. Goose runs hooks with `sh -c`, so
-   Windows needs Git Bash. Codex (local) needs Ollama 0.13.4 or later and needs no registration.
+   Windows needs Git Bash. Codex - Ollama needs Ollama 0.13.4 or later, Codex - LM Studio needs LM Studio
+   running, and neither needs registration.
    Registering Hermes adds an allowlist entry for each of Agent Tabs' own hook commands and nothing else;
    never set `hooks_auto_accept` or `HERMES_ACCEPT_HOOKS`.
 
@@ -223,6 +224,8 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
 |---|---|---|---|
 | Launch through OpenRouter (Ori) | `launchVia` | `direct`, `ori` | `direct` |
 | Show Ori agents | `showOriAgents` | `true`, `false` | `false` |
+| Show LM Studio agents | `showLmStudioAgents` | `true`, `false` | `false` |
+| Show Ollama agents | `showOllamaAgents` | `true`, `false` | `false` |
 | Close the old tab after a handoff | `closeAfterHandoff` | `true`, `false` | `true` |
 | Allow resuming closed sessions | `allowResume` | `true`, `false` | `true` |
 | Use the Claude Code mod (in-process messaging) | `claudeMod` | `on`, `off` | `on` |
@@ -236,9 +239,14 @@ handoff. An explicit request always wins: an `open_tab` call that names `ide`, a
   Codex tab doesn't launch through Ori with an npm Codex on Windows, and `ori claude` may fail with
   `401 Missing Authentication header` in Ori 0.14.3; both are Ori limits.
 - Show Ori agents: With `true`, the agent menus and `list_agents` list an entry such as
-  **Ori - Claude Code** (`ori:claude`) under each agent Ori can launch, so the user picks per tab
+  **Claude Code - Ori** (`ori:claude`) under each agent Ori can launch, so the user picks per tab
   instead of changing `launchVia`. Offer it under the same condition as `launchVia`. It changes only
   what is listed.
+- Show LM Studio agents, Show Ollama agents: With `true`, the agent menus and `list_agents` list
+  **Codex - LM Studio** (`codex-lmstudio`) or **Codex - Ollama** (`codex-ollama`) under Codex, after
+  its Ori entry. Each runs Codex with `--oss --local-provider lmstudio` or `ollama`, so a local model
+  answers. Offer one when the user runs LM Studio or Ollama. They change only what is listed: `open_tab`
+  opens both names either way.
 - Close the old tab after a handoff: After a handoff, the new session closes the old tab once both
   sides confirm. `false` leaves the old tab open, marked as handed off.
 - Allow resuming closed sessions: With `true`, agents can reopen a Claude Code, Codex or Antigravity CLI

@@ -11,12 +11,15 @@ from ide_agent_tabs.launch_plan import LaunchRequest, plan_launch
 from ide_agent_tabs.profiles import (
     BUILTIN_PROFILES,
     CLAUDE_TAB_SETTINGS_FILE,
+    CODEX_TAB_ARGS,
     AgentProfile,
     ConfigError,
     check_env,
     claude_tab_settings,
+    find_profile,
     launch_of,
     read_terminal_settings,
+    resolve_settings,
 )
 from ide_agent_tabs.request import validate_open
 from support import temp_home
@@ -41,6 +44,33 @@ class ProfileTest(unittest.TestCase):
             with self.subTest(size=len(env)), self.assertRaises(ConfigError):
                 check_env(env, "env")
         check_env({"CLAUDE_CODE_USE_BEDROCK": "1"}, "env")
+
+    def test_the_local_codex_profiles_name_their_backend(self) -> None:
+        local = [p for p in BUILTIN_PROFILES if p.name.startswith("codex-")]
+        self.assertEqual(
+            [(p.name, p.label, p.command, p.model_flag, p.prompt_flag) for p in local],
+            [
+                ("codex-lmstudio", "Codex - LM Studio", "codex", "-m", None),
+                ("codex-ollama", "Codex - Ollama", "codex", "-m", None),
+            ],
+        )
+        self.assertEqual(local[0].args, (*CODEX_TAB_ARGS, "--oss", "--local-provider", "lmstudio"))
+        self.assertEqual(local[1].args, (*CODEX_TAB_ARGS, "--oss", "--local-provider", "ollama"))
+
+    def test_codex_local_names_the_ollama_profile_unless_a_profile_has_that_name(self) -> None:
+        found = find_profile(BUILTIN_PROFILES, "codex-local")
+        self.assertEqual(found.name if found else None, "codex-ollama")
+        self.assertIsNone(find_profile(BUILTIN_PROFILES, "codex-nothing"))
+        custom = resolve_settings('{"codex-local": {"command": "old"}}', '{"defaultAgent": "codex-local"}')
+        self.assertEqual((custom.default_agent.name, custom.default_agent.command), ("codex-local", "old"))
+        builtin = resolve_settings(None, '{"defaultAgent": "codex-local"}')
+        self.assertEqual(builtin.default_agent.name, "codex-ollama")
+
+    def test_a_custom_profile_overrides_a_local_codex_profile_in_place(self) -> None:
+        settings = resolve_settings('{"codex-lmstudio": {"label": "LM", "command": "codex", "args": ["--oss"]}}', None)
+        names = [p.name for p in settings.profiles]
+        self.assertEqual(names[-2:], ["codex-lmstudio", "codex-ollama"])
+        self.assertEqual((settings.profiles[-2].label, settings.profiles[-2].args), ("LM", ("--oss",)))
 
     def test_a_model_for_a_profile_without_a_model_flag_is_an_error_never_ignored(self) -> None:
         base = LaunchRequest(args=[], env={}, launch_via="direct", ori=None, platform="linux")
@@ -189,6 +219,15 @@ class OpenRequestTest(unittest.TestCase):
         warnings: list[str] = []
         self.assertFalse(read_terminal_settings({"showOriAgents": "yes"}, warnings).show_ori_agents)
         self.assertEqual(warnings, ["Ignoring showOriAgents in config.json: it must be true or false"])
+
+    def test_the_local_toggles_default_to_off_and_take_only_a_boolean(self) -> None:
+        for key, field in (("showLmStudioAgents", "show_lmstudio_agents"), ("showOllamaAgents", "show_ollama_agents")):
+            with self.subTest(key=key):
+                self.assertFalse(getattr(read_terminal_settings({}, []), field))
+                self.assertTrue(getattr(read_terminal_settings({key: True}, []), field))
+                warnings: list[str] = []
+                self.assertFalse(getattr(read_terminal_settings({key: "yes"}, warnings), field))
+                self.assertEqual(warnings, [f"Ignoring {key} in config.json: it must be true or false"])
 
     def test_focus_passes_through_only_when_the_caller_gives_it(self) -> None:
         self.assertIsNone(validate_open({"path": DIR}).focus)

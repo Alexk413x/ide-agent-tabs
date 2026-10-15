@@ -134,8 +134,9 @@ session for a new message.
 
 A profile says how to start one agent CLI. Every IDE uses the same built-in profiles. Every list of agents,
 in this document and in the menus, uses this order: Claude, Codex, Antigravity CLI, Copilot CLI,
-Grok Build, Pi, Hermes, then the agents built for local models (OpenCode, Qwen Code, Goose and Codex (local)),
-then custom profiles.
+Grok Build, Pi, Hermes, then the agents built for local models (OpenCode, Qwen Code, Goose, Codex - LM Studio
+and Codex - Ollama), then custom profiles. The agent menus and `list_agents` move the two local Codex rows
+under Codex instead (see [Launch-mode entries](#launch-mode-entries)).
 
 | Name | Label | Command | First prompt | Model flag |
 |---|---|---|---|---|
@@ -149,14 +150,20 @@ then custom profiles.
 | `opencode` | OpenCode | `opencode` | `--prompt <prompt>` | `-m` |
 | `qwen` | Qwen Code | `qwen` | `-i <prompt>` | `-m` |
 | `goose` | Goose | `goose run -s`, or `goose session` when there is no prompt | `-t <prompt>` | `--model` |
-| `codex-local` | Codex (local) | `codex`, the `codex` profile's fixed `args`, then `--oss --local-provider ollama` | positional | `-m` |
+| `codex-lmstudio` | Codex - LM Studio | `codex`, the `codex` profile's fixed `args`, then `--oss --local-provider lmstudio` | positional | `-m` |
+| `codex-ollama` | Codex - Ollama | `codex`, the `codex` profile's fixed `args`, then `--oss --local-provider ollama` | positional | `-m` |
 
 The `claude`, `codex` and `agy` rows match each CLI's help. The `copilot` row comes from the
-CLI's docs and is untested. The `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose` and `codex-local` rows
+CLI's docs and is untested. The `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-lmstudio` and `codex-ollama` rows
 come from each CLI's docs, and none of those CLIs is installed on the development machine, so every one is
 untested (see [Agent support](#agent-support)). `antigravity` is the Antigravity IDE's command, so the profile is named `agy`. A profile in `agents.json` with the same name overrides a built-in one.
 An `agents.json` profile named `codex` replaces the built-in `args` too, so its tabs lose messaging unless
 it copies them.
+
+`codex-local` is an alias of `codex-ollama`. `open_tab`, `handoff`, `resume_tab`, the IDEs' `open` and the
+`defaultAgent` setting take it, and closed-session records and `list_sessions` treat a `codex-local`
+session as a `codex-ollama` one. An `agents.json` profile named `codex-local` is a custom profile like
+any other, and the name then opens it instead.
 
 A tab whose command is `claude` also gets `--settings ~/.ide-agent-tabs/mcp/claude-tab-settings.json` after
 the profile's `args`, so an `agents.json` override of `claude` keeps the tab's hooks (see
@@ -216,7 +223,7 @@ wake-up and no reminder.
 | OpenCode | Yes | Tools only, with `--register opencode` | None | `-m` | Yes | Official light and dark square SVGs | No |
 | Qwen Code | Yes | Yes, with `--register qwen` | `idle`, `busy`, `permission` | `-m` | No | Official #6D44E8 logo, both themes | No |
 | Goose | Yes | Yes, with `--register goose` | `idle`, `busy`; no `permission` | `--model` | No | Official `goose.svg`, #101010 in both themes; hard to see on a dark theme | No |
-| Codex (local) | Yes | Yes, as for Codex. No registration. | As for Codex | `-m` | No | Reuses the Codex icon | No |
+| Codex - LM Studio, Codex - Ollama | Yes | Yes, as for Codex. No registration. | As for Codex | `-m` | No | Reuses the Codex icon | No |
 
 "Tools only" means the session can list IDEs, open and close tabs and call the messaging tools, but it
 reports no state, so no wake-up types into it and no reminder reaches it. It reads a message only when
@@ -280,10 +287,12 @@ them.
   - With no first prompt, the tab runs `goose session`, because `goose run -s` refuses to start without
     a message. With a prompt, it runs `goose run -s -t <prompt>`, which stays interactive.
   - Whether Goose passes the tab's `IDE_AGENT_TABS_ID` to the extension is untested.
-- **Codex (local)** (`codex-local`). The tab is a Codex tab, so it brings the same server and hooks (see
-  [Codex tabs](#codex-tabs)) and needs no registration. The profile adds `--oss --local-provider ollama`,
-  because `--oss` alone stops at a picker between LM Studio and Ollama. It needs Ollama 0.13.4 or later.
-  `-m` takes the local model.
+- **Codex - LM Studio** (`codex-lmstudio`) and **Codex - Ollama** (`codex-ollama`). Each tab is a Codex
+  tab, so it brings the same server and hooks (see [Codex tabs](#codex-tabs)) and needs no registration.
+  The profiles add `--oss --local-provider lmstudio` or `--oss --local-provider ollama`, because `--oss`
+  alone stops at a picker between LM Studio and Ollama; Codex accepts only those two providers. Codex -
+  Ollama needs Ollama 0.13.4 or later, and Codex - LM Studio needs LM Studio running. `-m` takes the local
+  model. Nothing checks that LM Studio or Ollama runs: a row counts as installed when `codex` is.
 
 A small YAML editor in the server (`yaml_block.py`, no dependencies) edits the YAML of Hermes and Goose,
 and keeps comments and the other keys. It reads only the block-style subset those configs use. The
@@ -346,7 +355,7 @@ sets no `via`. An explicit `via` beats the setting.
 - Ori launches `claude`, `codex`, `grok`, `hermes`, `opencode`, `pi` and `prime-agent`, and only the
   ones that `ori harness list --json` reports as installed. The profile's name must be one of these. Of
   the built-in profiles, that leaves `claude`, `codex`, `grok`, `hermes`, `opencode` and `pi`. Qwen Code,
-  Goose and Codex (local) always start directly. `prime-agent` has no profile.
+  Goose and the two local Codex profiles always start directly. `prime-agent` has no profile.
 - When the setting asks for Ori and Ori can't launch the agent, the tab starts directly, with no error.
   When the request asks with `via: "ori"`, the open fails with `<agent> can't launch through Ori: <reason>`.
 - The tab's identity stays the inner agent: `IDE_AGENT_TABS_AGENT` is `claude` or `codex`, so hooks, wake
@@ -363,11 +372,11 @@ sets no `via`. An explicit `via` beats the setting.
 #### Ori entries
 
 The `showOriAgents` setting lists Ori as a separate entry for each agent it can launch, so a user or an
-agent picks "Claude Code" or "Ori - Claude Code" instead of changing `launchVia`. It is off by default
+agent picks "Claude Code" or "Claude Code - Ori" instead of changing `launchVia`. It is off by default
 and changes only what is listed.
 
 - With `showOriAgents` on, `list_agents` puts a row right after each row that has `ori: true`:
-  `name` `ori:<name>`, `label` `Ori - <label>`, `command` `ori`, `installed` `true`, `model` as the base
+  `name` `ori:<name>`, `label` `<label> - Ori`, `command` `ori`, `installed` `true`, `model` as the base
   row, `via` `ori` and `base` `<name>`. The result also carries `showOriAgents: true` after `launchVia`.
   With it off, the result is the same as without the setting.
 - `open_tab`, `handoff` and the IDEs' `open` take `ori:<name>` as the profile `<name>` with `via: "ori"`,
@@ -375,10 +384,43 @@ and changes only what is listed.
   `via: "direct"` fails with `agent ori:<name> opens through Ori, so via must be "ori" or left out`. An
   agent Ori can't launch, or a machine without Ori, fails with the `can't launch through Ori` reason
   above. Profile names can't hold `:`, so `ori:<name>` never names a custom profile.
-- The VS Code and JetBrains agent menus show `Ori - <label>` right under the agent's own entry, only
+- The VS Code and JetBrains agent menus show `<label> - Ori` right under the agent's own entry, only
   while the setting is on and `detected.json` lists the agent for Ori. Each entry opens its own tab
   through Ori, so a direct session and an Ori session of one agent run side by side as separate tabs
   and sessions; `list_sessions` shows both, with `via` `direct` and `ori`.
+
+#### Launch-mode entries
+
+The Ori entry is one of three launch-mode entries. Each sits right under the agent it belongs to, has
+its own setting in `config.json`, off by default, and carries the label `<agent label> - <mode>`. Only
+Codex has all three:
+
+```
+Claude Code
+Claude Code - Ori
+Codex
+Codex - Ori
+Codex - LM Studio
+Codex - Ollama
+```
+
+| Entry | Name | Setting |
+|---|---|---|
+| `<label> - Ori` | `ori:<name>` | `showOriAgents` |
+| Codex - LM Studio | `codex-lmstudio` | `showLmStudioAgents` |
+| Codex - Ollama | `codex-ollama` | `showOllamaAgents` |
+
+- `list_agents` lists `codex-lmstudio` and `codex-ollama` only while their setting is on, after the
+  Codex row and its Ori row, as ordinary profile rows: `name`, `label`, `command` `codex`, `installed`
+  when `codex` is installed, and `model`. The result carries `showLmStudioAgents: true` and
+  `showOllamaAgents: true` after `showOriAgents`, each only when on. With every setting off, the result
+  lists each agent once.
+- `open_tab`, `handoff`, `resume_tab` and the IDEs' `open` take both names whatever the settings say, as
+  they take `ori:<name>`.
+- An `agents.json` profile named `codex-lmstudio` or `codex-ollama` overrides the built-in one, as any
+  override does, and lists under Codex behind the same setting.
+- The VS Code and JetBrains agent menus and the VS Code status bar tooltip show the same rows in the same
+  order, less the profiles whose command isn't installed.
 
 Checked on Ori 0.14.3 on Windows 11, 2026-10-03:
 
@@ -514,7 +556,7 @@ reads the registry and calls the HTTP API. Claude Code sessions reach it through
 
 | Tool | Does |
 |---|---|
-| `list_agents` | Lists profiles, which are installed, which take a model (`model`), which Ori can launch (`ori`), and the `launchVia` setting. With `showOriAgents` on, it adds an `ori:<name>` row after each agent Ori can launch. |
+| `list_agents` | Lists profiles, which are installed, which take a model (`model`), which Ori can launch (`ori`), and the `launchVia` setting. With `showOriAgents` on, it adds an `ori:<name>` row after each agent Ori can launch. It lists `codex-lmstudio` and `codex-ollama` under Codex only with `showLmStudioAgents` or `showOllamaAgents` on. |
 | `list_tabs` | Lists tabs across all IDEs, or in one. |
 | `open_tab` | Opens a tab. Takes `path`, and optional `agent`, `prompt`, `args`, `env`, `ide`, `model`, `via`, `focus`. Returns `via: "ori"` for a tab started through Ori. |
 | `close_tab` | Closes a tab by `id`. With no `id`, closes the caller's own tab through `IDE_AGENT_TABS_ID`. Refuses the old tab of a handoff until the handoff is confirmed (see [Handoff](#handoff)). |
@@ -609,20 +651,24 @@ its own, such as a peer test or delegated work, passes no `focus`. With `auto`, 
 `never` decide alone and ignore it. The New Agent Tab button and the open-on-startup tab don't use the setting; they always take focus. What
 `focus: false` does depends on the host; see [Focus](#focus).
 
-Five more settings in `config.json` don't depend on where a tab opens:
+Seven more settings in `config.json` don't depend on where a tab opens:
 
 | Setting | Key | Values | Default |
 |---|---|---|---|
 | Launch through OpenRouter (Ori) | `launchVia` | `direct`: start each agent with its own command. `ori`: start supported agents with `ori <agent>`, which bills model usage through OpenRouter. See [Model and Ori](#model-and-ori). | `direct` |
-| Show Ori agents | `showOriAgents` | `true`: list an `Ori - <label>` entry under each agent Ori can launch, in the IDE menus and in `list_agents`. `false`: list each agent once. See [Ori entries](#ori-entries). | `false` |
+| Show Ori agents | `showOriAgents` | `true`: list a `<label> - Ori` entry under each agent Ori can launch, in the IDE menus and in `list_agents`. `false`: list each agent once. See [Ori entries](#ori-entries). | `false` |
+| Show LM Studio agents | `showLmStudioAgents` | `true`: list Codex - LM Studio (`codex-lmstudio`) under Codex, in the IDE menus and in `list_agents`. `false`: don't list it. See [Launch-mode entries](#launch-mode-entries). | `false` |
+| Show Ollama agents | `showOllamaAgents` | `true`: list Codex - Ollama (`codex-ollama`) under Codex, in the IDE menus and in `list_agents`. `false`: don't list it. See [Launch-mode entries](#launch-mode-entries). | `false` |
 | Close the old tab after a handoff | `closeAfterHandoff` | `true`: the new session closes the old tab. `false`: the old tab stays open, marked `handedOffTo`. See [Handoff](#handoff). | `true` |
 | Allow resuming closed sessions | `allowResume` | `true`: `resume_tab` reopens closed sessions. `false`: it refuses every call. See [Resume](#resume). | `true` |
 | Wait for a started IDE | `ideStartTimeoutSec` | Seconds to wait for an IDE that `open_tab`, `handoff` or `resume_tab` started by name to register, above 0 and at most 3600. After that the tab opens in the fallback. Only `config.json` sets it. | `180` |
 
-VS Code shows the first four in the **Agent Tabs** section, as `ideAgentTabs.launchVia`,
-`ideAgentTabs.showOriAgents`, `ideAgentTabs.closeAfterHandoff` and `ideAgentTabs.allowResume`. JetBrains
-shows them on the Agent Tabs page, `launchVia` and **Show Ori agents** next to **Default agent**, and
-writes `allowResume` only when it is off and `showOriAgents` only when it is on. Both IDEs show
+VS Code shows the first six in the **Agent Tabs** section, as `ideAgentTabs.launchVia`,
+`ideAgentTabs.showOriAgents`, `ideAgentTabs.showLmStudioAgents`, `ideAgentTabs.showOllamaAgents`,
+`ideAgentTabs.closeAfterHandoff` and `ideAgentTabs.allowResume`. JetBrains shows them on the Agent Tabs
+page, `launchVia`, **Show Ori agents**, **Show LM Studio agents** and **Show Ollama agents** next to
+**Default agent**, and writes `allowResume` only when it is off and the three show settings only when
+they are on. Both IDEs show
 `launchVia` only when `detected.json` has an `ori` entry; JetBrains shows **Show Ori agents** only then too. The server treats a value it doesn't know
 as the default, as for the tab settings.
 
@@ -1339,7 +1385,7 @@ other agent CLIs. For that, every session that runs the MCP server can message e
 
 | Tool | What it does |
 |---|---|
-| `list_sessions` | Lists live sessions in a fixed agent order (claude, codex, agy, copilot, grok, pi, hermes, opencode, qwen, goose, codex-local, then others by name): `name` (the native name of a Claude session whose mod runs, else the id), `id`, `agent`, `route` (`native` or `agent-tabs`), `state`, `tab` (the tab id, or `null`), `host` (the IDE product and project, or the terminal), `ide` (the host's id), `path`, `via` when known, `startedAt`, `handedOffTo` for a session that handed its work to another, and `self` for the caller. |
+| `list_sessions` | Lists live sessions in a fixed agent order (claude, codex, agy, copilot, grok, pi, hermes, opencode, qwen, goose, codex-lmstudio, codex-ollama with codex-local, then others by name): `name` (the native name of a Claude session whose mod runs, else the id), `id`, `agent`, `route` (`native` or `agent-tabs`), `state`, `tab` (the tab id, or `null`), `host` (the IDE product and project, or the terminal), `ide` (the host's id), `path`, `via` when known, `startedAt`, `handedOffTo` for a session that handed its work to another, and `self` for the caller. |
 | `send_message` | Sends `text` to the session `to`, optionally as a reply to `replyTo`. Returns the message `id`, and `delivery`: `woken` or `queued`. A `note` says why a wake-up failed. |
 | `read_messages` | Returns the caller's unread messages and marks them read. |
 | `wait_for_message` | Waits up to `timeout` seconds (default 60, at most 600, or 170 in an Antigravity CLI session) for a message, optionally only one from `from` or replying to `replyTo`, and returns it, marked read. Returns `message: null` on timeout. Messages the filter skips stay unread. |
@@ -1424,11 +1470,11 @@ as it is.
 | Hermes | None | At turn end, after the 2-second settle. |
 | Qwen Code | None | At turn end, after the 2-second settle. |
 | Goose | None | At turn end, after the 2-second settle. |
-| Codex (local) | None | At turn end, after the 2-second settle. |
+| Codex - LM Studio, Codex - Ollama | None | At turn end, after the 2-second settle. |
 
 Pi and OpenCode have no hooks, so they have no state and no wake-up.
 
-Codex, Antigravity CLI, Copilot CLI, Hermes, Qwen Code, Goose and Codex (local) expose no
+Codex, Antigravity CLI, Copilot CLI, Hermes, Qwen Code, Goose and the local Codex profiles expose no
 input idle signal. A line typed into one of them can still land in a prompt the user is writing. Grok
 Build has the signal, but it is untested.
 
@@ -1444,7 +1490,7 @@ Hook events for each CLI:
 | Hermes | `hooks` in `config.yaml` in `$HERMES_HOME`, plus `shell-hooks-allowlist.json` | `pre_llm_call`, `post_tool_call`, `post_approval_response` | `pre_approval_request` | `pre_verify`, `on_session_end` | `pre_llm_call` (`context`) | `pre_verify` (`decision: "block"`), only after code edits |
 | Qwen Code | `hooks` in `~/.qwen/settings.json` | `UserPromptSubmit`, `PreToolUse`, `PostToolUse` | `PermissionRequest`, and `Notification` of a permission or elicitation type | `Stop`, `Notification` `idle_prompt` | `UserPromptSubmit`, `PostToolUse` (`hookSpecificOutput.additionalContext`) | `Stop` (`decision: "block"`) |
 | Goose | `hooks/hooks.json` in the plugin `~/.agents/plugins/ide-agent-tabs/` | `UserPromptSubmit`, `PostToolUse` | None | `Stop` | None | `Stop` (`decision: "block"`) |
-| Codex (local) | The tab's `-c` arguments, as for Codex | As Codex | As Codex | As Codex | As Codex | As Codex |
+| Codex - LM Studio, Codex - Ollama | The tab's `-c` arguments, as for Codex | As Codex | As Codex | As Codex | As Codex | As Codex |
 
 Pi and OpenCode set no state, and send no reminder or nudge.
 
@@ -1651,7 +1697,7 @@ This is the test listing. The columns align across all groups.
   - `MODEL` and `EFFORT` come from the presence file (see [Sessions](#sessions)).
   - `SESSION` is the first 8 characters of the session id.
 - Inside a group, lines sort by agent, in the order `claude`, `codex`, `agy`, `copilot`,
-  `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-local`, then other agents by name. Within an
+  `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-lmstudio`, `codex-ollama`, `codex-local`, then other agents by name. Within an
   agent the newest session comes first, then sessions with no start time. State breaks a tie: `idle`,
   `waking`, `busy`, `permission`, then any other state. Native `running` counts as `busy`, and `waiting on a human` as
   `permission`.
@@ -1980,7 +2026,7 @@ A session that ends leaves a record that `resume_tab` can reopen.
   Others: `null`.
 
 `resume_tab` opens a tab through `open_tab` with the resume arguments after the profile's own:
-`--resume <id>` for Claude Code, `resume <id>` for Codex and Codex (local), `--conversation <id>` for
+`--resume <id>` for Claude Code, `resume <id>` for Codex and the local Codex profiles, `--conversation <id>` for
 Antigravity CLI. Each comes from the CLI's own `--help`. Other agents get an error that suggests
 `handoff`. The tab opens in the record's folder; in its host when that IDE run or terminal is still
 there, else in a running IDE of the same product, else by the usual route; and with the record's model
@@ -2383,8 +2429,8 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
 | Ghostty on Linux | 1.3.1 in WSL Ubuntu accepts the flags. No window opens, because Ghostty needs OpenGL 4.3 and WSLg offers 4.1. | A working window |
 | Ghostty on macOS | Unit tests of the AppleScript and command generation | A live run |
 | iTerm2 | Unit tests with a stand-in `osascript`: open, list, close, input, quoting, argv passing, and the permission and not-installed errors | A live run |
-| Agent profiles | `claude`, `codex` and `agy` flags checked against each CLI's help | `copilot`; `agy -i` in a tab; `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose` and `codex-local`, none of which is installed on the development machine |
-| Registration of the added agents | Unit tests against temporary homes: the config files and hooks of Grok Build, Pi, Hermes, Qwen Code and Goose are written, left unchanged by a second run and removed, and other entries stay | A live run of any of these CLIs: whether it reads the entry and runs the hooks, `--register` against a real home, Goose's `sh -c` hook on Windows with Git Bash, Hermes' allowlist, and Codex (local) with Ollama |
+| Agent profiles | `claude`, `codex` and `agy` flags checked against each CLI's help | `copilot`; `agy -i` in a tab; `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-lmstudio` and `codex-ollama`, none of which is installed on the development machine |
+| Registration of the added agents | Unit tests against temporary homes: the config files and hooks of Grok Build, Pi, Hermes, Qwen Code and Goose are written, left unchanged by a second run and removed, and other entries stay | A live run of any of these CLIs: whether it reads the entry and runs the hooks, `--register` against a real home, Goose's `sh -c` hook on Windows with Git Bash, Hermes' allowlist, and the local Codex profiles with LM Studio or Ollama |
 | Messaging | Two servers over stdio on Windows 11; the tmux wake-up with a stand-in agent in WSL Ubuntu; `--register codex` against Codex 0.157.1 in a temporary `CODEX_HOME`; the Codex tab arguments with headless `codex exec` 0.158.0 on Windows 11 in a temporary `CODEX_HOME`: the server starts, the `UserPromptSubmit`, `PostToolUse` and `Stop` hooks run trusted, a waiting message is read and answered, a `Stop` block, and the rename to `codex-<threadId>`; interactive Codex 0.158.0 tabs in Antigravity on Windows 11: a message read mid-task through the hooks, and an idle tab woken by the typed line through the `input` route, each answered; Antigravity CLI 1.2.16 headless (`agy -p`) on Windows 11 with a workspace `.agents/` config: `IDE_AGENT_TABS_ID` reaches the server and the hook commands, the MCP client name is `antigravity-client`, `PreInvocation` context reaches the model, `Stop` with `decision: "continue"` keeps the turn going, and `Stop` fires once per turn; Copilot CLI 1.0.95 headless (`copilot -p`) on Windows 11 in a temporary `COPILOT_HOME`, with the `--additional-mcp-config` option a tab gets and a stdio entry registered under the same name: only the shared server's HTTP entry starts, the first request is `server/discover`, `list_sessions` lists the tab's id with agent `copilot` and the tab's folder, the `sessionStart` hook records the Copilot process, and the session ends after Copilot exits | The `PermissionRequest` hook; the hook keys on macOS and Linux; wake-up in WezTerm, kitty, Ghostty and the IDEs; the other Copilot CLI hooks in an interactive session, and a Copilot tab opened from an IDE; Antigravity CLI: whether `Stop` fires after Esc, whether the typed wake line submits in its interactive TUI, and `--register agy` against the real `~/.gemini` files |
 
 Open, list and close through the MCP server pass for tmux, kitty and WezTerm. No part is tested on a real

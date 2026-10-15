@@ -15,7 +15,7 @@ from ..files import read_text_if_exists, remove_file
 from ..jsjson import trim, utf16_len, utf16_slice
 from ..liveness import pid_alive
 from ..parallel import Task
-from ..profiles import AGENT_ENV, BUILTIN_PROFILES, TAB_ID_ENV
+from ..profiles import AGENT_ENV, BUILTIN_PROFILES, TAB_ID_ENV, canonical_agent
 from ..scheduler import Job, Scheduler
 from .codex_config import read_codex_config
 from .db import MailError
@@ -72,7 +72,7 @@ START_RETRY_DELAYS_MS = (1_000, 3_000, 9_000)
 REWAKE_EVERY_MS = 15_000
 FOLLOW_UP_MS = MAX_WAIT_S * 1000
 MOD_STATES = ("idle", "busy", "permission")
-AGENT_ORDER = ("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-local")
+AGENT_ORDER = ("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-lmstudio", "codex-ollama")
 MOD_DELIVERY_NOTE = "the recipient's Agent Tabs mod delivers it in-process once the session is idle"
 CODEX_ID_PREFIX = "codex-"
 SESSION_PREFIX_CHARS = 8
@@ -126,11 +126,12 @@ def is_native_name(value: str) -> bool:
 
 
 def _agent_rank(agent: str) -> int:
-    return AGENT_ORDER.index(agent) if agent in AGENT_ORDER else len(AGENT_ORDER)
+    name = canonical_agent(agent)
+    return AGENT_ORDER.index(name) if name in AGENT_ORDER else len(AGENT_ORDER)
 
 
 def harness_of(agent: str, via: str | None = None) -> str:
-    label = next((p.label for p in BUILTIN_PROFILES if p.name == agent), agent)
+    label = next((p.label for p in BUILTIN_PROFILES if p.name == canonical_agent(agent)), agent)
     return f"{label}{' via OpenRouter' if via == 'ori' else ''}"
 
 

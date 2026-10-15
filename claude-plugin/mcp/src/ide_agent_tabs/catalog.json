@@ -3,7 +3,7 @@
     {
       "name": "list_agents",
       "title": "List agent profiles",
-      "description": "List the agent profiles open_tab accepts: name, label, command and whether the command is installed, plus the default agent. With showOriAgents on in config.json, each agent Ori can launch is followed by an ori:<name> entry that opens it through Ori. Call it to tell a profile name from a folder name, or to show the installed agents after an unknown-agent error. It does not list running sessions; list_tabs and list_sessions do.",
+      "description": "List the agent profiles open_tab accepts: name, label, command and whether the command is installed, plus the default agent. With showOriAgents on in config.json, each agent Ori can launch is followed by an ori:<name> entry that opens it through Ori; with showLmStudioAgents or showOllamaAgents on, Codex is also followed by codex-lmstudio or codex-ollama, which run Codex with a local model. Call it to tell a profile name from a folder name, or to show the installed agents after an unknown-agent error. It does not list running sessions; list_tabs and list_sessions do.",
       "inputSchema": {
         "type": "object",
         "properties": {}
@@ -50,7 +50,7 @@
             "description": "Absolute path of an existing folder. The session starts there."
           },
           "agent": {
-            "description": "Profile name from list_agents. ori:<name>, such as ori:claude, starts that agent through Ori, as via ori does. Defaults to the configured default agent.",
+            "description": "Profile name from list_agents. ori:<name>, such as ori:claude, starts that agent through Ori, as via ori does. codex-lmstudio and codex-ollama open whether list_agents lists them or not. Defaults to the configured default agent.",
             "type": "string"
           },
           "prompt": {

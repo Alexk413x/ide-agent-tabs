@@ -22,16 +22,20 @@ from .parallel import Task, run_all
 from .profiles import (
     AGENTS_FILE,
     CONFIG_FILE,
+    LOCAL_VARIANTS,
     TAB_ID_ENV,
+    AgentProfile,
     AgentSettings,
     CopilotHttp,
     claude_tab_settings,
     codex_http,
     codex_python,
     copilot_http,
+    find_profile,
     is_copilot_command,
     resolve_focus,
     resolve_settings,
+    variant_settings,
 )
 from .registry import Endpoint, Registry, read_registry
 from .request import OpenRequest, validate_open
@@ -320,15 +324,23 @@ class Service:
         settings = self.settings()
         detection = read_detection(self.deps.home)
         ori = detection.get("ori") if detection is not None else None
+        shown = variant_settings(settings.terminal)
+        variants = {v.name: v for v in LOCAL_VARIANTS}
         agents: list[dict[str, Any]] = []
-        for p in settings.profiles:
-            row: dict[str, Any] = {
+
+        def row_of(p: AgentProfile) -> dict[str, Any]:
+            return {
                 "name": p.name,
                 "label": p.label,
                 "command": p.command,
                 "installed": is_installed(p.command, self.ctx.path_var, self.is_windows),
                 "model": p.model_flag is not None,
             }
+
+        for p in settings.profiles:
+            if p.name in variants:
+                continue
+            row = row_of(p)
             agents.append(row)
             if ori is not None and p.name in ori["agents"] and p.name in ORI_AGENTS:
                 row["ori"] = True
@@ -336,7 +348,7 @@ class Service:
                     agents.append(
                         {
                             "name": f"{ORI_PREFIX}{p.name}",
-                            "label": f"Ori - {p.label}",
+                            "label": f"{p.label} - Ori",
                             "command": "ori",
                             "installed": True,
                             "model": row["model"],
@@ -344,9 +356,14 @@ class Service:
                             "base": p.name,
                         }
                     )
+            for v in LOCAL_VARIANTS:
+                local = find_profile(settings.profiles, v.name) if v.base == p.name and shown[v.setting] else None
+                if local is not None:
+                    agents.append(row_of(local))
         result: dict[str, Any] = {"default": settings.default_agent.name, "agents": agents, "launchVia": settings.terminal.launch_via}
-        if settings.terminal.show_ori_agents:
-            result["showOriAgents"] = True
+        for key, on in (("showOriAgents", settings.terminal.show_ori_agents), *shown.items()):
+            if on:
+                result[key] = True
         if settings.warnings:
             result["warnings"] = settings.warnings
         return result
@@ -640,7 +657,7 @@ class Service:
         if request.agent is None:
             profile = settings.default_agent
         else:
-            found = next((p for p in settings.profiles if p.name == request.agent), None)
+            found = find_profile(settings.profiles, request.agent)
             if found is None:
                 raise ToolError(f"unknown agent: {request.agent}")
             profile = found

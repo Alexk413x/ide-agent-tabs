@@ -67,10 +67,13 @@ The plugin knows these agents:
 | `opencode` | OpenCode | `opencode` | `--prompt <prompt>` |
 | `qwen` | Qwen Code | `qwen` | `-i <prompt>` |
 | `goose` | Goose | `goose run -s`; needs a first prompt to start | `-t <prompt>` |
-| `codex-local` | Codex (local) | `codex` with the Agent Tabs options, `--oss` and `--local-provider ollama` | positional |
+| `codex-lmstudio` | Codex - LM Studio | `codex` with the Agent Tabs options, `--oss` and `--local-provider lmstudio` | positional |
+| `codex-ollama` | Codex - Ollama | `codex` with the Agent Tabs options, `--oss` and `--local-provider ollama` | positional |
 
-The Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose and Codex (local) profiles come from each CLI's
-documentation and haven't had a live test.
+The Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose, Codex - LM Studio and Codex - Ollama profiles come
+from each CLI's documentation and haven't had a live test. The menus list Codex - LM Studio and Codex -
+Ollama under Codex only when **Show LM Studio agents** or **Show Ollama agents** is on. `codex-local`
+still opens Codex - Ollama.
 
 The menus list only agents whose command is on the IDE's `PATH`. On Windows, the plugin
 also looks for `.exe`, `.cmd`, `.bat` and `.ps1` files.
@@ -119,7 +122,9 @@ Open **Settings > Tools > Agent Tabs**.
 |---|---|
 | Default agent | The agent that **New Agent Tab** opens. Saved in `~/.ide-agent-tabs/config.json`. |
 | Launch through OpenRouter (Ori) | `direct` or `ori`. With `ori`, supported agents start as `ori <agent>`, which bills model usage through OpenRouter, and the menus and tab names carry "via OpenRouter". An agent that Ori can't launch starts directly. Shown only when Ori (`ori`) is installed. Saved as `launchVia`. |
-| Show Ori agents | Lists an **Ori - &lt;agent&gt;** entry under each agent that Ori can launch, in the agent menus and in `list_agents`. It opens the agent with `ori <agent>` in its own tab, next to a direct tab of the same agent. Shown only when Ori (`ori`) is installed. Saved as `showOriAgents`, written only when on. |
+| Show Ori agents | Lists an **&lt;agent&gt; - Ori** entry under each agent that Ori can launch, in the agent menus and in `list_agents`. It opens the agent with `ori <agent>` in its own tab, next to a direct tab of the same agent. Shown only when Ori (`ori`) is installed. Saved as `showOriAgents`, written only when on. |
+| Show LM Studio agents | Lists **Codex - LM Studio** under Codex, in the agent menus and in `list_agents`. It opens Codex with `--oss --local-provider lmstudio`, which runs a local model in LM Studio. Saved as `showLmStudioAgents`, written only when on. |
+| Show Ollama agents | Lists **Codex - Ollama** under Codex, in the agent menus and in `list_agents`. It opens Codex with `--oss --local-provider ollama`, which runs a local model in Ollama 0.13.4 or later. Saved as `showOllamaAgents`, written only when on. |
 | Close the old tab after a handoff | After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off. Saved as `closeAfterHandoff`, written only when off. |
 | Allow resuming closed sessions | Agents can reopen a Claude Code, Codex or Antigravity CLI session that ended in the last 7 days with `resume_tab`. A resume past the prompt cache re-reads the whole history at full price, so the agent asks you first. Off refuses every resume. Saved as `allowResume`, written only when off. |
 | Use the Claude Code mod (in-process messaging) | Claude Code sessions message other agents with SendMessage and ListAgents and get their messages in-process. Off uses the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0. Claude Code sessions that start after the change pick it up. Saved as `claudeMod`, written only when off. |

@@ -9,6 +9,7 @@ import sys
 import unittest
 from typing import Any
 
+from ide_agent_tabs.launch_plan import LaunchRequest, plan_launch
 from ide_agent_tabs.mcp_tools import HOOK_TOOL, SERVER_NAME
 from ide_agent_tabs.messaging.hook import HOOK_EVENTS
 from ide_agent_tabs.profiles import BUILTIN_PROFILES, CODEX_TAB_ARGS, codex_http, codex_http_arg, with_codex_http
@@ -168,7 +169,7 @@ class CodexHttpTest(unittest.TestCase):
         self.assertIsNone(codex_http(spaced, WINDOWS, "tab-1", "codex"))
 
     def test_only_the_server_argument_changes_and_nothing_in_it_needs_quoting_through_a_shell(self) -> None:
-        http = codex_http(self.home(), WINDOWS, "tab-1", "codex-local")
+        http = codex_http(self.home(), WINDOWS, "tab-1", "codex-ollama")
         assert http is not None
         swapped = with_codex_http(CODEX_TAB_ARGS, http)
         assert swapped is not None
@@ -176,6 +177,23 @@ class CodexHttpTest(unittest.TestCase):
         self.assertIsNone(with_codex_http(CODEX_TAB_ARGS, None))
         self.assertIsNone(with_codex_http(("--other",), http))
         self.assertNotRegex(codex_http_arg(http), r"[\"%!\n]")
+
+    def test_the_local_codex_tabs_use_the_shared_server_as_codex_does(self) -> None:
+        home = self.home()
+        for name, provider in (("codex-lmstudio", "lmstudio"), ("codex-ollama", "ollama")):
+            with self.subTest(name=name):
+                profile = next(p for p in BUILTIN_PROFILES if p.name == name)
+                http = codex_http(home, WINDOWS, "tab-1", name)
+                assert http is not None
+                request = LaunchRequest(args=[], env={}, launch_via="direct", ori=None, platform="linux", model="qwen3", http=http)
+                args = plan_launch(profile, request).launch.args
+                self.assertIn(codex_http_arg(http), args)
+                self.assertTrue(
+                    codex_http_arg(http).endswith(
+                        f"--agent {name} --port 47828 --home {home}', startup_timeout_sec = 30, tool_timeout_sec = 660 }}"
+                    )
+                )
+                self.assertEqual(args[-5:], ["--oss", "--local-provider", provider, "-m", "qwen3"])
 
     def test_the_helper_takes_the_tab_the_agent_the_port_and_the_home_as_arguments(self) -> None:
         got = option_env(["--tab", "t1", "--agent", "codex", "--port", "47831", "--home", "/h", "--other", "x", "--dangling"])

@@ -38,7 +38,8 @@ object Agents {
         "opencode" to "/icons/agents/opencode.svg",
         "qwen" to "/icons/agents/qwen.svg",
         "goose" to "/icons/agents/goose.svg",
-        "codex-local" to "/icons/agents/codex.svg",
+        "codex-lmstudio" to "/icons/agents/codex.svg",
+        "codex-ollama" to "/icons/agents/codex.svg",
     )
 
     private val neutralButtonIcon: Icon = IconLoader.getIcon("/icons/agentTab_new.svg", Agents::class.java)
@@ -97,7 +98,7 @@ object Agents {
 
     fun entries(): List<AgentEntry> {
         val path = searchPath
-        return agentEntries(settings.profiles(), settings.detected().ori, settings.shared().showOriAgents) {
+        return agentEntries(settings.profiles(), settings.detected().ori, settings.shared()) {
             isInstalled(it.command, path, SystemInfo.isWindows)
         }
     }

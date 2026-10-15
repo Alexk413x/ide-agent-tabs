@@ -17,11 +17,15 @@ A profile says how to start one agent CLI. Every IDE uses the same built-in prof
 | `opencode` | OpenCode | `opencode` | `--prompt <prompt>` | `-m` |
 | `qwen` | Qwen Code | `qwen` | `-i <prompt>` | `-m` |
 | `goose` | Goose | `goose run -s`, or `goose session` when there is no prompt | `-t <prompt>` | `--model` |
-| `codex-local` | Codex (local) | `codex`, the `codex` profile's fixed `args`, then `--oss --local-provider ollama` | positional | `-m` |
+| `codex-lmstudio` | Codex - LM Studio | `codex`, the `codex` profile's fixed `args`, then `--oss --local-provider lmstudio` | positional | `-m` |
+| `codex-ollama` | Codex - Ollama | `codex`, the `codex` profile's fixed `args`, then `--oss --local-provider ollama` | positional | `-m` |
 
-The `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose` and `codex-local` profiles come from each CLI's
-documentation and are untested. Codex (local) needs Ollama 0.13.4 or later. Lists of agents use this
-order, then custom profiles.
+The `grok`, `pi`, `hermes`, `opencode`, `qwen`, `goose`, `codex-lmstudio` and `codex-ollama` profiles
+come from each CLI's documentation and are untested. Codex - Ollama needs Ollama 0.13.4 or later, and
+Codex - LM Studio needs LM Studio running. `codex-local` names `codex-ollama` wherever an agent name is
+accepted, unless `agents.json` defines a `codex-local` profile. Lists of agents use this order, then
+custom profiles. The agent menus and `list_agents` list `codex-lmstudio` and `codex-ollama` only when
+`showLmStudioAgents` or `showOllamaAgents` is on, right under Codex.
 
 A profile in `agents.json` with the same name overrides a built-in one. An `agents.json` profile named
 `codex` replaces the built-in `args` too, so its tabs lose messaging unless it copies them.

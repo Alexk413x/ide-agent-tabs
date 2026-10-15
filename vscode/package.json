@@ -3,7 +3,7 @@
   "displayName": "Agent Tabs",
   "icon": "resources/icon.png",
   "description": "Open Claude Code, Codex, Antigravity CLI, Copilot CLI and other agent CLIs in editor tabs, from a button or from another agent.",
-  "version": "0.1.33",
+  "version": "0.1.34",
   "publisher": "alexk413x",
   "license": "LicenseRef-No-Resale-1.0",
   "repository": {
@@ -59,7 +59,8 @@
               "opencode",
               "qwen",
               "goose",
-              "codex-local"
+              "codex-lmstudio",
+              "codex-ollama"
             ],
             "enumItemLabels": [
               "Claude Code",
@@ -72,7 +73,8 @@
               "OpenCode",
               "Qwen Code",
               "Goose",
-              "Codex (local)"
+              "Codex - LM Studio",
+              "Codex - Ollama"
             ],
             "enumDescriptions": [
               "Claude Code.",
@@ -85,7 +87,8 @@
               "OpenCode.",
               "Qwen Code.",
               "Goose.",
-              "Codex (local)."
+              "Codex with a local model in LM Studio.",
+              "Codex with a local model in Ollama."
             ],
             "description": "The agent that the editor title button, the status bar item and startup open.",
             "order": 1
@@ -134,22 +137,36 @@
             "type": "boolean",
             "scope": "machine",
             "default": false,
-            "markdownDescription": "Show Ori agents. List an Ori entry under each agent that Ori (`ori`) can launch, such as `Ori - Claude Code`, in the New Agent Tab menus and in `list_agents`. An Ori entry opens the agent with `ori <agent>`, billed through OpenRouter, in its own tab next to the normal one. Needs Ori installed.",
+            "markdownDescription": "Show Ori agents. List an Ori entry under each agent that Ori (`ori`) can launch, such as `Claude Code - Ori`, in the New Agent Tab menus and in `list_agents`. An Ori entry opens the agent with `ori <agent>`, billed through OpenRouter, in its own tab next to the normal one. Needs Ori installed.",
             "order": 4
+          },
+          "ideAgentTabs.showLmStudioAgents": {
+            "type": "boolean",
+            "scope": "machine",
+            "default": false,
+            "markdownDescription": "Show LM Studio agents. List `Codex - LM Studio` under Codex in the New Agent Tab menus and in `list_agents`. It opens Codex with `--oss --local-provider lmstudio`, which runs a local model in LM Studio. Needs Codex installed and LM Studio running.",
+            "order": 5
+          },
+          "ideAgentTabs.showOllamaAgents": {
+            "type": "boolean",
+            "scope": "machine",
+            "default": false,
+            "markdownDescription": "Show Ollama agents. List `Codex - Ollama` under Codex in the New Agent Tab menus and in `list_agents`. It opens Codex with `--oss --local-provider ollama`, which runs a local model in Ollama. Needs Codex installed and Ollama 0.13.4 or later running.",
+            "order": 6
           },
           "ideAgentTabs.closeAfterHandoff": {
             "type": "boolean",
             "scope": "machine",
             "default": true,
             "markdownDescription": "Close the old tab after a handoff. After a handoff, the new session closes the old tab once both sides confirm. Off leaves the old tab open, marked as handed off.",
-            "order": 5
+            "order": 7
           },
           "ideAgentTabs.allowResume": {
             "type": "boolean",
             "scope": "machine",
             "default": true,
             "markdownDescription": "Allow resuming closed sessions. Agents can reopen a Claude Code, Codex or Antigravity CLI session that ended in the last 7 days with `resume_tab`. A resume past the prompt cache re-reads the whole history at full price, so the agent asks you first. Off refuses every resume.",
-            "order": 6
+            "order": 8
           },
           "ideAgentTabs.claudeMod": {
             "type": "string",
@@ -168,7 +185,7 @@
               "Claude Code sessions use the Agent Tabs hooks, wake lines and messaging tools, as in 0.6.0."
             ],
             "markdownDescription": "Use the Claude Code mod (in-process messaging). Takes effect in Claude Code sessions that start after the change.",
-            "order": 7
+            "order": 9
           }
         },
         "order": 1
@@ -426,8 +443,8 @@
         "category": "Agent Tabs"
       },
       {
-        "command": "ideAgentTabs.newTab.codexLocal",
-        "title": "New Codex (local) Tab",
+        "command": "ideAgentTabs.newTab.codexLmstudio",
+        "title": "New Codex - LM Studio Tab",
         "category": "Agent Tabs",
         "icon": {
           "light": "resources/icons/agents/codex_new.svg",
@@ -435,38 +452,52 @@
         }
       },
       {
-        "command": "ideAgentTabs.open.codexLocal",
-        "title": "Codex (local)",
+        "command": "ideAgentTabs.newTab.codexOllama",
+        "title": "New Codex - Ollama Tab",
+        "category": "Agent Tabs",
+        "icon": {
+          "light": "resources/icons/agents/codex_new.svg",
+          "dark": "resources/icons/agents/codex_new_dark.svg"
+        }
+      },
+      {
+        "command": "ideAgentTabs.open.codexLmstudio",
+        "title": "Codex - LM Studio",
+        "category": "Agent Tabs"
+      },
+      {
+        "command": "ideAgentTabs.open.codexOllama",
+        "title": "Codex - Ollama",
         "category": "Agent Tabs"
       },
       {
         "command": "ideAgentTabs.openOri.claude",
-        "title": "Ori - Claude Code",
+        "title": "Claude Code - Ori",
         "category": "Agent Tabs"
       },
       {
         "command": "ideAgentTabs.openOri.codex",
-        "title": "Ori - Codex",
+        "title": "Codex - Ori",
         "category": "Agent Tabs"
       },
       {
         "command": "ideAgentTabs.openOri.grok",
-        "title": "Ori - Grok Build",
+        "title": "Grok Build - Ori",
         "category": "Agent Tabs"
       },
       {
         "command": "ideAgentTabs.openOri.pi",
-        "title": "Ori - Pi",
+        "title": "Pi - Ori",
         "category": "Agent Tabs"
       },
       {
         "command": "ideAgentTabs.openOri.hermes",
-        "title": "Ori - Hermes",
+        "title": "Hermes - Ori",
         "category": "Agent Tabs"
       },
       {
         "command": "ideAgentTabs.openOri.opencode",
-        "title": "Ori - OpenCode",
+        "title": "OpenCode - Ori",
         "category": "Agent Tabs"
       },
       {
@@ -553,10 +584,16 @@
         "when": "ideAgentTabs.buttonAgent == goose"
       },
       {
-        "command": "ideAgentTabs.newTab.codexLocal",
+        "command": "ideAgentTabs.newTab.codexLmstudio",
         "key": "ctrl+alt+a",
         "mac": "cmd+alt+a",
-        "when": "ideAgentTabs.buttonAgent == codexLocal"
+        "when": "ideAgentTabs.buttonAgent == codexLmstudio"
+      },
+      {
+        "command": "ideAgentTabs.newTab.codexOllama",
+        "key": "ctrl+alt+a",
+        "mac": "cmd+alt+a",
+        "when": "ideAgentTabs.buttonAgent == codexOllama"
       },
       {
         "command": "ideAgentTabs.newTab.other",
@@ -618,8 +655,13 @@
           "group": "navigation@-0.2"
         },
         {
-          "command": "ideAgentTabs.newTab.codexLocal",
-          "when": "ideAgentTabs.buttonAgent == codexLocal",
+          "command": "ideAgentTabs.newTab.codexLmstudio",
+          "when": "ideAgentTabs.buttonAgent == codexLmstudio",
+          "group": "navigation@-0.2"
+        },
+        {
+          "command": "ideAgentTabs.newTab.codexOllama",
+          "when": "ideAgentTabs.buttonAgent == codexOllama",
           "group": "navigation@-0.2"
         },
         {
@@ -718,11 +760,19 @@
           "when": "false"
         },
         {
-          "command": "ideAgentTabs.newTab.codexLocal",
+          "command": "ideAgentTabs.newTab.codexLmstudio",
           "when": "false"
         },
         {
-          "command": "ideAgentTabs.open.codexLocal",
+          "command": "ideAgentTabs.newTab.codexOllama",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.codexLmstudio",
+          "when": "false"
+        },
+        {
+          "command": "ideAgentTabs.open.codexOllama",
           "when": "false"
         },
         {
@@ -836,9 +886,14 @@
           "group": "1_agents@9"
         },
         {
-          "command": "ideAgentTabs.open.codexLocal",
-          "when": "ideAgentTabs.installed.codexLocal",
-          "group": "1_agents@10"
+          "command": "ideAgentTabs.open.codexLmstudio",
+          "when": "ideAgentTabs.installed.codexLmstudio",
+          "group": "1_agents@1.6"
+        },
+        {
+          "command": "ideAgentTabs.open.codexOllama",
+          "when": "ideAgentTabs.installed.codexOllama",
+          "group": "1_agents@1.7"
         },
         {
           "command": "ideAgentTabs.newTabWith",
