@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import {
@@ -17,9 +16,9 @@ import {
   parseInput,
   parseOpenRequest,
 } from '../request';
+import { onWindows, tempDir } from './support';
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-request-'));
-const isWindows = process.platform === 'win32';
+const dir = tempDir('iat-request-');
 
 function body(fields: Record<string, unknown>) {
   return JSON.stringify({ path: dir, ...fields });
@@ -49,13 +48,13 @@ test('rejects bad bodies', () => {
 });
 
 test('rejects relative and missing directories', () => {
-  assert.throws(() => openRequestOf('relative\\dir'), BadRequest);
-  assert.throws(() => openRequestOf('relative/dir'), BadRequest);
-  assert.throws(() => openRequestOf(path.join(dir, 'absent')), BadRequest);
-  assert.throws(() => openRequestOf(`${dir}\0x`), BadRequest);
+  assert.throws(() => openRequestOf({ path: 'relative\\dir' }), BadRequest);
+  assert.throws(() => openRequestOf({ path: 'relative/dir' }), BadRequest);
+  assert.throws(() => openRequestOf({ path: path.join(dir, 'absent') }), BadRequest);
+  assert.throws(() => openRequestOf({ path: `${dir}\0x` }), BadRequest);
   const file = path.join(dir, 'f.txt');
   fs.writeFileSync(file, 'x');
-  assert.throws(() => openRequestOf(file), BadRequest);
+  assert.throws(() => openRequestOf({ path: file }), BadRequest);
 });
 
 test('absolute means rooted with a drive or UNC share on Windows', () => {
@@ -70,8 +69,8 @@ test('absolute means rooted with a drive or UNC share on Windows', () => {
 });
 
 test('rejects an oversized prompt', () => {
-  assert.throws(() => openRequestOf(dir, 'x'.repeat(MAX_PROMPT_CHARS + 1)), BadRequest);
-  assert.equal(openRequestOf(dir, 'x'.repeat(MAX_PROMPT_CHARS)).prompt?.length, MAX_PROMPT_CHARS);
+  assert.throws(() => openRequestOf({ path: dir, prompt: 'x'.repeat(MAX_PROMPT_CHARS + 1) }), BadRequest);
+  assert.equal(openRequestOf({ path: dir, prompt: 'x'.repeat(MAX_PROMPT_CHARS) }).prompt?.length, MAX_PROMPT_CHARS);
 });
 
 test('parses args and env', () => {
@@ -95,7 +94,7 @@ test('focus is an optional boolean that defaults to false', () => {
   assert.equal(parseOpenRequest(body({ focus: true })).focus, true);
   assert.equal(parseOpenRequest(body({ focus: false })).focus, false);
   for (const focus of ['true', 1, {}]) assert.throws(() => parseOpenRequest(body({ focus })), BadRequest, JSON.stringify(focus));
-  assert.equal(openRequestOf(dir).focus, false);
+  assert.equal(openRequestOf({ path: dir }).focus, false);
 });
 
 test('parses an optional model and via', () => {
@@ -149,12 +148,12 @@ test('rejects bad args and env', () => {
   for (const fields of bad) {
     assert.throws(() => parseOpenRequest(body(fields)), BadRequest, JSON.stringify(fields));
   }
-  assert.throws(() => openRequestOf(dir, undefined, Array(MAX_ENTRIES + 1).fill('x')), BadRequest);
-  assert.throws(() => openRequestOf(dir, undefined, ['x'.repeat(MAX_PROMPT_CHARS + 1)]), BadRequest);
-  assert.throws(() => openRequestOf(dir, undefined, [], { A: 'x\0y' }), BadRequest);
+  assert.throws(() => openRequestOf({ path: dir, args: Array(MAX_ENTRIES + 1).fill('x') }), BadRequest);
+  assert.throws(() => openRequestOf({ path: dir, args: ['x'.repeat(MAX_PROMPT_CHARS + 1)] }), BadRequest);
+  assert.throws(() => openRequestOf({ path: dir, env: { A: 'x\0y' } }), BadRequest);
   const many = Object.fromEntries(Array.from({ length: MAX_ENTRIES + 1 }, (_, i) => [`V${i}`, 'x']));
-  assert.throws(() => openRequestOf(dir, undefined, [], many), BadRequest);
-  openRequestOf(dir, undefined, Array(MAX_ENTRIES).fill('x'));
+  assert.throws(() => openRequestOf({ path: dir, env: many }), BadRequest);
+  openRequestOf({ path: dir, args: Array(MAX_ENTRIES).fill('x') });
 });
 
 test('close takes a string id', () => {
@@ -208,7 +207,7 @@ test('closest base picks the deepest containing folder', () => {
   const b = path.join(a, 'repo');
   const c = path.join(dir, 'other');
   assert.equal(closestBase(path.join(b, 'sub'), [a, b, c]), 1);
-  assert.equal(closestBase(path.join(a, 'x'), [a, b, undefined]), 0);
+  assert.equal(closestBase(path.join(a, 'x'), [a, b]), 0);
   assert.equal(closestBase(b, [a, b]), 1);
   assert.equal(closestBase(path.join(dir, 'none'), [a, b, c]), undefined);
   assert.equal(closestBase(`${a}-sibling`, [a]), undefined);
@@ -218,5 +217,5 @@ test('closest base ignores case on Windows', () => {
   assert.equal(closestBase('c:\\WORK\\Repo', ['C:\\work', 'C:\\work\\repo'], true), 1);
   assert.equal(closestBase('C:\\work\\x', ['C:\\'], true), 0);
   assert.equal(closestBase('/Work/repo', ['/work'], false), undefined);
-  if (isWindows) assert.equal(closestBase('c:\\WORK', ['C:\\work\\']), 0);
+  if (onWindows) assert.equal(closestBase('c:\\WORK', ['C:\\work\\']), 0);
 });

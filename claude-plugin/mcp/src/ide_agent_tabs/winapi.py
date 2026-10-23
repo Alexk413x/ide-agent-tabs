@@ -37,7 +37,7 @@ def kernel32() -> Any:
 
 
 # Python's open() on Windows withholds FILE_SHARE_DELETE, so while it reads a file no other process can delete
-# or rename over it; Node's readers share delete, and its lock release gives up on the refusal.
+# or rename over it, and the 0.8.0 build's lock release gives up on that refusal.
 def open_shared_read(path: str) -> int:
     if sys.platform != "win32":
         return os.open(path, os.O_RDONLY)
@@ -60,7 +60,7 @@ _REPARSE_BUFFER_SIZE = 16 * 1024
 
 
 # os.readlink reads symlinks and junctions only; the Store's pwsh.exe and wt.exe are app execution aliases,
-# whose target Node's readlink returns.
+# so their target comes from the reparse point.
 def read_app_exec_link(path: str) -> str | None:
     if sys.platform != "win32":
         return None

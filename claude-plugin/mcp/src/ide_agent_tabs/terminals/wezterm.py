@@ -11,14 +11,14 @@ from collections.abc import Mapping
 from typing import Callable, NamedTuple, Union
 
 from ..clock import now_ms
-from ..files import write_new_private_file
-from ..jsjson import is_number, number, parse
+from ..files import discard_file, write_new_private_file
+from ..jsjson import MAX_SAFE_INTEGER, is_number, number, parse
 from ..liveness import pid_alive
-from ..processes import RunResult, run
+from ..processes import RunResult, platform_name, run, terminal_environment
 from ..spec import LaunchSpec, check_posix_env_names, posix_spec, power_shell_spec
 from .driver import OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
 from .powershell import default_power_shell
-from .processes import GUI_SETTLE_MS, STARTUP_GRACE_MS, find_executable, start_detached, terminal_environment
+from .processes import GUI_SETTLE_MS, STARTUP_GRACE_MS, find_executable, start_detached
 from .shell import ENTER_DELAY_MS, argv_mode_command, check_argv_paths, check_input_line, launcher_name, login_shell, sleep_ms
 from .window_memory import RememberedWindow, read_window, remember_window
 from .windows_terminal import LAUNCHER_PS1, power_shell_argv
@@ -28,10 +28,6 @@ START_WAIT_MS = 10_000
 _GUI_SOCKET = re.compile(r"gui-sock-(\d+)")
 _DIGITS = re.compile(r"\d+")
 _NO_GUI = re.compile(r"connect|socket|no running|not running", re.IGNORECASE)
-
-
-def _platform() -> str:
-    return "linux" if sys.platform.startswith("linux") else sys.platform
 
 
 def wezterm_locations(platform: str, home: str, program_files: str | None) -> list[str]:
@@ -55,7 +51,7 @@ def _find_wezterm(ctx: TerminalContext) -> str | None:
     program_files = ctx.env.get("ProgramFiles")
     if program_files is None:
         program_files = ctx.env.get("PROGRAMFILES")
-    return find_executable(ctx.path_var, name, wezterm_locations(_platform(), os.path.expanduser("~"), program_files))
+    return find_executable(ctx.path_var, name, wezterm_locations(platform_name(), os.path.expanduser("~"), program_files))
 
 
 def wezterm_runtime_dir(platform: str, env: Mapping[str, str], home: str) -> str:
@@ -79,7 +75,7 @@ def find_gui_sockets(folder: str, running: Callable[[int], bool] = pid_alive) ->
         if match is None or match.end() != len(name):
             continue
         pid = int(match.group(1))
-        if pid > 2**53 - 1 or not running(pid):
+        if pid > MAX_SAFE_INTEGER or not running(pid):
             continue
         file = os.path.join(folder, name)
         try:
@@ -91,7 +87,7 @@ def find_gui_sockets(folder: str, running: Callable[[int], bool] = pid_alive) ->
 
 
 def _gui_sockets(env: Mapping[str, str]) -> list[str]:
-    found = find_gui_sockets(wezterm_runtime_dir(_platform(), env, os.path.expanduser("~")))
+    found = find_gui_sockets(wezterm_runtime_dir(platform_name(), env, os.path.expanduser("~")))
     own = env.get("WEZTERM_UNIX_SOCKET")
     return [own, *found] if own and own not in found else found
 
@@ -171,10 +167,6 @@ def parse_wezterm_pane_windows(stdout: str) -> dict[str, str]:
     return windows
 
 
-def parse_wezterm_panes(stdout: str) -> list[str]:
-    return list(parse_wezterm_pane_windows(stdout))
-
-
 def is_no_gui_error(stderr: str) -> bool:
     return _NO_GUI.search(stderr) is not None
 
@@ -225,7 +217,7 @@ def _pane_argv(ctx: TerminalContext, spec: LaunchSpec, spec_file: str) -> list[s
         check_argv_paths("WezTerm", argv)
         return argv
     check_posix_env_names(spec.env)
-    shell = login_shell(ctx.env.get("SHELL"), _platform())
+    shell = login_shell(ctx.env.get("SHELL"), platform_name())
     return argv_mode_command(shell, os.path.join(ctx.scripts_dir, launcher_name(shell)), spec_file)
 
 
@@ -294,11 +286,6 @@ def _wezterm_path(ctx: TerminalContext) -> str:
     return exe
 
 
-def _remove(file: str) -> None:
-    with contextlib.suppress(OSError):
-        os.remove(file)
-
-
 class Wezterm(TerminalDriver):
     name = WEZTERM
     label = "WezTerm"
@@ -329,7 +316,7 @@ class Wezterm(TerminalDriver):
                 if pane is not None:
                     break
         except BaseException:
-            _remove(spec_file)
+            discard_file(spec_file)
             raise
         if used is not None and used.remember and pane is not None:
             with contextlib.suppress(OSError, TimeoutError, ValueError, TypeError, RuntimeError):

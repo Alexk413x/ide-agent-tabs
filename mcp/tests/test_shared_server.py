@@ -11,12 +11,12 @@ from typing import Any
 
 from ide_agent_tabs.clock import now_iso
 from ide_agent_tabs.messaging.sessions import read_presence, update_presence
-from ide_agent_tabs.shared.host import Binding, BoundSession, Catalog, Progress
+from ide_agent_tabs.shared.host import Binding, BoundSession
 from ide_agent_tabs.shared.hub import Identity, derived_id, root_path, session_key
 from ide_agent_tabs.shared.server import IDLE_EXIT_MS, SharedServer
 from ide_agent_tabs.shared.state import port_from_url, read_state, state_path
 from shared_support import PROTOCOL, McpHttp, Reply, free_port, pid_headers, request, reset_store_mode, serve
-from store_host import StoreHost
+from store_host import Catalog, StoreHost
 from support import temp_home
 
 
@@ -29,7 +29,7 @@ class _Blocking:
     def id(self) -> str:
         return "s-blocking"
 
-    def call(self, name: str, arguments: dict[str, Any], progress: Progress | None, cancel: threading.Event) -> dict[str, Any]:
+    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event) -> dict[str, Any]:
         self.started.set()
         self.done.append("cancelled" if cancel.wait(20) else "timed out")
         return {"content": []}

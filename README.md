@@ -117,7 +117,7 @@ or later, found the way `scripts/pack-ides.mjs` finds it. Pass `--skip-ide` to s
 `--skip-tests` to skip every test.
 
 The step "ide packages current" compares a sha256 of the sources that go into each IDE package
-(`vscode/src`, `package.json` and `resources`; `jetbrains/src/main`, `build.gradle.kts`,
+(`vscode/src`, `package.json` and `resources`; `shared`; `jetbrains/src/main`, `build.gradle.kts`,
 `gradle.properties` and `settings.gradle.kts`) with the hashes that `node scripts/pack-ides.mjs` records
 in `claude-plugin/dist/ide/versions.json`. It needs no build. When a source changed, it fails with
 "vscode/ changed since the last repack; run node scripts/pack-ides.mjs".
@@ -128,6 +128,17 @@ To release, run `node scripts/bump.mjs <version>`. It sets the version in
 when you bumped one, check, commit and tag `ide-agent-tabs--v<version>`. Add `--vscode <version>` or `--jetbrains <version>` to bump the
 extension (`package.json` and its lock) or the plugin (`pluginVersion` in `gradle.properties`). The script
 never commits or tags.
+
+## Shared icons and launch scripts
+
+`shared/icons` and `shared/launch` hold the agent icons and the terminal launch scripts (`agent.sh`,
+`agent.ps1`, `agent.fish`) that both IDE packages use. Edit them there, then run
+`node scripts/sync-shared.mjs` to copy them into `vscode/resources` and `jetbrains/src/main/resources`.
+Commit the copies: the `vsce` and Gradle builds read only their own folder and don't run Node.
+`node scripts/sync-shared.mjs --check` lists copies that differ from `shared/` without writing, and
+`node scripts/check.mjs` and CI run it. `node scripts/pack-ides.mjs` syncs before it builds. Icons used by
+one IDE only, such as `newBadge*.svg` (JetBrains) and `openrouter*.svg` (VS Code), stay in that IDE's
+folder.
 
 ## License
 

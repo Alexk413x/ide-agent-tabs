@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import {
@@ -20,7 +19,9 @@ import {
   unixShell,
   windowsShell,
 } from '../launch';
-import { launchOf, profile } from '../profiles';
+import { launchOf } from '../launchPlan';
+import { profile } from '../profiles';
+import { tempDir } from './support';
 
 export const scriptDir = path.resolve(__dirname, '..', '..', 'resources', 'launch');
 const scripts = launchScripts('/ext/resources/launch');
@@ -75,7 +76,7 @@ test('PowerShell runs the launcher file and stays open', () => {
 });
 
 test('Windows prefers pwsh on PATH, then Windows PowerShell', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-shell-'));
+  const dir = tempDir('iat-shell-');
   const a = path.join(dir, 'a');
   const b = path.join(dir, 'b');
   fs.mkdirSync(a);

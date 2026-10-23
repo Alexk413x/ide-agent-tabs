@@ -26,33 +26,20 @@ from ide_agent_tabs.messaging.messaging import (
 )
 from ide_agent_tabs.messaging.notice import unread_reminder, wake_line
 from ide_agent_tabs.scheduler import Scheduler
-from support import temp_home
+from support import Clock, FakeHosts, follow_up_peers, out, patch, session, temp_home
 
 THREAD = "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b"
 FULL_ID = "f99f0a1b-2222-4333-8444-555566667777"
 
 
-class FakeHosts:
-    def __init__(self, host: str | None = None, ok: bool = True, labels: dict[str, str] | None = None) -> None:
-        self.host = host
-        self.ok = ok
-        self.labels = labels or {}
-        self.typed: list[tuple[str, str, str]] = []
-
-    def find_host(self, tab_id: str) -> str | None:
-        return self.host
-
-    def type_into(self, tab_id: str, host: str, text: str) -> dict[str, Any]:
-        self.typed.append((tab_id, host, text))
-        return {"ok": True} if self.ok else {"ok": False, "reason": "no input here"}
-
-    def describe_host(self, host: str) -> str | None:
-        return self.labels.get(host)
-
-
 class ThrowingHosts(FakeHosts):
     def type_into(self, tab_id: str, host: str, text: str) -> dict[str, Any]:
         raise RuntimeError("no input here")
+
+
+class DescribeFailsHosts(FakeHosts):
+    def describe_host(self, host: str) -> str | None:
+        raise RuntimeError("no endpoint")
 
 
 class MovingHosts(FakeHosts):
@@ -63,52 +50,10 @@ class MovingHosts(FakeHosts):
         return super().type_into(tab_id, host, text)
 
 
-class Clock:
-    def __init__(self, start: float) -> None:
-        self.at = start
-
-    def __call__(self) -> float:
-        return self.at
-
-
-def session(
-    test: unittest.TestCase,
-    home: str,
-    tab_id: str | None,
-    agent: str,
-    pid: int,
-    hosts: FakeHosts | None = None,
-    start: bool = True,
-    **over: Any,
-) -> Messaging:
-    scheduler = Scheduler()
-    test.addCleanup(scheduler.stop)
-    env = {} if tab_id is None else {"IDE_AGENT_TABS_ID": tab_id, "IDE_AGENT_TABS_AGENT": agent}
-    deps = {
-        "home": home,
-        "env": env,
-        "pid": pid,
-        "cwd": f"/w/{tab_id or 'x'}",
-        "hosts": hosts if hosts is not None else FakeHosts(),
-        "is_alive": lambda _pid: True,
-        "scheduler": scheduler,
-        **over,
-    }
-    messaging = Messaging(MessagingDeps(**deps))
-    test.addCleanup(messaging.stop_sync)
-    if start:
-        messaging.start()
-    return messaging
-
-
 def pair(test: unittest.TestCase, home: str, hosts: FakeHosts | None = None, **over: Any) -> tuple[Messaging, Messaging]:
     a = session(test, home, "tab-a", "codex", 1, hosts, **over)
     b = session(test, home, "tab-b", "claude", 2)
     return a, b
-
-
-def patch(home: str, tab_id: str, **fields: Any) -> None:
-    sessions.update_presence(home, tab_id, lambda p: p if p is None else {**p, **fields})
 
 
 def until(done: Callable[[], object], seconds: float) -> bool:
@@ -116,10 +61,6 @@ def until(done: Callable[[], object], seconds: float) -> bool:
     while not done() and time.monotonic() < end:
         time.sleep(0.01)
     return bool(done())
-
-
-def out(to: str, text: str, sender: str = "tab-a", **over: Any) -> dict[str, Any]:
-    return {"from": {"id": sender, "agent": "codex", "path": f"/w/{sender}"}, "to": to, "text": text, **over}
 
 
 def unread_texts(home: str, tab_id: str) -> list[str]:
@@ -520,7 +461,7 @@ class SendTest(unittest.TestCase):
         patch(home, "tab-b", state="idle")
         time.sleep(0.15)
         self.assertEqual(len(hosts.typed), 1)
-        self.assertEqual(a.follow_up_peers(), [])
+        self.assertEqual(follow_up_peers(a), [])
 
     def test_a_failed_wake_up_leaves_the_message_queued_and_the_session_idle(self) -> None:
         home = temp_home(self)
@@ -664,12 +605,12 @@ class SendTest(unittest.TestCase):
         home = temp_home(self)
         a, _b = pair(self, home)
         a.send({"to": "tab-b", "text": "one"})
-        self.assertEqual(a.follow_up_peers(), ["tab-b"])
+        self.assertEqual(follow_up_peers(a), ["tab-b"])
         a.stop_sync()
-        self.assertEqual(a.follow_up_peers(), [])
+        self.assertEqual(follow_up_peers(a), [])
         session(self, home, "tab-a", "codex", 1)
         a.send({"to": "tab-b", "text": "two"})
-        self.assertEqual(a.follow_up_peers(), [])
+        self.assertEqual(follow_up_peers(a), [])
 
 
 class ReadTest(unittest.TestCase):
@@ -882,6 +823,17 @@ class StartRetryTest(unittest.TestCase):
 
 
 class ListSessionsTest(unittest.TestCase):
+    def test_a_host_that_fails_to_describe_itself_is_logged_once_and_listed_without_a_label(self) -> None:
+        home = temp_home(self)
+        logs: list[str] = []
+        sessions.update_presence(home, "tab-c", lambda _: {"id": "tab-c", "host": "jetbrains-1"})
+        a = session(self, home, "tab-a", "codex", 1, DescribeFailsHosts(None), log=logs.append)
+        session(self, home, "tab-c", "claude", 2)
+        for _ in range(2):
+            row = next(r for r in a.list_sessions()["sessions"] if r["id"] == "tab-c")
+            self.assertIsNone(row["where"])
+        self.assertEqual(logs, ["describing host jetbrains-1 failed: RuntimeError: no endpoint"])
+
     def test_rows_carry_name_route_tab_host_and_via_in_the_agent_order(self) -> None:
         home = temp_home(self)
         labels = {"jetbrains-1": "IntelliJ IDEA", "windows-terminal": "Windows Terminal"}

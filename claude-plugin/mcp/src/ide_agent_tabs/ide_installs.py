@@ -13,7 +13,7 @@ from .editor_clis import cli_invocation, env_value, find_editor_clis
 from .ide_catalog import IDE_CATALOG, entry_for_product_info
 from .jsjson import CONTROL, parse, trim
 from .jspath import posix_resolve, win32_resolve
-from .terminals.processes import spawn_detached, terminal_environment
+from .processes import spawn_detached, terminal_environment
 from .version import compare_versions
 
 
@@ -64,7 +64,7 @@ def _exists(file: str) -> bool:
 SYSTEM_DISCOVERY_FS = DiscoveryFs(_exists, _readdir, _read_text)
 
 
-def node_arch() -> str:
+def machine_arch() -> str:
     if sys.platform == "win32":
         machine = os.environ.get("PROCESSOR_ARCHITECTURE", "")
     else:
@@ -78,10 +78,6 @@ def node_arch() -> str:
     if machine in ("x86", "i386", "i686"):
         return "ia32"
     return machine
-
-
-def node_platform() -> str:
-    return "linux" if sys.platform.startswith("linux") else sys.platform
 
 
 class LaunchEntry(NamedTuple):
@@ -281,6 +277,7 @@ class IdeCommand(NamedTuple):
     command: str
     args: list[str]
     windows_verbatim_arguments: bool
+    # spawn_ide never reads windows_hide, since spawn_detached hides every console; the ide.json parity fixture checks it.
     windows_hide: bool
 
     def command_line(self) -> str | list[str]:
@@ -294,8 +291,6 @@ def ide_launch_command(install: IdeInstall, folder: str, platform: str, comspec:
         raise ValueError("the folder path holds a control character")
     if install.kind == "vscode":
         inv = cli_invocation(install.launcher, [folder], platform, comspec)
-        # A .cmd editor CLI runs through cmd.exe, whose console window would flash; the editor window it
-        # starts is a separate process and shows anyway.
         return IdeCommand(inv.command, inv.args, inv.windows_verbatim_arguments, inv.command != install.launcher)
     if platform == "darwin":
         return IdeCommand("open", ["-na", install.launcher, "--args", folder], False, False)
@@ -307,4 +302,4 @@ def spawn_ide(cmd: IdeCommand, env: Mapping[str, str]) -> None:
 
 
 def system_discovery(platform: str, env: Mapping[str, str]) -> DiscoveryContext:
-    return DiscoveryContext(platform, env, os.path.expanduser("~"), node_arch(), SYSTEM_DISCOVERY_FS)
+    return DiscoveryContext(platform, env, os.path.expanduser("~"), machine_arch(), SYSTEM_DISCOVERY_FS)

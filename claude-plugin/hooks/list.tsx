@@ -16,15 +16,15 @@ export type ListGroup = { border: boolean; lines: ListLine[] }
 export type ListProps = { groups: ListGroup[]; acts: Record<string, JsonValue>; width?: number }
 type ListState = { hovered: string | null; focused: string | null; linger: number; frame: number }
 
-export type ListRow = { edge: 'top' | 'bottom'; group: number } | { edge?: undefined; group: number; index: number; line: ListLine; offset: number; border: boolean }
+type ListRow = { edge: 'top' | 'bottom'; group: number } | { edge?: undefined; group: number; index: number; line: ListLine; offset: number; border: boolean }
 
 const MARK = '▎'
 const IDLE: ListState = { hovered: null, focused: null, linger: 0, frame: 0 }
 export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
-export const SPIN_MS = 100
+const SPIN_MS = 100
 const spinners = new WeakMap<object, () => void>()
 const TICK_MS = 50
-export const LINGER_MS = 300
+const LINGER_MS = 300
 const LINGER_TICKS = LINGER_MS / TICK_MS
 
 const itemOf = (line: ListLine, part: ListPart) => part.item ?? line.item
@@ -39,7 +39,7 @@ export function listRows(groups: readonly ListGroup[]): ListRow[] {
 
 const revealed = (part: ListPart, active: string | null) => part.revealOn === undefined || (active !== null && part.revealOn.includes(active))
 
-export function itemAt(groups: readonly ListGroup[], x: number, y: number, active: string | null): string | null {
+function itemAt(groups: readonly ListGroup[], x: number, y: number, active: string | null): string | null {
   const row = listRows(groups)[y]
   if (row === undefined || row.edge !== undefined) return null
   const { line, offset } = row

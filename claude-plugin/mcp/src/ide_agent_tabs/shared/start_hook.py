@@ -1,35 +1,15 @@
 from __future__ import annotations
 
-import os
-import threading
 from collections.abc import Mapping
 
 from ..home import agent_tabs_home
 from ..jsjson import parse
+from ..processes import read_stdin
 from ..version import PACKAGE_VERSION
 from .client import ensure_server, notify_end, server_command
 from .state import DEFAULT_PORT, PORT_OPTION_ENV, parse_port
 
 STDIN_WAIT_S = 1.0
-
-
-def read_stdin(fd: int = 0, wait_s: float = STDIN_WAIT_S) -> bytes:
-    chunks: list[bytes] = []
-
-    def pump() -> None:
-        try:
-            while True:
-                chunk = os.read(fd, 65536)
-                if not chunk:
-                    return
-                chunks.append(chunk)
-        except OSError:
-            return
-
-    reader = threading.Thread(target=pump, daemon=True)
-    reader.start()
-    reader.join(wait_s)
-    return b"".join(chunks)
 
 
 def _reason(raw: bytes) -> object:
@@ -44,7 +24,7 @@ def run(event: str, env: Mapping[str, str], launcher: str, stdin: bytes | None =
     port = parse_port(env.get(PORT_OPTION_ENV)) or DEFAULT_PORT
     home = agent_tabs_home(env)
     if event == "SessionEnd":
-        reason = _reason(read_stdin() if stdin is None else stdin)
+        reason = _reason(read_stdin(STDIN_WAIT_S) if stdin is None else stdin)
         text = env.get("CLAUDE_PID") or ""
         pid = int(text) if text.isdigit() and len(text) <= 16 else 0
         if reason != "clear" and pid > 0:

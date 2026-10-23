@@ -9,12 +9,13 @@ import sys
 import unittest
 from typing import Any
 
+import source_values
 from ide_agent_tabs.launch_plan import LaunchRequest, plan_launch
 from ide_agent_tabs.mcp_tools import HOOK_TOOL, SERVER_NAME
 from ide_agent_tabs.messaging.hook import HOOK_EVENTS
 from ide_agent_tabs.profiles import BUILTIN_PROFILES, CODEX_TAB_ARGS, codex_http, codex_http_arg, with_codex_http
 from ide_agent_tabs.shared.headers import option_env
-from support import ROOT, temp_home
+from support import temp_home
 
 WINDOWS = sys.platform == "win32"
 HOOK_TIMEOUT_S = 10
@@ -118,16 +119,8 @@ class CodexTabTest(unittest.TestCase):
                     self.assertRegex(arg, r"\s", "an argument with a cmd.exe metacharacter must be quoted, so it needs a space")
 
     def test_the_vs_code_and_jetbrains_profiles_hold_the_same_codex_arguments(self) -> None:
-        with open(os.path.join(ROOT, "vscode", "src", "profiles.ts"), encoding="utf-8") as f:
-            vscode = f.read()
-        kotlin_file = os.path.join(ROOT, "jetbrains", "src", "main", "kotlin", "dev", "alexk", "ideagenttabs", "AgentProfiles.kt")
-        with open(kotlin_file, encoding="utf-8") as f:
-            kotlin = f.read()
-        for arg in CODEX_TAB_ARGS:
-            literal = json.dumps(arg, ensure_ascii=False)
-            with self.subTest(arg=arg[:60]):
-                self.assertIn(literal, vscode, "vscode/src/profiles.ts lacks the argument")
-                self.assertIn(literal.replace("$", "\\$"), kotlin, "AgentProfiles.kt lacks the argument")
+        self.assertEqual(source_values.typescript().value("CODEX_TAB_ARGS"), list(CODEX_TAB_ARGS))
+        self.assertEqual(source_values.kotlin().value("CODEX_TAB_ARGS"), list(CODEX_TAB_ARGS))
 
 
 class CodexHttpTest(unittest.TestCase):

@@ -1,18 +1,9 @@
 package dev.alexk.ideagenttabs
 
-import com.google.gson.JsonObject
-import com.google.gson.JsonParser
-import com.google.gson.JsonSyntaxException
 import java.net.InetAddress
 import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
-
-const val MAX_PROMPT_CHARS = 30_000
-const val MAX_ENTRIES = 64
-const val MAX_INPUT_CHARS = 500
-
-val MODEL_PATTERN = Regex("[A-Za-z0-9._:/@+-]{1,200}")
 
 class Refusal(val status: Int, val message: String)
 
@@ -37,59 +28,24 @@ object Admission {
     }
 }
 
-private fun parseObject(body: String): JsonObject {
-    val json = try {
-        JsonParser.parseString(body)
-    } catch (e: JsonSyntaxException) {
-        throw IllegalArgumentException("body is not JSON")
-    }
-    if (!json.isJsonObject) throw IllegalArgumentException("body must be a JSON object")
-    return json.asJsonObject
-}
-
-private fun JsonObject.string(name: String): String? {
-    val value = get(name) ?: return null
-    if (value.isJsonNull) return null
-    if (!value.isJsonPrimitive || !value.asJsonPrimitive.isString) {
-        throw IllegalArgumentException("$name must be a string")
-    }
-    return value.asString
-}
-
-private fun JsonObject.boolean(name: String): Boolean? {
-    val value = get(name) ?: return null
-    if (value.isJsonNull) return null
-    if (!value.isJsonPrimitive || !value.asJsonPrimitive.isBoolean) throw IllegalArgumentException("$name must be true or false")
-    return value.asBoolean
-}
-
-fun parseCloseId(body: String): String {
-    val id = parseObject(body).string("id")
-    if (id.isNullOrBlank()) throw IllegalArgumentException("id is required")
-    return id
-}
+fun parseCloseId(body: String): String = parseBody(body).required("id")
 
 data class InputRequest(val id: String, val text: String)
 
 fun parseInput(body: String): InputRequest {
-    val obj = parseObject(body)
-    val id = obj.string("id")
-    if (id.isNullOrBlank()) throw IllegalArgumentException("id is required")
-    val text = obj.string("text")
-    if (text.isNullOrBlank()) throw IllegalArgumentException("text is required")
+    val obj = parseBody(body)
+    val id = obj.required("id")
+    val text = obj.required("text")
     if (text.length > MAX_INPUT_CHARS) throw IllegalArgumentException("text exceeds $MAX_INPUT_CHARS characters")
-    if (text.any { Character.getType(it) == Character.CONTROL.toInt() }) {
-        throw IllegalArgumentException("text must be one line with no control characters")
-    }
+    if (text.hasControlChars()) throw IllegalArgumentException("text must be one line with no control characters")
     return InputRequest(id, text)
 }
 
-val BUNDLE_SEGMENT = Regex("\\.(app|bundle|framework|pkg|plugin|prefPane)$", RegexOption.IGNORE_CASE)
+val BUNDLE_SEGMENT = Regex("(?-u)\\.(app|bundle|framework|pkg|plugin|prefPane)\\z", RegexOption.IGNORE_CASE)
 
 fun parseRevealPath(body: String): Path {
-    val raw = parseObject(body).string("path")
-    if (raw.isNullOrBlank()) throw IllegalArgumentException("path is required")
-    if (raw.any { Character.getType(it) == Character.CONTROL.toInt() }) throw IllegalArgumentException("path must have no control characters")
+    val raw = parseBody(body).required("path")
+    if (raw.hasControlChars()) throw IllegalArgumentException("path must have no control characters")
     val path = try {
         Path.of(raw)
     } catch (e: java.nio.file.InvalidPathException) {
@@ -126,27 +82,7 @@ fun checkRevealTarget(
 }
 
 fun parseEmpty(body: String) {
-    if (body.isNotBlank()) parseObject(body)
-}
-
-private fun JsonObject.stringList(name: String): List<String> {
-    val value = get(name) ?: return emptyList()
-    if (value.isJsonNull) return emptyList()
-    if (!value.isJsonArray) throw IllegalArgumentException("$name must be an array of strings")
-    return value.asJsonArray.map {
-        if (!it.isJsonPrimitive || !it.asJsonPrimitive.isString) throw IllegalArgumentException("$name must be an array of strings")
-        it.asString
-    }
-}
-
-private fun JsonObject.stringMap(name: String): Map<String, String> {
-    val value = get(name) ?: return emptyMap()
-    if (value.isJsonNull) return emptyMap()
-    if (!value.isJsonObject) throw IllegalArgumentException("$name must be an object of strings")
-    return value.asJsonObject.entrySet().associate { (key, v) ->
-        if (!v.isJsonPrimitive || !v.asJsonPrimitive.isString) throw IllegalArgumentException("$name.$key must be a string")
-        key to v.asString
-    }
+    if (body.isNotBlank()) parseBody(body)
 }
 
 data class OpenRequest(
@@ -163,7 +99,7 @@ data class OpenRequest(
     companion object {
 
         fun parse(body: String): OpenRequest {
-            val obj = parseObject(body)
+            val obj = parseBody(body)
             return of(
                 obj.string("path"),
                 obj.string("prompt"),

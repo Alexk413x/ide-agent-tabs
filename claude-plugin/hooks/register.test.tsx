@@ -826,15 +826,6 @@ const AGENT_LINES = [
   "      ● cloud · Claude Code",
 ]
 
-type Node = { type?: string; props?: Record<string, unknown>; hover?: unknown; children?: unknown[] }
-
-function nodes(root: unknown): Node[] {
-  if (root === null || typeof root !== 'object') return []
-  const node = root as Node
-  return [node, ...(node.children ?? []).flatMap(nodes)]
-}
-
-
 type Found = { type: string; key: string | undefined; text: string; props: Record<string, unknown> }
 type PointerType = 'down' | 'move' | 'up' | 'enter' | 'leave'
 type Ui = {
@@ -944,7 +935,7 @@ async function hasItem(ui: Ui, ref: string): Promise<boolean> {
   }
 }
 
-const titleLine = (_width: number) => 'Agent Tabs Messages'
+const TITLE_LINE = 'Agent Tabs Messages'
 
 const DETAIL_LABELS = ['From', 'To', 'Time', 'Reply to', 'Delivery', 'Session']
 
@@ -1047,7 +1038,7 @@ describe('agents pane', () => {
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
       expect(await textIn(ui, 'Agent Tabs Messages')).toBeDefined()
-      expect(await drawnLines(ui)).toEqual([titleLine(PANE_PROPS().bodyColumns), ...AGENT_LINES])
+      expect(await drawnLines(ui)).toEqual([TITLE_LINE, ...AGENT_LINES])
       const { props } = await list(ui)
       expect(props.groups).toHaveLength(9)
       expect(props.groups.map(g => g.border)).toEqual([false, ...Array(8).fill(true)])
@@ -1320,7 +1311,7 @@ describe('agents pane', () => {
     const viewport = { columns: 200, rows: 50, isFullscreen: true }
     for (const surface of SURFACES) {
       const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface, component: 'Pane', requestId: 'agent-tabs', viewport, props: { ...PANE_PROPS(80), placement: 'dock' as const } })
-      expect(await drawnLines(ui)).toEqual([titleLine(80), ...AGENT_LINES])
+      expect(await drawnLines(ui)).toEqual([TITLE_LINE, ...AGENT_LINES])
       await ui.unmount()
     }
   })
@@ -2375,7 +2366,7 @@ describe('loading lines', () => {
   }
 
   test('the spinner steps a frame every 100 ms on the frame clock, and keeps the line the same width', async ($, on) => {
-    const { ui, done } = await loadingDetail($, on, 'terminal')
+    const { ui } = await loadingDetail($, on, 'terminal')
     const seen: string[] = []
     for (let i = 0; i < 11; i++) {
       seen.push((await loadingRows(ui))[1]!)

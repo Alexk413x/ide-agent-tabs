@@ -1,10 +1,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { PLUGIN_VERSION_LINE, root as defaultRoot } from './shared.mjs';
 
 const USAGE = 'Usage: node scripts/bump.mjs <version> [--vscode <version>] [--jetbrains <version>]';
 const SEMVER = /^\d+\.\d+\.\d+$/;
-const defaultRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const fail = (message) => {
   console.error(message);
@@ -30,27 +29,26 @@ for (const [name, value] of [['version', version], ['--vscode', vscode], ['--jet
 
 const file = (name) => path.join(root, name);
 const readText = (name) => readFileSync(file(name), 'utf8');
-const changed = [];
+const staged = [];
+const stage = (name, content) => staged.push([name, content]);
 
-function setJsonVersion(name, next, lock = false) {
+function stageJsonVersion(name, next, lock = false) {
   const json = JSON.parse(readText(name));
   json.version = next;
   if (lock) json.packages[''].version = next;
-  writeFileSync(file(name), `${JSON.stringify(json, null, 2)}\n`);
-  changed.push(name);
+  stage(name, `${JSON.stringify(json, null, 2)}\n`);
 }
 
-setJsonVersion('claude-plugin/.claude-plugin/plugin.json', version);
-setJsonVersion('claude-plugin/.codex-plugin/plugin.json', version);
+stageJsonVersion('claude-plugin/.claude-plugin/plugin.json', version);
+stageJsonVersion('claude-plugin/.codex-plugin/plugin.json', version);
 if (vscode !== undefined) {
-  setJsonVersion('vscode/package.json', vscode);
-  setJsonVersion('vscode/package-lock.json', vscode, true);
+  stageJsonVersion('vscode/package.json', vscode);
+  stageJsonVersion('vscode/package-lock.json', vscode, true);
 }
 if (jetbrains !== undefined) {
   const properties = readText('jetbrains/gradle.properties');
-  if (!/^pluginVersion=.+$/m.test(properties)) fail('jetbrains/gradle.properties has no pluginVersion line.');
-  writeFileSync(file('jetbrains/gradle.properties'), properties.replace(/^pluginVersion=.+$/m, `pluginVersion=${jetbrains}`));
-  changed.push('jetbrains/gradle.properties');
+  if (!PLUGIN_VERSION_LINE.test(properties)) fail('jetbrains/gradle.properties has no pluginVersion line.');
+  stage('jetbrains/gradle.properties', properties.replace(PLUGIN_VERSION_LINE, `pluginVersion=${jetbrains}`));
 }
 
 const changelog = readText('CHANGELOG.md');
@@ -59,12 +57,13 @@ if (changelog.includes(`## ${version}\n`)) {
 } else {
   const first = changelog.search(/^## /m);
   const stub = `## ${version}\n\nPlugin and MCP server ${version}.\n\n`;
-  writeFileSync(file('CHANGELOG.md'), first === -1 ? `${changelog.trimEnd()}\n\n${stub.trimEnd()}\n` : `${changelog.slice(0, first)}${stub}${changelog.slice(first)}`);
-  changed.push('CHANGELOG.md');
+  stage('CHANGELOG.md', first === -1 ? `${changelog.trimEnd()}\n\n${stub.trimEnd()}\n` : `${changelog.slice(0, first)}${stub}${changelog.slice(first)}`);
 }
 
+for (const [name, content] of staged) writeFileSync(file(name), content);
+
 console.log(`Set the plugin version to ${version}${vscode ? `, VS Code to ${vscode}` : ''}${jetbrains ? `, JetBrains to ${jetbrains}` : ''}.`);
-for (const name of changed) console.log(`  ${name}`);
+for (const [name] of staged) console.log(`  ${name}`);
 const steps = [
   `Fill in the CHANGELOG.md entry for ${version}.`,
   ...(vscode || jetbrains ? ['Build the IDE packages: node scripts/pack-ides.mjs'] : []),

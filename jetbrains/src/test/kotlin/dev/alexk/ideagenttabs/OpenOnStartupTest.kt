@@ -3,14 +3,18 @@ package dev.alexk.ideagenttabs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Path
 
 class OpenOnStartupTest {
 
-    private val plain: Path = Files.createTempDirectory("cst-plain")
-    private val withClaude: Path = Files.createTempDirectory("cst-claude").also { Files.createDirectory(it.resolve(".claude")) }
+    @get:Rule
+    val temp = TempDirs()
+
+    private val plain: Path = temp.create("cst-plain")
+    private val withClaude: Path = temp.create("cst-claude").also { Files.createDirectory(it.resolve(".claude")) }
 
     @Test
     fun `values match the VS Code setting`() {

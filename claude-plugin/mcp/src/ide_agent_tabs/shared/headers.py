@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import threading
 from collections.abc import Mapping
 from urllib.parse import quote
@@ -10,14 +9,22 @@ from ..home import agent_tabs_home
 from ..version import PACKAGE_VERSION
 from .ancestry import LOOKUP_TIMEOUT_S, ProcessInfo, find_agent_process
 from .client import ensure_server, server_command
-from .state import DEFAULT_PORT, PORT_OPTION_ENV, SERVER_LAUNCHER, parse_port, port_from_url
+from .state import (
+    AGENT_NAME,
+    CODEX_ID_PREFIX,
+    DEFAULT_PORT,
+    GENERATED_ID_PREFIX,
+    PORT_OPTION_ENV,
+    SERVER_LAUNCHER,
+    TAB_ID,
+    parse_port,
+    port_from_url,
+)
 
 # Claude Code gives a headers helper 10 s, and a helper that prints no token gets the server marked as needing
 # auth until the user clears it; so the helper waits for a slow first start up to well inside that limit.
 HELPER_START_WAIT_MS = 7_000
 MAX_CWD_CHARS = 1024
-_TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
-_AGENT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 
 # Codex hands a headers helper a stripped environment, so a Codex tab passes what Claude Code passes in the
@@ -52,10 +59,10 @@ def helper_headers(
     home = agent_tabs_home(env)
     headers = {"X-Agent-Tabs-Client": os.urandom(12).hex()}
     tab = env.get("IDE_AGENT_TABS_ID")
-    if tab is not None and _TAB_ID.fullmatch(tab) and not tab.startswith(("s-", "codex-")):
+    if tab is not None and TAB_ID.fullmatch(tab) and not tab.startswith((GENERATED_ID_PREFIX, CODEX_ID_PREFIX)):
         headers["X-Agent-Tabs-Tab"] = tab
     agent = env.get("IDE_AGENT_TABS_AGENT")
-    if agent is not None and _AGENT_NAME.fullmatch(agent):
+    if agent is not None and AGENT_NAME.fullmatch(agent):
         headers["X-Agent-Tabs-Agent"] = agent
     try:
         cwd = os.getcwd()

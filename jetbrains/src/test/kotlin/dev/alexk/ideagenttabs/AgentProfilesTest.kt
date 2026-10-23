@@ -10,22 +10,8 @@ import org.junit.Test
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.attribute.FileTime
 
-class AgentProfilesTest {
-
-    private val home: Path = Files.createTempDirectory("cst-agents")
-    private val warnings = mutableListOf<String>()
-    private val settings = AgentSettings(home) { warnings += it }
-
-    private var clock = System.currentTimeMillis()
-
-    private fun write(name: String, text: String) {
-        val file = home.resolve(name)
-        Files.writeString(file, text)
-        clock += 10_000
-        Files.setLastModifiedTime(file, FileTime.fromMillis(clock))
-    }
+class AgentProfilesTest : SettingsFixture("cst-agents") {
 
     private fun writeAgents(text: String) = write(AGENTS_FILE, text)
 
@@ -113,6 +99,7 @@ class AgentProfilesTest {
             """{"x": {"command": "x", "env": {"IDE_AGENT_TABS_COMMAND": "evil"}}}""",
             """{"x": {"command": "x", "env": {"jediterm_source": "evil"}}}""",
             """{"bad name": {"command": "x"}}""",
+            """{"x\n": {"command": "x"}}""",
             """{"claude": {"command": "x"}, "y": {"command": "y", "args": {}}}""",
         )
         for ((i, text) in bad.withIndex()) {
@@ -149,7 +136,7 @@ class AgentProfilesTest {
         val launch = profile.launch(null, listOf("--yolo"))
         assertEquals(listOf("--model", "m", "--yolo"), launch.args)
         assertNull(launch.prompt)
-        assertEquals(listOf<String>(), AgentProfile("claude", "Claude Code", "claude").launch("hi").args)
+        assertEquals(listOf<String>(), claude.launch("hi").args)
     }
 
     @Test
@@ -256,7 +243,6 @@ class AgentProfilesTest {
     }
 
     private val oriAll = DetectedOri("/home/u/.local/bin/ori", "0.14.3", listOf("claude", "codex"))
-    private val claude = AgentProfile("claude", "Claude Code", "claude", modelFlag = "--model")
     private val codex = AgentProfile("codex", "Codex", "codex", args = listOf("--no-daemon"), modelFlag = "-m")
     private val qwen = AgentProfile("qwen", "Qwen Code", "qwen", promptFlag = "-i", modelFlag = "-m")
     private val bare = AgentProfile("bare", "Bare", "bare-cli", promptFlag = "-i")
@@ -368,7 +354,7 @@ class AgentProfilesTest {
 
     @Test
     fun `an Ori launch needs no modelFlag on the profile`() {
-        val noFlag = AgentProfile("claude", "Claude Code", "claude")
+        val noFlag = claude.copy(modelFlag = null)
         val launch = planLaunch(noFlag, ctx(via = LaunchVia.ORI, model = "anthropic/claude-sonnet-4.5"))
         assertEquals(listOf("claude", "--model", "anthropic/claude-sonnet-4.5"), launch.args)
     }
@@ -379,6 +365,24 @@ class AgentProfilesTest {
         assertEquals(LaunchVia.DIRECT, planLaunch(claude, ctx(setting = LaunchVia.ORI, via = LaunchVia.DIRECT)).via)
         assertEquals(LaunchVia.ORI, planLaunch(claude, ctx(setting = LaunchVia.DIRECT, via = LaunchVia.ORI)).via)
         assertEquals(LaunchVia.DIRECT, planLaunch(claude, ctx(setting = LaunchVia.DIRECT)).via)
+    }
+
+    @Test
+    fun `planVia reads the route planLaunch picks, without planLaunch's file reads`() {
+        val bin = shimDir("codex.cmd")
+        val builtin = { name: String -> BUILTIN_PROFILES.first { it.name == name } }
+        val contexts = listOf(
+            ctx(),
+            ctx(setting = LaunchVia.ORI),
+            ctx(setting = LaunchVia.ORI, ori = null),
+            ctx(setting = LaunchVia.ORI, windows = true, searchPath = bin),
+            ctx(setting = LaunchVia.ORI, ori = DetectedOri("/x/ori", null, listOf("claude"))),
+        )
+        for (profile in listOf(claude, qwen, codex, bare, builtin("codex"), builtin("goose"))) {
+            for (context in contexts) {
+                assertEquals("${profile.name} ${context.setting} ${context.windows}", planLaunch(profile, context).via, planVia(profile, context))
+            }
+        }
     }
 
     @Test
@@ -411,7 +415,7 @@ class AgentProfilesTest {
     }
 
     private fun shimDir(vararg files: String): String {
-        val bin = Files.createTempDirectory("cst-shim")
+        val bin = temp.create("cst-shim")
         for (name in files) Files.writeString(bin.resolve(name), "")
         return bin.toString()
     }
@@ -451,13 +455,12 @@ class AgentProfilesTest {
 
     @Test
     fun `a Codex tab runs its server on the interpreter python json records`() {
-        val windows = File.separatorChar == '\\'
-        assertEquals(if (windows) listOf("py", "-3") else listOf("python3"), codexPython(home, windows))
+        assertEquals(if (IS_WINDOWS) listOf("py", "-3") else listOf("python3"), codexPython(home, IS_WINDOWS))
         val python = home.resolve("python.exe")
         Files.writeString(python, "")
         Files.createDirectories(home.resolve("mcp"))
         Files.writeString(home.resolve("mcp").resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", python.toString()) }.toString())
-        assertEquals(listOf(python.toString()), codexPython(home, windows))
+        assertEquals(listOf(python.toString()), codexPython(home, IS_WINDOWS))
         Files.writeString(home.resolve("mcp").resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", "$python'x") }.toString())
         assertEquals(listOf("py", "-3"), codexPython(home, true))
         assertEquals(listOf("python3"), codexPython(home, false))
@@ -473,7 +476,7 @@ class AgentProfilesTest {
     }
 
     private fun httpHome(port: Int? = 47828, stub: Boolean = true, python: Path? = null, prefix: String = "cst-http"): Path {
-        val dir = Files.createTempDirectory(prefix)
+        val dir = temp.create(prefix)
         val mcp = Files.createDirectories(dir.resolve("mcp"))
         val interpreter = python ?: dir.resolve("python.exe").also { Files.writeString(it, "") }
         Files.writeString(mcp.resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", interpreter.toString()) }.toString())
@@ -482,12 +485,10 @@ class AgentProfilesTest {
         return dir
     }
 
-    private val windows = File.separatorChar == '\\'
-
     @Test
     fun `a Codex tab uses the shared server when the copy, the port and the interpreter are recorded`() {
         val dir = httpHome(port = 47831)
-        val http = codexHttp(dir, windows, "tab-1", "codex")!!
+        val http = codexHttp(dir, IS_WINDOWS, "tab-1", "codex")!!
         val headers = dir.resolve("mcp").resolve("py").resolve("launch").resolve("headers.py").toString().replace('\\', '/')
         assertEquals(CodexHttp(dir.resolve("python.exe").toString(), headers, 47831, "tab-1", "codex", dir.toString()), http)
         assertEquals(
@@ -499,28 +500,28 @@ class AgentProfilesTest {
 
     @Test
     fun `a Codex tab stays on the stdio server without a valid port, a headers stub or a safe path`() {
-        assertNull(codexHttp(httpHome(port = null), windows, "tab-1", "codex"))
-        assertNull(codexHttp(httpHome(stub = false), windows, "tab-1", "codex"))
-        assertNull(codexHttp(httpHome(), windows, "tab 1", "codex"))
-        assertNull(codexHttp(httpHome(), windows, "tab-1", "co dex"))
-        assertNull(codexHttp(httpHome(), windows, "a".repeat(129), "codex"))
-        val spaced = Files.createDirectories(Files.createTempDirectory("cst-sp").resolve("sp ace"))
-        assertNull(codexHttp(httpHome(python = spaced.resolve("python.exe").also { Files.writeString(it, "") }), windows, "tab-1", "codex"))
-        assertNull(codexHttp(httpHome(prefix = "cst-sp ace"), windows, "tab-1", "codex"))
+        assertNull(codexHttp(httpHome(port = null), IS_WINDOWS, "tab-1", "codex"))
+        assertNull(codexHttp(httpHome(stub = false), IS_WINDOWS, "tab-1", "codex"))
+        assertNull(codexHttp(httpHome(), IS_WINDOWS, "tab 1", "codex"))
+        assertNull(codexHttp(httpHome(), IS_WINDOWS, "tab-1", "co dex"))
+        assertNull(codexHttp(httpHome(), IS_WINDOWS, "a".repeat(129), "codex"))
+        val spaced = Files.createDirectories(temp.create("cst-sp").resolve("sp ace"))
+        assertNull(codexHttp(httpHome(python = spaced.resolve("python.exe").also { Files.writeString(it, "") }), IS_WINDOWS, "tab-1", "codex"))
+        assertNull(codexHttp(httpHome(prefix = "cst-sp ace"), IS_WINDOWS, "tab-1", "codex"))
         for (port in listOf("0", "65536", "-1", "47828.5", "\"47828\"", "true", "null", "[]")) {
             val dir = httpHome()
             Files.writeString(dir.resolve("mcp").resolve("port.json"), """{"port": $port}""")
-            assertNull(port, codexHttp(dir, windows, "tab-1", "codex"))
+            assertNull(port, codexHttp(dir, IS_WINDOWS, "tab-1", "codex"))
         }
         val broken = httpHome()
         Files.writeString(broken.resolve("mcp").resolve("port.json"), "not json")
-        assertNull(codexHttp(broken, windows, "tab-1", "codex"))
-        assertEquals(65535, codexHttp(httpHome(port = 65535), windows, "tab-1", "codex")?.port)
+        assertNull(codexHttp(broken, IS_WINDOWS, "tab-1", "codex"))
+        assertEquals(65535, codexHttp(httpHome(port = 65535), IS_WINDOWS, "tab-1", "codex")?.port)
     }
 
     @Test
     fun `withCodexHttp changes only the server argument`() {
-        val http = codexHttp(httpHome(), windows, "tab-1", "codex-ollama")!!
+        val http = codexHttp(httpHome(), IS_WINDOWS, "tab-1", "codex-ollama")!!
         val swapped = withCodexHttp(CODEX_TAB_ARGS, http)!!
         assertEquals(CODEX_TAB_ARGS.size, swapped.size)
         assertEquals(listOf(codexHttpArg(http)), swapped.filterIndexed { i, arg -> arg != CODEX_TAB_ARGS[i] })
@@ -533,7 +534,7 @@ class AgentProfilesTest {
     @Test
     fun `planLaunch gives a Codex tab the HTTP argument only when an HTTP server is set`() {
         val codex = BUILTIN_PROFILES.first { it.name == "codex" }
-        val http = codexHttp(httpHome(), windows, "tab-1", "codex")!!
+        val http = codexHttp(httpHome(), IS_WINDOWS, "tab-1", "codex")!!
         val shared = planLaunch(codex, LaunchContext(http = http, python = listOf("/usr/bin/python3")))
         assertEquals(codexHttpArg(http), shared.args[2])
         assertEquals(CODEX_TAB_ARGS.filterIndexed { i, _ -> i != 2 }, shared.args.filterIndexed { i, _ -> i != 2 })
@@ -552,7 +553,7 @@ class AgentProfilesTest {
         prefix: String = "cst-copilot",
         hooks: Boolean = true,
     ): Path {
-        val dir = Files.createTempDirectory(prefix)
+        val dir = temp.create(prefix)
         if (hooks) {
             val file = hooksOf(dir)
             file.parentFile.mkdirs()
@@ -571,15 +572,15 @@ class AgentProfilesTest {
     fun `a Copilot tab uses the shared server when the port, the config and a running server agree`() {
         val dir = copilotHome()
         val asked = mutableListOf<Int>()
-        val http = copilotHttp(dir, windows, hooksOf(dir)) { asked += it; true }
+        val http = copilotHttp(dir, IS_WINDOWS, hooksOf(dir)) { asked += it; true }
         val file = dir.resolve("mcp").resolve("copilot-http.json").toString()
-        assertEquals(CopilotHttp(if (windows) file.replace('\\', '/') else file, 47951), http)
+        assertEquals(CopilotHttp(if (IS_WINDOWS) file.replace('\\', '/') else file, 47951), http)
         assertEquals(listOf(47951), asked)
     }
 
     @Test
     fun `a Copilot tab stays on the stdio server without a server, a port, a matching config or a safe path`() {
-        fun tab(dir: Path, answers: (Int) -> Boolean) = copilotHttp(dir, windows, hooksOf(dir), answers)
+        fun tab(dir: Path, answers: (Int) -> Boolean) = copilotHttp(dir, IS_WINDOWS, hooksOf(dir), answers = answers)
         assertNull(tab(copilotHome()) { false })
         assertNull(tab(copilotHome(port = null)) { true })
         assertNull(tab(copilotHome(configPort = null)) { true })
@@ -591,11 +592,11 @@ class AgentProfilesTest {
     fun `a Copilot tab stays on the stdio server without the registered hooks file`() {
         val asked = mutableListOf<Int>()
         val dir = copilotHome(hooks = false)
-        assertNull(copilotHttp(dir, windows, hooksOf(dir)) { asked += it; true })
-        assertNull(copilotHttp(dir, windows, hooksOf(dir).parentFile) { asked += it; true })
+        assertNull(copilotHttp(dir, IS_WINDOWS, hooksOf(dir)) { asked += it; true })
+        assertNull(copilotHttp(dir, IS_WINDOWS, hooksOf(dir).parentFile) { asked += it; true })
         assertEquals(emptyList<Int>(), asked)
         hooksOf(dir).apply { parentFile.mkdirs() }.writeText("{}")
-        assertTrue(copilotHttp(dir, windows, hooksOf(dir)) { true } != null)
+        assertTrue(copilotHttp(dir, IS_WINDOWS, hooksOf(dir)) { true } != null)
     }
 
     @Test
@@ -643,6 +644,16 @@ class AgentProfilesTest {
     }
 
     @Test
+    fun `the command patterns refuse a trailing newline`() {
+        for (end in listOf("\n", "\r\n", "\r", "\u0085", " ")) {
+            assertFalse(isCopilotCommand("copilot$end"))
+            assertFalse(isCopilotCommand("copilot.exe$end"))
+            assertEquals(listOf("--x") to emptyList<String>(), withClaudeSettings("claude$end", listOf("--x"), emptyList(), "/h/s.json"))
+        }
+        assertEquals(listOf("--x", "--settings", "/h/s.json") to emptyList<String>(), withClaudeSettings("claude", listOf("--x"), emptyList(), "/h/s.json"))
+    }
+
+    @Test
     fun `the folder header percent-encodes as the Python server copy does`() {
         assertEquals("C:\\work\\my repo\\100%25", cwdHeader("C:\\work\\my repo\\100%"))
         assertEquals("/tmp/Zo%C3%AB/%24%7BHOME%7D/a%26b~c", cwdHeader("/tmp/Zoë/\${HOME}/a&b~c"))
@@ -651,18 +662,17 @@ class AgentProfilesTest {
 
     @Test
     fun `a Claude Code tab gets the tab settings file after its profile arguments`() {
-        val windows = File.separatorChar == '\\'
         val settingsFile = home.resolve("mcp").resolve(CLAUDE_TAB_SETTINGS_FILE)
         Files.createDirectories(home.resolve("mcp"))
-        assertNull(claudeTabSettings(home, windows))
+        assertNull(claudeTabSettings(home, IS_WINDOWS))
         Files.writeString(settingsFile, "{}")
-        assertNull(claudeTabSettings(home, windows))
+        assertNull(claudeTabSettings(home, IS_WINDOWS))
         val python = home.resolve("python.exe")
         Files.writeString(python, "")
         Files.writeString(home.resolve("mcp").resolve("python.json"), JsonParser.parseString("{}").asJsonObject.apply { addProperty("python", python.toString()) }.toString())
-        assertEquals(settingsFile.toString(), claudeTabSettings(home, windows))
+        assertEquals(settingsFile.toString(), claudeTabSettings(home, IS_WINDOWS))
         Files.delete(settingsFile)
-        assertNull(claudeTabSettings(home, windows))
+        assertNull(claudeTabSettings(home, IS_WINDOWS))
 
         val claude = BUILTIN_PROFILES.first { it.name == "claude" }
         fun plan(profile: AgentProfile = claude, args: List<String> = emptyList(), settings: String? = "/h/s.json", model: String? = null, setting: LaunchVia = LaunchVia.DIRECT) =

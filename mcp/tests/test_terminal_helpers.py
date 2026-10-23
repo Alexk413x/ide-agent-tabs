@@ -5,6 +5,7 @@ import os
 import unittest
 from typing import Any
 
+from ide_agent_tabs.processes import terminal_environment
 from ide_agent_tabs.terminals import default_terminal_name, ghostty, kitty, processes, tmux, wezterm
 from ide_agent_tabs.terminals import windows_terminal as wt
 from ide_agent_tabs.terminals.driver import OpenOptions, TerminalTab
@@ -51,7 +52,7 @@ class TerminalEnvironmentTest(unittest.TestCase):
             "COPILOT_HOME": "g",
         }
         self.assertEqual(
-            processes.terminal_environment(env),
+            terminal_environment(env),
             {"PATH": "p", "CLAUDE_CODE_USE_BEDROCK": "1", "IDE_AGENT_TABS_HOME": "h", "CODEX_HOME": "c", "COPILOT_HOME": "g"},
         )
 
@@ -226,10 +227,10 @@ class WeztermHelpersTest(unittest.TestCase):
                 {"window_id": 1},
             ]
         )
-        self.assertEqual(wezterm.parse_wezterm_panes(listing), ["3", "7"])
-        self.assertEqual(wezterm.parse_wezterm_panes("[]"), [])
+        self.assertEqual(list(wezterm.parse_wezterm_pane_windows(listing)), ["3", "7"])
+        self.assertEqual(wezterm.parse_wezterm_pane_windows("[]"), {})
         with self.assertRaises(TypeError):
-            wezterm.parse_wezterm_panes("{}")
+            wezterm.parse_wezterm_pane_windows("{}")
 
     def test_cli_that_cannot_connect_reports_no_gui(self) -> None:
         self.assertTrue(wezterm.is_no_gui_error('Error: failed to connect to Socket("/run/user/1000/wezterm/gui-sock-1")'))
@@ -347,9 +348,9 @@ class KittyHelpersTest(unittest.TestCase):
                 {"id": 2, "tabs": []},
             ]
         )
-        self.assertEqual(kitty.parse_kitty_windows(listing), {"1", "4", "9"})
+        self.assertEqual({i for ids in kitty.parse_kitty_os_windows(listing).values() for i in ids}, {"1", "4", "9"})
         with self.assertRaises(TypeError):
-            kitty.parse_kitty_windows("{}")
+            kitty.parse_kitty_os_windows("{}")
 
     def test_a_dedicated_mode_still_opens_next_to_a_caller_window_that_exists(self) -> None:
         near = near_tab(terminal="kitty", terminalId="11", socket="unix:/n")

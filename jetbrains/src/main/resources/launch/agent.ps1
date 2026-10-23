@@ -1,4 +1,3 @@
-# Run by the terminal's PowerShell integration through JEDITERM_SOURCE, after the user's profile.
 & {
     $c = $env:IDE_AGENT_TABS_COMMAND
     Remove-Item env:IDE_AGENT_TABS_COMMAND -ErrorAction Ignore

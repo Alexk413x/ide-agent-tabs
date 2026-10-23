@@ -1,21 +1,21 @@
 import { timingSafeEqual } from 'node:crypto';
-import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isDirectory } from './files';
 
 export const MAX_PROMPT_CHARS = 30_000;
 export const MAX_ENTRIES = 64;
 export const MAX_INPUT_CHARS = 500;
 export const PLUGIN_ENV_PREFIX = 'IDE_AGENT_TABS_';
-export const STARTUP_ENV = 'JEDITERM_SOURCE';
+const STARTUP_ENV = 'JEDITERM_SOURCE';
 
 export class BadRequest extends Error {}
 
-export interface Refusal {
+interface Refusal {
   status: number;
   message: string;
 }
 
-export type HeaderLookup = (name: string) => string | undefined;
+type HeaderLookup = (name: string) => string | undefined;
 
 export function isLoopback(address: string | undefined): boolean {
   if (!address) return false;
@@ -68,7 +68,9 @@ export function checkEnv(env: Record<string, string>, field: string): void {
   }
 }
 
-export type JsonObject = Record<string, unknown>;
+type JsonObject = Record<string, unknown>;
+
+export const isPlainObject = (v: unknown): v is JsonObject => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 export function parseObject(text: string, what = 'body'): JsonObject {
   let json: unknown;
@@ -77,8 +79,8 @@ export function parseObject(text: string, what = 'body'): JsonObject {
   } catch {
     throw new BadRequest(`${what} is not JSON`);
   }
-  if (json === null || typeof json !== 'object' || Array.isArray(json)) throw new BadRequest(`${what} must be a JSON object`);
-  return json as JsonObject;
+  if (!isPlainObject(json)) throw new BadRequest(`${what} must be a JSON object`);
+  return json;
 }
 
 export function optString(obj: JsonObject, key: string, field = key): string | undefined {
@@ -98,29 +100,33 @@ export function optStringList(obj: JsonObject, key: string, field = key): string
 export function optStringMap(obj: JsonObject, key: string, field = key): Record<string, string> {
   const value = obj[key];
   if (value === undefined || value === null) return {};
-  if (typeof value !== 'object' || Array.isArray(value)) throw new BadRequest(`${field} must be an object of strings`);
+  if (!isPlainObject(value)) throw new BadRequest(`${field} must be an object of strings`);
   const result: Record<string, string> = {};
-  for (const [k, v] of Object.entries(value as JsonObject)) {
+  for (const [k, v] of Object.entries(value)) {
     if (typeof v !== 'string') throw new BadRequest(`${field}.${k} must be a string`);
     result[k] = v;
   }
   return result;
 }
 
-export function optBoolean(obj: JsonObject, key: string, field = key): boolean | undefined {
+function optBoolean(obj: JsonObject, key: string, field = key): boolean | undefined {
   const value = obj[key];
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'boolean') throw new BadRequest(`${field} must be true or false`);
   return value;
 }
 
-export function parseCloseId(body: string): string {
-  const id = optString(parseObject(body), 'id');
+function requireId(obj: JsonObject): string {
+  const id = optString(obj, 'id');
   if (id === undefined || isBlank(id)) throw new BadRequest('id is required');
   return id;
 }
 
-export const BUNDLE_SEGMENT = /\.(app|bundle|framework|pkg|plugin|prefPane)$/i;
+export function parseCloseId(body: string): string {
+  return requireId(parseObject(body));
+}
+
+const BUNDLE_SEGMENT = /\.(app|bundle|framework|pkg|plugin|prefPane)$/i;
 
 export interface RevealDeps {
   realpath(target: string): string | undefined;
@@ -153,15 +159,14 @@ export function checkRevealTarget(target: string, known: readonly string[], deps
   return real;
 }
 
-export interface InputRequest {
+interface InputRequest {
   id: string;
   text: string;
 }
 
 export function parseInput(body: string): InputRequest {
   const obj = parseObject(body);
-  const id = optString(obj, 'id');
-  if (id === undefined || isBlank(id)) throw new BadRequest('id is required');
+  const id = requireId(obj);
   const text = optString(obj, 'text');
   if (text === undefined || isBlank(text)) throw new BadRequest('text is required');
   if (text.length > MAX_INPUT_CHARS) throw new BadRequest(`text exceeds ${MAX_INPUT_CHARS} characters`);
@@ -178,7 +183,7 @@ export function isAbsolutePath(p: string, windows = process.platform === 'win32'
   return p.startsWith('/');
 }
 
-export const MODEL_PATTERN = /^[A-Za-z0-9._:/@+-]{1,200}$/;
+const MODEL_PATTERN = /^[A-Za-z0-9._:/@+-]{1,200}$/;
 export const ORI_PREFIX = 'ori:';
 
 export interface OpenRequest {
@@ -192,39 +197,36 @@ export interface OpenRequest {
   focus: boolean;
 }
 
-export function parseOpenRequest(body: string): OpenRequest {
-  const obj = parseObject(body);
-  return openRequestOf(
-    optString(obj, 'path'),
-    optString(obj, 'prompt'),
-    optStringList(obj, 'args'),
-    optStringMap(obj, 'env'),
-    optString(obj, 'agent'),
-    optString(obj, 'model'),
-    optString(obj, 'via'),
-    optBoolean(obj, 'focus'),
-  );
+interface OpenFields {
+  path?: string;
+  prompt?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  agent?: string;
+  model?: string;
+  via?: string;
+  focus?: boolean;
 }
 
-export function openRequestOf(
-  dir: string | undefined,
-  prompt?: string,
-  args: string[] = [],
-  env: Record<string, string> = {},
-  agent?: string,
-  model?: string,
-  via?: string,
-  focus = false,
-): OpenRequest {
+export function parseOpenRequest(body: string): OpenRequest {
+  const obj = parseObject(body);
+  return openRequestOf({
+    path: optString(obj, 'path'),
+    prompt: optString(obj, 'prompt'),
+    args: optStringList(obj, 'args'),
+    env: optStringMap(obj, 'env'),
+    agent: optString(obj, 'agent'),
+    model: optString(obj, 'model'),
+    via: optString(obj, 'via'),
+    focus: optBoolean(obj, 'focus'),
+  });
+}
+
+export function openRequestOf(fields: OpenFields): OpenRequest {
+  const { path: dir, prompt, args = [], env = {}, agent, model, via, focus = false } = fields;
   if (dir === undefined || isBlank(dir)) throw new BadRequest('path is required');
   if (dir.includes('\0') || !isAbsolutePath(dir)) throw new BadRequest('path must be absolute');
-  let isDirectory = false;
-  try {
-    isDirectory = fs.statSync(dir).isDirectory();
-  } catch {
-    isDirectory = false;
-  }
-  if (!isDirectory) throw new BadRequest(`path is not a directory: ${dir}`);
+  if (!isDirectory(dir)) throw new BadRequest(`path is not a directory: ${dir}`);
   if (prompt !== undefined && prompt.length > MAX_PROMPT_CHARS) throw new BadRequest(`prompt exceeds ${MAX_PROMPT_CHARS} characters`);
   if (args.length > MAX_ENTRIES) throw new BadRequest(`args exceeds ${MAX_ENTRIES} entries`);
   if (args.some(a => a.length > MAX_PROMPT_CHARS)) throw new BadRequest(`an arg exceeds ${MAX_PROMPT_CHARS} characters`);
@@ -256,7 +258,7 @@ function stripTrailingSeparator(p: string, paths: path.PlatformPath = path): str
   return p.length > root.length ? p.replace(/[\\/]+$/, '') : p;
 }
 
-export function closestBase(target: string, bases: (string | undefined)[], windows = process.platform === 'win32'): number | undefined {
+export function closestBase(target: string, bases: readonly string[], windows = process.platform === 'win32'): number | undefined {
   const paths = windows ? path.win32 : path.posix;
   const key = (p: string) => {
     const normal = stripTrailingSeparator(paths.normalize(p), paths);
@@ -267,7 +269,6 @@ export function closestBase(target: string, bases: (string | undefined)[], windo
   let best: number | undefined;
   let bestLength = -1;
   bases.forEach((base, i) => {
-    if (base === undefined) return;
     const b = key(base);
     const inside = t === b || t.startsWith(b.endsWith(sep) ? b : b + sep);
     if (inside && b.length > bestLength) {

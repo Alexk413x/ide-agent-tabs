@@ -14,7 +14,7 @@ from ide_agent_tabs.jev.key import KeyDeps, StoredCredential, decode_blob, look_
 from ide_agent_tabs.jev.ledger import cost_usd, ledger_path, summarize_ledger
 from ide_agent_tabs.jev.service import Jev, JevDeps, start_jev
 from ide_agent_tabs.jev.settings import parse_jev_settings, read_jev_config
-from ide_agent_tabs.jev.tools import run_tool
+from ide_agent_tabs.jev.tools import RUNNERS
 from ide_agent_tabs.jsjson import parse, stringify
 from ide_agent_tabs.processes import RunResult
 from jev_support import StubTypeSafe, expand, jev_fixtures
@@ -177,7 +177,9 @@ class ToolParity(unittest.TestCase):
             )
         )
         try:
-            output: dict[str, Any] = {"output": portable(mask(stringify(run_tool(jev, case["tool"], expand(case["input"])), 2), home))}
+            output: dict[str, Any] = {
+                "output": portable(mask(stringify(RUNNERS[case["tool"]](jev, parse_input(case["tool"], expand(case["input"]))), 2), home))
+            }
         except JevError as e:
             output = {"error": mask(e.message, home)}
             if e.status is not None:

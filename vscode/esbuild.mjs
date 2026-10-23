@@ -8,7 +8,5 @@ await build({
   format: 'cjs',
   platform: 'node',
   target: 'node20',
-  sourcemap: false,
-  minify: false,
   logLevel: 'info',
 });

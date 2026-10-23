@@ -4,8 +4,8 @@ import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
-import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
@@ -14,7 +14,10 @@ import java.time.Instant
 
 class EndpointRecordTest {
 
-    private val home: Path = Files.createTempDirectory("cst-home")
+    @get:Rule
+    val temp = TempDirs()
+
+    private val home: Path = temp.create("cst-home")
     private val token = newToken()
     private val entry = endpointJson("Android Studio", "2026.2.2", 12345, "http://127.0.0.1:63342/ide-agent-tabs", token, 1700000000000L)
 
@@ -63,7 +66,7 @@ class EndpointRecordTest {
 
     @Test
     fun `endpoint folder and file are private on POSIX`() {
-        assumeTrue("POSIX permissions are tested on macOS and Linux", File.separatorChar != '\\')
+        assumeTrue("POSIX permissions are tested on macOS and Linux", !IS_WINDOWS)
         val dir = home.resolve("endpoints")
         Files.createDirectories(dir)
         Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwxr-xr-x"))

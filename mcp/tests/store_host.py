@@ -4,12 +4,14 @@ import threading
 from typing import Any, Callable
 
 from ide_agent_tabs.clock import now_iso
+from ide_agent_tabs.jev.settings import read_jev_config
 from ide_agent_tabs.jsjson import stringify
 from ide_agent_tabs.liveness import pid_alive
+from ide_agent_tabs.mcp_tools import JEV_PREFIX, catalog
 from ide_agent_tabs.messaging import store
 from ide_agent_tabs.messaging.db import MailError
 from ide_agent_tabs.messaging.sessions import HEARTBEAT_MS, MAIL_VERSION, Presence, live_sessions, read_presence, update_presence
-from ide_agent_tabs.shared.host import Binding, BoundSession, Catalog, Progress
+from ide_agent_tabs.shared.host import Binding, BoundSession
 
 HTTP_MAX_WAIT_S = 240
 
@@ -21,7 +23,24 @@ def _text(value: Any, error: bool = False) -> dict[str, Any]:
     return out
 
 
-# A stand-in for P7's tool layer: the shared server's tests and stress run need sessions with presence files
+class Catalog:
+    def __init__(self, home: str) -> None:
+        self.home = home
+
+    def tools_for(self, agent: str) -> list[dict[str, Any]]:
+        only = catalog().only
+        jev = read_jev_config(self.home)[0].enabled
+        return [
+            tool
+            for tool in catalog().tools
+            if agent in only.get(tool["name"], [agent]) and (jev or not str(tool["name"]).startswith(JEV_PREFIX))
+        ]
+
+    def instructions(self) -> str:
+        return catalog().instructions.get("jev" if read_jev_config(self.home)[0].enabled else "plain", "")
+
+
+# A stand-in for the tool layer: the shared server's tests and stress run need sessions with presence files
 # and the messaging tools over the real message store, not the rest of the tool set.
 class StoreSession:
     def __init__(self, host: StoreHost, binding: Binding) -> None:
@@ -60,7 +79,7 @@ class StoreSession:
         p.update({"startedAt": self.started_at, "state": "unknown", "beatMs": HEARTBEAT_MS, "mail": MAIL_VERSION})
         return p
 
-    def call(self, name: str, arguments: dict[str, Any], progress: Progress | None, cancel: threading.Event) -> dict[str, Any]:
+    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event) -> dict[str, Any]:
         self.calls.append(name)
         home = self.host.home
         try:

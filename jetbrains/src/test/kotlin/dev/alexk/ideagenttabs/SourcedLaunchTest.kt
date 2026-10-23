@@ -5,17 +5,21 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.FileTime
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.TimeUnit
 
 class SourcedLaunchTest {
 
-    private val dir: Path = Files.createTempDirectory("cst-sourced")
-    private val isWindows = File.separatorChar == '\\'
+    @get:Rule
+    val temp = TempDirs()
+
+    private val dir: Path = temp.create("cst-sourced")
 
     @Test
     fun `shell kind comes from the file name`() {
@@ -46,8 +50,6 @@ class SourcedLaunchTest {
         assertEquals(emptyList<String>(), unixShell("/usr/local/bin/pwsh", isMac = true).flags)
     }
 
-    private val claude = AgentProfile("claude", "Claude Code", "claude")
-
     @Test
     fun `sourced launch points the shell at the script and passes the command and each arg in its own variable`() {
         val script = dir.resolve("agent.sh")
@@ -76,11 +78,29 @@ class SourcedLaunchTest {
     }
 
     @Test
+    fun `shellLaunch writes the shell's script and hands it to the matching launch`() {
+        val scripts = dir.resolve("scripts")
+        val posix = shellLaunch(Shell("/bin/zsh", ShellKind.POSIX, listOf("-i")), scripts, claude.launch(null, listOf("--x")), "tab-4")
+        assertEquals(listOf("/bin/zsh", "-i"), posix.command)
+        assertEquals(scripts.resolve("agent.sh").toString(), posix.env[STARTUP_ENV])
+        assertEquals("--x", posix.env["${ARG_ENV_PREFIX}0"])
+        assertEquals("tab-4", posix.env[TAB_ID_ENV])
+        assertTrue(Files.isRegularFile(scripts.resolve("agent.sh")))
+        val fish = shellLaunch(Shell("/usr/bin/fish", ShellKind.FISH), scripts, claude.launch(null), "tab-5")
+        assertEquals(scripts.resolve("agent.fish").toString(), fish.env[STARTUP_ENV])
+        val pwsh = shellLaunch(Shell("pwsh.exe", ShellKind.POWERSHELL), scripts, claude.launch(null, listOf("--x")), "tab-6")
+        assertEquals(listOf("pwsh.exe"), pwsh.command)
+        assertEquals(scripts.resolve("agent.ps1").toString(), pwsh.env[STARTUP_ENV])
+        assertEquals("""["--x"]""", pwsh.env[ARGS_ENV])
+        assertTrue(Files.isRegularFile(scripts.resolve("agent.ps1")))
+    }
+
+    @Test
     fun `launch script is written once and rewritten when it differs`() {
         val script = launchScript(ShellKind.POSIX, dir.resolve("scripts"))
         assertEquals("agent.sh", script.fileName.toString())
-        val written = Files.getLastModifiedTime(script)
-        Thread.sleep(20)
+        val written = FileTime.fromMillis(1_000_000_000_000L)
+        Files.setLastModifiedTime(script, written)
         launchScript(ShellKind.POSIX, dir.resolve("scripts"))
         assertEquals(written, Files.getLastModifiedTime(script))
         Files.writeString(script, "stale")
@@ -108,7 +128,7 @@ class SourcedLaunchTest {
     fun `fish runs the agent through the real integration script`() = checkShell("fish")
 
     private fun checkShell(name: String) {
-        assumeTrue("POSIX shells are tested on macOS and Linux", !isWindows)
+        assumeTrue("POSIX shells are tested on macOS and Linux", !IS_WINDOWS)
         val shell = findOnPath(System.getenv("PATH").orEmpty(), name)
         assumeTrue("$name not on PATH", shell != null)
         val agent = AgentProfile("test", "Test", "cst-agent")

@@ -63,7 +63,8 @@ val updatePluginsXml = tasks.register("updatePluginsXml") {
     inputs.property("version", pluginVersion)
     outputs.file(out)
     doLast {
-        val zipUrl = File(repoDir.get(), "ide-agent-tabs-$pluginVersion.zip").toPath().toUri()
+        val zipUrl = File(repoDir.get(), "ide-agent-tabs-$pluginVersion.zip").toPath().toUri().toString()
+            .replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
         out.get().asFile.writeText(
             """
             <plugins>

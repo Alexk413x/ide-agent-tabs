@@ -23,7 +23,7 @@ class NewAgentTabAction : DumbAwareAction(), CustomComponentAction {
         e.presentation.isEnabled = e.project != null
         val profile = Agents.settings.defaultProfile()
         e.presentation.icon = Agents.buttonIcon(profile)
-        val label = viaLabel(profile.label, Agents.launchFor(profile).via)
+        val label = viaLabel(profile.label, Agents.viaFor(profile))
         e.presentation.text = "New $label Tab"
         e.presentation.description = "Open $label in an editor tab, in the project root. Right-click to choose another agent."
     }
@@ -48,13 +48,13 @@ class AgentMenuGroup : ActionGroup(), DumbAware {
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
     override fun getChildren(e: AnActionEvent?): Array<AnAction> {
-        val agents = Agents.entries().map { OpenAgentTabAction(it, Agents.entryLabel(it)) }
+        val agents = Agents.rows().map { OpenAgentTabAction(it) }
         return (agents + listOf(Separator.getInstance(), OpenSettingsAction())).toTypedArray()
     }
 }
 
-private class OpenAgentTabAction(private val entry: AgentEntry, label: String) :
-    DumbAwareAction(label, "Open $label in an editor tab", Agents.icon(entry.profile)) {
+private class OpenAgentTabAction(private val row: AgentRow) :
+    DumbAwareAction(row.label, "Open ${row.label} in an editor tab", row.icon) {
 
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
@@ -64,7 +64,7 @@ private class OpenAgentTabAction(private val entry: AgentEntry, label: String) :
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        Agents.open(project, entry.profile, entry.via)
+        Agents.open(project, row.entry.profile, row.entry.via)
     }
 }
 

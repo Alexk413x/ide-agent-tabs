@@ -1,4 +1,3 @@
-# Sourced by the terminal's fish integration through JEDITERM_SOURCE.
 function __ide_agent_tabs
     set -l c $IDE_AGENT_TABS_COMMAND
     set -e IDE_AGENT_TABS_COMMAND

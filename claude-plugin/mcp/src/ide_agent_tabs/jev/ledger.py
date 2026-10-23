@@ -8,9 +8,8 @@ from typing import Any
 
 from ..clock import now_ms, parse_iso
 from ..files import ensure_private_dir, read_text_if_exists
-from ..jsjson import parse, stringify, trim
+from ..jsjson import is_finite, parse, stringify, trim
 from ..winapi import FILE_ATTRIBUTE_NORMAL, FILE_SHARE_ALL, INVALID_HANDLE_VALUE, kernel32
-from .settings import is_number
 
 _FILE_APPEND_DATA = 0x0004
 _OPEN_ALWAYS = 4
@@ -93,7 +92,7 @@ def summarize_ledger(home: str, price_per_million_input: float, now: float | Non
     entries = _entries_of(text)
     today_key = _local_day(now_ms() if now is None else now)
     today = [e for e in entries if _local_day(parse_iso(e["at"])) == today_key]
-    tokens = sum(e["input_tokens"] for e in today if is_number(e.get("input_tokens")) and math.isfinite(e["input_tokens"]))
+    tokens = sum(e["input_tokens"] for e in today if is_finite(e.get("input_tokens")))
     answered = [e for e in entries if e["ok"]]
     last = answered[-1].get("model") if answered else None
     return {

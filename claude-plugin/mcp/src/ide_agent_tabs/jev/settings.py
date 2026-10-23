@@ -6,7 +6,7 @@ import re
 from typing import Any, NamedTuple
 
 from ..files import read_text_if_exists
-from ..jsjson import JS_SPACE, parse, trim, utf16_len
+from ..jsjson import JS_SPACE, is_number, parse, trim, utf16_len
 
 JEV_MODEL = "jev-latest"
 DEFAULT_SURE = 0.85
@@ -28,10 +28,6 @@ JEV_OFF = JevSettings(False, DEFAULT_SURE, {}, DEFAULT_PRICE_PER_MILLION_INPUT)
 
 class SettingsError(ValueError):
     pass
-
-
-def is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _tier_name_ok(name: str) -> bool:

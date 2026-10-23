@@ -9,7 +9,7 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import Any, Callable, NamedTuple, Protocol
 
-from ..clock import iso, now_ms, parse_iso
+from ..clock import iso, iso_ms, now_ms
 from ..closed import TranscriptDirs, locale_key, record_ended, transcript_dirs
 from ..files import read_text_if_exists, remove_file
 from ..jsjson import trim, utf16_len, utf16_slice
@@ -71,20 +71,22 @@ RESTART_GRACE_MS = 60_000
 START_RETRY_DELAYS_MS = (1_000, 3_000, 9_000)
 REWAKE_EVERY_MS = 15_000
 FOLLOW_UP_MS = MAX_WAIT_S * 1000
-MOD_STATES = ("idle", "busy", "permission")
 AGENT_ORDER = ("claude", "codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose", "codex-lmstudio", "codex-ollama")
 MOD_DELIVERY_NOTE = "the recipient's Agent Tabs mod delivers it in-process once the session is idle"
+GENERATED_ID_PREFIX = "s-"
 CODEX_ID_PREFIX = "codex-"
 SESSION_PREFIX_CHARS = 8
+LOG_REPEAT_S = 600
 
 _AGENT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _THREAD_ID = re.compile(r"[A-Za-z0-9-]{1,100}")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
-_ID_PREFIXES = ("s-", CODEX_ID_PREFIX)
+_ID_PREFIXES = (GENERATED_ID_PREFIX, CODEX_ID_PREFIX)
 _SHORT_ID_CHARS = 4
 _NAME_SLUG_CHARS = 24
 _NAME_SUFFIX_CHARS = 2
 _MAX_DATE_MS = 8.64e15
+_MAX_LOGGED = 256
 
 
 class Hosts(Protocol):
@@ -111,14 +113,15 @@ class MessagingDeps(NamedTuple):
     heartbeat_ms: float | None = None
     transcripts: TranscriptDirs | None = None
     scheduler: Scheduler | None = None
+    log: Callable[[str], None] | None = None
 
 
 def _generated_id() -> str:
-    return f"s-{os.urandom(6).hex()}"
+    return f"{GENERATED_ID_PREFIX}{os.urandom(6).hex()}"
 
 
 def _may_be_tab(session_id: str) -> bool:
-    return not session_id.startswith("s-") and not session_id.startswith(CODEX_ID_PREFIX)
+    return not session_id.startswith(_ID_PREFIXES)
 
 
 def is_native_name(value: str) -> bool:
@@ -194,11 +197,6 @@ def _shown(m: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _ms(text: str | None) -> float:
-    found = parse_iso(text or "")
-    return math.nan if found is None else float(found)
-
-
 def _date_iso(ms: float) -> str:
     if not math.isfinite(ms) or abs(ms) > _MAX_DATE_MS:
         raise MailError("Invalid time value")
@@ -227,20 +225,35 @@ class Messaging:
         self._start_error: str | None = None
         self._stopped = False
         self._scheduler = deps.scheduler
+        self._logged: dict[str, float] = {}
+        self._log_lock = threading.Lock()
 
     @property
     def id(self) -> str:
         return self._session_id
 
     @property
-    def is_tab(self) -> bool:
-        return self._is_tab
-
-    @property
     def scheduler(self) -> Scheduler:
         if self._scheduler is None:
-            self._scheduler = Scheduler()
+            self._scheduler = Scheduler(log=self.deps.log)
         return self._scheduler
+
+    def _log(self, message: str) -> None:
+        log = self.deps.log
+        if log is None:
+            return
+        at = time.monotonic()
+        with self._log_lock:
+            if at - self._logged.get(message, -math.inf) < LOG_REPEAT_S:
+                return
+            if len(self._logged) >= _MAX_LOGGED:
+                self._logged.clear()
+            self._logged[message] = at
+        with contextlib.suppress(Exception):
+            log(message)
+
+    def _failed(self, what: str, e: Exception) -> None:
+        self._log(f"{what} failed: {type(e).__name__}: {e}")
 
     def _new_id(self) -> str:
         return (self.deps.random_id or _generated_id)()
@@ -265,14 +278,14 @@ class Messaging:
         return self.deps.is_alive or pid_alive
 
     @property
-    def _beat_ms(self) -> float:
+    def _beat_ms(self) -> int:
         return int(self.deps.heartbeat_ms) if self.deps.heartbeat_ms is not None else HEARTBEAT_MS
 
     def _ended(self, p: Presence, at: float) -> None:
         record_ended(self.deps.home, p, int(at), self.deps.transcripts or transcript_dirs(self.deps.env))
 
     def live(self) -> list[Presence]:
-        return join_live_sessions(self.deps.home, self._alive, self._now(), self._ended)
+        return join_live_sessions(self.deps.home, self._alive, self._now(), self._ended, self._log)
 
     def record_end(self) -> None:
         own = read_presence(self.deps.home, self._session_id)
@@ -382,8 +395,7 @@ class Messaging:
             update_presence(self.deps.home, self._session_id, lambda current: self._presence(current))
         if self._is_tab:
             self._own_host = Task(self._resolve_own_host, "agent-tabs-own-host")
-        with contextlib.suppress(Exception):
-            self._learn_codex_defaults()
+        self._learn_codex_defaults_quietly()
         self._start_heartbeat()
         self.scheduler.soon(self._clean)
 
@@ -393,29 +405,36 @@ class Messaging:
         if current is None or current.get("pid") is None or current["pid"] == self.deps.pid or self._alive(current["pid"]):
             return current
         rest = _without(current, ("nudges", "driver", "modBeat", "nativeName"))
-        at = _ms(current.get("stateAt"))
-        old = not math.isfinite(at) or at < _ms(self.started_at) - RESTART_GRACE_MS
+        at = iso_ms(current.get("stateAt"))
+        old = not math.isfinite(at) or at < iso_ms(self.started_at) - RESTART_GRACE_MS
         return {**rest, "state": "unknown"} if old and current.get("state") != "idle" else rest
 
     def _resolve_own_host(self) -> str | None:
         try:
             host = self.deps.hosts.find_host(self._session_id)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            self._failed("finding this tab's host", e)
             host = None
         if host is not None:
             fields = self._host_fields(host)
-            with contextlib.suppress(Exception):
+            try:
                 self._update_own(lambda p: {**p, **fields})
+            except Exception as e:  # noqa: BLE001
+                self._failed("recording this tab's host", e)
         return host
 
     # A host id names one run of an IDE extension or one terminal, so the product label is kept in the
     # presence file: list_sessions still names the IDE after that endpoint is gone.
     def _host_fields(self, host: str) -> dict[str, str]:
-        try:
-            product = self.deps.hosts.describe_host(host)
-        except Exception:  # noqa: BLE001
-            product = None
+        product = self._describe_host(host)
         return {"host": host} if product is None else {"host": host, "product": product}
+
+    def _describe_host(self, host: str) -> str | None:
+        try:
+            return self.deps.hosts.describe_host(host)
+        except Exception as e:  # noqa: BLE001
+            self._failed(f"describing host {host}", e)
+            return None
 
     # A model from open_tab or from a hook payload names what the session runs; the config is only its default.
     def _learn_codex_defaults(self) -> None:
@@ -435,13 +454,21 @@ class Messaging:
 
         self._update_own(learn)
 
+    def _learn_codex_defaults_quietly(self) -> None:
+        try:
+            self._learn_codex_defaults()
+        except Exception as e:  # noqa: BLE001
+            self._failed("reading the Codex config defaults", e)
+
     def note_thread(self, thread_id: object) -> None:
         with self._identify_lock:
             if not isinstance(thread_id, str) or _THREAD_ID.fullmatch(thread_id) is None or thread_id == self.thread_id:
                 return
             self.thread_id = thread_id
-            with contextlib.suppress(Exception):
+            try:
                 self._identify(thread_id)
+            except Exception as e:  # noqa: BLE001
+                self._failed(f"taking the id of Codex thread {thread_id}", e)
 
     # The shared Codex daemon starts servers with the environment of whatever started the daemon, so its
     # IDE_AGENT_TABS_ID can name another tab or a closed one. A Codex session keeps that id only while the tab is open.
@@ -451,7 +478,8 @@ class Messaging:
         if self._is_tab and self._own_host is not None:
             try:
                 tab_open = self._own_host.result() is not None
-            except Exception:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
+                self._failed("finding this tab's host", e)
                 tab_open = False
         if tab_open or self._session_id == new_id:
             self._update_own(lambda p: {**p, "threadId": thread_id})
@@ -494,8 +522,7 @@ class Messaging:
             return
         self.agent = agent_from_client(name)
         self._update_own(lambda p: {**p, "agent": self.agent})
-        with contextlib.suppress(Exception):
-            self._learn_codex_defaults()
+        self._learn_codex_defaults_quietly()
 
     def stop_sync(self) -> None:
         self._stopped = True
@@ -514,23 +541,17 @@ class Messaging:
             return
         self._last_clean = now
         # Not joined: a tool call that joined this background scan could miss a session registered after it began.
-        live = live_sessions(self.deps.home, self._alive, now, self._ended)
+        live = live_sessions(self.deps.home, self._alive, now, self._ended, self._log)
         clean_store(self.deps.home, {s["id"] for s in live}, now)
-
-    def _clean_later(self) -> None:
-        self.scheduler.soon(self._clean)
 
     def list_sessions(self) -> dict[str, Any]:
         now = self._now()
-        sessions = join_live_sessions(self.deps.home, self._alive, now, self._ended)
+        sessions = join_live_sessions(self.deps.home, self._alive, now, self._ended, self._log)
         labels: dict[str, str | None] = {}
         for s in sessions:
             host = s.get("host")
             if host is not None and host not in labels:
-                try:
-                    labels[host] = self.deps.hosts.describe_host(host)
-                except Exception:  # noqa: BLE001
-                    labels[host] = None
+                labels[host] = self._describe_host(host)
         legacy = short_names(sessions)
         named = session_names(sessions)
         rows: list[dict[str, Any]] = []
@@ -594,7 +615,7 @@ class Messaging:
         now = self._now()
         recipient = live_session(self.deps.home, to, self._alive, now)
         if recipient is None:
-            live = join_live_sessions(self.deps.home, self._alive, now, self._ended)
+            live = join_live_sessions(self.deps.home, self._alive, now, self._ended, self._log)
             named = session_names(live)
             legacy = short_names(live)
             recipient = (
@@ -636,10 +657,12 @@ class Messaging:
                 wake = self._wake(recipient, now)
             except Exception as e:  # noqa: BLE001
                 wake = {"delivery": "queued", "note": f"Error: {e}"}
-            with contextlib.suppress(Exception):
+            try:
                 set_delivery(self.deps.home, sent["id"], wake["delivery"])
+            except Exception as e:  # noqa: BLE001
+                self._failed(f"recording the delivery of message {sent['id']}", e)
         self._follow_up(to)
-        self._clean_later()
+        self.scheduler.soon(self._clean)
         return {"id": sent["id"], "to": to, **wake, **self._warnings()}
 
     def _queued_without_wake(self, recipient: Presence, now: float) -> dict[str, Any] | None:
@@ -656,7 +679,7 @@ class Messaging:
             return queued
         # An agent reports idle when its turn-end hook runs, but it can still be finishing the turn, and a
         # line typed then is lost; typing only after the session stays idle for IDLE_SETTLE_MS avoids that.
-        settle = IDLE_SETTLE_MS - (now - _ms(recipient.get("stateAt")))
+        settle = IDLE_SETTLE_MS - (now - iso_ms(recipient.get("stateAt")))
         if settle > IDLE_SETTLE_MS:
             return {"delivery": "queued"}
         if settle > 0:
@@ -690,7 +713,8 @@ class Messaging:
         if not typed.get("ok") and recipient.get("host") is not None and _may_be_tab(recipient["id"]):
             try:
                 found = self.deps.hosts.find_host(recipient["id"])
-            except Exception:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
+                self._failed(f"finding the host of {recipient['id']}", e)
                 found = None
             if found is not None and found != host:
                 state_at = claimed.get("stateAt")
@@ -757,16 +781,13 @@ class Messaging:
                     return
                 try:
                     pending = self._rewake(peer)
-                except Exception:  # noqa: BLE001
+                except Exception as e:  # noqa: BLE001
+                    self._failed(f"waking {peer} again", e)
                     pending = False
                 if not pending:
                     stop()
 
             self._follow_ups[peer] = self.scheduler.every(self._rewake_s, tick)
-
-    def follow_up_peers(self) -> list[str]:
-        with self._follow_lock:
-            return list(self._follow_ups)
 
     def stop_follow_ups(self) -> None:
         with self._follow_lock:
@@ -779,8 +800,10 @@ class Messaging:
         own = read_presence(self.deps.home, self._session_id)
         if own is not None and own.get("pid") == self.deps.pid and not own.get("nudges"):
             return
-        with contextlib.suppress(Exception):
+        try:
             self._update_own(lambda p: {**p, "nudges": 0} if p.get("nudges") else p)
+        except Exception as e:  # noqa: BLE001
+            self._failed("resetting this session's nudge count", e)
 
     def mod_log(self, given: Mapping[str, Any]) -> dict[str, Any]:
         peer_name = given["peer"]
@@ -835,13 +858,14 @@ class Messaging:
         return {"message": {**message, "text": ""}, "text": text_piece(message["text"], start), "offset": start, "total": total}
 
     def session_folders(self) -> list[str]:
-        live = join_live_sessions(self.deps.home, self._alive, self._now(), self._ended)
+        live = join_live_sessions(self.deps.home, self._alive, self._now(), self._ended, self._log)
         return list(dict.fromkeys(s["path"] for s in live))
 
     def host_id(self) -> str | None:
         try:
             own = read_presence(self.deps.home, self._session_id)
-        except Exception:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001
+            self._failed("reading this session's presence", e)
             return None
         return None if own is None else own.get("host")
 
@@ -937,7 +961,7 @@ class Messaging:
             put_back(self.deps.home, self._session_id, batch["ids"], self._now())
             raise MailError("read_messages was cancelled; the messages stay unread")
         self._reset_nudges()
-        self._clean_later()
+        self.scheduler.soon(self._clean)
         messages = batch["messages"]
         result: dict[str, Any] = {}
         if messages:
@@ -975,8 +999,10 @@ class Messaging:
             peer = sender
 
             def rewake() -> None:
-                with contextlib.suppress(Exception):
+                try:
                     self._rewake(peer)
+                except Exception as e:  # noqa: BLE001
+                    self._failed(f"waking {peer} again", e)
 
             retry = self.scheduler.every(self._rewake_s, rewake)
         try:

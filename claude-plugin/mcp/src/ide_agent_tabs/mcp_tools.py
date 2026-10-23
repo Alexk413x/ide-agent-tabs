@@ -11,14 +11,14 @@ from .jsjson import js_round, stringify
 if TYPE_CHECKING:
     from .jev.inputs import Schema
     from .messaging.history import Who
+    from .service import Progress
 
 SERVER_NAME = "ide-agent-tabs"
 HOOK_TOOL = "agent_tabs_hook"
 MOD_TOOL = "agent_tabs_mod"
 CATALOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalog.json")
 INVALID_PARAMS = -32602
-
-Progress = Callable[[float, float, str], None]
+JEV_PREFIX = "jev_"
 
 
 class Call(NamedTuple):
@@ -49,12 +49,23 @@ def server_instructions(jev: bool) -> str:
     return catalog().instructions["jev" if jev else "plain"]
 
 
+def _offered(name: str, agent: str | None, jev: bool) -> bool:
+    only = catalog().only
+    return (jev or not name.startswith(JEV_PREFIX)) and (name not in only or agent in only[name])
+
+
 def tools_for(client_name: str | None, jev: bool) -> list[dict[str, Any]]:
     from .messaging.sessions import agent_from_client
 
     agent = agent_from_client(client_name)
-    only = catalog().only
-    return [t for t in catalog().tools if (jev or not t["name"].startswith("jev_")) and (t["name"] not in only or agent in only[t["name"]])]
+    return [t for t in catalog().tools if _offered(t["name"], agent, jev)]
+
+
+def tool_for(client_name: str | None, name: str, jev: bool) -> dict[str, Any] | None:
+    from .messaging.sessions import agent_from_client
+
+    tool = next((t for t in catalog().tools if t["name"] == name), None)
+    return tool if tool is not None and _offered(name, agent_from_client(client_name), jev) else None
 
 
 def text_result(text: str, error: bool = False) -> dict[str, Any]:
@@ -129,7 +140,7 @@ class Tools:
         from .tool_input import issues_text, parse_args
 
         try:
-            tool = next((t for t in self.list(client_name) if t["name"] == name), None)
+            tool = tool_for(client_name, name, self.jev_enabled)
             if tool is None:
                 raise McpError(INVALID_PARAMS, f"Tool {name} not found")
             schema = _schema(name, tool)
@@ -171,76 +182,78 @@ class Tools:
     def _run(self, deps: ToolDeps, name: str, args: dict[str, Any], call: Call) -> Any:
         service = deps.service
         messaging = deps.messaging
-        if name == "list_agents":
-            return service.list_agents()
-        if name == "list_tabs":
-            return service.list_tabs(args.get("ide"))
-        if name == "open_tab":
-            return service.open_tab(args, wait="background", on_progress=self._progress(call))
-        if name == "close_tab":
-            deps.handoffs.check_close(args.get("id"), messaging.id)
-            return service.close_tab(args.get("id"))
-        if name == MOD_TOOL:
-            return self._mod(deps, args)
-        if name == "list_sessions":
-            return messaging.list_sessions()
-        if name == "send_message":
-            return messaging.send(args)
-        if name == "read_messages":
-            return messaging.read(call.cancel)
-        if name == "wait_for_message":
-            return messaging.wait(args, call.cancel)
-        if name == "handoff":
-            return deps.handoffs.start(args)
-        if name == "closed_sessions":
-            return deps.resumes.list()
-        if name == "resume_tab":
-            return deps.resumes.resume(args)
-        if name.startswith("jev_") and deps.jev is not None:
+        runs: dict[str, Callable[[], Any]] = {
+            "list_agents": lambda: service.list_agents(),
+            "list_tabs": lambda: service.list_tabs(args.get("ide")),
+            "open_tab": lambda: service.open_tab(args, wait="background", on_progress=self._progress(call)),
+            "close_tab": lambda: self._close_tab(deps, args.get("id")),
+            MOD_TOOL: lambda: self._mod(deps, args),
+            "list_sessions": lambda: messaging.list_sessions(),
+            "send_message": lambda: messaging.send(args),
+            "read_messages": lambda: messaging.read(call.cancel),
+            "wait_for_message": lambda: messaging.wait(args, call.cancel),
+            "handoff": lambda: deps.handoffs.start(args),
+            "closed_sessions": lambda: deps.resumes.list(),
+            "resume_tab": lambda: deps.resumes.resume(args),
+        }
+        run = runs.get(name)
+        if run is not None:
+            return run()
+        if name.startswith(JEV_PREFIX) and deps.jev is not None:
             from .jev.tools import RUNNERS
 
             return RUNNERS[name](deps.jev, args)
         raise McpError(INVALID_PARAMS, f"Tool {name} not found")
 
+    def _close_tab(self, deps: ToolDeps, tab_id: str | None) -> Any:
+        deps.handoffs.check_close(tab_id, deps.messaging.id)
+        return deps.service.close_tab(tab_id)
+
     def _mod(self, deps: ToolDeps, given: dict[str, Any]) -> Any:
         messaging = deps.messaging
         op = given["op"]
-        if op == "presence":
-            fields = {k: given[k] for k in ("driver", "nativeName", "state", "model", "effort", "agentType", "agentColor") if k in given}
-            if "session" in given:
-                fields["owner"] = given["session"]
-            return messaging.mod_presence(fields)
-        if op == "unread":
-            return messaging.mod_unread()
-        if op == "send":
-            sent = {"to": need(op, given.get("to"), "to"), "text": need(op, given.get("text"), "text")}
-            if given.get("replyTo") is not None:
-                sent["replyTo"] = given["replyTo"]
-            return messaging.send(sent)
-        if op == "take":
-            return messaging.mod_take()
-        if op in ("ack", "release"):
-            return messaging.mod_settle(need(op, given.get("claim"), "claim"), op)
-        if op == "sessions":
-            return messaging.list_sessions()
-        if op == "log":
-            logged = {
-                "direction": need(op, given.get("direction"), "direction"),
-                "peer": need(op, given.get("peer"), "peer"),
-                "text": need(op, given.get("text"), "text"),
-            }
-            for key in ("id", "at", "delivery"):
-                if given.get(key) is not None:
-                    logged[key] = given[key]
-            return messaging.mod_log(logged)
-        if op == "history":
-            return messaging.mod_history(_who(given), given.get("before"))
-        if op == "message":
-            return messaging.mod_message(_who(given), need(op, given.get("id"), "id"), given.get("offset") or 0)
-        if op == "reveal":
-            return deps.service.reveal(need(op, given.get("path"), "path"), messaging.host_id(), messaging.session_folders())
-        if op == "counts":
-            return messaging.mod_counts([_who(a) for a in given.get("agents") or []])
-        if op == "settings":
-            return {"claudeMod": deps.service.settings().terminal.claude_mod}
-        raise ValueError(f"unknown op {op}")
+        ops: dict[str, Callable[[], Any]] = {
+            "presence": lambda: messaging.mod_presence(_presence_fields(given)),
+            "unread": lambda: messaging.mod_unread(),
+            "send": lambda: messaging.send(_sent(op, given)),
+            "take": lambda: messaging.mod_take(),
+            "ack": lambda: messaging.mod_settle(need(op, given.get("claim"), "claim"), op),
+            "release": lambda: messaging.mod_settle(need(op, given.get("claim"), "claim"), op),
+            "sessions": lambda: messaging.list_sessions(),
+            "log": lambda: messaging.mod_log(_logged(op, given)),
+            "history": lambda: messaging.mod_history(_who(given), given.get("before")),
+            "message": lambda: messaging.mod_message(_who(given), need(op, given.get("id"), "id"), given.get("offset") or 0),
+            "reveal": lambda: deps.service.reveal(need(op, given.get("path"), "path"), messaging.host_id(), messaging.session_folders()),
+            "counts": lambda: messaging.mod_counts([_who(a) for a in given.get("agents") or []]),
+            "settings": lambda: {"claudeMod": deps.service.settings().terminal.claude_mod},
+        }
+        run = ops.get(op)
+        if run is None:
+            raise ValueError(f"unknown op {op}")
+        return run()
+
+
+def _presence_fields(given: Mapping[str, Any]) -> dict[str, Any]:
+    fields = {k: given[k] for k in ("driver", "nativeName", "state", "model", "effort", "agentType", "agentColor") if k in given}
+    if "session" in given:
+        fields["owner"] = given["session"]
+    return fields
+
+
+def _sent(op: str, given: Mapping[str, Any]) -> dict[str, Any]:
+    sent = {"to": need(op, given.get("to"), "to"), "text": need(op, given.get("text"), "text")}
+    if given.get("replyTo") is not None:
+        sent["replyTo"] = given["replyTo"]
+    return sent
+
+
+def _logged(op: str, given: Mapping[str, Any]) -> dict[str, Any]:
+    logged = {
+        "direction": need(op, given.get("direction"), "direction"),
+        "peer": need(op, given.get("peer"), "peer"),
+        "text": need(op, given.get("text"), "text"),
+    }
+    for key in ("id", "at", "delivery"):
+        if given.get(key) is not None:
+            logged[key] = given[key]
+    return logged

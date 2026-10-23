@@ -251,7 +251,7 @@ class Boot:
         env = os.environ
         service = system_service(self.home, _log)
         jev = start_jev(self.home, env, sys.platform, lambda: service.list_agents()["agents"]).jev
-        messaging = Messaging(MessagingDeps(home=self.home, env=env, pid=os.getpid(), cwd=os.getcwd(), hosts=service))
+        messaging = Messaging(MessagingDeps(home=self.home, env=env, pid=os.getpid(), cwd=os.getcwd(), hosts=service, log=_log))
         self.messaging = messaging
         messaging.start_registered(log=_log)
         handoffs = Handoffs(
@@ -261,6 +261,7 @@ class Boot:
                 session_id=lambda: messaging.id,
                 open_tab=lambda given: service.open_tab(given),
                 find_host=service.find_host,
+                log=_log,
             )
         )
         resumes = Resumes(

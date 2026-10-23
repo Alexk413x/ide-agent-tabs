@@ -4,27 +4,14 @@ import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.attribute.FileTime
 
-class SharedSettingsTest {
+class SharedSettingsTest : SettingsFixture("cst-shared") {
 
-    private val home: Path = Files.createTempDirectory("cst-shared")
-    private val warnings = mutableListOf<String>()
-    private val settings = AgentSettings(home) { warnings += it }
     private val config = home.resolve(CONFIG_FILE)
-
-    private var clock = System.currentTimeMillis()
-
-    private fun write(name: String, text: String) {
-        val file = home.resolve(name)
-        Files.writeString(file, text)
-        clock += 10_000
-        Files.setLastModifiedTime(file, FileTime.fromMillis(clock))
-    }
 
     private fun saved() = JsonParser.parseString(Files.readString(config)).asJsonObject
 
@@ -37,7 +24,7 @@ class SharedSettingsTest {
     }
 
     @Test
-    fun `the four keys are read and invalid values fall back`() {
+    fun `the routing, terminal, shell and window keys are read and invalid values fall back`() {
         write(CONFIG_FILE, """{"tabRouting": "caller", "terminal": "wezterm", "shell": "/opt/pwsh", "terminalWindow": "dedicated"}""")
         assertEquals(SharedSettings(TabRouting.CALLER, "wezterm", "/opt/pwsh", TerminalWindow.DEDICATED), settings.shared())
         write(CONFIG_FILE, """{"tabRouting": "nowhere", "terminal": 3, "shell": " ", "terminalWindow": ""}""")
@@ -96,8 +83,27 @@ class SharedSettingsTest {
         )
         write(DETECTED_FILE, """{"terminals": "none", "shells": {}}""")
         assertEquals(Detected(), settings.detected())
+        assertTrue(warnings.isEmpty())
         write(DETECTED_FILE, "broken")
         assertEquals(Detected(), settings.detected())
+        assertEquals(Detected(), settings.detected())
+        assertEquals(1, warnings.size)
+    }
+
+    @Test
+    fun `shared settings and detection are read again only when their files change`() {
+        write(CONFIG_FILE, """{"tabRouting": "caller"}""")
+        assertSame(settings.shared(), settings.shared())
+        write(CONFIG_FILE, """{"tabRouting": "project"}""")
+        assertEquals(TabRouting.PROJECT, settings.shared().tabRouting)
+        write(DETECTED_FILE, """{"terminals": [{"id": "kitty"}]}""")
+        assertSame(settings.detected(), settings.detected())
+        write(DETECTED_FILE, """{"terminals": [{"id": "tmux"}]}""")
+        assertEquals("tmux", settings.detected().terminals.single().id)
+        assertTrue(settings.setTabRouting(TabRouting.CALLER))
+        assertEquals(TabRouting.CALLER, settings.shared().tabRouting)
+        Files.delete(config)
+        assertEquals(SharedSettings(), settings.shared())
     }
 
     @Test

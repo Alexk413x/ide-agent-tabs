@@ -15,7 +15,6 @@ from ..jspath import win32_is_absolute, win32_normalize
 from ..parallel import run_all
 from ..processes import run
 
-SHELL_SOURCES = ("path", "msi", "store", "preview", "windows")
 _STORE_PACKAGE = re.compile(r"^Microsoft\.PowerShell(Preview)?_(\d+(?:\.\d+)*)_", re.IGNORECASE)
 _VERSION = re.compile(r"\d+(?:\.\d+)*(?:-[0-9A-Za-z.-]+)?")
 _PREVIEW = re.compile("preview", re.IGNORECASE)

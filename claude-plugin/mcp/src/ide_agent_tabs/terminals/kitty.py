@@ -4,18 +4,17 @@ import contextlib
 import os
 import posixpath
 import re
-import sys
 from collections.abc import Mapping
 from typing import NamedTuple, Union
 
 from ..clock import now_ms
-from ..files import write_new_private_file
+from ..files import discard_file, write_new_private_file
 from ..installed import find_on_path
 from ..jsjson import is_number, number, parse
-from ..processes import run
+from ..processes import platform_name, run, terminal_environment
 from ..spec import LaunchSpec, check_posix_env_names, posix_spec
 from .driver import Capabilities, OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
-from .processes import GUI_SETTLE_MS, find_executable, hang_up, pid_tabs_alive, start_detached, terminal_environment
+from .processes import GUI_SETTLE_MS, find_executable, hang_up, pid_tabs_alive, start_detached
 from .shell import ENTER_DELAY_MS, check_argv_paths, check_input_line, launcher_name, login_shell, sleep_ms, surface_argv, tab_title
 from .window_memory import RememberedWindow, read_window, remember_window
 
@@ -25,10 +24,6 @@ _REMOTE = caps("tab", "yes", "yes")
 _SPAWNED = caps("window", "tracked", "best-effort")
 _DIGITS = re.compile(r"\d+")
 _SOCKET = re.compile(rf"{re.escape(KITTY_SOCKET_NAME)}-\d+")
-
-
-def _platform() -> str:
-    return "linux" if sys.platform.startswith("linux") else sys.platform
 
 
 def kitty_locations(home: str) -> list[str]:
@@ -186,10 +181,6 @@ def parse_kitty_os_windows(stdout: str) -> dict[str, list[str]]:
     return by_os_window
 
 
-def parse_kitty_windows(stdout: str) -> set[str]:
-    return {i for ids in parse_kitty_os_windows(stdout).values() for i in ids}
-
-
 def _ls_by_os_window(kitten: str, address: str) -> dict[str, list[str]] | None:
     try:
         result = run(kitten, ["@", "--to", address, "ls"], timeout=10)
@@ -251,7 +242,7 @@ def _remember_os_window(kitten: str, home: str, address: str, window_id: str) ->
 
 
 def _reachable_socket(kitten: str, env: Mapping[str, str]) -> str | None:
-    for address in kitty_addresses(_platform(), env):
+    for address in kitty_addresses(platform_name(), env):
         try:
             if _ls(kitten, address) is not None:
                 return address
@@ -267,11 +258,6 @@ def _tools(ctx: TerminalContext) -> tuple[str, str]:
     return exe, _find_kitten(exe, ctx.path_var)
 
 
-def _remove(file: str) -> None:
-    with contextlib.suppress(OSError):
-        os.remove(file)
-
-
 class Kitty(TerminalDriver):
     name = KITTY
     label = "kitty"
@@ -285,12 +271,12 @@ class Kitty(TerminalDriver):
         return _REMOTE if _reachable_socket(_find_kitten(found, ctx.path_var), ctx.env) else _SPAWNED
 
     def available(self, ctx: TerminalContext) -> bool:
-        return _platform() in ("darwin", "linux") and _find_kitty(ctx) is not None
+        return platform_name() in ("darwin", "linux") and _find_kitty(ctx) is not None
 
     def open(self, ctx: TerminalContext, spec: LaunchSpec, title: str, options: OpenOptions | None = None) -> TerminalTab:
         exe, kitten = _tools(ctx)
         check_posix_env_names(spec.env)
-        shell = login_shell(ctx.env.get("SHELL"), _platform())
+        shell = login_shell(ctx.env.get("SHELL"), platform_name())
         folder = os.path.join(ctx.home, "launch")
         spec_file = os.path.join(folder, f"{spec.id}.spec")
         launcher = os.path.join(ctx.scripts_dir, launcher_name(shell))
@@ -311,7 +297,7 @@ class Kitty(TerminalDriver):
                     raise RuntimeError(f"kitten @ launch failed: {result.stderr.strip()}")
                 window_id = parse_kitty_window_id(result.stdout)
             except BaseException:
-                _remove(spec_file)
+                discard_file(spec_file)
                 raise
             if isinstance(target.place, OsWindow):
                 with contextlib.suppress(OSError, TimeoutError, ValueError, TypeError):
@@ -324,7 +310,7 @@ class Kitty(TerminalDriver):
         try:
             start_detached(exe, args, {**env, "IDE_AGENT_TABS_LAUNCHER": launcher, "IDE_AGENT_TABS_SPEC": spec_file}, GUI_SETTLE_MS)
         except BaseException:
-            _remove(spec_file)
+            discard_file(spec_file)
             raise
         return {**base, "createdAt": now_ms(), "pidFile": pid_file}
 

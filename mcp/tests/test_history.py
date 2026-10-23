@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import threading
 import unittest
 from typing import Any
 
@@ -9,54 +8,16 @@ from ide_agent_tabs.jsjson import stringify, utf16_len
 from ide_agent_tabs.messaging import history, store
 from ide_agent_tabs.messaging.db import MailError
 from ide_agent_tabs.messaging.history import HISTORY_REPLY_CHARS, PIECE_CHARS, PREVIEW_CHARS, Who, text_piece
-from ide_agent_tabs.messaging.messaging import Messaging, MessagingDeps
-from ide_agent_tabs.scheduler import Scheduler
-from support import temp_home
+from ide_agent_tabs.messaging.messaging import Messaging
+from support import Clock, temp_home
+from support import session as base_session
 
 NATIVE_PEER = "docs-9b [11aa22]"
 NATIVE_SELF = "plugins-fa [6a3948]"
 
 
-class FakeHosts:
-    def find_host(self, tab_id: str) -> str | None:
-        return None
-
-    def type_into(self, tab_id: str, host: str, text: str) -> dict[str, Any]:
-        return {"ok": True}
-
-    def describe_host(self, host: str) -> str | None:
-        return None
-
-
-class Clock:
-    def __init__(self, start: float) -> None:
-        self.at = start
-
-    def __call__(self) -> float:
-        return self.at
-
-
 def session(test: unittest.TestCase, home: str, tab_id: str, agent: str, pid: int, clock: Clock | None = None) -> Messaging:
-    scheduler = Scheduler()
-    test.addCleanup(scheduler.stop)
-    deps = MessagingDeps(
-        home=home,
-        env={"IDE_AGENT_TABS_ID": tab_id, "IDE_AGENT_TABS_AGENT": agent},
-        pid=pid,
-        cwd=f"/w/{tab_id}",
-        hosts=FakeHosts(),
-        is_alive=lambda _pid: True,
-        now=clock,
-        scheduler=scheduler,
-    )
-    messaging = Messaging(deps)
-    test.addCleanup(messaging.stop_sync)
-    messaging.start()
-    # start() queues a session scan; a send that joins a scan begun before the peer registered would not see the peer.
-    scanned = threading.Event()
-    scheduler.soon(scanned.set)
-    scanned.wait(10)
-    return messaging
+    return base_session(test, home, tab_id, agent, pid, settle=True, now=clock)
 
 
 def unread_ids(home: str, tab_id: str) -> list[str]:

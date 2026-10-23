@@ -10,7 +10,11 @@ import threading
 import time
 import unittest
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ide_agent_tabs.messaging.messaging import Messaging
+    from ide_agent_tabs.service import Service
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 MCP = os.path.dirname(TESTS)
@@ -38,6 +42,100 @@ def close_store(home: str) -> None:
     from ide_agent_tabs.messaging import db
 
     db.close_db(home)
+
+
+def follow_up_peers(messaging: Messaging) -> list[str]:
+    with messaging._follow_lock:
+        return list(messaging._follow_ups)
+
+
+def settled(service: Service) -> None:
+    while True:
+        with service._lock:
+            pending = list(service._background)
+        if not pending:
+            return
+        for thread in pending:
+            thread.join()
+
+
+class Clock:
+    def __init__(self, start: float) -> None:
+        self.at = start
+
+    def __call__(self) -> float:
+        return self.at
+
+
+class FakeHosts:
+    def __init__(self, host: str | None = None, ok: bool = True, labels: dict[str, str] | None = None) -> None:
+        self.host = host
+        self.ok = ok
+        self.labels = labels or {}
+        self.typed: list[tuple[str, str, str]] = []
+
+    def find_host(self, tab_id: str) -> str | None:
+        return self.host
+
+    def type_into(self, tab_id: str, host: str, text: str) -> dict[str, Any]:
+        self.typed.append((tab_id, host, text))
+        return {"ok": True} if self.ok else {"ok": False, "reason": "no input here"}
+
+    def describe_host(self, host: str) -> str | None:
+        return self.labels.get(host)
+
+
+def session(
+    test: unittest.TestCase,
+    home: str,
+    tab_id: str | None,
+    agent: str,
+    pid: int,
+    hosts: FakeHosts | None = None,
+    start: bool = True,
+    settle: bool = False,
+    **over: Any,
+) -> Messaging:
+    from ide_agent_tabs.messaging.messaging import Messaging, MessagingDeps
+    from ide_agent_tabs.scheduler import Scheduler
+
+    scheduler = Scheduler()
+    test.addCleanup(scheduler.stop)
+    env = {} if tab_id is None else {"IDE_AGENT_TABS_ID": tab_id, "IDE_AGENT_TABS_AGENT": agent}
+    deps = {
+        "home": home,
+        "env": env,
+        "pid": pid,
+        "cwd": f"/w/{tab_id or 'x'}",
+        "hosts": hosts if hosts is not None else FakeHosts(),
+        "is_alive": lambda _pid: True,
+        "scheduler": scheduler,
+        **over,
+    }
+    messaging = Messaging(MessagingDeps(**deps))
+    test.addCleanup(messaging.stop_sync)
+    if start:
+        messaging.start()
+        if settle:
+            # start() queues a session scan; a send that joins a scan begun before the peer registered would not see the peer.
+            scanned = threading.Event()
+            scheduler.soon(scanned.set)
+            scanned.wait(10)
+    return messaging
+
+
+def patch(home: str, tab_id: str, **fields: Any) -> None:
+    from ide_agent_tabs.messaging import sessions
+
+    sessions.update_presence(home, tab_id, lambda p: p if p is None else {**p, **fields})
+
+
+def out(to: str, text: str, sender: str = "tab-a", **over: Any) -> dict[str, Any]:
+    return {"from": {"id": sender, "agent": "codex", "path": f"/w/{sender}"}, "to": to, "text": text, **over}
+
+
+def texts(messages: list[dict[str, Any]]) -> list[str]:
+    return [m["text"] for m in messages]
 
 
 def js_fixtures() -> dict[str, Any]:

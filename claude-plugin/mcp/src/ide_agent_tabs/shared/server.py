@@ -111,7 +111,7 @@ class SharedServer:
             server_info={"name": SERVICE, "version": self.version},
             health=self.health,
             tools=self.host.tools_for,
-            instructions=self.host.instructions_for,
+            instructions=self.host.instructions,
             call=self.hub.call,
             end=self.hub.end_pid,
             on_request=self.touch,
@@ -152,10 +152,18 @@ class SharedServer:
 
         def every(seconds: float, check: Callable[[], bool], name: str) -> None:
             def loop() -> None:
+                last: str | None = None
                 while not self._timers.wait(seconds):
-                    with contextlib.suppress(Exception):
+                    try:
                         if check():
                             return
+                    except Exception as e:  # noqa: BLE001
+                        text = f"{type(e).__name__}: {e}"
+                        if text != last:
+                            self.log(f"{name} failed: {text}")
+                        last = text
+                    else:
+                        last = None
 
             threading.Thread(target=loop, name=name, daemon=True).start()
 
@@ -176,17 +184,18 @@ class SharedServer:
         if self.front is not None:
             # socketserver's shutdown() waits for serve_forever() to return, so it would hang before serve() runs.
             if serving:
-                with contextlib.suppress(Exception):
-                    self.front.shutdown()
-            with contextlib.suppress(Exception):
-                self.front.server_close()
-        with contextlib.suppress(Exception):
-            self.hub.close()
-        with contextlib.suppress(Exception):
-            self.host.close()
-        with contextlib.suppress(Exception):
-            remove_state(self.home, self.port, self.pid)
+                self._quietly("shutting down the front", self.front.shutdown)
+            self._quietly("closing the front", self.front.server_close)
+        self._quietly("closing the hub", self.hub.close)
+        self._quietly("closing the host", self.host.close)
+        self._quietly("removing the state file", lambda: remove_state(self.home, self.port, self.pid))
         self.stopped.set()
+
+    def _quietly(self, what: str, step: Callable[[], object]) -> None:
+        try:
+            step()
+        except Exception as e:  # noqa: BLE001
+            self.log(f"stopping: {what} failed: {e}")
 
     def serve(self) -> None:
         with self._stopping:

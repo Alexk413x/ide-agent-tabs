@@ -19,7 +19,7 @@ from ide_agent_tabs.service import IdeWait, Service, ServiceDeps, ToolError
 from ide_agent_tabs.spec import LaunchSpec
 from ide_agent_tabs.terminals.driver import OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
 from ide_agent_tabs.terminals.powershell import ShellProbe
-from support import temp_home
+from support import settled, temp_home
 
 
 class FakeTerminal(TerminalDriver):
@@ -356,7 +356,7 @@ class OpenTabTest(unittest.TestCase):
                 "If it doesn't load by then, the tab opens in the caller's IDE or terminal instead.",
             },
         )
-        s.service.settled()
+        settled(s.service)
         self.assertEqual(s.logs, ["opened tab term-1 in Fake Terminal after starting Android Studio"])
 
     def test_a_named_ide_that_is_not_installed_falls_back(self) -> None:

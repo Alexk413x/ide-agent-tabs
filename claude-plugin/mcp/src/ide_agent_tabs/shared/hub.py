@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import os
 import sys
@@ -10,6 +9,7 @@ from typing import Any, Callable, NamedTuple
 
 from ..liveness import pid_alive
 from .host import Binding, BoundSession, ToolHost
+from .state import GENERATED_ID_PREFIX
 
 ROOTS_REQUEST = "agent-tabs-roots"
 LIVENESS_S = 15.0
@@ -64,7 +64,7 @@ def session_key(identity: Identity) -> str | None:
 
 
 def derived_id(key: str) -> str:
-    return "s-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+    return GENERATED_ID_PREFIX + hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
 
 
 class _Entry:
@@ -117,9 +117,17 @@ class Hub:
 
     def start_liveness(self, every_s: float = LIVENESS_S) -> None:
         def loop() -> None:
+            last: str | None = None
             while not self._stop.wait(every_s):
-                with contextlib.suppress(Exception):
+                try:
                     self.sweep()
+                except Exception as e:  # noqa: BLE001
+                    text = f"{type(e).__name__}: {e}"
+                    if text != last:
+                        self.log(f"liveness sweep failed: {text}")
+                    last = text
+                else:
+                    last = None
 
         self._timer = threading.Thread(target=loop, name="liveness", daemon=True)
         self._timer.start()
@@ -228,7 +236,7 @@ class Hub:
         if found.session is None:
             raise RuntimeError(str(found.error) if found.error is not None else "the session ended")
         arguments = params.get("arguments")
-        return found.session.call(str(params.get("name")), arguments if isinstance(arguments, dict) else {}, None, cancel)
+        return found.session.call(str(params.get("name")), arguments if isinstance(arguments, dict) else {}, cancel)
 
     def close(self) -> None:
         self._stop.set()
@@ -242,5 +250,7 @@ class Hub:
                 entry.dropped = True
             entry.ready.wait()
             if entry.session is not None:
-                with contextlib.suppress(Exception):
+                try:
                     entry.session.release()
+                except Exception as e:  # noqa: BLE001
+                    self.log(f"releasing {entry.key} failed: {e}")

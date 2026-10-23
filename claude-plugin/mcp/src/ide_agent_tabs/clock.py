@@ -25,6 +25,11 @@ def now_iso() -> str:
     return iso(now_ms())
 
 
+def iso_ms(text: str | None) -> float:
+    found = parse_iso(text or "")
+    return float("nan") if found is None else float(found)
+
+
 def parse_iso(text: str) -> int | None:
     match = _ISO.fullmatch(text)
     if match is None:

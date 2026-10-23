@@ -233,7 +233,7 @@ def parse_body(raw: bytes) -> Any:
         return text
 
 
-def _node_arch() -> str:
+def _machine_arch() -> str:
     import platform
 
     machine = platform.machine().lower()
@@ -244,7 +244,7 @@ def _node_arch() -> str:
 
 def runtime_header() -> str:
     v = sys.version_info
-    return f"python/{v.major}.{v.minor}.{v.micro} ({sys.platform}; {_node_arch()})"
+    return f"python/{v.major}.{v.minor}.{v.micro} ({sys.platform}; {_machine_arch()})"
 
 
 def base_url_of(env: Mapping[str, str]) -> str:

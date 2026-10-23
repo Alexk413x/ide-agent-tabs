@@ -10,7 +10,7 @@ from typing import Callable, NamedTuple
 from .jsjson import CONTROL
 from .jspath import is_absolute
 
-BUNDLE_SEGMENT = re.compile(r"\.(app|bundle|framework|pkg|plugin|prefPane)\Z", re.IGNORECASE)
+BUNDLE_SEGMENT = re.compile(r"\.(app|bundle|framework|pkg|plugin|prefPane)\Z", re.IGNORECASE | re.ASCII)
 _SEPARATORS = re.compile("/")
 _TRAILING = re.compile(r"/+\Z")
 

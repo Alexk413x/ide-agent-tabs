@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import threading
 import unittest
+from unittest import mock
 
 from ide_agent_tabs.messaging import db
 from support import temp_home
@@ -27,15 +28,15 @@ class OpenTest(unittest.TestCase):
 
     def test_one_connection_per_database_however_many_threads_open_it(self) -> None:
         home = temp_home(self)
-        before = db.open_stats["opened"]
         opened: list[db.Db] = []
         threads = [threading.Thread(target=lambda: opened.append(db.open_db(home))) for _ in range(8)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        with mock.patch.object(db, "_connect", wraps=db._connect) as connect:
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
         self.assertEqual(len({id(d) for d in opened}), 1)
-        self.assertEqual(db.open_stats["opened"] - before, 1)
+        self.assertEqual(connect.call_count, 1)
 
     def test_the_old_file_mailbox_is_deleted(self) -> None:
         home = temp_home(self)

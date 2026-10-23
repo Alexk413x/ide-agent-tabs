@@ -3,6 +3,7 @@ package dev.alexk.ideagenttabs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
@@ -12,11 +13,14 @@ import java.util.concurrent.TimeUnit
 
 class PowerShellLaunchTest {
 
-    private val pwsh: Path? = findOnPath(System.getenv("PATH"), if (File.separatorChar == '\\') "pwsh.exe" else "pwsh")?.let { Path.of(it) }
+    @get:Rule
+    val temp = TempDirs()
+
+    private val pwsh: Path? = findOnPath(System.getenv("PATH"), if (IS_WINDOWS) "pwsh.exe" else "pwsh")?.let { Path.of(it) }
 
     @Test
     fun `finds an executable on PATH and skips blank, quoted and invalid entries`() {
-        val dir = Files.createTempDirectory("cst-path")
+        val dir = temp.create("cst-path")
         Files.createFile(dir.resolve("tool.exe"))
         val path = listOf("", "  ", "C:\\no\\such\\dir", "bad<>|dir", "\"$dir\"").joinToString(File.pathSeparator)
         assertEquals(dir.resolve("tool.exe").toString(), findOnPath(path, "tool.exe"))
@@ -29,8 +33,6 @@ class PowerShellLaunchTest {
         assumeTrue("Store pwsh not installed", Files.exists(windowsApps.resolve("pwsh.exe"), LinkOption.NOFOLLOW_LINKS))
         assertEquals(windowsApps.resolve("pwsh.exe").toString(), findOnPath(windowsApps.toString(), "pwsh.exe"))
     }
-
-    private val claude = AgentProfile("claude", "Claude Code", "claude")
 
     private val script = Path.of("launch", "agent.ps1")
 
@@ -130,7 +132,7 @@ second line"""
         assumeTrue("pwsh not on PATH", pwsh != null)
         val integration = javaClass.classLoader.getResource("shell-integrations/powershell/powershell-integration.ps1")
         assertNotNull("terminal plugin's PowerShell integration script is not on the test classpath", integration)
-        val dir = Files.createTempDirectory("cst-integration")
+        val dir = temp.create("cst-integration")
         val script = dir.resolve("powershell-integration.ps1")
         integration!!.openStream().use { Files.copy(it, script) }
 

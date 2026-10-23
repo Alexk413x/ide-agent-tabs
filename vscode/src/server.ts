@@ -1,28 +1,19 @@
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs';
 import * as http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import * as os from 'node:os';
-import {
-  AgentLaunch,
-  AgentProfile,
-  AgentSettings,
-  answersHealth,
-  claudeTabSettings,
-  codexHttp,
-  codexPython,
-  CopilotHttp,
-  copilotHooksFile,
-  copilotHttp,
-  isCopilotCommand,
-  planLaunch,
-} from './profiles';
+import type { AgentSettings } from './agentSettings';
+import { isDirectory } from './files';
+import { isCopilotCommand, launchContext, planLaunch } from './launchPlan';
+import { answersHealth, CopilotHttp, copilotHooksFile, copilotHttp } from './mcpHome';
+import { AgentLaunch, AgentProfile } from './profiles';
 import { ENDPOINT_BASE } from './registry';
-import * as fs from 'node:fs';
 import { BadRequest, checkAdmission, checkRevealTarget, OpenRequest, parseCloseId, parseEmpty, parseInput, parseOpenRequest, parseRevealPath, RevealDeps } from './request';
 
-export const MAX_BODY_BYTES = 16 * 1024 * 1024;
+const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
-export interface ProjectInfo {
+interface ProjectInfo {
   name: string;
   path: string;
   focused: boolean;
@@ -59,7 +50,7 @@ export function route(url: string | undefined): string | undefined {
   return ROUTES.has(name) ? name : undefined;
 }
 
-export function handle(name: string, body: string, host: Host, settings: AgentSettings, copilot?: CopilotHttp): Reply {
+function handle(name: string, body: string, host: Host, settings: AgentSettings, copilot?: CopilotHttp, warn?: (message: string) => void): Reply {
   try {
     switch (name) {
       case 'open': {
@@ -71,23 +62,25 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
           profile = named;
         }
         const id = randomUUID();
-        const windows = process.platform === 'win32';
-        const launch = planLaunch(profile, {
-          prompt: request.prompt,
-          args: request.args,
-          env: request.env,
-          model: request.model,
-          via: request.via,
-          setting: settings.shared().launchVia,
-          ori: settings.detected().ori,
-          windows,
-          searchPath: process.env.PATH ?? '',
-          python: codexPython(settings.home, windows),
-          http: codexHttp(settings.home, windows, id, profile.name),
-          copilot,
-          claudeSettings: claudeTabSettings(settings.home, windows),
-          cwd: request.path,
-        });
+        const launch = planLaunch(
+          profile,
+          launchContext(
+            settings,
+            profile,
+            { windows: process.platform === 'win32', searchPath: process.env.PATH ?? '' },
+            {
+              prompt: request.prompt,
+              args: request.args,
+              env: request.env,
+              model: request.model,
+              via: request.via,
+              tab: id,
+              copilot,
+              cwd: request.path,
+              warn,
+            },
+          ),
+        );
         const tab = host.open(request, profile, launch, id);
         return tab ? ok({ ...tab, via: launch.via }) : fail(409, 'no open folder to host the tab');
       }
@@ -107,7 +100,8 @@ export function handle(name: string, body: string, host: Host, settings: AgentSe
         });
       case 'info':
         parseEmpty(body);
-        return ok({ ...host.info() });
+        return ok(host.info());
+      case 'list':
       default:
         parseEmpty(body);
         return ok({ tabs: host.list() });
@@ -126,21 +120,16 @@ export const systemReveal: RevealDeps = {
       return undefined;
     }
   },
-  isDirectory: target => {
-    try {
-      return fs.statSync(target).isDirectory();
-    } catch {
-      return false;
-    }
-  },
+  isDirectory,
   platform: process.platform,
 };
 
 // A Copilot tab connects to the shared server only while it answers, which takes a request, so open checks it first.
-export async function handleOpen(
+async function handleOpen(
   body: string,
   host: Host,
   settings: AgentSettings,
+  warn: (message: string) => void,
   answers: (port: number) => Promise<boolean> = answersHealth,
   hooksFile: string = copilotHooksFile(process.env, os.homedir()),
 ): Promise<Reply> {
@@ -149,13 +138,14 @@ export async function handleOpen(
     const request = parseOpenRequest(body);
     const profile = request.agent === undefined ? settings.defaultProfile() : settings.profile(request.agent);
     if (profile !== undefined && isCopilotCommand(profile.command)) copilot = await copilotHttp(settings.home, process.platform === 'win32', hooksFile, answers);
-  } catch {
+  } catch (e) {
+    if (!(e instanceof BadRequest)) warn(`Opening the tab without the shared Copilot server: ${String(e)}`);
     copilot = undefined;
   }
-  return handle('open', body, host, settings, copilot);
+  return handle('open', body, host, settings, copilot, warn);
 }
 
-export async function handleReveal(body: string, host: Host, deps: RevealDeps = systemReveal): Promise<Reply> {
+async function handleReveal(body: string, host: Host, deps: RevealDeps = systemReveal): Promise<Reply> {
   try {
     const known = [...host.info().projects.map(p => p.path), ...host.list().map(t => t.path)];
     const target = checkRevealTarget(parseRevealPath(body), known, deps);
@@ -176,7 +166,7 @@ function respond(res: http.ServerResponse, reply: Reply): void {
   res.end(bytes);
 }
 
-export function createApiServer(token: string, host: Host, settings: AgentSettings): http.Server {
+export function createApiServer(token: string, host: Host, settings: AgentSettings, warn: (message: string) => void = () => {}): http.Server {
   return http.createServer((req, res) => {
     const header = (name: string) => {
       const value = req.headers[name];
@@ -211,7 +201,7 @@ export function createApiServer(token: string, host: Host, settings: AgentSettin
       if (tooLarge) return;
       const body = Buffer.concat(chunks).toString('utf8');
       if (name === 'reveal') void handleReveal(body, host).then(reply => respond(res, reply));
-      else if (name === 'open') void handleOpen(body, host, settings).then(reply => respond(res, reply));
+      else if (name === 'open') void handleOpen(body, host, settings, warn).then(reply => respond(res, reply));
       else respond(res, handle(name, body, host, settings));
     });
   });

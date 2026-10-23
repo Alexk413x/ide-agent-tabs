@@ -3,6 +3,43 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.10
+
+Plugin and MCP server 0.9.10, with VS Code extension 0.1.36 and JetBrains plugin 0.4.19 bundled.
+
+### Changed
+
+- Cleanup with no change in behavior. The server, both IDE plugins, the Claude Code mod and the scripts
+  drop unused code and share helpers that were copied across modules. The shared HTTP server no longer
+  carries an unused progress argument, and the IDE plugins no longer re-read their settings files on every
+  menu refresh.
+- Long functions split into smaller ones: the VS Code `activate`, `profiles.ts`, the Claude Code mod's
+  `register`, the JetBrains settings panel and `AgentProfiles.kt`, and the server's handoff, hook, open,
+  close and front-door code.
+- The VS Code extension, the JetBrains plugin and the server log errors they used to swallow, in the places
+  that already had a log. Which errors they catch, and what they return, does not change.
+- The JetBrains HTTP handler cancels its 10-second timeout when the work finishes first, and answers an
+  unexpected failure with "internal error" and logs the detail.
+- The icons and launch scripts the two IDEs share live in `shared/`. `node scripts/sync-shared.mjs` copies
+  them into each IDE, and `scripts/check.mjs` and CI fail when a copy drifts.
+- Tests compare the constants that the server, VS Code and JetBrains duplicate, such as the Codex tab
+  arguments, the Ori profiles and the request limits, and fail when they differ.
+- The JetBrains plugin does its file reads and launch-script writes on a background thread instead of the
+  UI thread, for both menu launches and `open` and `reveal` requests over HTTP.
+- The JetBrains bundle-name, `copilot` and `claude` patterns now match ASCII letters only, as the VS Code
+  and server patterns do, and the bundle-name pattern rejects a trailing newline.
+- The messaging code logs failures it used to swallow, to stderr, once per distinct message.
+- The `updatePlugins.xml` file that Gradle writes escapes the zip URL.
+- The unit tests share fixtures and clean up their temporary folders.
+- `scripts/check.mjs` runs every test in `scripts/test`. The IDE package hash now also covers the
+  VS Code build files and the Gradle wrapper settings.
+- `scripts/bump.mjs` validates `jetbrains/gradle.properties` before it writes any file.
+- CI type-checks the VS Code extension and no longer runs a job only to find out that `vscode/` exists.
+
+### Fixed
+
+- The JetBrains plugin logs a warning when `detected.json` exists but does not parse.
+
 ## 0.9.9
 
 Plugin and MCP server 0.9.9.

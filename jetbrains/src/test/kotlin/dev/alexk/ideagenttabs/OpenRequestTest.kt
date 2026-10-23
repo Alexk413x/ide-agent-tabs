@@ -1,17 +1,22 @@
 package dev.alexk.ideagenttabs
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
-import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 
 class OpenRequestTest {
 
-    private val dir: Path = Files.createTempDirectory("cst")
+    @get:Rule
+    val temp = TempDirs()
+
+    private val dir: Path = temp.create("cst")
 
     private fun body(path: String, prompt: String? = null): String {
         val escaped = path.replace("\\", "\\\\")
@@ -50,7 +55,7 @@ class OpenRequestTest {
         assertEquals(real, checkRevealTarget(dir, listOf(dir)))
         val file = Files.createFile(dir.resolve("note.txt"))
         val missing = dir.resolve("missing")
-        val outside = Files.createTempDirectory("cst-outside")
+        val outside = temp.create("cst-outside")
         assertEquals("not a folder on this machine: $file", assertThrows(IllegalArgumentException::class.java) { checkRevealTarget(file, listOf(dir)) }.message)
         assertEquals("not a folder on this machine: $missing", assertThrows(IllegalArgumentException::class.java) { checkRevealTarget(missing, listOf(dir)) }.message)
         assertEquals(
@@ -72,6 +77,23 @@ class OpenRequestTest {
         }
         assertEquals("refused: $bundle is inside a macOS bundle", error.message)
         assertEquals(bundle, checkRevealTarget(bundle, listOf(bundle), mac = false, realPath = resolve, isDirectory = { true }))
+    }
+
+    @Test
+    fun `a bundle name must end the segment, so a trailing newline is not a bundle`() {
+        listOf("Foo.app", "Foo.APP", "Foo.prefpane", "x.app.plugin").forEach { assertTrue(it, BUNDLE_SEGMENT.containsMatchIn(it)) }
+        listOf("Foo.app\n", "Foo.app\r\n", "Foo.app\r", "Foo.app\u0085", "Foo.app ", "Foo.app.bak", "Foo.apps").forEach {
+            assertFalse(it, BUNDLE_SEGMENT.containsMatchIn(it))
+        }
+    }
+
+    @Test
+    fun `a model with a trailing newline is refused`() {
+        for (end in listOf("\n", "\r\n", "\r", "\u0085", " ")) {
+            assertFalse(MODEL_PATTERN.matches("gpt-5$end"))
+            assertThrows(IllegalArgumentException::class.java) { OpenRequest.of(dir.toString(), null, model = "gpt-5$end") }
+        }
+        assertTrue(MODEL_PATTERN.matches("gpt-5"))
     }
 
     @Test
@@ -203,7 +225,7 @@ class OpenRequestTest {
 
     @Test
     fun `closest base ignores case on Windows`() {
-        assumeTrue("Windows paths", File.separatorChar == '\\')
+        assumeTrue("Windows paths", IS_WINDOWS)
         assertEquals(1, closestBase(Path.of("c:\\WORK\\Repo"), listOf(Path.of("C:\\work"), Path.of("C:\\work\\repo"))))
     }
 

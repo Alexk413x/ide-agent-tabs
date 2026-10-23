@@ -5,15 +5,11 @@ import unittest
 from typing import Any, Callable
 
 from ide_agent_tabs.clock import iso, parse_iso
-from support import Worker, node_worker, py_worker, require_node, temp_home
+from support import Worker, node_worker, out, py_worker, require_node, temp_home
 
 T0 = parse_iso("2026-10-07T12:00:00Z") or 0
 Spawn = Callable[[unittest.TestCase, str, "dict[str, Any]"], Worker]
 SIDES: tuple[tuple[str, Spawn], ...] = (("node", node_worker), ("python", py_worker))
-
-
-def out(to: str, text: str, sender: str = "tab-a", **over: Any) -> dict[str, Any]:
-    return {"from": {"id": sender, "agent": "codex", "path": f"/w/{sender}"}, "to": to, "text": text, **over}
 
 
 class StoreInteropTest(unittest.TestCase):
