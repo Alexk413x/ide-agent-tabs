@@ -187,14 +187,16 @@ class TerminalParityTest(unittest.TestCase):
                 calls.append({"script": "OPEN" if script == iterm2.OPEN_SCRIPT else script, "args": args})
                 return iterm2.RunResult(0, "w0t1p0:XYZ\n77\n", "")
 
-            driver = iterm2.create_iterm2(
-                platform="darwin",
-                find_app=lambda: "/Applications/iTerm.app",
-                osascript=osascript,
-                write_spec=lambda _file, _content: None,
-                remove_spec=lambda _file: None,
-                read_window=lambda _home: {"id": "5"},
-                remember_window=lambda _home, w, remembered=remembered: remembered.append(w),
+            driver = iterm2.Iterm2(
+                iterm2.DEFAULT_DEPS._replace(
+                    platform="darwin",
+                    find_app=lambda: "/Applications/iTerm.app",
+                    osascript=osascript,
+                    write_spec=lambda _file, _content: None,
+                    remove_spec=lambda _file: None,
+                    read_window=lambda _home: {"id": "5"},
+                    remember_window=lambda _home, w, remembered=remembered: remembered.append(w),
+                )
             )
             ctx = TerminalContext("/h", "/p/launch", "", {"SHELL": "/bin/zsh"})
             sp = launch_spec(DATA["posixSpec"][0]["args"][0])

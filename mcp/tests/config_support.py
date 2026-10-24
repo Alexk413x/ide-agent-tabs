@@ -7,6 +7,7 @@ import sys
 from collections.abc import Mapping
 from typing import Any
 
+from ide_agent_tabs.processes import platform_name
 from ide_agent_tabs.register import RegisterContext
 from ide_agent_tabs.server_copy import Source
 
@@ -110,7 +111,7 @@ def context(source: Source, user_home: str, env: Mapping[str, str], python: str 
     return RegisterContext(
         source,
         os.path.join(user_home, ".ide-agent-tabs"),
-        "linux" if sys.platform.startswith("linux") else sys.platform,
+        platform_name(),
         env,
         user_home,
         python,

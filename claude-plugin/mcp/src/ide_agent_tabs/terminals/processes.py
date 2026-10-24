@@ -11,70 +11,18 @@ from collections.abc import Mapping, Sequence
 from ..clock import now_ms
 from ..files import read_bytes
 from ..installed import find_on_path
-from ..jsjson import trim
+from ..jsjson import MAX_SAFE_INTEGER, trim
 from ..liveness import pid_alive
-from ..processes import CREATE_BREAKAWAY_FROM_JOB, detached_flags, run
+from ..processes import run, spawn_detached
 from .driver import TerminalTab
 
 STARTUP_GRACE_MS = 60_000
 GUI_SETTLE_MS = 2_000
 _SHELL_NAMES = {"bash", "zsh", "fish"}
 
-_SESSION_ENV = {
-    "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "CLAUDE_CODE_SSE_PORT",
-    "CLAUDE_CODE_SESSION_ID",
-    "CLAUDE_CODE_CHILD_SESSION",
-    "CLAUDE_CODE_BRIDGE_SESSION_ID",
-    "CLAUDE_CODE_MESSAGING_SOCKET",
-    "CLAUDE_CODE_MESSAGING_TOKEN",
-    "CLAUDE_CODE_SESSION_ATTENDED",
-    "CLAUDE_CODE_EXECPATH",
-    "CLAUDE_PID",
-    "CLAUDE_EFFORT",
-    "CLAUDE_PLUGIN_ROOT",
-    "CLAUDE_PLUGIN_DATA",
-    "IDE_AGENT_TABS_ID",
-    "IDE_AGENT_TABS_AGENT",
-    "IDE_AGENT_TABS_CWD",
-    "CODEX_SANDBOX",
-    "CODEX_SANDBOX_NETWORK_DISABLED",
-    "OPENCODE_SESSION_ID",
-    "ANTIGRAVITY_CLI_ALIAS",
-}
-
-
-# A terminal the server starts, or a tmux server it starts, keeps this environment for every later tab, so
-# variables that identify the calling agent session are dropped.
-def terminal_environment(env: Mapping[str, str]) -> dict[str, str]:
-    return {name: value for name, value in env.items() if name.upper() not in _SESSION_ENV}
-
 
 def find_executable(path_var: str, name: str, fallbacks: Sequence[str]) -> str | None:
     return find_on_path(path_var, name) or next((p for p in fallbacks if os.path.exists(p)), None)
-
-
-def _popen(command: str | Sequence[str], env: Mapping[str, str] | None, flags: int) -> subprocess.Popen[bytes]:
-    return subprocess.Popen(
-        command if isinstance(command, str) else list(command),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=dict(env) if env is not None else None,
-        creationflags=flags,
-        start_new_session=sys.platform != "win32",
-    )
-
-
-def spawn_detached(command: str | Sequence[str], env: Mapping[str, str] | None) -> subprocess.Popen[bytes]:
-    try:
-        return _popen(command, env, detached_flags())
-    except PermissionError:
-        if sys.platform != "win32":
-            raise
-    # A job object that forbids breakaway refuses CREATE_BREAKAWAY_FROM_JOB with access denied.
-    return _popen(command, env, detached_flags() & ~CREATE_BREAKAWAY_FROM_JOB)
 
 
 def start_detached(command: str, args: Sequence[str], env: Mapping[str, str], settle_ms: float) -> None:
@@ -97,7 +45,7 @@ def read_pid(file: str | None) -> int | None:
     if not text.isdigit() or not text.isascii():
         return None
     pid = int(text)
-    return pid if 0 < pid <= 2**53 - 1 else None
+    return pid if 0 < pid <= MAX_SAFE_INTEGER else None
 
 
 def is_shell_name(comm: str) -> bool:

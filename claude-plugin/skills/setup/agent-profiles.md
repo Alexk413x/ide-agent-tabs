@@ -56,6 +56,7 @@ Add or override profiles in `~/.ide-agent-tabs/agents.json`:
 - `modelFlag`: the flag placed before a model that `open_tab` passes. Without it, a model for this
   profile is an error.
 - `env`: environment variables for the session. The caller's `env` wins on a clash.
+- `label`: optional name for menus. The default is the profile name.
 - `icon`: optional path to an SVG file for menus.
 
 A profile is `installed` when its command is on the IDE's `PATH`. On Windows, the IDE also looks for

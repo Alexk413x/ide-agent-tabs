@@ -241,6 +241,7 @@ def live_sessions(
     alive: Callable[[int], bool] = pid_alive,
     now: float | None = None,
     ended: Ended | None = None,
+    log: Callable[[str], None] | None = None,
 ) -> list[Presence]:
     now = now_ms() if now is None else now
     folder = os.path.join(home, SESSIONS_DIR)
@@ -249,6 +250,7 @@ def live_sessions(
     except OSError:
         return []
     sessions: list[Presence] = []
+    logged = False
     for name in names:
         file = os.path.join(folder, name)
         try:
@@ -265,8 +267,13 @@ def live_sessions(
         dead = presence is not None and presence.get("pid") is not None
         if mtime is not None and (dead or now - mtime > STUB_MAX_AGE_MS):
             if presence is not None and ended is not None:
-                with contextlib.suppress(Exception):
+                try:
                     ended(presence, min(now, mtime))
+                except Exception as e:  # noqa: BLE001
+                    if log is not None and not logged:
+                        logged = True
+                        with contextlib.suppress(Exception):
+                            log(f"recording the end of session {presence.get('id')} failed: {type(e).__name__}: {e}")
             with contextlib.suppress(OSError):
                 remove_file(file)
     return sessions
@@ -285,7 +292,9 @@ _reads_lock = threading.Lock()
 
 # The shared server answers many sessions at once, and each call that lists sessions reads every presence
 # file; calls that overlap share one read instead of each reading the folder.
-def join_live_sessions(home: str, alive: Callable[[int], bool], now: float, ended: Ended | None = None) -> list[Presence]:
+def join_live_sessions(
+    home: str, alive: Callable[[int], bool], now: float, ended: Ended | None = None, log: Callable[[str], None] | None = None
+) -> list[Presence]:
     key = (alive, os.path.abspath(home))
     with _reads_lock:
         shared = _reads.get(key)
@@ -299,7 +308,7 @@ def join_live_sessions(home: str, alive: Callable[[int], bool], now: float, ende
             raise shared.error
         return list(shared.value)
     try:
-        shared.value = live_sessions(home, alive, now, ended)
+        shared.value = live_sessions(home, alive, now, ended, log)
     except BaseException as e:
         shared.error = e
         raise

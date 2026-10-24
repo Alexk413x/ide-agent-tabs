@@ -41,7 +41,7 @@ class Fake:
             "write_spec": self.written.__setitem__,
             "remove_spec": self.removed.append,
         }
-        self.driver = iterm2.create_iterm2(**{**deps, **overrides})
+        self.driver = iterm2.Iterm2(iterm2.DEFAULT_DEPS._replace(**{**deps, **overrides}))
 
     def osascript(self, script: str, args: list[str]) -> RunResult:
         self.calls.append((script, args))

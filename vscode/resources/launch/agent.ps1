@@ -1,4 +1,3 @@
-# Run by the terminal as `-File`; the agent's command, arguments and prompt arrive in environment variables.
 & {
     $c = $env:IDE_AGENT_TABS_COMMAND
     Remove-Item env:IDE_AGENT_TABS_COMMAND -ErrorAction Ignore

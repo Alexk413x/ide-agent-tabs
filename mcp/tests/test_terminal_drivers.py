@@ -8,7 +8,7 @@ import unittest
 from typing import Any, Callable
 from unittest import mock
 
-from ide_agent_tabs.processes import RunResult
+from ide_agent_tabs.processes import RunResult, platform_name
 from ide_agent_tabs.spec import LaunchSpec, posix_spec, power_shell_spec
 from ide_agent_tabs.terminals import TERMINAL_DRIVERS, ghostty, kitty, tmux, wezterm
 from ide_agent_tabs.terminals import windows_terminal as wt
@@ -221,7 +221,7 @@ class WeztermTest(unittest.TestCase):
                 spec_file,
             ]
         else:
-            shell = login_shell("/bin/zsh", "linux" if sys.platform.startswith("linux") else sys.platform)
+            shell = login_shell("/bin/zsh", platform_name())
             argv = argv_mode_command(shell, os.path.join("/p", "agent-launch.sh"), spec_file)
         call = runner.calls[0]
         self.assertEqual(call["argv"], ["/usr/bin/wezterm", "cli", "--no-auto-start", "spawn", "--cwd", "/work/app", "--", *argv])
@@ -237,6 +237,7 @@ class GhosttyLinuxTest(unittest.TestCase):
         written = Written()
         with (
             mock.patch.object(ghostty, "sys", types.SimpleNamespace(platform="linux")),
+            mock.patch.object(ghostty, "platform_name", lambda: "linux"),
             mock.patch.object(ghostty, "_find_on_linux", lambda ctx: "/usr/bin/ghostty"),
             mock.patch.object(ghostty, "start_detached", lambda c, a, e, s: started.append((c, a, dict(e)))),
             mock.patch.object(ghostty, "write_new_private_file", written),

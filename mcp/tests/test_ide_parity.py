@@ -9,6 +9,7 @@ from typing import Any, Callable
 from ide_agent_tabs import closed, ide_catalog, ide_installs, jsjson, launch_plan, profiles, registry, resume, routing, spec, tab_store
 from ide_agent_tabs import detection as detection_mod
 from ide_agent_tabs.editor_clis import cli_invocation, editor_cli_locations
+from ide_agent_tabs.processes import terminal_environment
 from ide_agent_tabs.terminals import default_terminal_name, powershell, processes, shell
 from ide_agent_tabs.terminals.driver import OpenOptions
 from ide_agent_tabs.version import compare_versions
@@ -216,7 +217,7 @@ ADAPTERS: dict[str, Callable[..., Any]] = {
     "cliInvocation": lambda c, a, p, s: dict(zip(("command", "args", "windowsVerbatimArguments"), cli_invocation(c, a, p, s))),
     "ideLaunchCommand": launch_command,
     "launchEnvironment": ide_installs.launch_environment,
-    "terminalEnvironment": processes.terminal_environment,
+    "terminalEnvironment": terminal_environment,
     "compareBuilds": compare_versions,
     "powerShellSpec": lambda s: spec.power_shell_spec(launch_spec(s)),
     "posixSpec": lambda s: spec.posix_spec(launch_spec(s)).hex(),

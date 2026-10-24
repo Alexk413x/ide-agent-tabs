@@ -138,7 +138,7 @@ def store_ops(args: dict[str, Any]) -> None:
             results.append({"ok": run_op(home, o)})
         except (db.MailError, ValueError, OSError) as e:
             results.append({"error": str(e)})
-    db.close_all_dbs()
+    db.close_db(home)
     done({"results": results})
 
 

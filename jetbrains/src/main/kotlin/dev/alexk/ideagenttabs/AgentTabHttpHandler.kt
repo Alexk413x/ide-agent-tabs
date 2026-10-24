@@ -50,29 +50,45 @@ class AgentTabHttpHandler : HttpRequestHandler() {
         val body = request.content().toString(Charsets.UTF_8)
         try {
             when (route(urlDecoder.path())) {
-                "open" -> {
-                    val open = OpenRequest.parse(body)
-                    val profile = open.agent?.let {
-                        Agents.settings.profile(it) ?: throw IllegalArgumentException("unknown agent: $it")
-                    } ?: Agents.settings.defaultProfile()
+                "open" -> AppExecutorUtil.getAppExecutorService().execute {
                     val id = UUID.randomUUID().toString()
-                    AppExecutorUtil.getAppExecutorService().execute {
-                        val launch = try {
-                            Agents.launchFor(profile, open, tabId = id, copilot = Agents.copilotFor(profile))
-                        } catch (e: IllegalArgumentException) {
-                            respond(context, Reply(400, error(e.message ?: "bad request")))
-                            return@execute
-                        } catch (e: Exception) {
-                            LOG.warn("Agent tab request failed", e)
-                            respond(context, Reply(500, error(e.toString())))
-                            return@execute
-                        }
-                        onEdt(context) { open(open, profile, launch, id) }
+                    val (open, profile, launch) = try {
+                        val open = OpenRequest.parse(body)
+                        val profile = open.agent?.let {
+                            Agents.settings.profile(it) ?: throw IllegalArgumentException("unknown agent: $it")
+                        } ?: Agents.settings.defaultProfile()
+                        Triple(open, profile, Agents.launchFor(profile, open, tabId = id, copilot = Agents.copilotFor(profile)))
+                    } catch (e: IllegalArgumentException) {
+                        respond(context, badRequest(e))
+                        return@execute
+                    } catch (e: Exception) {
+                        respond(context, internalError(e))
+                        return@execute
                     }
+                    val shell = try {
+                        AgentTabLauncher.prepare(launch, id)
+                    } catch (e: Exception) {
+                        respond(context, internalError(e))
+                        return@execute
+                    }
+                    onEdt(context) { open(open, profile, launch, shell, id) }
                 }
                 "close" -> parseCloseId(body).let { onEdt(context) { close(it) } }
                 "input" -> parseInput(body).let { onEdt(context) { input(it) } }
-                "reveal" -> parseRevealPath(body).let { onEdt(context) { reveal(it) } }
+                "reveal" -> parseRevealPath(body).let { path ->
+                    AppExecutorUtil.getAppExecutorService().execute {
+                        val real = try {
+                            checkRevealTarget(path, knownFolders())
+                        } catch (e: IllegalArgumentException) {
+                            respond(context, badRequest(e))
+                            return@execute
+                        } catch (e: Exception) {
+                            respond(context, internalError(e))
+                            return@execute
+                        }
+                        onEdt(context) { reveal(real) }
+                    }
+                }
                 "agents" -> {
                     parseEmpty(body)
                     AppExecutorUtil.getAppExecutorService().execute { respond(context, attempt(::agents)) }
@@ -81,26 +97,28 @@ class AgentTabHttpHandler : HttpRequestHandler() {
                     parseEmpty(body)
                     onEdt(context) { info() }
                 }
-                else -> {
+                "list" -> {
                     parseEmpty(body)
                     onEdt(context) { list() }
                 }
+                else -> respond(context, Reply(404, error("unknown route")))
             }
         } catch (e: IllegalArgumentException) {
-            respond(context, Reply(400, error(e.message ?: "bad request")))
+            respond(context, badRequest(e))
         }
         return true
     }
 
     private fun onEdt(context: ChannelHandlerContext, work: () -> Reply) {
         val claimed = AtomicBoolean(false)
-        AppExecutorUtil.getAppScheduledExecutorService().schedule({
+        val timeout = AppExecutorUtil.getAppScheduledExecutorService().schedule({
             if (claimed.compareAndSet(false, true)) {
                 respond(context, Reply(503, error("the IDE did not respond in $START_TIMEOUT_SECONDS s, likely a modal dialog; nothing was done")))
             }
         }, START_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         ApplicationManager.getApplication().invokeLater {
             if (!claimed.compareAndSet(false, true)) return@invokeLater
+            timeout.cancel(false)
             respond(context, attempt(work))
         }
     }
@@ -108,15 +126,21 @@ class AgentTabHttpHandler : HttpRequestHandler() {
     private fun attempt(work: () -> Reply): Reply = try {
         work()
     } catch (e: Exception) {
-        LOG.warn("Agent tab request failed", e)
-        Reply(500, error(e.toString()))
+        internalError(e)
     }
 
-    private fun open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch, tabId: String): Reply {
+    private fun badRequest(e: IllegalArgumentException) = Reply(400, error(e.message ?: "bad request"))
+
+    private fun internalError(e: Exception): Reply {
+        LOG.warn("Agent tab request failed", e)
+        return Reply(500, error("internal error"))
+    }
+
+    private fun open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch, shell: ShellLaunch, tabId: String): Reply {
         val project = chooseProject(request.path) ?: return Reply(409, error("no open project to host the tab"))
-        val id = AgentTabLauncher.open(project, request.path.toString(), profile, launch, request.focus, tabId)
+        AgentTabLauncher.open(project, request.path.toString(), profile, launch, shell, request.focus, tabId)
         return Reply(200, ok().apply {
-            addProperty("id", id)
+            addProperty("id", tabId)
             addProperty("agent", profile.name)
             addProperty("project", project.name)
             addProperty("path", request.path.toString())
@@ -124,14 +148,10 @@ class AgentTabHttpHandler : HttpRequestHandler() {
         })
     }
 
-    private fun reveal(path: Path): Reply {
-        val known = openProjects().mapNotNull { it.basePath?.let(Path::of) } +
-            AgentTabRegistry.getInstance().live().map { Path.of(it.path) }
-        val real = try {
-            checkRevealTarget(path, known)
-        } catch (e: IllegalArgumentException) {
-            return Reply(400, error(e.message ?: "bad request"))
-        }
+    private fun knownFolders(): List<Path> =
+        openProjects().mapNotNull { it.basePath?.let(Path::of) } + AgentTabRegistry.getInstance().live().map { Path.of(it.path) }
+
+    private fun reveal(real: Path): Reply {
         RevealFileAction.openDirectory(real)
         return Reply(200, ok().apply { addProperty("path", real.toString()) })
     }

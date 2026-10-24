@@ -7,12 +7,13 @@ import unittest
 from typing import Any
 
 from ide_agent_tabs.ide_client import IdeError
+from ide_agent_tabs.processes import platform_name
 from ide_agent_tabs.registry import Endpoint
 from ide_agent_tabs.reveal import RevealDeps, check_reveal_target, system_reveal
 from ide_agent_tabs.service import Service, ServiceDeps
 from support import temp_home
 
-PLATFORM = "linux" if sys.platform.startswith("linux") else sys.platform
+PLATFORM = platform_name()
 
 
 class Setup:

@@ -14,6 +14,7 @@ class Job:
         self.work = work
         self.every_s = every_s
         self.cancelled = False
+        self.last_error: str | None = None
 
     def cancel(self) -> None:
         self.cancelled = True
@@ -21,7 +22,8 @@ class Job:
 
 
 class Scheduler:
-    def __init__(self, name: str = "agent-tabs-scheduler") -> None:
+    def __init__(self, name: str = "agent-tabs-scheduler", log: Callable[[str], None] | None = None) -> None:
+        self._log = log
         self._queue: list[tuple[float, int, Job]] = []
         self._order = itertools.count()
         self._cond = threading.Condition()
@@ -81,5 +83,16 @@ class Scheduler:
                 return
             if job.cancelled:
                 continue
-            with contextlib.suppress(Exception):
+            try:
                 job.work()
+            except Exception as e:  # noqa: BLE001
+                self._failed(job, e)
+            else:
+                job.last_error = None
+
+    def _failed(self, job: Job, e: Exception) -> None:
+        text = f"{type(e).__name__}: {e}"
+        if self._log is not None and text != job.last_error:
+            with contextlib.suppress(Exception):
+                self._log(f"scheduled job {getattr(job.work, '__qualname__', 'job')} failed: {text}")
+        job.last_error = text

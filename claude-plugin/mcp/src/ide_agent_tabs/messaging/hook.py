@@ -20,7 +20,6 @@ from .sessions import (
 )
 from .store import peek_unread
 
-HOOK_CLIS = ("claude", "codex", "copilot", "agy", "grok", "hermes", "qwen", "goose")
 MAX_NUDGES = 3
 
 Action = Mapping[str, Any]
@@ -97,7 +96,7 @@ _IN_TURN = ("busy", "permission")
 
 
 def is_hook_cli(cli: str) -> bool:
-    return cli in HOOK_CLIS
+    return cli in HOOK_EVENTS
 
 
 def _notification_state(data: Mapping[str, Any]) -> str | None:
@@ -172,6 +171,112 @@ def reported_model(data: Mapping[str, Any]) -> dict[str, str]:
     return out
 
 
+def _hook_state(action: Action, data: Mapping[str, Any]) -> str | None:
+    if action.get("notification"):
+        return _notification_state(data)
+    if action.get("failure"):
+        return "idle" if data.get("is_interrupt") is True else "busy"
+    return action.get("state")
+
+
+def _unread_for(action: Action, home: str, session_id: str, at: float) -> list[dict[str, Any]]:
+    if not (action.get("remind") or action.get("stop")):
+        return []
+    try:
+        return peek_unread(home, session_id, at, HOOK_DEADLINE_MS)
+    except (MailError, sqlite3.Error, OSError):
+        return []
+
+
+class _PresenceChange:
+    def __init__(
+        self,
+        cli: str,
+        session_id: str,
+        action: Action,
+        data: Mapping[str, Any],
+        at: float,
+        agent_process: tuple[int, int] | None,
+        unread: list[dict[str, Any]],
+    ) -> None:
+        self.cli = cli
+        self.session_id = session_id
+        self.action = action
+        self.data = data
+        self.at = at
+        self.agent_process = agent_process
+        self.unread = unread
+        self.input_idle = _input_idle_after(cli, action, data)
+        self.state = _hook_state(action, data)
+        self.reminder = unread_reminder(unread)
+        self.reported = reported_model(data)
+        self.block = False
+        self.remind = False
+        self.foreign = False
+
+    def __call__(self, current: Presence | None) -> Presence | None:
+        owned = (
+            _FOREIGN
+            if current is not None and is_mod_driven(current, self.at)
+            else _owned_by(self.cli, current or {"id": self.session_id}, self.action, self.data, self.at)
+        )
+        if owned is _FOREIGN:
+            self.foreign = True
+            return current
+        base = self._base(current, owned)
+        if self.action.get("stop"):
+            return self._after_stop(base)
+        if self.state is None:
+            return current if self._unchanged(current, owned) else base
+        return self._after_event(base, self.state)
+
+    def _base(self, current: Presence | None, owned: object) -> Presence:
+        base: Presence = {**(current or {"id": self.session_id})}
+        if owned is not None:
+            base["owner"] = owned
+        if self.input_idle is not None:
+            base["inputIdle"] = self.input_idle
+        base.update(self.reported)
+        if self.agent_process is not None and self.action.get("owner"):
+            base["agentPid"], base["agentPidStart"] = self.agent_process
+        return base
+
+    def _after_stop(self, base: Presence) -> Presence:
+        nudges = base.get("nudges") or 0
+        self.block = self.reminder is not None and nudges < MAX_NUDGES
+        if self.block:
+            return with_state(base, "busy", self.at, nudges + 1)
+        return with_state(base, "idle", self.at, 0 if self.reminder is None else nudges)
+
+    def _unchanged(self, current: Presence | None, owned: object) -> bool:
+        known = current or {}
+        learned = any(known.get(k) != v for k, v in self.reported.items())
+        return (
+            not learned
+            and (owned is None or known.get("owner") == owned)
+            and (self.input_idle is None or known.get("inputIdle") == self.input_idle)
+        )
+
+    def _after_event(self, base: Presence, state: str) -> Presence:
+        prompt = self.action.get("prompt") or (self.action.get("invocation") and self.data.get("invocationNum") == 0)
+        following = with_state(base, state, self.at, 0 if prompt else None)
+        if not self.action.get("remind"):
+            return following
+        seen = set(base.get("reminded") or [])
+        self.remind = any(m["id"] not in seen for m in self.unread)
+        rest = {k: v for k, v in following.items() if k != "reminded"}
+        return {**rest, "reminded": [m["id"] for m in self.unread]} if self.unread else rest
+
+    def output(self, event: str) -> dict[str, Any] | None:
+        if self.foreign:
+            return None
+        if self.action.get("stop"):
+            return _stop_output(self.cli, f"Agent Tabs kept this turn open. {self.reminder}") if self.block else None
+        if self.remind and self.reminder is not None:
+            return _context_output(self.cli, event, self.reminder)
+        return None
+
+
 # A Copilot tab on the shared server sends no process id, so its start hook records the Copilot process, and the
 # server ends the tab's session when that process exits.
 def run_hook(
@@ -192,68 +297,6 @@ def run_hook(
     before = read_presence(home, session_id)
     if before is not None and is_mod_driven(before, at):
         return None
-    input_idle = _input_idle_after(cli, action, data)
-    if action.get("notification"):
-        state = _notification_state(data)
-    elif action.get("failure"):
-        state = "idle" if data.get("is_interrupt") is True else "busy"
-    else:
-        state = action.get("state")
-    unread: list[dict[str, Any]] = []
-    if action.get("remind") or action.get("stop"):
-        try:
-            unread = peek_unread(home, session_id, at, HOOK_DEADLINE_MS)
-        except (MailError, sqlite3.Error, OSError):
-            unread = []
-    reminder = unread_reminder(unread)
-    reported = reported_model(data)
-    outcome = {"block": False, "remind": False, "foreign": False}
-
-    def change(current: Presence | None) -> Presence | None:
-        owned = (
-            _FOREIGN
-            if current is not None and is_mod_driven(current, at)
-            else _owned_by(cli, current or {"id": session_id}, action, data, at)
-        )
-        if owned is _FOREIGN:
-            outcome["foreign"] = True
-            return current
-        base: Presence = {**(current or {"id": session_id})}
-        if owned is not None:
-            base["owner"] = owned
-        if input_idle is not None:
-            base["inputIdle"] = input_idle
-        base.update(reported)
-        if agent_process is not None and action.get("owner"):
-            base["agentPid"], base["agentPidStart"] = agent_process
-        learned = any((current or {}).get(k) != v for k, v in reported.items())
-        if action.get("stop"):
-            nudges = base.get("nudges") or 0
-            outcome["block"] = reminder is not None and nudges < MAX_NUDGES
-            if outcome["block"]:
-                return with_state(base, "busy", at, nudges + 1)
-            return with_state(base, "idle", at, 0 if reminder is None else nudges)
-        if state is None:
-            unchanged = (
-                not learned
-                and (owned is None or (current or {}).get("owner") == owned)
-                and (input_idle is None or (current or {}).get("inputIdle") == input_idle)
-            )
-            return current if unchanged else base
-        prompt = action.get("prompt") or (action.get("invocation") and data.get("invocationNum") == 0)
-        following = with_state(base, state, at, 0 if prompt else None)
-        if not action.get("remind"):
-            return following
-        seen = set(base.get("reminded") or [])
-        outcome["remind"] = any(m["id"] not in seen for m in unread)
-        rest = {k: v for k, v in following.items() if k != "reminded"}
-        return {**rest, "reminded": [m["id"] for m in unread]} if unread else rest
-
+    change = _PresenceChange(cli, session_id, action, data, at, agent_process, _unread_for(action, home, session_id, at))
     update_presence(home, session_id, change)
-    if outcome["foreign"]:
-        return None
-    if action.get("stop"):
-        return _stop_output(cli, f"Agent Tabs kept this turn open. {reminder}") if outcome["block"] else None
-    if outcome["remind"] and reminder is not None:
-        return _context_output(cli, event, reminder)
-    return None
+    return change.output(event)

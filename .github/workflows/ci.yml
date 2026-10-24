@@ -29,16 +29,6 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y zsh fish
       - run: ./gradlew test buildPlugin --console=plain
 
-  # hashFiles() isn't available in a job-level `if`, so this job reports whether the VS Code part exists.
-  parts:
-    runs-on: ubuntu-latest
-    outputs:
-      vscode: ${{ steps.find.outputs.vscode }}
-    steps:
-      - uses: actions/checkout@v7
-      - id: find
-        run: echo "vscode=${{ hashFiles('vscode/package.json') != '' }}" >> "$GITHUB_OUTPUT"
-
   plugin:
     runs-on: ubuntu-latest
     steps:
@@ -50,7 +40,8 @@ jobs:
           node-version: '24'
       - run: node scripts/check-no-node.mjs
       - run: node scripts/check-plugin-version.mjs
-      - run: node --test scripts/test/bump.test.mjs
+      - run: node scripts/sync-shared.mjs --check
+      - run: node --test scripts/test/bump.test.mjs scripts/test/sync-shared.test.mjs
       - shell: bash
         run: |
           jetbrains_version=$(sed -n 's/^pluginVersion=//p' jetbrains/gradle.properties)
@@ -113,8 +104,6 @@ jobs:
       - run: uv run --python ${{ matrix.python }} --no-project python -I -S mcp/tests/run.py -v test_lock_interop test_store_interop test_stress_mixed test_hook_interop test_shared_process.NodeHandoverTest test_server_cli.AgainstNodeServer
 
   vscode:
-    needs: parts
-    if: needs.parts.outputs.vscode == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -131,5 +120,6 @@ jobs:
           cache: npm
           cache-dependency-path: vscode/package-lock.json
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build

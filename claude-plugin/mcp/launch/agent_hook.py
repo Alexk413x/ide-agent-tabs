@@ -7,27 +7,6 @@ STDIN_WAIT_S = 2.0
 OWNER_LOOKUP_S = 2.0
 
 
-def _read_stdin() -> bytes:
-    import threading
-
-    chunks: list[bytes] = []
-
-    def pump() -> None:
-        try:
-            while True:
-                chunk = os.read(0, 65536)
-                if not chunk:
-                    return
-                chunks.append(chunk)
-        except OSError:
-            return
-
-    reader = threading.Thread(target=pump, daemon=True)
-    reader.start()
-    reader.join(STDIN_WAIT_S)
-    return b"".join(chunks)
-
-
 def _parse(raw: bytes) -> dict[str, object]:
     from ide_agent_tabs.jsjson import parse
 
@@ -46,6 +25,7 @@ def main() -> None:
     from ide_agent_tabs.home import agent_tabs_home
     from ide_agent_tabs.jsjson import stringify
     from ide_agent_tabs.messaging.hook import HOOK_EVENTS, run_hook
+    from ide_agent_tabs.processes import read_stdin
 
     args = sys.argv[1:]
     cli = args[0] if args else ""
@@ -56,7 +36,7 @@ def main() -> None:
 
         found = find_agent_process(None, OWNER_LOOKUP_S)
         process = None if found is None else (found.pid, max(0, round(found.start_ms)))
-    output = run_hook(cli, event, _parse(_read_stdin()), agent_tabs_home(), tab, agent_process=process)
+    output = run_hook(cli, event, _parse(read_stdin(STDIN_WAIT_S)), agent_tabs_home(), tab, agent_process=process)
     if output is not None:
         os.write(1, (stringify(output) + "\n").encode("utf-8"))
 

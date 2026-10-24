@@ -14,7 +14,7 @@ from ide_agent_tabs.registry import Endpoint
 from ide_agent_tabs.service import IdeWait, Service, ServiceDeps, ToolError
 from ide_agent_tabs.spec import LaunchSpec
 from ide_agent_tabs.terminals.driver import OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
-from support import temp_home
+from support import settled, temp_home
 
 STUDIO = IdeInstall("android-studio", "Android Studio", "jetbrains", "/opt/android-studio/bin/studio.sh", "2026.1")
 CODE = IdeInstall("vscode", "VS Code", "vscode", "/usr/bin/code")
@@ -213,7 +213,7 @@ class NamedIdeTest(unittest.TestCase):
         self.assertIs(t.service.open_tab({"path": t.work, "ide": "studio"}, "background")["pending"], True)
         self.assertEqual(len(t.launches), 1, "a second call waits on the same launch")
 
-        t.service.settled()
+        settled(t.service)
         self.assertEqual([o[0] for o in t.opens], ["jetbrains-new", "jetbrains-new"])
         self.assertEqual(sorted(o[1].get("prompt", "") for o in t.opens), ["", "hi"], "each waiting call opens its own tab")
         self.assertRegex("\n".join(t.logs), r"opened tab tab-\d+ in Android Studio after starting Android Studio")
@@ -225,7 +225,7 @@ class FallbackTest(unittest.TestCase):
         t.add_ide("vscode-caller", "Visual Studio Code", [t.other], tabs=["caller-tab"])
         result = t.service.open_tab({"path": t.work, "ide": "android studio"}, "background")
         self.assertIs(result["pending"], True)
-        t.service.settled()
+        settled(t.service)
         self.assertEqual([o[0] for o in t.opens], ["vscode-caller"])
         self.assertRegex("\n".join(t.logs), "in Visual Studio Code after starting Android Studio")
 

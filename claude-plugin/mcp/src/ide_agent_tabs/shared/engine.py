@@ -7,7 +7,7 @@ import threading
 from collections.abc import Mapping
 from typing import Any, Callable
 
-from .host import Binding, BoundSession, Progress, ToolHost
+from .host import Binding, BoundSession, ToolHost
 
 CLIENT_NAME = "claude-code"
 HTTP_MAX_WAIT_S = 240
@@ -46,6 +46,7 @@ class _Session:
                 max_wait_s=HTTP_MAX_WAIT_S,
                 random_id=lambda: binding.id,
                 scheduler=host.scheduler,
+                log=host.log,
             )
         )
         messaging.start_registered(log=host.log)
@@ -56,6 +57,7 @@ class _Session:
                 session_id=lambda: messaging.id,
                 open_tab=lambda given: service.open_tab(given),
                 find_host=service.find_host,
+                log=host.log,
             )
         )
         resumes = Resumes(
@@ -78,7 +80,7 @@ class _Session:
     def id(self) -> str:
         return self.messaging.id
 
-    def call(self, name: str, arguments: dict[str, Any], progress: Progress | None, cancel: threading.Event) -> dict[str, Any]:
+    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event) -> dict[str, Any]:
         from ..mcp_tools import Call
 
         self.tools.jev_enabled = self.host.jev_enabled()
@@ -114,21 +116,21 @@ class Engine:
         self.home = home
         self.log = log
         self.env = {k: v for k, v in (os.environ if env is None else env).items() if k.upper() not in _SESSION_ENV}
-        self.scheduler = Scheduler("agent-tabs-shared-scheduler")
+        self.scheduler = Scheduler("agent-tabs-shared-scheduler", log=log)
         if detect:
             threading.Thread(target=self._detect, name="agent-tabs-detect", daemon=True).start()
 
     def service(self, env: Mapping[str, str]) -> Any:
         from ..ide_client import ide_caller
-        from ..ide_installs import node_platform
         from ..list_ides_cli import SessionPresence, scripts_dir
+        from ..processes import platform_name
         from ..service import Service, ServiceDeps
         from ..terminals import TERMINAL_DRIVERS
 
         deps = ServiceDeps(
             home=self.home,
             scripts_dir=scripts_dir(),
-            platform=node_platform(),
+            platform=platform_name(),
             env=env,
             call_ide=ide_caller(),
             drivers=TERMINAL_DRIVERS,
@@ -146,7 +148,7 @@ class Engine:
 
         try:
             return bool(read_jev_config(self.home)[0].enabled)
-        except Exception:  # noqa: BLE001 - an unreadable config leaves Jev off, as the stdio server reads it
+        except Exception:  # noqa: BLE001 - an unreadable config leaves Jev off
             return False
 
     def tools_for(self, agent: str) -> list[dict[str, Any]]:
@@ -154,7 +156,7 @@ class Engine:
 
         return tools_for(CLIENT_NAME if agent == "claude" else agent, self.jev_enabled())
 
-    def instructions_for(self, agent: str) -> str:
+    def instructions(self) -> str:
         from ..mcp_tools import server_instructions
 
         return server_instructions(self.jev_enabled())

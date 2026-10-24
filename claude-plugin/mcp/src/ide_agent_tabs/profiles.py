@@ -7,13 +7,12 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Callable, NamedTuple
 
-from .jev.settings import JEV_OFF, JevSettings, parse_jev_settings
+from .jev.settings import CONFIG_FILE, JEV_OFF, JevSettings, parse_jev_settings
 from .jsjson import entries, is_finite, parse, trim, utf16_len
 from .jspath import posix_is_absolute, win32_is_absolute
 
 DEFAULT_AGENT = "claude"
 AGENTS_FILE = "agents.json"
-CONFIG_FILE = "config.json"
 MAX_PROMPT_CHARS = 30_000
 MAX_ENTRIES = 64
 PLUGIN_ENV_PREFIX = "IDE_AGENT_TABS_"
@@ -163,7 +162,8 @@ class CopilotHttp(NamedTuple):
 
 COPILOT_HEALTH_TIMEOUT_MS = 500
 MAX_CWD_CHARS = 1024
-_COPILOT_COMMAND = re.compile(r"(?:.*[\\/])?copilot(?:\.(?:exe|cmd|bat|ps1))?\Z", re.IGNORECASE)
+_JS_DOT = r"[^\n\r  ]"
+_COPILOT_COMMAND = re.compile(rf"(?:{_JS_DOT}*[\\/])?copilot(?:\.(?:exe|cmd|bat|ps1))?\Z", re.IGNORECASE | re.ASCII)
 
 
 def is_copilot_command(command: str) -> bool:
@@ -221,7 +221,7 @@ def codex_python(home: str, windows: bool) -> tuple[str, ...]:
 
 # The settings path reaches cmd.exe when claude is a .cmd shim, so it may not hold a double quote or a cmd.exe metacharacter.
 _CMD_SAFE_PATH = re.compile(r'[^"%!^&|<>\x00-\x1f\x7f]+\Z')
-_CLAUDE_COMMAND = re.compile(r"(?:.*[\\/])?claude(?:\.(?:exe|cmd|bat|ps1))?\Z", re.IGNORECASE)
+_CLAUDE_COMMAND = re.compile(rf"(?:{_JS_DOT}*[\\/])?claude(?:\.(?:exe|cmd|bat|ps1))?\Z", re.IGNORECASE | re.ASCII)
 
 
 def claude_tab_settings(home: str, windows: bool) -> str | None:
@@ -479,15 +479,6 @@ def merge_profiles(builtins: tuple[AgentProfile, ...] | list[AgentProfile], cust
     return [*(by_name.get(b.name, b) for b in builtins), *(c for c in custom if c.name not in names)]
 
 
-def read_default_agent(text: str) -> str | None:
-    value = parse_json_object(text, CONFIG_FILE).get("defaultAgent")
-    return value if isinstance(value, str) else None
-
-
-def read_jev_settings(text: str) -> JevSettings:
-    return parse_jev_settings(parse_json_object(text, CONFIG_FILE).get("jev"))
-
-
 AUTO = "auto"
 
 
@@ -613,21 +604,19 @@ def resolve_settings(
     terminal = TerminalSettings()
     jev = JEV_OFF
     if config_text is not None:
-        readable = True
+        config: dict[str, Any] | None = None
         try:
-            configured = read_default_agent(config_text)
-            terminal = read_terminal_settings(parse_json_object(config_text, CONFIG_FILE), warnings)
+            config = parse_json_object(config_text, CONFIG_FILE)
+            agent = config.get("defaultAgent")
+            configured = agent if isinstance(agent, str) else None
+            terminal = read_terminal_settings(config, warnings)
         except ValueError as e:
-            readable = False
+            config = None
             warnings.append(f"Ignoring {config_path}: {e}")
-        if readable:
+        if config is not None:
             try:
-                jev = read_jev_settings(config_text)
+                jev = parse_jev_settings(config.get("jev"))
             except (ValueError, TypeError) as e:
                 warnings.append(f"Ignoring jev in {config_path}, so Jev is off: {e}")
     default = find_profile(profiles, configured) or next(p for p in profiles if p.name == DEFAULT_AGENT)
     return AgentSettings(profiles, default, terminal, jev, warnings)
-
-
-def with_args(p: AgentProfile, args: tuple[str, ...]) -> AgentProfile:
-    return p._replace(args=tuple(args))

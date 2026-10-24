@@ -1,8 +1,6 @@
 package dev.alexk.ideagenttabs
 
-import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
-import com.google.gson.JsonParser
 
 // Pure module: no IDE types, so the shared settings test without a running IDE.
 
@@ -10,44 +8,50 @@ const val DETECTED_FILE = "detected.json"
 const val AUTO = "auto"
 const val CLAUDE_MOD_OFF = "off"
 
-enum class TabRouting(val value: String, val label: String) {
+interface Valued {
+    val value: String
+}
+
+private fun <T : Valued> List<T>.withValue(value: String?): T? = firstOrNull { it.value == value }
+
+enum class TabRouting(override val value: String, val label: String) : Valued {
     PROJECT("project", "IDE that has the project open"),
     CALLER("caller", "IDE the request came from"),
     ;
 
     companion object {
-        fun of(value: String?): TabRouting? = entries.firstOrNull { it.value == value }
+        fun of(value: String?): TabRouting? = entries.withValue(value)
     }
 }
 
-enum class TerminalWindow(val value: String, val label: String) {
+enum class TerminalWindow(override val value: String, val label: String) : Valued {
     LAST("last", "Use my last window"),
     DEDICATED("dedicated", "A dedicated Agent Tabs window"),
     ;
 
     companion object {
-        fun of(value: String?): TerminalWindow? = entries.firstOrNull { it.value == value }
+        fun of(value: String?): TerminalWindow? = entries.withValue(value)
     }
 }
 
-enum class LaunchVia(val value: String) {
+enum class LaunchVia(override val value: String) : Valued {
     DIRECT("direct"),
     ORI("ori"),
     ;
 
     companion object {
-        fun of(value: String?): LaunchVia? = entries.firstOrNull { it.value == value }
+        fun of(value: String?): LaunchVia? = entries.withValue(value)
     }
 }
 
-enum class FocusNewTabs(val value: String, val label: String) {
+enum class FocusNewTabs(override val value: String, val label: String) : Valued {
     AUTO_FOCUS(AUTO, "When you asked for the tab"),
     ALWAYS("always", "Always"),
     NEVER("never", "Never"),
     ;
 
     companion object {
-        fun of(value: String?): FocusNewTabs? = entries.firstOrNull { it.value == value }
+        fun of(value: String?): FocusNewTabs? = entries.withValue(value)
     }
 }
 
@@ -96,16 +100,18 @@ fun readSharedSettings(text: String): SharedSettings {
     )
 }
 
-fun withSharedValue(existing: String?, key: String, value: String): String {
+internal fun editConfig(existing: String?, change: (JsonObject) -> Unit): String {
     val root = if (existing.isNullOrBlank()) JsonObject() else parseJsonObject(existing, CONFIG_FILE)
-    if (value == AUTO || value.isBlank()) root.remove(key) else root.addProperty(key, value)
-    return GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n"
+    change(root)
+    return root.toPrettyText()
 }
 
-fun withSharedFlag(existing: String?, key: String, value: Boolean, default: Boolean): String {
-    val root = if (existing.isNullOrBlank()) JsonObject() else parseJsonObject(existing, CONFIG_FILE)
-    if (value == default) root.remove(key) else root.addProperty(key, value)
-    return GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n"
+fun withSharedValue(existing: String?, key: String, value: String): String = editConfig(existing) {
+    if (value == AUTO || value.isBlank()) it.remove(key) else it.addProperty(key, value)
+}
+
+fun withSharedFlag(existing: String?, key: String, value: Boolean, default: Boolean): String = editConfig(existing) {
+    if (value == default) it.remove(key) else it.addProperty(key, value)
 }
 
 fun parseDetected(text: String): Detected {

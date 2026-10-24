@@ -13,8 +13,6 @@ if TYPE_CHECKING:
 USER_AGENT = f"ide-agent-tabs-mcp/{PACKAGE_VERSION}"
 IDE_TIMEOUT_MS = 15_000
 
-ROUTES = ("info", "agents", "open", "close", "list", "input", "reveal")
-
 IdeCall = Callable[[Endpoint, str, Optional[dict]], dict]
 
 _MAX_BODY = 64 * 1024 * 1024

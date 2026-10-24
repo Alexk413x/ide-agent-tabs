@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import socket
 import sys
 import time
 import unittest
@@ -11,6 +10,7 @@ from ide_agent_tabs.jev import client
 from ide_agent_tabs.jev.client import JevError, call_jev, js_to_number, retry_delay_ms
 from ide_agent_tabs.jsjson import parse
 from jev_support import StubTypeSafe
+from shared_support import free_port
 
 QUESTIONS = {"q": {"type": "noul", "instructions": "Is it?"}}
 OK = {"status": 200, "body": '{"model":"jev-1","answers":{"q":{"type":"noul","noul":0.5}},"usage":{"input_tokens":3}}'}
@@ -21,12 +21,6 @@ def headers(**values: str) -> Message:
     for name, value in values.items():
         m[name.replace("_", "-")] = value
     return m
-
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 class Retries(unittest.TestCase):

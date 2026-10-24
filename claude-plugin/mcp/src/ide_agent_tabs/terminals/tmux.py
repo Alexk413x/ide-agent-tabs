@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import math
 import os
 import re
@@ -9,12 +8,12 @@ from collections.abc import Mapping
 from typing import NamedTuple, Union
 
 from ..clock import now_ms
-from ..files import write_new_private_file
+from ..files import discard_file, write_new_private_file
 from ..jsjson import is_safe_integer
-from ..processes import run
+from ..processes import platform_name, run, terminal_environment
 from ..spec import LaunchSpec, check_posix_env_names, posix_spec
 from .driver import OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
-from .processes import find_executable, terminal_environment
+from .processes import find_executable
 from .shell import ENTER_DELAY_MS, check_argv_paths, check_input_line, launcher_name, login_shell, sleep_ms, surface_argv, tab_title
 from .window_memory import DEDICATED_NAME
 
@@ -222,7 +221,7 @@ class Tmux(TerminalDriver):
     def open(self, ctx: TerminalContext, spec: LaunchSpec, title: str, options: OpenOptions | None = None) -> TerminalTab:
         exe = _tmux_path(ctx)
         check_posix_env_names(spec.env)
-        shell = login_shell(ctx.env.get("SHELL"), "linux" if sys.platform.startswith("linux") else sys.platform)
+        shell = login_shell(ctx.env.get("SHELL"), platform_name())
         spec_file = os.path.join(ctx.home, "launch", f"{spec.id}.spec")
         launcher = os.path.join(ctx.scripts_dir, launcher_name(shell))
         env = terminal_environment(ctx.env)
@@ -235,8 +234,7 @@ class Tmux(TerminalDriver):
                 raise RuntimeError(f"tmux {args[0]} failed: {result.stderr.strip()}")
             window = parse_tmux_window(result.stdout)
         except BaseException:
-            with contextlib.suppress(OSError):
-                os.remove(spec_file)
+            discard_file(spec_file)
             raise
         detached = isinstance(target, NewSession) or (isinstance(target, InSession) and target.detached)
         dedicated = options is not None and options.window == "dedicated" and options.near is None

@@ -1,19 +1,20 @@
-import { parseObject } from './request';
+import { isPlainObject, parseObject } from './request';
 
 export const DETECTED_FILE = 'detected.json';
+export const CONFIG_FILE = 'config.json';
 export const AUTO = 'auto';
 
-export const TAB_ROUTINGS = ['project', 'caller'] as const;
-export const TERMINAL_WINDOWS = ['last', 'dedicated'] as const;
-export const LAUNCH_VIA = ['direct', 'ori'] as const;
-export const FOCUS_NEW_TABS = ['auto', 'always', 'never'] as const;
-export const CLAUDE_MOD = ['on', 'off'] as const;
+const TAB_ROUTINGS = ['project', 'caller'] as const;
+const TERMINAL_WINDOWS = ['last', 'dedicated'] as const;
+const LAUNCH_VIA = ['direct', 'ori'] as const;
+const FOCUS_NEW_TABS = ['auto', 'always', 'never'] as const;
+const CLAUDE_MOD = ['on', 'off'] as const;
 
-export type TabRouting = (typeof TAB_ROUTINGS)[number];
-export type TerminalWindow = (typeof TERMINAL_WINDOWS)[number];
+type TabRouting = (typeof TAB_ROUTINGS)[number];
+type TerminalWindow = (typeof TERMINAL_WINDOWS)[number];
 export type LaunchVia = (typeof LAUNCH_VIA)[number];
-export type FocusNewTabs = (typeof FOCUS_NEW_TABS)[number];
-export type ClaudeMod = (typeof CLAUDE_MOD)[number];
+type FocusNewTabs = (typeof FOCUS_NEW_TABS)[number];
+type ClaudeMod = (typeof CLAUDE_MOD)[number];
 
 export interface SharedSettings {
   tabRouting: TabRouting;
@@ -47,12 +48,12 @@ export const SHARED_DEFAULTS: Readonly<SharedSettings> = Object.freeze({
   claudeMod: 'on',
 });
 
-export interface DetectedTerminal {
+interface DetectedTerminal {
   id: string;
   name: string;
 }
 
-export interface DetectedShell {
+interface DetectedShell {
   path: string;
   label: string;
 }
@@ -78,8 +79,10 @@ function pathOrAuto(value: unknown): string | undefined {
   return value.trim() === '' ? AUTO : value;
 }
 
-export function readSharedSettings(text: string, file: string): Partial<SharedSettings> {
-  const root = parseObject(text, file);
+const BOOLEAN_SETTINGS = ['closeAfterHandoff', 'allowResume', 'showOriAgents', 'showLmStudioAgents', 'showOllamaAgents'] as const;
+
+export function readSharedSettings(text: string): Partial<SharedSettings> {
+  const root = parseObject(text, CONFIG_FILE);
   const found: Partial<SharedSettings> = {};
   const tabRouting = oneOf(TAB_ROUTINGS, root.tabRouting);
   if (tabRouting !== undefined) found.tabRouting = tabRouting;
@@ -91,11 +94,10 @@ export function readSharedSettings(text: string, file: string): Partial<SharedSe
   if (terminalWindow !== undefined) found.terminalWindow = terminalWindow;
   const launchVia = oneOf(LAUNCH_VIA, root.launchVia);
   if (launchVia !== undefined) found.launchVia = launchVia;
-  if (typeof root.closeAfterHandoff === 'boolean') found.closeAfterHandoff = root.closeAfterHandoff;
-  if (typeof root.allowResume === 'boolean') found.allowResume = root.allowResume;
-  if (typeof root.showOriAgents === 'boolean') found.showOriAgents = root.showOriAgents;
-  if (typeof root.showLmStudioAgents === 'boolean') found.showLmStudioAgents = root.showLmStudioAgents;
-  if (typeof root.showOllamaAgents === 'boolean') found.showOllamaAgents = root.showOllamaAgents;
+  for (const key of BOOLEAN_SETTINGS) {
+    const value = root[key];
+    if (typeof value === 'boolean') found[key] = value;
+  }
   const focusNewTabs = oneOf(FOCUS_NEW_TABS, root.focusNewTabs);
   if (focusNewTabs !== undefined) found.focusNewTabs = focusNewTabs;
   const claudeMod = oneOf(CLAUDE_MOD, root.claudeMod);
@@ -103,14 +105,20 @@ export function readSharedSettings(text: string, file: string): Partial<SharedSe
   return found;
 }
 
-export function withSharedValue(existing: string | undefined, file: string, key: SyncedSetting, value: string | boolean): string {
-  const root = existing === undefined || existing.trim() === '' ? {} : parseObject(existing, file);
-  if (typeof value === 'boolean') {
-    if (value === SHARED_DEFAULTS[key]) delete root[key];
-    else root[key] = value;
-  } else if (value === AUTO || value.trim() === '' || (key === 'claudeMod' && value === SHARED_DEFAULTS.claudeMod)) delete root[key];
-  else root[key] = value;
+export function editConfig(existing: string | undefined, edit: (root: Record<string, unknown>) => void): string {
+  const root = existing === undefined || existing.trim() === '' ? {} : parseObject(existing, CONFIG_FILE);
+  edit(root);
   return JSON.stringify(root, null, 2) + '\n';
+}
+
+export function withSharedValue(existing: string | undefined, key: SyncedSetting, value: string | boolean): string {
+  return editConfig(existing, root => {
+    if (typeof value === 'boolean') {
+      if (value === SHARED_DEFAULTS[key]) delete root[key];
+      else root[key] = value;
+    } else if (value === AUTO || value.trim() === '' || (key === 'claudeMod' && value === SHARED_DEFAULTS.claudeMod)) delete root[key];
+    else root[key] = value;
+  });
 }
 
 export function parseDetected(text: string): Detected {
@@ -135,8 +143,8 @@ export function parseDetected(text: string): Detected {
 }
 
 function parseOri(value: unknown): DetectedOri | null {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
-  const { path, version, agents } = value as Record<string, unknown>;
+  if (!isPlainObject(value)) return null;
+  const { path, version, agents } = value;
   if (typeof path !== 'string' || path === '') return null;
   return {
     path,
@@ -145,7 +153,7 @@ function parseOri(value: unknown): DetectedOri | null {
   };
 }
 
-export interface InspectedSetting {
+interface InspectedSetting {
   globalValue?: unknown;
   workspaceValue?: unknown;
   workspaceFolderValue?: unknown;

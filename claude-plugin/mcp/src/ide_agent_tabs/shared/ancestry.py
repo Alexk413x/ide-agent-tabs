@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import time
 from typing import Callable, NamedTuple
 
 MAX_DEPTH = 16
@@ -160,8 +161,6 @@ def _linux_lookup() -> Lookup:
 
 
 def parse_ps_table(text: str) -> dict[int, ProcessInfo]:
-    import time
-
     table: dict[int, ProcessInfo] = {}
     for line in text.split("\n"):
         parts = line.split()

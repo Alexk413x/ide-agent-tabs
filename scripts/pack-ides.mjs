@@ -2,15 +2,14 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { hashAllIdeSources } from './ide-sources.mjs';
+import { PLUGIN_VERSION_LINE, root, runCommand, windows } from './shared.mjs';
+import { syncShared } from './sync-shared.mjs';
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.join(root, 'claude-plugin', 'dist', 'ide');
-const windows = process.platform === 'win32';
 const javaExe = windows ? 'java.exe' : 'java';
 
-const jetbrainsVersion = readFileSync(path.join(root, 'jetbrains', 'gradle.properties'), 'utf8').match(/^pluginVersion=(.+)$/m)?.[1]?.trim();
+const jetbrainsVersion = readFileSync(path.join(root, 'jetbrains', 'gradle.properties'), 'utf8').match(PLUGIN_VERSION_LINE)?.[1]?.trim();
 const vscodeVersion = JSON.parse(readFileSync(path.join(root, 'vscode', 'package.json'), 'utf8')).version;
 if (!jetbrainsVersion || !vscodeVersion) throw new Error('Could not read the plugin versions.');
 
@@ -49,15 +48,8 @@ function findJdk() {
 
 function runStep(command, args, options) {
   console.log(`> ${[command, ...args].join(' ')}`);
-  // Node refuses to spawn .bat and .cmd files without cmd.exe. Every argument here is a fixed string or a path.
-  const result = windows
-    ? spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `"${[command, ...args].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}"`], {
-        stdio: 'inherit',
-        windowsVerbatimArguments: true,
-        ...options,
-      })
-    : spawnSync(command, args, { stdio: 'inherit', ...options });
-  if (result.status !== 0) throw new Error(`${command} failed with exit code ${result.status}`);
+  const status = runCommand(command, args, options);
+  if (status !== 0) throw new Error(`${command} failed with exit code ${status}`);
 }
 
 const jdk = findJdk();
@@ -75,6 +67,8 @@ if (process.argv.includes('--test')) {
   console.log('IDE tests passed.');
   process.exit(0);
 }
+const syncedShared = syncShared(root);
+if (syncedShared.length) console.log(`Synced ${syncedShared.length} shared files into the IDE trees.`);
 gradle('buildPlugin');
 runStep(npm, ['run', 'package'], { cwd: path.join(root, 'vscode') });
 

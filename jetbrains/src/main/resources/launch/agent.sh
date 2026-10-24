@@ -1,4 +1,3 @@
-# Sourced by the terminal's bash or zsh integration through JEDITERM_SOURCE, after the user's startup files.
 __ide_agent_tabs() {
     [ -n "${ZSH_VERSION-}" ] && emulate -L zsh
     local -a a

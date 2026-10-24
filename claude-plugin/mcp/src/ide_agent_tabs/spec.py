@@ -67,31 +67,6 @@ def posix_spec(spec: LaunchSpec) -> bytes:
     return well_formed("".join(f"{f}\0" for f in fields)).encode("utf-8")
 
 
-def parse_posix_spec(data: bytes) -> LaunchSpec:
-    fields = data.decode("utf-8", "replace").split("\0")
-    fields.pop()
-    i = 0
-
-    def take() -> str:
-        nonlocal i
-        if i >= len(fields):
-            raise ValueError("truncated launch spec")
-        i += 1
-        return fields[i - 1]
-
-    if take() != POSIX_SPEC_MAGIC:
-        raise ValueError("not a launch spec")
-    spec_id, agent, cwd, command = take(), take(), take(), take()
-    env: dict[str, str] = {}
-    for _ in range(int(take() or 0)):
-        name = take()
-        env[name] = take()
-    args = [take() for _ in range(int(take() or 0))]
-    prompt = take() if take() == "1" else None
-    pid_file = take() if i < len(fields) else None
-    return LaunchSpec(spec_id, agent, cwd, command, args, env, prompt, pid_file)
-
-
 _POSIX_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 

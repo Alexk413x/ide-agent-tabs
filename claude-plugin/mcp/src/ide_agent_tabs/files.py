@@ -9,6 +9,7 @@ from collections.abc import Iterator, Sequence
 from typing import Callable
 
 from .clock import now_ms
+from .jsjson import MAX_SAFE_INTEGER
 from .liveness import pid_alive
 from .winapi import open_shared_read
 
@@ -41,17 +42,21 @@ def write_new_private_file(path: str, content: str | bytes) -> None:
     _write_new(path, _bytes(content))
 
 
-# Windows refuses to rename over a file while another process has it open, such as a reader of the same
-# file; the reader closes it within milliseconds.
-def replace_retrying(source: str, target: str) -> None:
+# Windows refuses to rename over or delete a file while another process has it open, such as a reader of the
+# same file; the reader closes it within milliseconds.
+def _retrying(action: Callable[[], None]) -> None:
     for attempt in range(_RENAME_ATTEMPTS + 1):
         try:
-            os.replace(source, target)
+            action()
             return
         except PermissionError:
             if sys.platform != "win32" or attempt >= _RENAME_ATTEMPTS:
                 raise
-            time.sleep(0.025)
+            time.sleep(LOCK_POLL_S)
+
+
+def replace_retrying(source: str, target: str) -> None:
+    _retrying(lambda: os.replace(source, target))
 
 
 def write_atomically(path: str, content: str | bytes) -> None:
@@ -81,16 +86,16 @@ def read_text_if_exists(path: str) -> str | None:
 
 
 def remove_file(path: str) -> None:
-    for attempt in range(_RENAME_ATTEMPTS + 1):
-        try:
+    def remove() -> None:
+        with contextlib.suppress(FileNotFoundError):
             os.remove(path)
-            return
-        except FileNotFoundError:
-            return
-        except PermissionError:
-            if sys.platform != "win32" or attempt >= _RENAME_ATTEMPTS:
-                raise
-            time.sleep(0.025)
+
+    _retrying(remove)
+
+
+def discard_file(path: str) -> None:
+    with contextlib.suppress(OSError):
+        remove_file(path)
 
 
 def remove_tree(path: str) -> None:
@@ -127,7 +132,7 @@ def _lock_owner(text: str | None) -> int | None:
     if not sep or not head.isdigit() or not head.isascii():
         return None
     pid = int(head)
-    return pid if 0 < pid <= 2**53 - 1 else None
+    return pid if 0 < pid <= MAX_SAFE_INTEGER else None
 
 
 def _abandoned(lock: str, alive: Callable[[int], bool]) -> str | None:

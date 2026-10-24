@@ -9,6 +9,8 @@ import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.intellij.util.concurrency.AppExecutorUtil
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.ide.BuiltInServerManager
 import java.nio.file.Files
 import java.nio.file.Path
@@ -22,7 +24,6 @@ class EndpointFile : Disposable {
 
     private val pid = ProcessHandle.current().pid()
 
-    @Volatile
     private var file: Path? = null
 
     private var beat: ScheduledFuture<*>? = null
@@ -73,6 +74,6 @@ class EndpointFile : Disposable {
 
 class EndpointFileActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
-        service<EndpointFile>().write()
+        withContext(Dispatchers.IO) { service<EndpointFile>().write() }
     }
 }

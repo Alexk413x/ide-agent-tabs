@@ -7,8 +7,8 @@ from typing import Any, BinaryIO, Callable
 
 from .home import agent_tabs_home
 from .ide_client import ide_caller
-from .ide_installs import node_platform
 from .jsjson import stringify
+from .processes import platform_name
 from .service import Service, ServiceDeps
 from .terminals import TERMINAL_DRIVERS
 from .terminals.shell import LAUNCHER_PS1
@@ -52,7 +52,7 @@ def system_service(home: str, log: Callable[[str], None] | None = None) -> Servi
         ServiceDeps(
             home=home,
             scripts_dir=scripts_dir(),
-            platform=node_platform(),
+            platform=platform_name(),
             env=os.environ,
             call_ide=ide_caller(),
             drivers=TERMINAL_DRIVERS,

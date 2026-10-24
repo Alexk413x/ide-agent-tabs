@@ -10,6 +10,7 @@ from typing import Any, NamedTuple
 from .clock import now_ms
 from .files import ensure_private_dir, file_lock, mtime_ms, read_bytes, read_text_if_exists, remove_file, remove_tree, write_atomically
 from .jsjson import parse, stringify
+from .mcp_tools import SERVER_NAME
 from .version import PACKAGE_VERSION, compare_versions
 
 COPY_DIR = "py"
@@ -278,7 +279,7 @@ def copilot_config(port: int, token: str) -> dict[str, Any]:
         "X-Agent-Tabs-Cwd": "${IDE_AGENT_TABS_CWD}",
     }
     entry = {"type": "http", "url": f"http://127.0.0.1:{port}/mcp", "headers": headers, "tools": ["*"]}
-    return {"mcpServers": {"ide-agent-tabs": entry}}
+    return {"mcpServers": {SERVER_NAME: entry}}
 
 
 def write_copilot_config(home: str, port: int, token: str) -> None:
@@ -290,7 +291,7 @@ def write_copilot_config(home: str, port: int, token: str) -> None:
 
 def copilot_config_port(home: str) -> int | None:
     servers = (_read_json(os.path.join(copy_root(home), COPILOT_FILE)) or {}).get("mcpServers")
-    entry = servers.get("ide-agent-tabs") if isinstance(servers, dict) else None
+    entry = servers.get(SERVER_NAME) if isinstance(servers, dict) else None
     url = entry.get("url") if isinstance(entry, dict) else None
     match = re.fullmatch(r"http://127\.0\.0\.1:([0-9]{1,5})/mcp", url) if isinstance(url, str) else None
     port = int(match.group(1)) if match else 0

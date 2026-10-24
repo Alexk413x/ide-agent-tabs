@@ -4,6 +4,7 @@ import contextlib
 import os
 import threading
 import time
+import uuid
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Protocol, TypeVar
 
@@ -17,7 +18,7 @@ from .ide_client import IdeCall, IdeError
 from .ide_installs import IdeInstall, discover_ides, ide_launch_command, launch_environment, spawn_ide, system_discovery
 from .installed import is_cmd_shim, is_installed
 from .jsjson import js_round, js_string
-from .launch_plan import ORI_AGENTS, ORI_PREFIX, LaunchRequest, plan_launch
+from .launch_plan import ORI_AGENTS, ORI_PREFIX, LaunchPlan, LaunchRequest, plan_launch
 from .parallel import Task, run_all
 from .profiles import (
     AGENTS_FILE,
@@ -59,11 +60,7 @@ SELF_CLOSE_DELAY_MS = 500
 
 
 def random_uuid() -> str:
-    h = bytearray(os.urandom(16))
-    h[6] = (h[6] & 0x0F) | 0x40
-    h[8] = (h[8] & 0x3F) | 0x80
-    x = h.hex()
-    return f"{x[:8]}-{x[8:12]}-{x[12:16]}-{x[16:20]}-{x[20:]}"
+    return str(uuid.uuid4())
 
 
 T = TypeVar("T")
@@ -165,6 +162,31 @@ def _copy_present(source: Mapping[str, Any], keys: Sequence[str], into: dict[str
             into[key] = source[key]
 
 
+def _pending_reply(entry: IdeEntry, request: OpenRequest, settings: AgentSettings) -> dict[str, Any]:
+    seconds = settings.terminal.ide_start_timeout_sec
+    return {
+        "pending": True,
+        "ide": entry.key,
+        "product": entry.name,
+        "agent": request.agent if request.agent is not None else settings.default_agent.name,
+        "path": request.path,
+        "reason": f"started {entry.name}; it is still loading",
+        "note": (
+            f"{entry.name} is starting. The agent tab opens there once it loads, up to {js_string(seconds)} s after the launch. "
+            "If it doesn't load by then, the tab opens in the caller's IDE or terminal instead."
+        ),
+    }
+
+
+def _profile_for(settings: AgentSettings, request: OpenRequest) -> AgentProfile:
+    if request.agent is None:
+        return settings.default_agent
+    found = find_profile(settings.profiles, request.agent)
+    if found is None:
+        raise ToolError(f"unknown agent: {request.agent}")
+    return found
+
+
 class Service:
     def __init__(self, deps: ServiceDeps) -> None:
         self.deps = deps
@@ -227,6 +249,12 @@ class Service:
     def _infos(self, endpoints: Sequence[Endpoint]) -> tuple[list[IdeInfo], list[dict[str, str]]]:
         results = run_all([lambda e=e: self._info(e) for e in endpoints])
         return [r for r in results if isinstance(r, IdeInfo)], [r for r in results if isinstance(r, dict)]
+
+    def _driver(self, name: str | None) -> TerminalDriver | None:
+        return next((d for d in self.deps.drivers if d.name == name), None)
+
+    def _stored_tab(self, tab_id: str | None) -> TerminalTab | None:
+        return next((t for t in self.store.read() if t["id"] == tab_id), None)
 
     def _available_drivers(self) -> list[TerminalDriver]:
         return available_drivers(self.deps.drivers, self.ctx)
@@ -377,15 +405,6 @@ class Service:
         except DRIVER_ERRORS:
             return []
 
-    def settled(self) -> None:
-        while True:
-            with self._lock:
-                pending = list(self._background)
-            if not pending:
-                return
-            for thread in pending:
-                thread.join()
-
     def open_tab(self, given: Mapping[str, Any], wait: str = "full", on_progress: Progress | None = None) -> dict[str, Any]:
         try:
             request = validate_open(dict(given))
@@ -395,7 +414,7 @@ class Service:
         settings = self.settings()
         request = request.with_focus(resolve_focus(settings.terminal.focus_new_tabs, request.focus))
         if request.ide is not None:
-            driver = next((d for d in self.deps.drivers if d.name == request.ide), None)
+            driver = self._driver(request.ide)
             if driver is not None:
                 if not self._driver_available(driver):
                     raise ToolError(f"terminal {driver.name} is not available on this machine")
@@ -417,9 +436,9 @@ class Service:
 
     def _route(self, request: OpenRequest, endpoints: Sequence[Endpoint], settings: AgentSettings) -> dict[str, Any]:
         own, caller_host = self._caller_host()
-        caller_terminal = next((d for d in self.deps.drivers if d.name == caller_host), None)
+        caller_terminal = self._driver(caller_host)
         if settings.terminal.tab_routing == "caller" and caller_terminal is not None and self._driver_available(caller_terminal):
-            near = next((t for t in self.store.read() if t["id"] == own), None)
+            near = self._stored_tab(own)
             return self._open_in_terminal(caller_terminal, request, "tabRouting is caller; the caller's terminal window", near)
         infos, errors = self._infos(endpoints)
         candidates = [IdeCandidate(i.endpoint.id, i.endpoint.started_at, i.projects) for i in infos]
@@ -447,21 +466,7 @@ class Service:
         entry = find_ide_entry(name)
         matching = [e for e in endpoints if product_matches_name(e.product, name)]
         if matching:
-            infos, _ = self._infos(matching)
-
-            def depth_of(i: IdeInfo) -> int:
-                depths = [project_depth(p.path, request.path, self.is_windows) for p in i.projects]
-                return max([-1, *(d if d is not None else -1 for d in depths)])
-
-            ranked = sorted(((i, depth_of(i)) for i in infos), key=lambda r: (-r[1], -r[0].endpoint.started_at))
-            best = ranked[0] if ranked else None
-            endpoint = best[0].endpoint if best is not None else max(matching, key=lambda e: e.started_at)
-            label = entry.name if entry is not None else endpoint.product
-            if best is not None and best[1] >= 0:
-                reason = f"{label} is running; an open project contains the path"
-            else:
-                reason = f"{label} is running; most recently started"
-            return self._open_in_ide(endpoint, request, reason)
+            return self._open_in_running(entry, matching, request)
         if entry is None:
             raise ToolError(
                 f"no running IDE or terminal with id {name}, and no IDE by that name; pass an IDE name such as vscode, idea or "
@@ -472,27 +477,46 @@ class Service:
             return self._fallback(request, f"{entry.name} isn't installed")
         budget_ms = settings.terminal.ide_start_timeout_sec * 1000
         started = self._start_ide(entry, install, request.path, {e.id for e in endpoints}, budget_ms)
-
-        def finish(s: Started) -> dict[str, Any]:
-            if s.endpoint is None:
-                return self._fallback(request, s.why or "")
-            try:
-                return self._open_in_ide(s.endpoint, request, f"started {entry.name}")
-            except Exception as e:  # noqa: BLE001
-                return self._fallback(request, f"{entry.name} started but couldn't open the tab: {error_text(e)}")
-
         message = f"Waiting for {entry.name} to load"
         if wait != "background":
             early = self._wait_for(started, budget_ms, budget_ms, message, on_progress)
-            return finish(early if early is not None else started.result())
+            return self._finish_start(entry, request, early if early is not None else started.result())
         sync_ms = min(self.deps.ide_wait.sync_ms, budget_ms)
         early = self._wait_for(started, sync_ms, budget_ms, message, on_progress)
         if early is not None:
-            return finish(early)
+            return self._finish_start(entry, request, early)
+        self._open_when_started(entry, request, started)
+        return _pending_reply(entry, request, settings)
 
+    def _open_in_running(self, entry: IdeEntry | None, matching: Sequence[Endpoint], request: OpenRequest) -> dict[str, Any]:
+        infos, _ = self._infos(matching)
+
+        def depth_of(i: IdeInfo) -> int:
+            depths = [project_depth(p.path, request.path, self.is_windows) for p in i.projects]
+            return max([-1, *(d if d is not None else -1 for d in depths)])
+
+        ranked = sorted(((i, depth_of(i)) for i in infos), key=lambda r: (-r[1], -r[0].endpoint.started_at))
+        best = ranked[0] if ranked else None
+        endpoint = best[0].endpoint if best is not None else max(matching, key=lambda e: e.started_at)
+        label = entry.name if entry is not None else endpoint.product
+        if best is not None and best[1] >= 0:
+            reason = f"{label} is running; an open project contains the path"
+        else:
+            reason = f"{label} is running; most recently started"
+        return self._open_in_ide(endpoint, request, reason)
+
+    def _finish_start(self, entry: IdeEntry, request: OpenRequest, s: Started) -> dict[str, Any]:
+        if s.endpoint is None:
+            return self._fallback(request, s.why or "")
+        try:
+            return self._open_in_ide(s.endpoint, request, f"started {entry.name}")
+        except Exception as e:  # noqa: BLE001
+            return self._fallback(request, f"{entry.name} started but couldn't open the tab: {error_text(e)}")
+
+    def _open_when_started(self, entry: IdeEntry, request: OpenRequest, started: Task[Started]) -> None:
         def later() -> None:
             try:
-                opened = finish(started.result())
+                opened = self._finish_start(entry, request, started.result())
                 self._log(f"opened tab {js_string(opened.get('id'))} in {js_string(opened.get('product'))} after starting {entry.name}")
             except Exception as e:  # noqa: BLE001
                 self._log(f"couldn't open the tab after starting {entry.name}: {error_text(e)}")
@@ -504,19 +528,6 @@ class Service:
         with self._lock:
             self._background.add(thread)
         thread.start()
-        seconds = settings.terminal.ide_start_timeout_sec
-        return {
-            "pending": True,
-            "ide": entry.key,
-            "product": entry.name,
-            "agent": request.agent if request.agent is not None else settings.default_agent.name,
-            "path": request.path,
-            "reason": f"started {entry.name}; it is still loading",
-            "note": (
-                f"{entry.name} is starting. The agent tab opens there once it loads, up to {js_string(seconds)} s after the launch. "
-                "If it doesn't load by then, the tab opens in the caller's IDE or terminal instead."
-            ),
-        }
 
     def _log(self, message: str) -> None:
         if self.deps.log is not None:
@@ -592,11 +603,11 @@ class Service:
         settings = self.settings()
         own, host = self._caller_host()
         endpoint = next((e for e in endpoints if e.id == host), None)
-        driver = next((d for d in self.deps.drivers if d.name == host), None)
+        driver = self._driver(host)
         if endpoint is not None:
             opened = self._open_in_ide(endpoint, request, f"{why}; the caller's IDE")
         elif driver is not None and self._driver_available(driver):
-            near = next((t for t in self.store.read() if t["id"] == own), None)
+            near = self._stored_tab(own)
             opened = self._open_in_terminal(driver, request, f"{why}; the caller's terminal", near)
         else:
             routed = self._route(request, endpoints, settings)
@@ -654,37 +665,10 @@ class Service:
         self, driver: TerminalDriver, request: OpenRequest, reason: str, near: TerminalTab | None = None
     ) -> dict[str, Any]:
         settings = self.settings()
-        if request.agent is None:
-            profile = settings.default_agent
-        else:
-            found = find_profile(settings.profiles, request.agent)
-            if found is None:
-                raise ToolError(f"unknown agent: {request.agent}")
-            profile = found
+        profile = _profile_for(settings, request)
         detection = read_detection(self.deps.home)
         tab_id = (self.deps.new_id or random_uuid)()
-        try:
-            plan = plan_launch(
-                profile,
-                LaunchRequest(
-                    args=request.args,
-                    env=request.env,
-                    launch_via=settings.terminal.launch_via,
-                    ori=detection.get("ori") if detection is not None else None,
-                    platform=self.deps.platform,
-                    prompt=request.prompt,
-                    model=request.model,
-                    via=request.via,
-                    cmd_shim=self.is_windows and is_cmd_shim(profile.command, self.ctx.path_var),
-                    python=codex_python(self.deps.home, self.is_windows),
-                    http=codex_http(self.deps.home, self.is_windows, tab_id, profile.name),
-                    copilot=self._copilot_http(profile.command),
-                    claude_settings=claude_tab_settings(self.deps.home, self.is_windows),
-                    cwd=request.path,
-                ),
-            )
-        except ValueError as e:
-            raise ToolError(error_text(e)) from e
+        plan = self._plan_terminal_launch(profile, request, settings, detection, tab_id)
         spec = launch_spec(tab_id, request.path, plan.launch)
         remove_stale_files(os.path.join(self.deps.home, "launch"), [".json", ".spec"], SPEC_MAX_AGE_MS)
         power_shell = self._power_shell(settings.terminal.shell)
@@ -715,6 +699,32 @@ class Service:
             result["note"] = note
         return result
 
+    def _plan_terminal_launch(
+        self, profile: AgentProfile, request: OpenRequest, settings: AgentSettings, detection: Detection | None, tab_id: str
+    ) -> LaunchPlan:
+        try:
+            return plan_launch(
+                profile,
+                LaunchRequest(
+                    args=request.args,
+                    env=request.env,
+                    launch_via=settings.terminal.launch_via,
+                    ori=detection.get("ori") if detection is not None else None,
+                    platform=self.deps.platform,
+                    prompt=request.prompt,
+                    model=request.model,
+                    via=request.via,
+                    cmd_shim=self.is_windows and is_cmd_shim(profile.command, self.ctx.path_var),
+                    python=codex_python(self.deps.home, self.is_windows),
+                    http=codex_http(self.deps.home, self.is_windows, tab_id, profile.name),
+                    copilot=self._copilot_http(profile.command),
+                    claude_settings=claude_tab_settings(self.deps.home, self.is_windows),
+                    cwd=request.path,
+                ),
+            )
+        except ValueError as e:
+            raise ToolError(error_text(e)) from e
+
     # Some CLIs, such as Codex, run no start hook until their first turn, so a tab opened without a prompt would
     # stay unknown and never be woken. It waits at its prompt once the CLI has had FRESH_TAB_START_MS to start.
     def _mark_opened(self, tab_id: Any, host: str, fresh: bool, launch: dict[str, Any]) -> None:
@@ -736,7 +746,7 @@ class Service:
             presence.update(self.deps.home, tab_id, change)
 
     def live_host(self, host: str | None, product: str | None) -> str | None:
-        driver = next((d for d in self.deps.drivers if d.name == host), None) if host is not None else None
+        driver = self._driver(host)
         if driver is not None:
             return driver.name if self._driver_available(driver) else None
         endpoints = self._registry().endpoints
@@ -746,7 +756,7 @@ class Service:
         return found.id if found is not None else None
 
     def describe_host(self, host: str) -> str | None:
-        driver = next((d for d in self.deps.drivers if d.name == host), None)
+        driver = self._driver(host)
         if driver is not None:
             return driver.label
         return next((e.product for e in self._registry().endpoints if e.id == host), None)
@@ -780,7 +790,7 @@ class Service:
 
     def list_tabs(self, ide: str | None = None) -> dict[str, Any]:
         endpoints = self._registry().endpoints
-        driver = next((d for d in self.deps.drivers if d.name == ide), None) if ide is not None else None
+        driver = self._driver(ide)
         chosen = endpoints if ide is None else [e for e in endpoints if e.id == ide]
         if ide is not None and driver is None and not chosen:
             raise ToolError(f"no running IDE or terminal with id {ide}; the Agent Tabs command line's list-ides prints the ids")
@@ -840,45 +850,13 @@ class Service:
         target = tab_id if tab_id is not None else own
         if not target:
             raise ToolError(f"no id given, and {TAB_ID_ENV} is not set, so this session was not opened as an agent tab")
-        is_self = target == own
         ending: dict[str, Any] | None = None
         if self.deps.presence is not None:
             with contextlib.suppress(Exception):
                 ending = self.deps.presence.read(self.deps.home, target)
-
-        def ended() -> None:
-            if ending is None:
-                return
-            with contextlib.suppress(Exception):
-                from .closed import record_ended, transcript_dirs
-
-                record_ended(self.deps.home, ending, now_ms(), self.deps.transcripts or transcript_dirs(self.deps.env))
-
-        record = next((t for t in self.store.read() if t["id"] == target), None)
+        record = self._stored_tab(target)
         if record is not None:
-            driver = next((d for d in self.deps.drivers if d.name == record["terminal"]), None)
-            if driver is None:
-                raise ToolError(f"tab {target} belongs to terminal {record['terminal']}, which this server can't drive")
-
-            def close() -> None:
-                driver.close(self.ctx, record)
-                self.store.remove({target})
-
-            if is_self:
-                ended()
-
-                def close_quietly() -> None:
-                    with contextlib.suppress(Exception):
-                        close()
-
-                threading.Timer(self.deps.self_close_delay_ms / 1000, close_quietly).start()
-                return {"id": target, "ide": driver.name, "closing": True}
-            try:
-                close()
-            except Exception as e:
-                raise ToolError(f"{driver.label}: {error_text(e)}") from e
-            ended()
-            return {"id": target, "ide": driver.name, "closed": True}
+            return self._close_terminal_tab(record, target, target == own, ending)
         owner = self._ide_owner(target)
         if owner is None:
             raise ToolError(f"no open agent tab with id {target}; list_tabs shows the open ones")
@@ -886,8 +864,41 @@ class Service:
             self.call_ide(owner, "close", {"id": target})
         except Exception as e:
             raise ToolError(error_text(e)) from e
-        ended()
+        self._record_ended(ending)
         return {"id": target, "ide": owner.id, "closed": True}
+
+    def _close_terminal_tab(self, record: TerminalTab, target: str, is_self: bool, ending: dict[str, Any] | None) -> dict[str, Any]:
+        driver = self._driver(record["terminal"])
+        if driver is None:
+            raise ToolError(f"tab {target} belongs to terminal {record['terminal']}, which this server can't drive")
+
+        def close() -> None:
+            driver.close(self.ctx, record)
+            self.store.remove({target})
+
+        if is_self:
+            self._record_ended(ending)
+
+            def close_quietly() -> None:
+                with contextlib.suppress(Exception):
+                    close()
+
+            threading.Timer(self.deps.self_close_delay_ms / 1000, close_quietly).start()
+            return {"id": target, "ide": driver.name, "closing": True}
+        try:
+            close()
+        except Exception as e:
+            raise ToolError(f"{driver.label}: {error_text(e)}") from e
+        self._record_ended(ending)
+        return {"id": target, "ide": driver.name, "closed": True}
+
+    def _record_ended(self, ending: dict[str, Any] | None) -> None:
+        if ending is None:
+            return
+        with contextlib.suppress(Exception):
+            from .closed import record_ended, transcript_dirs
+
+            record_ended(self.deps.home, ending, now_ms(), self.deps.transcripts or transcript_dirs(self.deps.env))
 
     def _ide_owner(self, tab_id: str) -> Endpoint | None:
         endpoints = self._registry().endpoints
@@ -904,14 +915,14 @@ class Service:
         return next((e for e, owned in zip(endpoints, flags) if owned), None)
 
     def find_host(self, tab_id: str) -> str | None:
-        record = next((t for t in self.store.read() if t["id"] == tab_id), None)
+        record = self._stored_tab(tab_id)
         if record is not None:
             return record["terminal"]
         owner = self._ide_owner(tab_id)
         return owner.id if owner is not None else None
 
     def type_into(self, tab_id: str, host: str, text: str) -> dict[str, Any]:
-        driver = next((d for d in self.deps.drivers if d.name == host), None)
+        driver = self._driver(host)
         if driver is not None:
             if not driver.can_input:
                 return {"ok": False, "reason": f"{driver.label} can't take input from outside"}

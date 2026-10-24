@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { root as repo } from '../shared.mjs';
 
-const repo = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const bump = path.join(repo, 'scripts', 'bump.mjs');
 const FILES = [
   'claude-plugin/.claude-plugin/plugin.json',
@@ -17,13 +16,17 @@ const FILES = [
   'CHANGELOG.md',
 ];
 
-function copyRepo() {
+function withRepo(body) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'iat-bump-'));
-  for (const file of FILES) {
-    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
-    cpSync(path.join(repo, file), path.join(dir, file));
+  try {
+    for (const file of FILES) {
+      mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+      cpSync(path.join(repo, file), path.join(dir, file));
+    }
+    body(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
-  return dir;
 }
 
 const run = (dir, ...args) => spawnSync(process.execPath, [bump, '--root', dir, ...args], { encoding: 'utf8' });
@@ -32,8 +35,7 @@ const original = (file) => readFileSync(path.join(repo, file), 'utf8');
 const json = (dir, file) => JSON.parse(text(dir, file));
 
 test('bumps the plugin version in every file and adds a changelog stub', () => {
-  const dir = copyRepo();
-  try {
+  withRepo((dir) => {
     const result = run(dir, '9.8.7');
     assert.equal(result.status, 0, result.stderr);
     assert.equal(json(dir, 'claude-plugin/.claude-plugin/plugin.json').version, '9.8.7');
@@ -45,14 +47,11 @@ test('bumps the plugin version in every file and adds a changelog stub', () => {
     assert.equal(text(dir, 'CHANGELOG.md').replace(stub, ''), original('CHANGELOG.md'));
     assert.match(result.stdout, /git tag ide-agent-tabs--v9\.8\.7/);
     assert.doesNotMatch(result.stdout, /pack-ides/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  });
 });
 
 test('--vscode and --jetbrains bump the IDE packages', () => {
-  const dir = copyRepo();
-  try {
+  withRepo((dir) => {
     const result = run(dir, '9.8.7', '--vscode', '1.2.3', '--jetbrains', '4.5.6');
     assert.equal(result.status, 0, result.stderr);
     assert.equal(json(dir, 'vscode/package.json').version, '1.2.3');
@@ -61,32 +60,36 @@ test('--vscode and --jetbrains bump the IDE packages', () => {
     assert.equal(lock.packages[''].version, '1.2.3');
     assert.match(text(dir, 'jetbrains/gradle.properties'), /^pluginVersion=4\.5\.6$/m);
     assert.match(result.stdout, /pack-ides/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  });
 });
 
 test('a second run for the same version keeps the changelog entry', () => {
-  const dir = copyRepo();
-  try {
+  withRepo((dir) => {
     assert.equal(run(dir, '9.8.7').status, 0);
     const once = text(dir, 'CHANGELOG.md');
     const again = run(dir, '9.8.7');
     assert.equal(again.status, 0, again.stderr);
     assert.equal(text(dir, 'CHANGELOG.md'), once);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  });
 });
 
 test('a bad version or missing argument fails and writes nothing', () => {
-  const dir = copyRepo();
-  try {
+  withRepo((dir) => {
     for (const args of [[], ['1.2'], ['1.2.3', '--vscode', 'x'], ['1.2.3', '--jetbrains']]) {
       assert.equal(run(dir, ...args).status, 1, args.join(' '));
     }
     assert.equal(text(dir, 'claude-plugin/.claude-plugin/plugin.json'), original('claude-plugin/.claude-plugin/plugin.json'));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  });
+});
+
+test('a gradle.properties without a version line fails and writes nothing', () => {
+  withRepo((dir) => {
+    writeFileSync(path.join(dir, 'jetbrains/gradle.properties'), 'org.gradle.jvmargs=-Xmx1g\n');
+    const result = run(dir, '9.8.7', '--jetbrains', '4.5.6');
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /no pluginVersion line/);
+    for (const file of FILES) {
+      if (file !== 'jetbrains/gradle.properties') assert.equal(text(dir, file), original(file), file);
+    }
+  });
 });

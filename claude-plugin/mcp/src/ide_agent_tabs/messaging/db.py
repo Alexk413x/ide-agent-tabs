@@ -31,7 +31,7 @@ CORRUPT_MESSAGE = (
     "and unread messages in it can be lost"
 )
 
-# The text Node's build runs, byte for byte: SQLite keeps each CREATE statement's text in sqlite_master.
+# The 0.8.0 build runs this text byte for byte: SQLite keeps each CREATE statement's text in sqlite_master.
 # Migrations stay additive (new tables, columns with defaults, indexes): an older build keeps using a database
 # that a newer build migrated, with no version check.
 MIGRATIONS = (
@@ -177,7 +177,6 @@ class Db:
 _busy_timeout_ms = BUSY_TIMEOUT_MS
 _connections: dict[str, Db] = {}
 _connecting = threading.Lock()
-open_stats = {"opened": 0}
 
 
 def _jitter_s() -> float:
@@ -270,7 +269,6 @@ def _connect(home: str, file: str, deadline: float) -> Db:
     fresh = os.stat(file).st_size == 0
     sql = sqlite3.connect(file, timeout=_busy_timeout_ms / 1000, isolation_level=None, check_same_thread=False)
     sql.row_factory = sqlite3.Row
-    open_stats["opened"] += 1
 
     def ready() -> None:
         retry_busy(lambda: _setup(sql), deadline, "open", _is_open_race)
@@ -306,20 +304,15 @@ def open_db(home: str, deadline_ms: float = TOOL_DEADLINE_MS) -> Db:
         return db
 
 
-def close_db(home: str) -> None:
-    file = os.path.abspath(db_path(home))
+def _close(file: str) -> None:
     db = _connections.pop(file, None)
     if db is not None:
         with db.lock, contextlib.suppress(sqlite3.Error):
             db.sql.close()
 
 
-def close_all_dbs() -> None:
-    for file in list(_connections):
-        db = _connections.pop(file, None)
-        if db is not None:
-            with db.lock, contextlib.suppress(sqlite3.Error):
-                db.sql.close()
+def close_db(home: str) -> None:
+    _close(os.path.abspath(db_path(home)))
 
 
 def _guarded(home: str, work: Callable[[Db], T], in_tx: bool, deadline_ms: float, label: str | None) -> T:
@@ -382,15 +375,13 @@ def set_aside_corrupt(home: str, now: int | None = None) -> None:
     close_db(home)
     file = db_path(home)
     with file_lock(f"{file}.recover"):
-        try:
+        with contextlib.suppress(sqlite3.Error):
             broken = sqlite3.connect(file, isolation_level=None)
             try:
                 target = os.path.join(home, f"messages.recovered-{now}.db").replace("'", "''")
                 broken.execute(f"VACUUM INTO '{target}'")
             finally:
                 broken.close()
-        except sqlite3.Error:
-            pass
         for suffix in ("-shm", "-wal", ""):
             try:
                 os.replace(f"{file}{suffix}", os.path.join(home, f"messages.corrupt-{now}.db{suffix}"))

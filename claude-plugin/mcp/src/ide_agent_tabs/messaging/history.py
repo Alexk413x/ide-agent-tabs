@@ -4,7 +4,7 @@ import re
 from collections.abc import Sequence
 from typing import Any, NamedTuple
 
-from ..clock import parse_iso
+from ..clock import iso_ms
 from ..jsjson import code_units, stringify, utf16_len, utf16_slice
 from .store import new_message_id, stored_for
 
@@ -61,18 +61,13 @@ def _matches(who: Who, p: dict[str, Any]) -> bool:
     return (who.id is not None and p.get("id") == who.id) or (p.get("name") is not None and p["name"] in who.names)
 
 
-def _ms(text: str) -> float:
-    found = parse_iso(text)
-    return float("nan") if found is None else found
-
-
 def _same_native(a: HistoryItem, b: HistoryItem) -> bool:
     return (
         a["route"] == "native"
         and b["route"] == "native"
         and a["direction"] == b["direction"]
         and a["text"] == b["text"]
-        and abs(_ms(a["at"]) - _ms(b["at"])) < _NATIVE_SAME_MS
+        and abs(iso_ms(a["at"]) - iso_ms(b["at"])) < _NATIVE_SAME_MS
     )
 
 

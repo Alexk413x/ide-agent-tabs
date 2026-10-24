@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -16,17 +15,12 @@ from ide_agent_tabs import server_cli
 from ide_agent_tabs.shared import client
 from ide_agent_tabs.shared.state import parse_port, read_state, read_token, state_path, token_path
 from jev_support import QuietServer
+from shared_support import free_port
 from support import NODE_080, ROOT, require_node, temp_home
 
 LAUNCHER = os.path.join(ROOT, "claude-plugin", "mcp", "launch", "agent_tabs.py")
 NODE_SERVER = os.path.join(NODE_080, "shared-server.mjs")
 NODE_CLI = os.path.join(NODE_080, "mcp-server.mjs")
-
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 def run_cli(args: list[str], home: str) -> tuple[int, Any]:

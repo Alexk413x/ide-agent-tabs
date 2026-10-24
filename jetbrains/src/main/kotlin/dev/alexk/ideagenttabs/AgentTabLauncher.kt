@@ -8,7 +8,9 @@ import com.intellij.openapi.fileEditor.FileEditorManagerKeys
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
+import com.intellij.util.EnvironmentUtil
 import com.intellij.util.concurrency.AppExecutorUtil
+import com.intellij.util.concurrency.annotations.RequiresBackgroundThread
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import java.io.File
 import java.nio.file.Files
@@ -16,7 +18,6 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.util.concurrent.TimeUnit
 
-const val PLUGIN_ENV_PREFIX = "IDE_AGENT_TABS_"
 const val PROMPT_ENV = "${PLUGIN_ENV_PREFIX}PROMPT"
 const val TAB_ID_ENV = "${PLUGIN_ENV_PREFIX}ID"
 const val AGENT_ENV = "${PLUGIN_ENV_PREFIX}AGENT"
@@ -24,12 +25,8 @@ const val COMMAND_ENV = "${PLUGIN_ENV_PREFIX}COMMAND"
 const val ARGS_ENV = "${PLUGIN_ENV_PREFIX}ARGS"
 const val ARG_COUNT_ENV = "${PLUGIN_ENV_PREFIX}ARGC"
 const val ARG_ENV_PREFIX = "${PLUGIN_ENV_PREFIX}ARG_"
-const val STARTUP_ENV = "JEDITERM_SOURCE"
 const val CHAR_DELAY_MS = 20L
 const val ENTER_DELAY_MS = 300L
-
-fun isReservedEnv(name: String): Boolean =
-    name.startsWith(PLUGIN_ENV_PREFIX, ignoreCase = true) || name.startsWith(STARTUP_ENV, ignoreCase = true)
 
 enum class ShellKind { POWERSHELL, POSIX, FISH }
 
@@ -62,24 +59,26 @@ fun unixShell(loginShell: String?, isMac: Boolean): Shell {
 
 object AgentTabLauncher {
 
+    @RequiresBackgroundThread
+    fun prepare(agent: AgentLaunch, id: String): ShellLaunch {
+        val shell = if (SystemInfo.isWindows) {
+            windowsShell(Agents.searchPath)
+        } else {
+            unixShell(EnvironmentUtil.getValue("SHELL") ?: System.getenv("SHELL"), SystemInfo.isMac)
+        }
+        return shellLaunch(shell, SCRIPT_DIR, agent, id)
+    }
+
     @RequiresEdt
     fun open(
         project: Project,
         directory: String,
         profile: AgentProfile,
         agent: AgentLaunch,
+        launch: ShellLaunch,
         focus: Boolean,
         id: String,
-    ): String {
-        val shell = if (SystemInfo.isWindows) {
-            windowsShell(System.getenv("PATH").orEmpty())
-        } else {
-            unixShell(System.getenv("SHELL"), SystemInfo.isMac)
-        }
-        val launch = when (shell.kind) {
-            ShellKind.POWERSHELL -> powerShellLaunch(shell.path, launchScript(shell.kind, SCRIPT_DIR), agent, id)
-            else -> sourcedLaunch(shell, launchScript(shell.kind, SCRIPT_DIR), agent, id)
-        }
+    ) {
         val manager = TerminalToolWindowTabsManager.getInstance(project)
         val tab = manager.createTabBuilder()
             .workingDirectory(directory)
@@ -100,7 +99,6 @@ object AgentTabLauncher {
             file.putUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN, null)
         }
         AgentTabRegistry.getInstance().add(AgentTabRegistry.Entry(id, profile.name, project, file, directory, tab))
-        return id
     }
 
     @RequiresEdt
@@ -148,6 +146,14 @@ fun launchScript(kind: ShellKind, dir: Path): Path {
 }
 
 class ShellLaunch(val command: List<String>, val env: Map<String, String>)
+
+fun shellLaunch(shell: Shell, scriptDir: Path, agent: AgentLaunch, tabId: String): ShellLaunch {
+    val script = launchScript(shell.kind, scriptDir)
+    return when (shell.kind) {
+        ShellKind.POWERSHELL -> powerShellLaunch(shell.path, script, agent, tabId)
+        else -> sourcedLaunch(shell, script, agent, tabId)
+    }
+}
 
 private fun launchEnv(agent: AgentLaunch, tabId: String): MutableMap<String, String> =
     agent.env.toMutableMap().apply {

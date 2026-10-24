@@ -4,13 +4,12 @@ import contextlib
 import os
 import posixpath
 import re
-import sys
-from typing import Any, Callable, NamedTuple
+from typing import Callable, NamedTuple
 
 from ..clock import now_ms
-from ..files import write_new_private_file
+from ..files import remove_file, write_new_private_file
 from ..jsjson import CONTROL, stringify
-from ..processes import RunResult, run
+from ..processes import RunResult, platform_name, run
 from ..spec import LaunchSpec, check_posix_env_names, posix_spec
 from .driver import OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
 from .shell import argv_mode_command, check_argv_paths, check_input_line, launcher_name, login_shell, tab_title
@@ -224,11 +223,6 @@ def _default_osascript(script: str, args: list[str]) -> RunResult:
     return run("/usr/bin/osascript", ["-", *args], input=script, timeout=30)
 
 
-def _default_remove(file: str) -> None:
-    with contextlib.suppress(FileNotFoundError):
-        os.remove(file)
-
-
 class Iterm2Deps(NamedTuple):
     platform: str
     find_app: Callable[[], str | None]
@@ -240,11 +234,11 @@ class Iterm2Deps(NamedTuple):
 
 
 DEFAULT_DEPS = Iterm2Deps(
-    platform="linux" if sys.platform.startswith("linux") else sys.platform,
+    platform=platform_name(),
     find_app=lambda: next((p for p in iterm2_locations(os.path.expanduser("~")) if os.path.exists(p)), None),
     osascript=_default_osascript,
     write_spec=write_new_private_file,
-    remove_spec=_default_remove,
+    remove_spec=remove_file,
     read_window=lambda home: read_window(home, ITERM2),
     remember_window=lambda home, window: remember_window(home, ITERM2, window),
 )
@@ -335,10 +329,6 @@ class Iterm2(TerminalDriver):
         session = self._session_id(tab)
         if self._osascript(INPUT_SCRIPT, [session, text]).strip() != "sent":
             raise RuntimeError(f"iTerm2 has no session {session}")
-
-
-def create_iterm2(**overrides: Any) -> Iterm2:
-    return Iterm2(DEFAULT_DEPS._replace(**overrides))
 
 
 iterm2 = Iterm2()

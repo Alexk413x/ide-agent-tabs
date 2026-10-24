@@ -191,6 +191,7 @@ You add or override profiles in `~/.ide-agent-tabs/agents.json`:
 - `modelFlag`: the flag that takes a model, such as `--model`. A request's `model` goes after it. Leave it
   out when the agent has no such flag; a request with `model` then fails instead of dropping the model.
 - `env`: environment variables for the session. The caller's `env` wins on a clash.
+- `label`: optional name for menus. The default is the profile name.
 - `icon`: optional path to an SVG file for menus.
 
 A profile is `installed` when its command is on the IDE's `PATH`. On Windows, the IDE also looks for
@@ -1133,7 +1134,7 @@ server copy.
   a client's first call, ends a session when its process exits (checked every 15 s) or `/end` names its
   pid, and sets the store's shared mode (busy timeout 0, no wake files for waiters in the process) before
   the first bind.
-- Tools come through `host.ToolHost`: `tools_for` and `instructions_for` an agent, and `bind` for one
+- Tools come through `host.ToolHost`: `tools_for` and `instructions`, and `bind` for one
   session, whose `end` records the session as closed and whose `release` keeps its presence for the next
   server. `engine.py` gives each bound session its own `Messaging`, service, Jev and `mcp_tools.Tools`,
   as a stdio server has, with an HTTP wait cap of 240 s; the sessions share one scheduler thread and the
@@ -2407,7 +2408,7 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
 
 ### Skills
 
-- `jev` (new): tells Claude Code when to use the Jev tools on its own, and how to write a question that
+- `jev`: tells Claude Code when to use the Jev tools on its own, and how to write a question that
   Jev answers well. See [jev-integration.md](jev-integration.md) for the rules and the tests behind
   them.
 - `delegate`: with the Jev tools listed and no agent named, the skill asks `jev_route` which tier takes

@@ -1,4 +1,4 @@
-import type { EngineInterface, Register, RenderSurface } from 'claude-code'
+import type { ElementTable, Elements, EngineInterface, Register, RenderSurface } from 'claude-code'
 
 import type {
   AgentTabsActivity,
@@ -23,13 +23,15 @@ const RETRY_MS = 30_000
 const CONTINUING: readonly string[] = ['clear', 'resume']
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const NATIVE_NAME = /This session is (.+?) —/
-const PEER_TOOLS = /^mcp__(plugin_ide-agent-tabs_)?ide-agent-tabs__(send_message|read_messages|wait_for_message|list_sessions|agent_tabs_mod)$/
-const OWN_CALLS = /^(mcp__(plugin_ide-agent-tabs_)?ide-agent-tabs__agent_tabs_mod|ListAgents)$/
+const PEER_TOOL_PREFIX = 'mcp__(plugin_ide-agent-tabs_)?ide-agent-tabs__'
+const PEER_TOOLS = new RegExp(`^${PEER_TOOL_PREFIX}(send_message|read_messages|wait_for_message|list_sessions|${MOD_TOOL})$`)
+const OWN_CALLS = new RegExp(`^(${PEER_TOOL_PREFIX}${MOD_TOOL}|ListAgents)$`)
 const CARD = /Message (m-[0-9a-f]{16}) from (.+?) \(([^,()]+), (.*?)\)\. This is a peer agent's request/
 const CARD_COUNT = /Message m-[0-9a-f]{16} from /g
 const MODEL = /^[^\x00-\x1f\x7f]{1,128}$/
 const EFFORT = /^[A-Za-z0-9._-]{1,32}$/
 
+// The mod runs apart from the server and the IDE packages, so these labels repeat theirs.
 const AGENT_LABELS: Record<string, string> = {
   claude: 'Claude Code',
   codex: 'Codex',
@@ -46,6 +48,7 @@ const AGENT_LABELS: Record<string, string> = {
   'codex-local': 'Codex - Ollama',
 }
 
+// The engine lists the state a module uses, so a reference is an object literal in a const, not a helper call.
 const selfRef = { plugin: 'ide-agent-tabs', key: 'self' } as const
 const activityRef = { plugin: 'ide-agent-tabs', key: 'activity' } as const
 const paneRef = { plugin: 'ide-agent-tabs', key: 'pane' } as const
@@ -59,10 +62,9 @@ const paneHistoryErrorRef = { plugin: 'ide-agent-tabs', key: 'paneHistoryError' 
 const inboxRef = { plugin: 'ide-agent-tabs', key: 'inbox' } as const
 
 const PANE = 'agent-tabs'
-const PANE_COMMANDS = ['agent-messages']
+const PANE_COMMAND = 'agent-messages'
 const OPEN_TOOL_NAME = 'open_agent_messages'
-const OPEN_TOOL = /^mcp__ide-agent-tabs__open_agent_messages$/
-const PANE_COMMAND = /^agent-messages$/
+const OPEN_TOOL = `mcp__ide-agent-tabs__${OPEN_TOOL_NAME}`
 const PANE_TITLE = 'Agent Tabs Messages'
 const MOD_OFF = "The Agent Tabs mod isn't running in this session: claudeMod is off, or the Agent Tabs server isn't connected."
 const WIDEN_NOTICE = 'Widen Window to Display Pane'
@@ -117,7 +119,7 @@ const NAME_COLORS: Record<string, string> = {
 export const DEFAULT_PANE: AgentTabsPane = { view: 'agents', agent: null, message: null, focus: { agents: null, messages: null, detail: null } }
 const UP: Record<AgentTabsView, AgentTabsView> = { agents: 'agents', messages: 'agents', detail: 'messages' }
 
-export type SessionRow = {
+type SessionRow = {
   name: string
   id: string
   agent: string
@@ -157,9 +159,9 @@ type PresenceReply = { id: string; tab: boolean; driver: boolean }
 
 type UnreadReply = { count: number; senders: string[] }
 
-export const agentLabel = (agent: string) => AGENT_LABELS[agent] ?? agent
+const agentLabel = (agent: string) => AGENT_LABELS[agent] ?? agent
 
-export function frame(m: PeerMessage, name: string): string {
+function frame(m: PeerMessage, name: string): string {
   const reply = m.replyTo !== undefined ? ` It answers your message ${m.replyTo}.` : ''
   return (
     `Message ${m.id} from ${name} (${agentLabel(m.from.agent)}, ${m.from.path}).${reply} ` +
@@ -168,7 +170,7 @@ export function frame(m: PeerMessage, name: string): string {
   )
 }
 
-export type Entry = {
+type Entry = {
   name: string
   agent: string
   state: string
@@ -200,7 +202,7 @@ type NativePeer = {
   remote?: boolean
 }
 
-export type ParsedListing = {
+type ParsedListing = {
   header: string
   peers: NativePeer[]
   kept: string[]
@@ -239,17 +241,18 @@ const THIS_SESSION = ' (this session)'
 const COLUMN_CAPS = [Infinity, 10, 6, 32, 24, 8, 8]
 const NAME_SLUG_CHARS = 24
 
+const distinct = (...values: (string | undefined)[]) => [...new Set(values.filter(v => v !== undefined))]
 const baseName = (name: string) => name.replace(/ \[[^\]]*\]$/, '')
 const rank = (list: readonly string[], value: string) => (list.includes(value) ? list.indexOf(value) : list.length)
 
 // Duplicates folder_slug in mcp/src/ide_agent_tabs/messaging/messaging.py: the mod runs apart from the server and can't import it.
-export function folderSlug(folder: string): string {
+function folderSlug(folder: string): string {
   const base = folder.split(/[\\/]+/).filter(p => p !== '').at(-1) ?? ''
   const slug = base.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, NAME_SLUG_CHARS).replace(/^-+|-+$/g, '')
   return slug === '' ? 'session' : slug
 }
 
-export function since(ms: number): string {
+function since(ms: number): string {
   const e = Math.max(0, ms)
   if (e < 60_000) return `${Math.floor(e / 1000)}s`
   let d = Math.floor(e / 86_400_000)
@@ -292,7 +295,7 @@ function parsePeer(line: string, parsed: ParsedListing) {
   }
 }
 
-export function parseListing(listing: string): ParsedListing | undefined {
+function parseListing(listing: string): ParsedListing | undefined {
   const [header = '', ...blocks] = listing.split('\n\n')
   if (!HEADER.test(header)) return undefined
   const parsed: ParsedListing = { header, peers: [], kept: [], notes: [], left: { remoteOffline: 0, offline: 0, unreachable: 0, noStatus: 0, hidden: 0 } }
@@ -341,7 +344,7 @@ function rowEntry(r: SessionRow, name: string, now: number | undefined, joined =
     agentType: r.agentType ?? null,
     agentColor: r.agentColor ?? null,
     id: r.id,
-    names: [...new Set([name, r.name, r.nativeName, r.shortName, r.legacyName, r.id].filter(n => n !== undefined))],
+    names: distinct(name, r.name, r.nativeName, r.shortName, r.legacyName, r.id),
   }
 }
 
@@ -412,8 +415,8 @@ function matchPeers(peers: readonly NativePeer[], rows: readonly SessionRow[], n
 }
 
 const cut = (value: string, cap: number) => (value.length > cap ? `${value.slice(0, cap - 1)}…` : value)
-export const withoutRef = (name: string) => name.replace(/\s*\[[^\]]*\]$/, '')
-export const shownName = (e: { name: string; self?: boolean }) => (e.self ? `${e.name}${THIS_SESSION}` : e.name)
+const withoutRef = (name: string) => name.replace(/\s*\[[^\]]*\]$/, '')
+const shownName = (e: { name: string; self?: boolean }) => (e.self ? `${e.name}${THIS_SESSION}` : e.name)
 const cells = (e: Entry) => [shownName(e), e.state, e.started ?? '—', e.harness, e.model ?? '—', e.effort ?? '—', e.session ?? '—']
 
 const orderEntries = (members: Entry[]) =>
@@ -468,7 +471,7 @@ function hostGroups(entries: readonly Entry[], ownFolder: string | undefined, ow
   ]
 }
 
-export function groupedListing(entries: readonly Entry[], ownFolder: string | undefined, ownHost?: string | null): string {
+function groupedListing(entries: readonly Entry[], ownFolder: string | undefined, ownHost?: string | null): string {
   const none = 'No other session can take a message right now.'
   if (!entries.length) return none
   const shown = entries.map(e => cells(e).map((v, i) => cut(v, COLUMN_CAPS[i]!)))
@@ -493,7 +496,7 @@ function leftOut(left: ParsedListing['left']): string | undefined {
 
 const hostOfRow = (r: SessionRow | undefined) => (r === undefined ? undefined : r.where !== undefined ? r.where : r.host)
 
-export function mergeEntries(listing: string | undefined, rows: readonly SessionRow[], now?: number) {
+function mergeEntries(listing: string | undefined, rows: readonly SessionRow[], now?: number) {
   const others = rows.filter(r => !r.self)
   const self = rows.find(r => r.self)
   const ownFolder = self?.path
@@ -519,7 +522,7 @@ export function mergeEntries(listing: string | undefined, rows: readonly Session
   return { parsed, ownFolder, ownHost, entries }
 }
 
-export function mergeListing(listing: string, rows: readonly SessionRow[], now?: number): string | undefined {
+function mergeListing(listing: string, rows: readonly SessionRow[], now?: number): string | undefined {
   const { parsed, ownFolder, ownHost, entries } = mergeEntries(listing, rows, now)
   if (parsed === undefined) {
     if (!entries.some(e => !e.self)) return undefined
@@ -530,7 +533,7 @@ export function mergeListing(listing: string, rows: readonly SessionRow[], now?:
     .join('\n\n')
 }
 
-export function bridgeTarget(rows: readonly SessionRow[], to: string): SessionRow | undefined {
+function bridgeTarget(rows: readonly SessionRow[], to: string): SessionRow | undefined {
   return rows.find(
     r =>
       !r.self &&
@@ -540,7 +543,7 @@ export function bridgeTarget(rows: readonly SessionRow[], to: string): SessionRo
   )
 }
 
-export function parseCard(text: string) {
+function parseCard(text: string) {
   const m = CARD.exec(text)
   if (!m) return undefined
   return { id: m[1]!, name: m[2]!, agent: m[3]!, folder: m[4]!, count: text.match(CARD_COUNT)?.length ?? 1 }
@@ -548,6 +551,20 @@ export function parseCard(text: string) {
 
 function textOf(content: readonly { type: string; text?: string }[]): string {
   return content.map(c => (c.type === 'text' ? (c.text ?? '') : '')).join('')
+}
+
+const quieted = new Set<string>()
+
+function quiet<T>($: EngineInterface, label: string, fallback: T): (error: unknown) => T {
+  return error => {
+    if (!quieted.has(label)) {
+      quieted.add(label)
+      try {
+        $.ui.log(`${label} failed: ${reason(error)}`, { to: 'debug' })
+      } catch {}
+    }
+    return fallback
+  }
 }
 
 async function callMod($: EngineInterface, server: string, args: Record<string, unknown>): Promise<unknown> {
@@ -589,27 +606,36 @@ async function nativeName($: EngineInterface): Promise<string | undefined> {
 }
 
 async function sessions($: EngineInterface, server: string): Promise<SessionRow[]> {
-  const reply = (await callMod($, server, { op: 'sessions' })) as { sessions?: SessionRow[] }
+  const reply = (await callMod($, server, { op: 'sessions' }).catch(quiet($, 'sessions', {}))) as { sessions?: SessionRow[] }
   return reply.sessions ?? []
+}
+
+async function storedSelf($: EngineInterface) {
+  return (await $.state.get(selfRef)).value
+}
+
+async function storedPane($: EngineInterface): Promise<AgentTabsPane> {
+  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  return pane
 }
 
 async function report($: EngineInterface, state: AgentTabsActivity) {
   const before = await $.state.get(activityRef)
   if (before.value === state) return
   await $.state.set(activityRef, state)
-  const { value: me } = await $.state.get(selfRef)
-  if (me?.isDriver) await callMod($, me.server, { op: 'presence', state }).catch(() => undefined)
+  const me = await storedSelf($)
+  if (me?.isDriver) await callMod($, me.server, { op: 'presence', state }).catch(quiet($, 'presence state', undefined))
 }
 
 async function beat($: EngineInterface) {
   const me = await self($)
   if (!me?.isDriver) return
   const { value: state = 'idle' } = await $.state.get(activityRef)
-  const reply = (await callMod($, me.server, { op: 'presence', state }).catch(() => undefined)) as PresenceReply | undefined
-  if (reply?.driver === false) await callMod($, me.server, { op: 'presence', driver: true, nativeName: me.name, state }).catch(() => undefined)
+  const reply = (await callMod($, me.server, { op: 'presence', state }).catch(quiet($, 'presence beat', undefined))) as PresenceReply | undefined
+  if (reply?.driver === false) await callMod($, me.server, { op: 'presence', driver: true, nativeName: me.name, state }).catch(quiet($, 'presence driver', undefined))
 }
 
-export function modelInfo(model: unknown, effort: unknown): ModelInfo {
+function modelInfo(model: unknown, effort: unknown): ModelInfo {
   return {
     ...(typeof model === 'string' && MODEL.test(model) ? { model } : {}),
     ...(typeof effort === 'string' && EFFORT.test(effort) ? { effort } : {}),
@@ -621,15 +647,15 @@ const reported: ModelInfo = {}
 async function noteModel($: EngineInterface, info: ModelInfo) {
   const changed = Object.fromEntries(Object.entries(info).filter(([k, v]) => reported[k as keyof ModelInfo] !== v))
   if (!Object.keys(changed).length) return
-  const { value: me } = await $.state.get(selfRef)
+  const me = await storedSelf($)
   if (!me) return
   Object.assign(reported, changed)
-  await callMod($, me.server, { op: 'presence', ...changed }).catch(() => undefined)
+  await callMod($, me.server, { op: 'presence', ...changed }).catch(quiet($, 'presence model', undefined))
 }
 
 const AGENT_TYPE = /^[A-Za-z0-9._:-]{1,128}$/
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---/
-const DEFINITION_COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'pink', 'cyan']
+const DEFINITION_COLORS = Object.keys(NAME_COLORS)
 
 export function definitionColor(markdown: string, type?: string): string | undefined {
   const head = FRONTMATTER.exec(markdown)?.[1]
@@ -643,7 +669,7 @@ export function definitionColor(markdown: string, type?: string): string | undef
 const joinPath = (dir: string, ...parts: string[]) => [dir.replace(/[\\/]+$/, ''), ...parts].join(dir.includes('\\') ? '\\' : '/')
 
 async function readText($: EngineInterface, path: string): Promise<string | undefined> {
-  return $.fs.read(path).catch(() => undefined)
+  return $.fs.read(path).catch(quiet($, 'fs.read', undefined))
 }
 
 async function configDir($: EngineInterface): Promise<string | undefined> {
@@ -656,7 +682,7 @@ async function configDir($: EngineInterface): Promise<string | undefined> {
 async function colorIn($: EngineInterface, dir: string, type: string): Promise<string | undefined> {
   const direct = await readText($, joinPath(dir, `${type}.md`))
   if (direct !== undefined) return definitionColor(direct, type)
-  const files = await $.fs.list(dir).catch(() => [])
+  const files = await $.fs.list(dir).catch(quiet($, 'fs.list', []))
   for (const f of files) {
     if (f.kind !== 'file' || !f.name.endsWith('.md')) continue
     const text = await readText($, joinPath(dir, f.name))
@@ -666,7 +692,7 @@ async function colorIn($: EngineInterface, dir: string, type: string): Promise<s
   return undefined
 }
 
-export async function agentColor($: EngineInterface, type: string, cwd: string | undefined): Promise<string | undefined> {
+async function agentColor($: EngineInterface, type: string, cwd: string | undefined): Promise<string | undefined> {
   const config = await configDir($)
   const plugin = /^([^:]+):(.+)$/.exec(type)
   if (plugin !== null) {
@@ -688,28 +714,29 @@ const agentNoted: { type: string; pending: string | undefined } = { type: '', pe
 
 async function noteAgent($: EngineInterface, type: unknown, cwd: string | undefined) {
   if (typeof type !== 'string' || !AGENT_TYPE.test(type) || agentNoted.type === type) return
-  const { value: me } = await $.state.get(selfRef)
+  const me = await storedSelf($)
   if (!me) {
     agentNoted.pending = type
     return
   }
   agentNoted.type = type
-  const color = await agentColor($, type, cwd).catch(() => undefined)
-  await callMod($, me.server, { op: 'presence', agentType: type, ...(color !== undefined ? { agentColor: color } : {}) }).catch(() => undefined)
+  const color = await agentColor($, type, cwd).catch(quiet($, 'agent color', undefined))
+  await callMod($, me.server, { op: 'presence', agentType: type, ...(color !== undefined ? { agentColor: color } : {}) }).catch(quiet($, 'presence agent', undefined))
 }
 
 const sessionCwd: { current: string | undefined } = { current: undefined }
 
+// $.env.get and $.env.set take literal names: the engine lists the variables a module uses, so a constant fails to load.
 async function boot($: EngineInterface): Promise<AgentTabsSelf | null> {
-  const server = await serverName($).catch(() => undefined)
+  const server = await serverName($).catch(quiet($, 'connect', undefined))
   if (server === undefined) return null
-  const settings = (await callMod($, server, { op: 'settings' }).catch(() => ({}))) as { claudeMod?: string }
+  const settings = (await callMod($, server, { op: 'settings' }).catch(quiet($, 'settings', {}))) as { claudeMod?: string }
   if (settings.claudeMod === 'off') return null
   const tab = await $.env.get('IDE_AGENT_TABS_ID')
   const inTab = tab !== undefined && SESSION_ID.test(tab)
-  const name = inTab ? await nativeName($).catch(() => undefined) : undefined
+  const name = inTab ? await nativeName($).catch(quiet($, 'native name', undefined)) : undefined
   const fallback = await $.session.id()
-  const info = modelInfo(await $.session.model().catch(() => undefined), await $.env.get('CLAUDE_EFFORT').catch(() => undefined))
+  const info = modelInfo(await $.session.model().catch(quiet($, 'session.model', undefined)), await $.env.get('CLAUDE_EFFORT').catch(quiet($, 'env CLAUDE_EFFORT', undefined)))
   const reply = (await callMod($, server, {
     op: 'presence',
     ...(inTab ? { driver: true, state: 'idle', nativeName: name ?? fallback } : {}),
@@ -726,22 +753,20 @@ async function boot($: EngineInterface): Promise<AgentTabsSelf | null> {
 async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> {
   const taken = (await callMod($, me.server, { op: 'take' })) as Taken
   if (taken.claim === null || taken.messages.length === 0) return true
-  const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
+  const rows = await sessions($, me.server)
   const text = taken.messages.map(m => frame(m, rows.find(r => r.id === m.from.id)?.name ?? m.from.id)).join('\n\n---\n\n')
   let submitted = false
   try {
     const entered = await $.prompt.submit({ text })
     submitted = entered.drop === undefined
-  } catch {
-    submitted = false
-  }
-  await callMod($, me.server, { op: submitted ? 'ack' : 'release', claim: taken.claim }).catch(() => undefined)
+  } catch {}
+  await callMod($, me.server, { op: submitted ? 'ack' : 'release', claim: taken.claim }).catch(quiet($, 'ack', undefined))
   return submitted
 }
 
 async function senders($: EngineInterface, server: string, ids: readonly string[]): Promise<AgentTabsSender[]> {
   if (!ids.length) return []
-  const rows = await sessions($, server).catch(() => [] as SessionRow[])
+  const rows = await sessions($, server)
   return ids.map(id => ({ id, name: rows.find(r => r.id === id)?.name ?? id }))
 }
 
@@ -751,7 +776,7 @@ let timers: { cancel: () => void }[] = []
 async function poll($: EngineInterface) {
   const me = await self($)
   if (!me?.isDriver) return
-  const unread = (await callMod($, me.server, { op: 'unread' }).catch(() => undefined)) as UnreadReply | undefined
+  const unread = (await callMod($, me.server, { op: 'unread' }).catch(quiet($, 'unread', undefined))) as UnreadReply | undefined
   if (unread === undefined) return
   const { count } = unread
   const key = `${count}|${unread.senders.join('|')}`
@@ -782,11 +807,11 @@ let booting: Promise<AgentTabsSelf | null> | undefined
 
 async function begin($: EngineInterface, cwd: string | undefined): Promise<AgentTabsSelf | null> {
   begun = true
-  sessionCwd.current = cwd ?? sessionCwd.current ?? (await $.session.cwd().catch(() => undefined))
+  sessionCwd.current = cwd ?? sessionCwd.current ?? (await $.session.cwd().catch(quiet($, 'session.cwd', undefined)))
   for (const t of timers) t.cancel()
   timers = []
   agentNoted.type = ''
-  const me = await boot($).catch(() => null)
+  const me = await boot($).catch(quiet($, 'boot', null))
   await $.env.set('IDE_AGENT_TABS_MOD', me?.isDriver ? me.id : undefined)
   inbox.shown = ''
   await $.state.set(inboxRef, null)
@@ -794,15 +819,15 @@ async function begin($: EngineInterface, cwd: string | undefined): Promise<Agent
     await $.state.set(selfRef, null)
     return null
   }
-  const configured = ((await $.settings.read().catch(() => ({}))) as { agent?: unknown }).agent
+  const configured = ((await $.settings.read().catch(quiet($, 'settings.read', {}))) as { agent?: unknown }).agent
   await noteAgent($, agentNoted.pending ?? configured, sessionCwd.current)
   if (me.isDriver) {
     timers.push($.clock.every(BEAT_MS, () => void beat($)))
-    timers.push($.clock.every(POLL_MS, () => void poll($).catch(() => undefined)))
+    timers.push($.clock.every(POLL_MS, () => void poll($).catch(quiet($, 'poll', undefined))))
   }
-  for (const name of PANE_COMMANDS) {
-    await $.command.register({ name, description: 'Show or hide the Agent Tabs Messages pane: agents, and the messages each sent or received' }).catch(() => undefined)
-  }
+  await $.command
+    .register({ name: PANE_COMMAND, description: 'Show or hide the Agent Tabs Messages pane: agents, and the messages each sent or received' })
+    .catch(quiet($, 'command.register', undefined))
   await $.tool
     .register({
       name: OPEN_TOOL_NAME,
@@ -810,7 +835,7 @@ async function begin($: EngineInterface, cwd: string | undefined): Promise<Agent
         "Open the user's Agent Tabs Messages pane. Call it only when the user asks to see agent messages, the agents pane, or one agent's messages. With agent (a name from ListAgents), it opens on that agent's messages.",
       inputSchema: { type: 'object', properties: { agent: { type: 'string', description: 'A session name from ListAgents' } } },
     })
-    .catch(() => undefined)
+    .catch(quiet($, 'tool.register', undefined))
   $.ui.invalidate('tool.describe')
   const { value: open = false } = await $.state.get(paneOpenRef)
   if (open && (await $.ui.panes()).some(pane => pane.id === PANE)) await showPane($)
@@ -821,7 +846,7 @@ async function begin($: EngineInterface, cwd: string | undefined): Promise<Agent
 function restart($: EngineInterface, cwd: string | undefined): Promise<AgentTabsSelf | null> {
   const prior = booting
   const run = (async () => {
-    await prior?.catch(() => null)
+    await prior?.catch(quiet($, 'restart', null))
     return begin($, cwd)
   })().finally(() => {
     if (booting === run) booting = undefined
@@ -834,18 +859,18 @@ function restart($: EngineInterface, cwd: string | undefined): Promise<AgentTabs
 // and /reload-plugins drops the timers without one. The first hook that needs the mod then starts it again.
 async function self($: EngineInterface): Promise<AgentTabsSelf | null> {
   if (booting !== undefined) return booting
-  const { value } = await $.state.get(selfRef)
+  const value = await storedSelf($)
   if (begun && value !== undefined) return value
   return booting ?? restart($, undefined)
 }
 
-export const shortModel = (model: string) => model.replace(MODEL_VENDOR, '')
+const shortModel = (model: string) => model.replace(MODEL_VENDOR, '')
 
-export function detailLine(r: Pick<AgentTabsPaneRow, 'state' | 'started' | 'harness' | 'model' | 'effort' | 'agentType'>): string {
+function detailLine(r: Pick<AgentTabsPaneRow, 'state' | 'started' | 'harness' | 'model' | 'effort' | 'agentType'>): string {
   return [r.state, r.started, r.agentType ? `${r.harness} (${r.agentType})` : r.harness, r.model === null ? null : shortModel(r.model), r.effort].filter(v => v !== null && v !== '' && v !== '—').join(' · ')
 }
 
-export const agentKey = (e: Entry) => (e.id ? `id:${e.id}` : `name:${e.name}`)
+const agentKey = (e: Entry) => (e.id ? `id:${e.id}` : `name:${e.name}`)
 
 const paneRow = (e: Entry): AgentTabsPaneRow => ({
   key: agentKey(e),
@@ -865,7 +890,7 @@ const paneRow = (e: Entry): AgentTabsPaneRow => ({
   agentColor: e.agentColor ?? null,
 })
 
-export function paneHosts(listing: string | undefined, rows: readonly SessionRow[], now?: number): AgentTabsPaneHost[] {
+function paneHosts(listing: string | undefined, rows: readonly SessionRow[], now?: number): AgentTabsPaneHost[] {
   const { entries, ownFolder, ownHost } = mergeEntries(listing, rows, now)
   return hostGroups(entries, ownFolder, ownHost).map(h => ({
     heading: h.heading,
@@ -873,9 +898,9 @@ export function paneHosts(listing: string | undefined, rows: readonly SessionRow
   }))
 }
 
-export const paneRows = (hosts: readonly AgentTabsPaneHost[]) => hosts.flatMap(h => h.folders.flatMap(f => f.rows))
+const paneRows = (hosts: readonly AgentTabsPaneHost[]) => hosts.flatMap(h => h.folders.flatMap(f => f.rows))
 
-export type HostPlatform = 'windows' | 'mac' | 'linux'
+type HostPlatform = 'windows' | 'mac' | 'linux'
 
 export function platformOf(os: string | undefined, uname: string | undefined): HostPlatform {
   if (os === 'Windows_NT') return 'windows'
@@ -890,25 +915,24 @@ export function folderOpener(platform: 'mac' | 'linux', path: string): string[] 
 
 async function hostPlatform($: EngineInterface): Promise<HostPlatform> {
   const os = await $.env.get('OS')
-  if (os === 'Windows_NT') return 'windows'
-  const uname = await $.process.run(['uname', '-s']).catch(() => undefined)
+  const uname = os === 'Windows_NT' ? undefined : await $.process.run(['uname', '-s']).catch(quiet($, 'uname', undefined))
   return platformOf(os, uname?.stdout)
 }
 
 // The pane holds toasts while it's open, so actions taken in the pane report inside it.
 async function notify($: EngineInterface, text: string) {
-  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const pane = await storedPane($)
   await $.state.set(paneRef, { ...pane, notice: text })
   $.clock.after(NOTICE_MS, () => {
     void $.state.get(paneRef).then(({ value }) => (value?.notice === text ? $.state.set(paneRef, { ...value, notice: null }) : undefined))
   })
 }
 
-export const FILE_MANAGERS: Record<HostPlatform, string> = { windows: 'File Explorer', mac: 'Finder', linux: 'the file manager' }
+const FILE_MANAGERS: Record<HostPlatform, string> = { windows: 'File Explorer', mac: 'Finder', linux: 'the file manager' }
 const BUNDLE_SEGMENT = /\.(app|bundle|framework|pkg|plugin|prefPane)$/i
 
 async function openFolder($: EngineInterface, path: string) {
-  const at = await $.fs.stat(path, { resolve: true }).catch(() => undefined)
+  const at = await $.fs.stat(path, { resolve: true }).catch(quiet($, 'fs.stat', undefined))
   if (at?.kind !== 'dir' || at.realPath === undefined) {
     await notify($, `${path} is not a folder on this machine.`)
     return
@@ -918,8 +942,8 @@ async function openFolder($: EngineInterface, path: string) {
     await notify($, `${path} is inside a macOS bundle, which opening would launch.`)
     return
   }
-  const { value: me } = await $.state.get(selfRef)
-  const revealed = me ? ((await callModTimed($, me.server, { op: 'reveal', path: at.realPath }).catch(() => undefined)) as { ok?: boolean; ide?: string; reason?: string } | undefined) : undefined
+  const me = await storedSelf($)
+  const revealed = me ? ((await callModTimed($, me.server, { op: 'reveal', path: at.realPath }).catch(quiet($, 'reveal', undefined))) as { ok?: boolean; ide?: string; reason?: string } | undefined) : undefined
   if (revealed?.ok === true) {
     const behind = platform === 'windows' && revealed.ide === 'system' ? ' (it may be behind this window)' : ''
     await notify($, `Opened ${at.realPath} in ${FILE_MANAGERS[platform]}${behind}.`)
@@ -932,28 +956,28 @@ async function openFolder($: EngineInterface, path: string) {
     return
   }
   const argv = folderOpener(platform, at.realPath)
-  const ran = await $.process.run(argv, { timeoutMs: OPEN_TIMEOUT_MS }).catch(() => undefined)
+  const ran = await $.process.run(argv, { timeoutMs: OPEN_TIMEOUT_MS }).catch(quiet($, 'open folder', undefined))
   if (ran === undefined || ran.exitCode !== 0) await notify($, `${argv[0]} could not open ${at.realPath}.`)
   else await notify($, `Opened ${at.realPath}.`)
 }
 
 async function copyPath($: EngineInterface, path: string, surface: RenderSurface) {
-  const copied = await $.ui.copy({ text: path, surface }).catch(() => undefined)
+  const copied = await $.ui.copy({ text: path, surface }).catch(quiet($, 'copy path', undefined))
   await notify($, copied?.isCopied ? `Copied ${path}` : `Couldn't copy ${path}`)
 }
 
-export function hhmm(iso: string): string {
+function hhmm(iso: string): string {
   const at = new Date(iso)
   if (Number.isNaN(at.getTime())) return '--:--'
   return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
 }
 
-export function partyName(p: AgentTabsParty, hosts: readonly AgentTabsPaneHost[]): string {
+function partyName(p: AgentTabsParty, hosts: readonly AgentTabsPaneHost[]): string {
   const row = paneRows(hosts).find(r => (p.id !== undefined && r.id === p.id) || (p.name !== undefined && r.names.includes(p.name)))
   return row?.name ?? p.name ?? p.id ?? 'unknown'
 }
 
-export function messageLine(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[], width: number): string {
+function messageLine(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[], width: number): string {
   const name = withoutRef(partyName(m.peer, hosts))
   const head = `${hhmm(m.at)}  ${m.direction === 'sent' ? '↑' : '↘'} ${name} · `
   const first = m.text.split('\n')[0] ?? ''
@@ -962,12 +986,12 @@ export function messageLine(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHo
   return `${head}${first}${m.text.includes('\n') ? '…' : ''}`
 }
 
-export function replyLine(m: AgentTabsMessage, selfId: string | undefined, hosts: readonly AgentTabsPaneHost[]): string {
+function replyLine(m: AgentTabsMessage, selfId: string | undefined, hosts: readonly AgentTabsPaneHost[]): string {
   const target = m.from.id !== undefined && m.from.id === selfId ? m.to : m.from
   return `Reply to ${partyName(target, hosts)} (message ${m.id}): `
 }
 
-export function receivedFrom(text: string): string {
+function receivedFrom(text: string): string {
   for (const pattern of RECEIVED_FROM) {
     const found = pattern.exec(text)?.[1]?.trim()
     if (found) return found
@@ -984,14 +1008,14 @@ async function readListing($: EngineInterface): Promise<string | undefined> {
 
 async function logNative($: EngineInterface, args: Record<string, unknown>) {
   const me = await self($)
-  if (me) await callMod($, me.server, { op: 'log', ...args, at: await $.clock.now() }).catch(() => undefined)
+  if (me) await callMod($, me.server, { op: 'log', ...args, at: await $.clock.now() }).catch(quiet($, 'log', undefined))
 }
 
 async function refreshPane($: EngineInterface) {
-  const { value: me } = await $.state.get(selfRef)
+  const me = await storedSelf($)
   const { value: open = false } = await $.state.get(paneOpenRef)
   if (!me || !open) return
-  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const pane = await storedPane($)
   const { value: known = [] } = await $.state.get(paneHostsRef)
   if (pane.view === 'agents' || pane.agent === null || known.length === 0) await refreshHosts($, me)
   if (pane.view === 'agents' || pane.agent === null) return
@@ -1037,23 +1061,23 @@ const reason = (error: unknown) => (error instanceof Error ? error.message.split
 const whoOf = (agent: AgentTabsPick) => ({ ...(agent.id !== null ? { session: agent.id } : {}), names: agent.names.slice(0, 8) })
 
 async function refreshHosts($: EngineInterface, me: AgentTabsSelf) {
-  const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
-  const listed = paneHosts(await readListing($).catch(() => undefined), rows, await $.clock.now())
+  const rows = await sessions($, me.server)
+  const listed = paneHosts(await readListing($).catch(quiet($, 'ListAgents', undefined)), rows, await $.clock.now())
   const agents = paneRows(listed).map(r => ({ ...(r.id !== null ? { session: r.id } : {}), names: r.names.slice(0, 8) }))
-  const counted = agents.length ? ((await callModTimed($, me.server, { op: 'counts', agents }).catch(() => undefined)) as { counts?: (number | null)[] } | undefined) : undefined
+  const counted = agents.length ? ((await callModTimed($, me.server, { op: 'counts', agents }).catch(quiet($, 'counts', undefined))) as { counts?: (number | null)[] } | undefined) : undefined
   let at = 0
   const hosts = listed.map(h => ({ ...h, folders: h.folders.map(f => ({ ...f, rows: f.rows.map(r => ({ ...r, messages: counted?.counts?.[at++] ?? null })) })) }))
   const { value: shownHosts } = await $.state.get(paneHostsRef)
   if (JSON.stringify(shownHosts) !== JSON.stringify(hosts)) await $.state.set(paneHostsRef, hosts)
 }
 
-const loading = new Set<string>()
+const loadingMessages = new Set<string>()
 
 async function loadMessage($: EngineInterface, id: string, offset: number) {
-  const { value: me } = await $.state.get(selfRef)
-  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
-  if (!me || pane.agent === null || loading.has(id)) return
-  loading.add(id)
+  const me = await storedSelf($)
+  const pane = await storedPane($)
+  if (!me || pane.agent === null || loadingMessages.has(id)) return
+  loadingMessages.add(id)
   try {
     let at = offset
     for (;;) {
@@ -1084,12 +1108,12 @@ async function loadMessage($: EngineInterface, id: string, offset: number) {
       at = text.length
     }
   } finally {
-    loading.delete(id)
+    loadingMessages.delete(id)
   }
 }
 
 async function retryMessage($: EngineInterface) {
-  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const pane = await storedPane($)
   const { value: full } = await $.state.get(paneMessageRef)
   if (pane.message === null) return
   const from = full?.id === pane.message ? full.text.length : 0
@@ -1100,18 +1124,18 @@ async function retryMessage($: EngineInterface) {
 async function copyMessage($: EngineInterface, surface: RenderSurface) {
   const { value: full } = await $.state.get(paneMessageRef)
   if (!full) return
-  const copied = await $.ui.copy({ text: full.text, surface }).catch(() => undefined)
+  const copied = await $.ui.copy({ text: full.text, surface }).catch(quiet($, 'copy message', undefined))
   await notify($, copied?.isCopied ? `Copied the message, ${full.text.length.toLocaleString('en-US')} characters.` : "Couldn't copy the message.")
 }
 
 async function retryHistory($: EngineInterface) {
   await $.state.set(paneHistoryErrorRef, null)
-  await refreshPane($).catch(() => undefined)
+  await refreshPane($).catch(quiet($, 'refresh', undefined))
 }
 
 async function loadOlder($: EngineInterface) {
-  const { value: me } = await $.state.get(selfRef)
-  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const me = await storedSelf($)
+  const pane = await storedPane($)
   const { value: shown = [] } = await $.state.get(paneHistoryRef)
   if (!me || pane.agent === null || !shown.length) return
   try {
@@ -1136,8 +1160,8 @@ const paneTimer: { current: { cancel: () => void } | null } = { current: null }
 
 async function showPane($: EngineInterface) {
   await $.state.set(paneOpenRef, true)
-  if (paneTimer.current === null) paneTimer.current = $.clock.every(PANE_REFRESH_MS, () => void refreshPane($).catch(() => undefined))
-  await refreshPane($).catch(() => undefined)
+  if (paneTimer.current === null) paneTimer.current = $.clock.every(PANE_REFRESH_MS, () => void refreshPane($).catch(quiet($, 'refresh', undefined)))
+  await refreshPane($).catch(quiet($, 'refresh', undefined))
 }
 
 async function hidePane($: EngineInterface) {
@@ -1147,29 +1171,29 @@ async function hidePane($: EngineInterface) {
 }
 
 async function goTo($: EngineInterface, change: Partial<AgentTabsPane>) {
-  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const pane = await storedPane($)
   const next = { ...pane, ...change }
   if (next.agent?.key !== pane.agent?.key || (pane.view === 'agents' && next.view === 'messages')) await clearHistory($)
   else if (next.message !== pane.message) await $.state.set(paneMessageRef, null)
   await $.state.set(paneRef, next)
-  await refreshPane($).catch(() => undefined)
+  await refreshPane($).catch(quiet($, 'refresh', undefined))
 }
 
 export const upFrom = (pane: AgentTabsPane): AgentTabsPane => ({ ...pane, view: UP[pane.view], ...(pane.view === 'detail' ? {} : { message: null }) })
 
 async function goUp($: EngineInterface) {
-  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const pane = await storedPane($)
   await $.state.set(paneRef, upFrom(pane))
 }
 
 function senderPick(rows: readonly SessionRow[], name: string, id?: string): AgentTabsPick {
   const r = rows.find(one => !one.self && ((id !== undefined && one.id === id) || one.name === name || one.id === name || one.shortName === name || one.legacyName === name))
   if (r === undefined) return { key: `name:${name}`, name, id: null, names: [name] }
-  return { key: `id:${r.id}`, name, id: r.id, names: [...new Set([name, r.name, r.nativeName, r.shortName, r.legacyName, r.id].filter(n => n !== undefined))] }
+  return { key: `id:${r.id}`, name, id: r.id, names: distinct(name, r.name, r.nativeName, r.shortName, r.legacyName, r.id) }
 }
 
 async function openPaneOn($: EngineInterface, change: Pick<AgentTabsPane, 'view' | 'agent' | 'message'>) {
-  const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+  const pane = await storedPane($)
   await clearHistory($)
   await $.state.set(paneRef, { ...pane, ...change })
   const opened = await $.ui.open(PANE_OPEN)
@@ -1178,9 +1202,9 @@ async function openPaneOn($: EngineInterface, change: Pick<AgentTabsPane, 'view'
 }
 
 async function openSender($: EngineInterface, name: string, id: string | undefined, message: string | null) {
-  const { value: me } = await $.state.get(selfRef)
+  const me = await storedSelf($)
   if (!me) return
-  const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
+  const rows = await sessions($, me.server)
   await openPaneOn($, { view: message === null ? 'messages' : 'detail', agent: senderPick(rows, name, id), message })
 }
 
@@ -1190,7 +1214,7 @@ async function fillReply($: EngineInterface, text: string) {
   if (!filled.isFilled) $.ui.toast(`Agent Tabs: the prompt didn't take the reply line. ${text}`)
 }
 
-export type PaneAct =
+type PaneAct =
   | { act: 'session'; key: string }
   | { act: 'folder'; path: string }
   | { act: 'copy'; path: string }
@@ -1204,7 +1228,7 @@ export type PaneAct =
 
 const isAct = (data: unknown): data is PaneAct => typeof data === 'object' && data !== null && typeof (data as { act?: unknown }).act === 'string'
 
-export function centered(text: string, width: number): { indent: number; text: string }[] {
+function centered(text: string, width: number): { indent: number; text: string }[] {
   const lines: string[] = []
   for (const word of text.split(/\s+/).filter(w => w !== '')) {
     const last = lines.at(-1)
@@ -1219,22 +1243,19 @@ const centeredLines = (text: string, width: number): ListLine[] => centered(text
 const SPINNER_FIRST = '⠋'
 
 // The spinner glyph and its space are measured with the text, so the line stays centred on every frame.
-export function loadingLines(text: string, width: number): ListLine[] {
+function loadingLines(text: string, width: number): ListLine[] {
   return [
     { indent: 0, parts: [{ text: ' ' }] },
     ...centered(`${SPINNER_FIRST} ${text}`, width).map((c, i): ListLine => ({ indent: c.indent, parts: [{ text: c.text, dim: true, italic: true, ...(i === 0 ? { spin: true as const } : {}) }] })),
   ]
 }
 
-export const loadingList = (text: string, width: number): ListProps => ({ groups: [{ border: false, lines: loadingLines(text, width) }], acts: {}, width })
+const loadingList = (text: string, width: number): ListProps => ({ groups: [{ border: false, lines: loadingLines(text, width) }], acts: {}, width })
 
-
-const partsWidth = (indent: number, parts: readonly ListPart[]) => indent + parts.reduce((n, p) => n + p.text.length, 0)
-
-export const countWidth = (rows: readonly AgentTabsPaneRow[]) => Math.max(1, ...rows.map(r => countText(r).length))
 const countText = (r: AgentTabsPaneRow) => (r.messages === null ? '·' : String(r.messages))
+const countWidth = (rows: readonly AgentTabsPaneRow[]) => Math.max(1, ...rows.map(r => countText(r).length))
 
-export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number, notice: string | null = null, loading = false): ListProps {
+function agentsList(hosts: readonly AgentTabsPaneHost[], width: number, notice: string | null = null, loading = false): ListProps {
   const acts: Record<string, PaneAct> = {}
   const room = Math.max(8, width - 4 - 6)
   const title: ListPart[] = [{ text: PANE_TITLE, bold: true }]
@@ -1304,11 +1325,11 @@ export function agentsList(hosts: readonly AgentTabsPaneHost[], width: number, n
   return { groups: [header, ...groups], acts, width }
 }
 
-export function sessionDetails(agent: AgentTabsPick): string {
+function sessionDetails(agent: AgentTabsPick): string {
   return [agent.name !== withoutRef(agent.name) ? agent.name : undefined, agent.id !== null ? `Session: ${agent.id}` : undefined].filter(v => v !== undefined).join(' · ')
 }
 
-export function sessionPlace(agent: AgentTabsPick | null, hosts: readonly AgentTabsPaneHost[]) {
+function sessionPlace(agent: AgentTabsPick | null, hosts: readonly AgentTabsPaneHost[]) {
   if (agent === null) return undefined
   for (const host of hosts) {
     for (const f of host.folders) {
@@ -1319,11 +1340,11 @@ export function sessionPlace(agent: AgentTabsPick | null, hosts: readonly AgentT
   return undefined
 }
 
-export const countLabel = (n: number) => (n === 1 ? '1 message' : `${n} messages`)
+const countLabel = (n: number) => (n === 1 ? '1 message' : `${n} messages`)
 
-export const olderLabel = (older: number) => `Show older messages (${older})`
+const olderLabel = (older: number) => `Show older messages (${older})`
 
-export function messagesList(
+function messagesList(
   pane: AgentTabsPane,
   messages: readonly AgentTabsMessage[],
   total: number | null,
@@ -1366,7 +1387,7 @@ export function messagesList(
   return { groups: [{ border: false, lines }], acts, width }
 }
 
-export const retryChip = (width: number): ListProps => ({
+const retryChip = (width: number): ListProps => ({
   groups: [
     {
       border: false,
@@ -1381,19 +1402,19 @@ export const retryChip = (width: number): ListProps => ({
   width,
 })
 
-export const copyChip = (): ListProps => ({
+const copyChip = (): ListProps => ({
   groups: [{ border: false, lines: [{ indent: 1, parts: [{ text: COPY_LABEL, underline: true, item: 'copy-message' }] }] }],
   acts: { 'copy-message': { act: 'copy-message' } },
 })
 
-export type DetailRow = { label: string; value: string; party?: true; id?: string }
+type DetailRow = { label: string; value: string; party?: true; id?: string }
 
-export function partySession(p: AgentTabsParty, hosts: readonly AgentTabsPaneHost[]): string | undefined {
+function partySession(p: AgentTabsParty, hosts: readonly AgentTabsPaneHost[]): string | undefined {
   const id = p.id ?? paneRows(hosts).find(r => p.name !== undefined && r.names.includes(p.name))?.id ?? undefined
   return id === undefined || id === null ? undefined : id.slice(0, 8)
 }
 
-export function detailRows(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[]): DetailRow[] {
+function detailRows(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[]): DetailRow[] {
   const delivery = [m.delivery, m.status].filter(v => v !== undefined).join(' · ') || '—'
   const party = (label: string, p: AgentTabsParty): DetailRow => {
     const id = partySession(p, hosts)
@@ -1425,15 +1446,324 @@ export function markdownBlocks(text: string, max = MARKDOWN_CHARS): string[] {
   return blocks
 }
 
-export const drawnNote = (total: number) => `Showing the first ${DRAW_CHARS.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} characters.`
+const drawnNote = (total: number) => `Showing the first ${DRAW_CHARS.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} characters.`
 
-export function detailChips(width: number): ListProps {
+function detailChips(width: number): ListProps {
   const chips: ListPart[] = [{ text: BACK_LABEL, underline: true, item: 'back' }, { text: '  ' }, { text: REPLY_LABEL, underline: true, item: 'reply' }]
   return {
     groups: [{ border: false, lines: [{ indent: 1, parts: chips }] }],
     acts: { back: { act: 'back' }, reply: { act: 'reply' } },
     width,
   }
+}
+
+type PaneKit = {
+  Box: ElementTable['Box']
+  Text: ElementTable['Text']
+  Button: ElementTable['Button']
+  Client: Elements['terminal']['Client'] | undefined
+  Markdown: ElementTable['Markdown'] | undefined
+}
+
+function paneEmpty(kit: PaneKit, text: string, width: number, italic = false) {
+  const { Text } = kit
+  return centered(text, width).map((c, i) =>
+    italic ? (
+      <Text key={`empty-${i}`} dimColor italic>
+        {`${' '.repeat(c.indent)}${c.text}`}
+      </Text>
+    ) : (
+      <Text key={`empty-${i}`} dimColor>
+        {`${' '.repeat(c.indent)}${c.text}`}
+      </Text>
+    ),
+  )
+}
+
+function paneWaiting(kit: PaneKit, text: string, width: number) {
+  const { Box } = kit
+  return (
+    <Box key="loading" flexDirection="column" marginTop={1}>
+      {paneEmpty(kit, text, width, true)}
+    </Box>
+  )
+}
+
+function agentsHeading(kit: PaneKit, notice: string | null | undefined) {
+  const { Box, Text } = kit
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text bold>{PANE_TITLE}</Text>
+      </Box>
+      {notice ? (
+        <Text color="suggestion" wrap="truncate-end">
+          {notice}
+        </Text>
+      ) : null}
+    </Box>
+  )
+}
+
+const rowPick = (r: AgentTabsPaneRow): AgentTabsPick => ({ key: r.key, name: r.name, id: r.id, names: r.names })
+
+const nameColor = (r: AgentTabsPaneRow) => (r.agentColor !== null ? NAME_COLORS[r.agentColor] : undefined)
+
+function agentRow($: EngineInterface, kit: PaneKit, r: AgentTabsPaneRow, counted: number, room: number) {
+  const { Box, Text, Button } = kit
+  const open = () => goTo($, { view: 'messages', agent: rowPick(r), message: null })
+  const glyph = AGENT_GLYPHS[r.agent] ?? OTHER_GLYPH
+  const dot = DOT_COLORS[r.state]
+  const mark = (
+    <Box position="absolute" top={0} left={2} display="none" hover={{ display: 'flex' }}>
+      <Text>{ROW_MARK}</Text>
+    </Box>
+  )
+  return (
+    <Box key={`row-${r.key}`} flexDirection="column" marginTop={1}>
+      <Box flexDirection="row" paddingLeft={4}>
+        {mark}
+        {r.messages ? (
+          <Text bold>{countText(r).padStart(counted)} </Text>
+        ) : (
+          <Text bold dimColor>
+            {countText(r).padStart(counted)}{' '}
+          </Text>
+        )}
+        <Text color={glyph.color}>{glyph.glyph} </Text>
+        {nameColor(r) !== undefined ? (
+          <Text color={nameColor(r)} hover={{ underline: true }}>
+            {withoutRef(r.name)}
+          </Text>
+        ) : (
+          <Button key={`agent:${r.key}`} plain label={withoutRef(r.name)} hover={{ underline: true }} onPress={open} />
+        )}
+        {r.self && (
+          <Text italic wrap="truncate-end">
+            {THIS_SESSION}
+          </Text>
+        )}
+      </Box>
+      <Box flexDirection="row" paddingLeft={6}>
+        {mark}
+        {dot !== undefined ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
+        <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), Math.max(8, room - 2))} hover={{ underline: true }} onPress={open} />
+      </Box>
+    </Box>
+  )
+}
+
+function folderHeading($: EngineInterface, kit: PaneKit, surface: RenderSurface, hi: number, f: AgentTabsPaneFolder, room: number) {
+  const { Box, Text, Button } = kit
+  if (f.heading === null) return null
+  if (f.path === null) {
+    return (
+      <Box paddingLeft={2}>
+        <Text bold>
+          {FOLDER_MARK}
+          {f.heading}
+        </Text>
+      </Box>
+    )
+  }
+  const path = f.path
+  const key = `folder:${hi}:${f.path}`
+  const label = `${FOLDER_MARK}${f.heading}`
+  return (
+    <Box key={`heading-${key}`} flexDirection="row" paddingLeft={2}>
+      <Button key={key} plain label={label} onPress={() => openFolder($, path)} />
+      <Box position="absolute" top={0} left={label.length + 4} display="none" hover={{ display: 'flex' }}>
+        <Button key={`copy-${key}`} plain dimColor label={cut(path, Math.max(8, room - label.length))} onPress={() => copyPath($, path, surface)} />
+      </Box>
+    </Box>
+  )
+}
+
+function agentsView($: EngineInterface, kit: PaneKit, surface: RenderSurface, pane: AgentTabsPane, hosts: readonly AgentTabsPaneHost[], width: number, loading: boolean) {
+  const { Box, Text, Client } = kit
+  if (Client) return <Client key="agents" module="./list.tsx" width="100%" props={agentsList(hosts, width, pane.notice ?? null, loading)} />
+  const heading = agentsHeading(kit, pane.notice)
+  const all = paneRows(hosts)
+  if (!all.length) {
+    return (
+      <Box flexDirection="column">
+        {heading}
+        {loading ? paneWaiting(kit, LOADING_SESSIONS, width) : paneEmpty(kit, NO_SESSIONS, width)}
+      </Box>
+    )
+  }
+  const counted = countWidth(all)
+  const room = Math.max(8, width - 4 - 6)
+  return (
+    <Box flexDirection="column">
+      {heading}
+      {hosts.map((host, hi) => (
+        <Box key={`host-${hi}`} flexDirection="column" borderStyle="round" paddingX={1}>
+          <Text bold wrap="truncate-end">
+            {host.heading}
+          </Text>
+          {host.folders.map((f, fi) => (
+            <Box key={`folder-${hi}-${fi}`} flexDirection="column" marginTop={fi === 0 ? 0 : 1}>
+              {folderHeading($, kit, surface, hi, f, room)}
+              {f.rows.map(r => agentRow($, kit, r, counted, room))}
+            </Box>
+          ))}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+type PaneHistory = { messages: AgentTabsMessage[]; total: number | null; older: number | null; failed: string | null }
+
+function backButton($: EngineInterface, kit: PaneKit) {
+  const { Button } = kit
+  return <Button key="back" label="Back" onPress={() => goUp($)} />
+}
+
+function messagesView($: EngineInterface, kit: PaneKit, pane: AgentTabsPane, agent: AgentTabsPick, history: PaneHistory, hosts: readonly AgentTabsPaneHost[], width: number) {
+  const { Box, Text, Button, Client } = kit
+  const { messages, total, older, failed } = history
+  if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, total, hosts, width, older, failed)} />
+  const where = sessionPlace(agent, hosts)
+  const dot = where ? DOT_COLORS[where.row.state] : undefined
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
+        {backButton($, kit)}
+      </Box>
+      <Text> </Text>
+      <Box flexDirection="column" paddingLeft={HEADER_INDENT}>
+        <Text bold wrap="truncate-end">
+          {withoutRef(agent.name)} · {total === null ? '…' : countLabel(total)}
+        </Text>
+        {where && (
+          <Box flexDirection="row">
+            {dot !== undefined ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
+            <Text dimColor wrap="truncate-end">
+              {detailLine(where.row)}
+            </Text>
+          </Box>
+        )}
+        {where && (
+          <Text dimColor wrap="truncate-end">
+            {[where.folder, where.host].filter(v => v !== null).join(' · ')}
+          </Text>
+        )}
+        {sessionDetails(agent) !== '' && (
+          <Text dimColor wrap="truncate-end">
+            {sessionDetails(agent)}
+          </Text>
+        )}
+      </Box>
+      <Text> </Text>
+      {messages.length === 0 &&
+        (total !== null ? (
+          paneEmpty(kit, NO_MESSAGES, width)
+        ) : failed !== null ? (
+          <Box flexDirection="column">
+            {paneEmpty(kit, READ_FAILED, width)}
+            <Box flexDirection="row" justifyContent="center">
+              <Button key="retry-history" label={RETRY_LABEL} onPress={() => retryHistory($)} />
+            </Box>
+          </Box>
+        ) : (
+          paneEmpty(kit, READING, width, true)
+        ))}
+      {messages.map(m => (
+        <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
+          <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
+            <Text>{ROW_MARK}</Text>
+          </Box>
+          <Button key={`msg:${m.id}`} plain label={messageLine(m, hosts, width - 2)} onPress={() => goTo($, { view: 'detail', message: m.id })} />
+        </Box>
+      ))}
+      {older ? (
+        <Box flexDirection="column" marginTop={1} paddingLeft={2}>
+          <Button key="older" plain dimColor label={olderLabel(older)} onPress={() => loadOlder($)} />
+        </Box>
+      ) : null}
+    </Box>
+  )
+}
+
+function detailHead(kit: PaneKit, m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[], width: number) {
+  const { Box, Text } = kit
+  const rows = detailRows(m, hosts)
+  const labelWidth = Math.max(...rows.map(r => r.label.length))
+  const valueRoom = Math.max(8, width - DETAIL_INDENT - labelWidth - DETAIL_GAP)
+  return (
+    <Box key="detail-head" flexDirection="column" marginTop={1} paddingLeft={DETAIL_INDENT}>
+      {rows.map(r => (
+        <Box key={`detail-${r.label}`} flexDirection="row" gap={DETAIL_GAP}>
+          <Text dimColor>{r.label.padStart(labelWidth)}</Text>
+          {r.party ? <Text wrap="truncate-end">{cut(r.value, Math.max(8, valueRoom - (r.id ? r.id.length + DETAIL_GAP : 0)))}</Text> : <Text dimColor wrap="truncate-end">{cut(r.value, valueRoom)}</Text>}
+          {r.id !== undefined && <Text dimColor>{r.id}</Text>}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
+async function detailView($: EngineInterface, kit: PaneKit, surface: RenderSurface, id: string, messages: readonly AgentTabsMessage[], hosts: readonly AgentTabsPaneHost[], width: number) {
+  const { Box, Text, Button, Client, Markdown } = kit
+  const m = messages.find(one => one.id === id)
+  const chips = Client ? <Client key="chips" module="./list.tsx" width="100%" props={detailChips(width)} /> : undefined
+  if (m === undefined) {
+    return (
+      <Box flexDirection="column">
+        {chips ?? (
+          <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
+            {backButton($, kit)}
+          </Box>
+        )}
+        <Text dimColor>That message is no longer in the 7-day log.</Text>
+      </Box>
+    )
+  }
+  const me = await storedSelf($)
+  const { value: whole = null } = await $.state.get(paneMessageRef)
+  const full = whole?.id === m.id ? whole : null
+  const length = full?.total ?? m.textLength ?? m.text.length
+  const known = full !== null && full.text.length > m.text.length ? full.text : m.text
+  const stage = full?.error ? 'failed' : known.length < length ? 'loading' : 'done'
+  const clipped = known.length > DRAW_CHARS
+  const body = clipped ? `${known.slice(0, DRAW_CHARS)}…` : known.length < length ? `${known}…` : known
+  const line = replyLine(m, me?.id, hosts)
+  return (
+    <Box flexDirection="column">
+      {chips ?? (
+        <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
+          <Box flexDirection="row" gap={2}>
+            {backButton($, kit)}
+            <Button key="reply" label="Reply" onPress={() => fillReply($, line)} />
+          </Box>
+        </Box>
+      )}
+      {detailHead(kit, m, hosts, width)}
+      <Box key="detail-body" flexDirection="column" marginTop={1} paddingX={2} paddingY={1}>
+        {Markdown ? markdownBlocks(body).map((block, i) => <Markdown key={`body-${i}`} text={block} />) : <Text wrap="wrap">{body}</Text>}
+      </Box>
+      {clipped && stage === 'done' && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>{drawnNote(length)}</Text>
+          {Client ? <Client key="copy" module="./list.tsx" props={copyChip()} /> : <Button key="copy-message" label={COPY_LABEL} onPress={() => copyMessage($, surface)} />}
+        </Box>
+      )}
+      {stage === 'loading' && (Client ? <Client key="loading" module="./list.tsx" width="100%" props={loadingList(LOADING_MESSAGE, width)} /> : paneWaiting(kit, LOADING_MESSAGE, width))}
+      {stage === 'failed' &&
+        (Client ? (
+          <Client key="retry" module="./list.tsx" width="100%" props={retryChip(width)} />
+        ) : (
+          <Box flexDirection="column" marginTop={1}>
+            {paneEmpty(kit, LOAD_FAILED, width)}
+            <Box flexDirection="row" justifyContent="center">
+              <Button key="retry" label={RETRY_LABEL} onPress={() => retryMessage($)} />
+            </Box>
+          </Box>
+        ))}
+    </Box>
+  )
 }
 
 export const register: Register = on => {
@@ -1444,10 +1774,10 @@ export const register: Register = on => {
   })
 
   on('session.end', async ($, e, next) => {
-    const { value: me } = await $.state.get(selfRef)
+    const me = await storedSelf($)
     if (me?.isDriver && !CONTINUING.includes(e.reason)) {
       await $.env.set('IDE_AGENT_TABS_MOD', undefined)
-      await callMod($, me.server, { op: 'presence', driver: false }).catch(() => undefined)
+      await callMod($, me.server, { op: 'presence', driver: false }).catch(quiet($, 'presence end', undefined))
       $.ui.status(undefined)
       await $.state.set(inboxRef, null)
     }
@@ -1457,7 +1787,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     await self($)
     await report($, 'busy')
-    await noteModel($, modelInfo(await $.session.model().catch(() => undefined), undefined))
+    await noteModel($, modelInfo(await $.session.model().catch(quiet($, 'session.model', undefined)), undefined))
     return next(e)
   })
 
@@ -1482,7 +1812,7 @@ export const register: Register = on => {
     const done = await next(e)
     if (e.agentId === undefined) {
       await report($, 'idle')
-      void poll($).catch(() => undefined)
+      void poll($).catch(quiet($, 'poll', undefined))
     }
     return done
   })
@@ -1510,7 +1840,7 @@ export const register: Register = on => {
     if (ran.deny !== undefined || ran.isError || next.origin.plugin === $.plugin.name) return ran
     const me = await self($)
     if (!me) return ran
-    const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
+    const rows = await sessions($, me.server)
     const listing = (ran.result as { listing?: unknown } | undefined)?.listing
     const merged = typeof listing === 'string' ? mergeListing(listing, rows, await $.clock.now()) : undefined
     if (merged === undefined) return ran
@@ -1526,7 +1856,7 @@ export const register: Register = on => {
   on('session.send', async ($, e, next) => {
     const me = await self($)
     if (!me) return next(e)
-    const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
+    const rows = await sessions($, me.server)
     const target = bridgeTarget(rows, e.to)
     if (target === undefined) {
       const sent = await next(e)
@@ -1553,21 +1883,22 @@ export const register: Register = on => {
     // Core validates `result` against a registered tool's output shape: a string, an array or undefined, never an object.
     const answer = (text: string) => ({ result: text, text })
     if (!me) return answer(MOD_OFF)
-    const agent = typeof (e as { agent?: unknown }).agent === 'string' ? ((e as { agent: string }).agent).trim() : ''
+    const asked = (e as { agent?: unknown }).agent
+    const agent = typeof asked === 'string' ? asked.trim() : ''
     if (agent === '') {
       const opened = await openPaneOn($, { view: 'agents', agent: null, message: null })
       return answer(opened.isPlaced ? `${PANE_TITLE} pane opened.` : WIDEN_NOTICE)
     }
-    const rows = await sessions($, me.server).catch(() => [] as SessionRow[])
+    const rows = await sessions($, me.server)
     const opened = await openPaneOn($, { view: 'messages', agent: senderPick(rows, agent, undefined), message: null })
     return answer(opened.isPlaced ? `${PANE_TITLE} pane opened on ${agent}'s messages.` : WIDEN_NOTICE)
   })
 
   on('tool.describe', { tool: PEER_TOOLS }, async ($, e, next) => {
     const described = await next(e)
-    const { value: me } = await $.state.get(selfRef)
+    const me = await storedSelf($)
     if (!me) return described
-    const internal = e.tool.endsWith('__agent_tabs_mod')
+    const internal = e.tool.endsWith(`__${MOD_TOOL}`)
     return {
       ...described,
       isDeferred: true,
@@ -1581,7 +1912,7 @@ export const register: Register = on => {
     if (e.props.isExpanded) return next(e)
     const origin = e.props.origin
     const ours = (origin.kind === 'plugin' && origin.name === $.plugin.name) || origin.kind === 'peer'
-    const { value: me } = await $.state.get(selfRef)
+    const me = await storedSelf($)
     const card = ours && me ? parseCard(e.props.text) : undefined
     if (card === undefined) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
@@ -1645,7 +1976,7 @@ export const register: Register = on => {
   })
 
   on('ui.close', { id: PANE }, async ($, e, next) => {
-    const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+    const pane = await storedPane($)
     if (e.origin.kind === 'person' && pane.view !== 'agents') {
       await goUp($)
       return { value: undefined }
@@ -1658,7 +1989,7 @@ export const register: Register = on => {
   on('ui.focus', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
     const moved = await next(e)
     if (e.element !== undefined && e.plugin === $.plugin.name) {
-      const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+      const pane = await storedPane($)
       if (pane.focus[pane.view] !== e.element) await $.state.set(paneRef, { ...pane, focus: { ...pane.focus, [pane.view]: e.element } })
     }
     return moved
@@ -1667,308 +1998,71 @@ export const register: Register = on => {
   on('ui.message', { component: 'Pane' }, async ($, e) => {
     if (e.requestId !== PANE || !isAct(e.data)) return {}
     const act = e.data
-    if (act.act === 'folder') await openFolder($, act.path)
-    else if (act.act === 'copy') await copyPath($, act.path, e.surface)
-    else if (act.act === 'back') await goUp($)
-    else if (act.act === 'older') await loadOlder($)
-    else if (act.act === 'retry') await retryMessage($)
-    else if (act.act === 'copy-message') await copyMessage($, e.surface)
-    else if (act.act === 'retry-history') await retryHistory($)
-    else if (act.act === 'message') await goTo($, { view: 'detail', message: act.id })
-    else if (act.act === 'session') {
-      const { value: hosts = [] } = await $.state.get(paneHostsRef)
-      const r = paneRows(hosts).find(one => one.key === act.key)
-      if (r) await goTo($, { view: 'messages', agent: { key: r.key, name: r.name, id: r.id, names: r.names }, message: null })
-    } else if (act.act === 'reply') {
-      const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
-      const { value: messages = [] } = await $.state.get(paneHistoryRef)
-      const { value: hosts = [] } = await $.state.get(paneHostsRef)
-      const { value: me } = await $.state.get(selfRef)
-      const m = messages.find(one => one.id === pane.message)
-      if (m) await fillReply($, replyLine(m, me?.id, hosts))
+    switch (act.act) {
+      case 'folder':
+        await openFolder($, act.path)
+        break
+      case 'copy':
+        await copyPath($, act.path, e.surface)
+        break
+      case 'back':
+        await goUp($)
+        break
+      case 'older':
+        await loadOlder($)
+        break
+      case 'retry':
+        await retryMessage($)
+        break
+      case 'copy-message':
+        await copyMessage($, e.surface)
+        break
+      case 'retry-history':
+        await retryHistory($)
+        break
+      case 'message':
+        await goTo($, { view: 'detail', message: act.id })
+        break
+      case 'session': {
+        const { value: hosts = [] } = await $.state.get(paneHostsRef)
+        const r = paneRows(hosts).find(one => one.key === act.key)
+        if (r) await goTo($, { view: 'messages', agent: { key: r.key, name: r.name, id: r.id, names: r.names }, message: null })
+        break
+      }
+      case 'reply': {
+        const pane = await storedPane($)
+        const { value: messages = [] } = await $.state.get(paneHistoryRef)
+        const { value: hosts = [] } = await $.state.get(paneHostsRef)
+        const me = await storedSelf($)
+        const m = messages.find(one => one.id === pane.message)
+        if (m) await fillReply($, replyLine(m, me?.id, hosts))
+        break
+      }
     }
     return {}
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const table = $.ui.resolve(e)
-    const { Box, Text, Button } = table
-    const Client = (e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in table ? table.Client : undefined
-    const { value: pane = DEFAULT_PANE } = await $.state.get(paneRef)
+    const kit: PaneKit = {
+      Box: table.Box,
+      Text: table.Text,
+      Button: table.Button,
+      Client: (e.surface === 'terminal' || e.surface === 'desktop') && 'Client' in table ? table.Client : undefined,
+      Markdown: 'Markdown' in table ? table.Markdown : undefined,
+    }
+    const pane = await storedPane($)
     const { value: loadedHosts } = await $.state.get(paneHostsRef)
     const hosts = loadedHosts ?? []
-    const loading = loadedHosts === undefined
     const width = Math.max(20, e.props.bodyColumns)
-    const empty = (text: string, italic = false) =>
-      centered(text, width).map((c, i) =>
-        italic ? (
-          <Text key={`empty-${i}`} dimColor italic>
-            {`${' '.repeat(c.indent)}${c.text}`}
-          </Text>
-        ) : (
-          <Text key={`empty-${i}`} dimColor>
-            {`${' '.repeat(c.indent)}${c.text}`}
-          </Text>
-        ),
-      )
-    const waiting = (text: string) => (
-      <Box key="loading" flexDirection="column" marginTop={1}>
-        {empty(text, true)}
-      </Box>
-    )
-
-    if (pane.view === 'agents' || pane.agent === null) {
-      if (Client) return <Client key="agents" module="./list.tsx" width="100%" props={agentsList(hosts, width, pane.notice ?? null, loading)} />
-      const heading = (
-        <Box flexDirection="column">
-          <Box flexDirection="row" justifyContent="space-between">
-            <Text bold>{PANE_TITLE}</Text>
-          </Box>
-          {pane.notice ? (
-            <Text color="suggestion" wrap="truncate-end">
-              {pane.notice}
-            </Text>
-          ) : null}
-        </Box>
-      )
-      const all = paneRows(hosts)
-      if (!all.length) {
-        return (
-          <Box flexDirection="column">
-            {heading}
-            {loading ? waiting(LOADING_SESSIONS) : empty(NO_SESSIONS)}
-          </Box>
-        )
-      }
-      const counted = countWidth(all)
-      const folderKey = (hi: number, f: AgentTabsPaneFolder) => `folder:${hi}:${f.path}`
-      const nameColor = (r: AgentTabsPaneRow) => (r.agentColor !== null ? NAME_COLORS[r.agentColor] : undefined)
-      const room = Math.max(8, width - 4 - 6)
-      const pick = (r: AgentTabsPaneRow): AgentTabsPick => ({ key: r.key, name: r.name, id: r.id, names: r.names })
-      const open = (r: AgentTabsPaneRow) => () => goTo($, { view: 'messages', agent: pick(r), message: null })
-      const line = (r: AgentTabsPaneRow) => {
-        const glyph = AGENT_GLYPHS[r.agent] ?? OTHER_GLYPH
-        const dot = DOT_COLORS[r.state]
-        const mark = (
-          <Box position="absolute" top={0} left={2} display="none" hover={{ display: 'flex' }}>
-            <Text>{ROW_MARK}</Text>
-          </Box>
-        )
-        return (
-          <Box key={`row-${r.key}`} flexDirection="column" marginTop={1}>
-            <Box flexDirection="row" paddingLeft={4}>
-              {mark}
-              {r.messages ? (
-                <Text bold>{countText(r).padStart(counted)} </Text>
-              ) : (
-                <Text bold dimColor>
-                  {countText(r).padStart(counted)}{' '}
-                </Text>
-              )}
-              <Text color={glyph.color}>{glyph.glyph} </Text>
-              {nameColor(r) !== undefined ? (
-                <Text color={nameColor(r)} hover={{ underline: true }}>
-                  {withoutRef(r.name)}
-                </Text>
-              ) : (
-                <Button key={`agent:${r.key}`} plain label={withoutRef(r.name)} hover={{ underline: true }} onPress={open(r)} />
-              )}
-              {r.self && (
-                <Text italic wrap="truncate-end">
-                  {THIS_SESSION}
-                </Text>
-              )}
-            </Box>
-            <Box flexDirection="row" paddingLeft={6}>
-              {mark}
-              {dot !== undefined ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
-              <Button key={`info:${r.key}`} plain dimColor label={cut(detailLine(r), Math.max(8, room - 2))} hover={{ underline: true }} onPress={open(r)} />
-            </Box>
-          </Box>
-        )
-      }
-      const folderHeading = (hi: number, f: AgentTabsPaneFolder) => {
-        if (f.heading === null) return null
-        if (f.path === null) {
-          return (
-            <Box paddingLeft={2}>
-              <Text bold>
-                {FOLDER_MARK}
-                {f.heading}
-              </Text>
-            </Box>
-          )
-        }
-        const path = f.path
-        const key = folderKey(hi, f)
-        const label = `${FOLDER_MARK}${f.heading}`
-        return (
-          <Box key={`heading-${key}`} flexDirection="row" paddingLeft={2}>
-            <Button key={key} plain label={label} onPress={() => openFolder($, path)} />
-            <Box position="absolute" top={0} left={label.length + 4} display="none" hover={{ display: 'flex' }}>
-              <Button key={`copy-${key}`} plain dimColor label={cut(path, Math.max(8, room - label.length))} onPress={() => copyPath($, path, e.surface)} />
-            </Box>
-          </Box>
-        )
-      }
-      return (
-        <Box flexDirection="column">
-          {heading}
-          {hosts.map((host, hi) => (
-            <Box key={`host-${hi}`} flexDirection="column" borderStyle="round" paddingX={1}>
-              <Text bold wrap="truncate-end">
-                {host.heading}
-              </Text>
-              {host.folders.map((f, fi) => (
-                <Box key={`folder-${hi}-${fi}`} flexDirection="column" marginTop={fi === 0 ? 0 : 1}>
-                  {folderHeading(hi, f)}
-                  {f.rows.map(line)}
-                </Box>
-              ))}
-            </Box>
-          ))}
-        </Box>
-      )
-    }
+    if (pane.view === 'agents' || pane.agent === null) return agentsView($, kit, e.surface, pane, hosts, width, loadedHosts === undefined)
 
     const { value: messages = [] } = await $.state.get(paneHistoryRef)
     const { value: total = null } = await $.state.get(paneTotalRef)
     const { value: older = null } = await $.state.get(paneOlderRef)
     const { value: failed = null } = await $.state.get(paneHistoryErrorRef)
-    const back = <Button key="back" label="Back" onPress={() => goUp($)} />
+    if (pane.view === 'messages' || pane.message === null) return messagesView($, kit, pane, pane.agent, { messages, total, older, failed }, hosts, width)
 
-    if (pane.view === 'messages' || pane.message === null) {
-      if (Client) return <Client key="messages" module="./list.tsx" width="100%" props={messagesList(pane, messages, total, hosts, width, older, failed)} />
-      const where = sessionPlace(pane.agent, hosts)
-      const dot = where ? DOT_COLORS[where.row.state] : undefined
-      return (
-        <Box flexDirection="column">
-          <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
-            {back}
-          </Box>
-          <Text> </Text>
-          <Box flexDirection="column" paddingLeft={HEADER_INDENT}>
-            <Text bold wrap="truncate-end">
-              {withoutRef(pane.agent.name)} · {total === null ? '…' : countLabel(total)}
-            </Text>
-            {where && (
-              <Box flexDirection="row">
-                {dot !== undefined ? <Text color={dot}>● </Text> : <Text dimColor>● </Text>}
-                <Text dimColor wrap="truncate-end">
-                  {detailLine(where.row)}
-                </Text>
-              </Box>
-            )}
-            {where && (
-              <Text dimColor wrap="truncate-end">
-                {[where.folder, where.host].filter(v => v !== null).join(' · ')}
-              </Text>
-            )}
-            {sessionDetails(pane.agent) !== '' && (
-              <Text dimColor wrap="truncate-end">
-                {sessionDetails(pane.agent)}
-              </Text>
-            )}
-          </Box>
-          <Text> </Text>
-          {messages.length === 0 &&
-            (total !== null ? (
-              empty(NO_MESSAGES)
-            ) : failed !== null ? (
-              <Box flexDirection="column">
-                {empty(READ_FAILED)}
-                <Box flexDirection="row" justifyContent="center">
-                  <Button key="retry-history" label={RETRY_LABEL} onPress={() => retryHistory($)} />
-                </Box>
-              </Box>
-            ) : (
-              empty(READING, true)
-            ))}
-          {messages.map(m => (
-            <Box key={`row-msg:${m.id}`} flexDirection="row" paddingLeft={2}>
-              <Box position="absolute" top={0} left={0} display="none" hover={{ display: 'flex' }}>
-                <Text>{ROW_MARK}</Text>
-              </Box>
-              <Button key={`msg:${m.id}`} plain label={messageLine(m, hosts, width - 2)} onPress={() => goTo($, { view: 'detail', message: m.id })} />
-            </Box>
-          ))}
-          {older ? (
-            <Box flexDirection="column" marginTop={1} paddingLeft={2}>
-              <Button key="older" plain dimColor label={olderLabel(older)} onPress={() => loadOlder($)} />
-            </Box>
-          ) : null}
-        </Box>
-      )
-    }
-
-    const m = messages.find(one => one.id === pane.message)
-    const chips = Client ? <Client key="chips" module="./list.tsx" width="100%" props={detailChips(width)} /> : undefined
-    if (m === undefined) {
-      return (
-        <Box flexDirection="column">
-          {chips ?? (
-            <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
-              {back}
-            </Box>
-          )}
-          <Text dimColor>That message is no longer in the 7-day log.</Text>
-        </Box>
-      )
-    }
-    const { value: me } = await $.state.get(selfRef)
-    const { value: whole = null } = await $.state.get(paneMessageRef)
-    const full = whole?.id === m.id ? whole : null
-    const length = full?.total ?? m.textLength ?? m.text.length
-    const known = full !== null && full.text.length > m.text.length ? full.text : m.text
-    const stage = full?.error ? 'failed' : known.length < length ? 'loading' : 'done'
-    const clipped = known.length > DRAW_CHARS
-    const body = clipped ? `${known.slice(0, DRAW_CHARS)}…` : known.length < length ? `${known}…` : known
-    const line = replyLine(m, me?.id, hosts)
-    const rows = detailRows(m, hosts)
-    const labelWidth = Math.max(...rows.map(r => r.label.length))
-    const valueRoom = Math.max(8, width - DETAIL_INDENT - labelWidth - DETAIL_GAP)
-    const Markdown = 'Markdown' in table ? table.Markdown : undefined
-    return (
-      <Box flexDirection="column">
-        {chips ?? (
-          <Box flexDirection="row" justifyContent="space-between" paddingLeft={1}>
-            <Box flexDirection="row" gap={2}>
-              <Button key="back" label="Back" onPress={() => goUp($)} />
-              <Button key="reply" label="Reply" onPress={() => fillReply($, line)} />
-            </Box>
-          </Box>
-        )}
-        <Box key="detail-head" flexDirection="column" marginTop={1} paddingLeft={DETAIL_INDENT}>
-          {rows.map(r => (
-            <Box key={`detail-${r.label}`} flexDirection="row" gap={DETAIL_GAP}>
-              <Text dimColor>{r.label.padStart(labelWidth)}</Text>
-              {r.party ? <Text wrap="truncate-end">{cut(r.value, Math.max(8, valueRoom - (r.id ? r.id.length + DETAIL_GAP : 0)))}</Text> : <Text dimColor wrap="truncate-end">{cut(r.value, valueRoom)}</Text>}
-              {r.id !== undefined && <Text dimColor>{r.id}</Text>}
-            </Box>
-          ))}
-        </Box>
-        <Box key="detail-body" flexDirection="column" marginTop={1} paddingX={2} paddingY={1}>
-          {Markdown ? markdownBlocks(body).map((block, i) => <Markdown key={`body-${i}`} text={block} />) : <Text wrap="wrap">{body}</Text>}
-        </Box>
-        {clipped && stage === 'done' && (
-          <Box flexDirection="column" marginTop={1}>
-            <Text dimColor>{drawnNote(length)}</Text>
-            {Client ? <Client key="copy" module="./list.tsx" props={copyChip()} /> : <Button key="copy-message" label={COPY_LABEL} onPress={() => copyMessage($, e.surface)} />}
-          </Box>
-        )}
-        {stage === 'loading' && (Client ? <Client key="loading" module="./list.tsx" width="100%" props={loadingList(LOADING_MESSAGE, width)} /> : waiting(LOADING_MESSAGE))}
-        {stage === 'failed' &&
-          (Client ? (
-            <Client key="retry" module="./list.tsx" width="100%" props={retryChip(width)} />
-          ) : (
-            <Box flexDirection="column" marginTop={1}>
-              {empty(LOAD_FAILED)}
-              <Box flexDirection="row" justifyContent="center">
-                <Button key="retry" label={RETRY_LABEL} onPress={() => retryMessage($)} />
-              </Box>
-            </Box>
-          ))}
-      </Box>
-    )
+    return detailView($, kit, e.surface, pane.message, messages, hosts, width)
   })
 }

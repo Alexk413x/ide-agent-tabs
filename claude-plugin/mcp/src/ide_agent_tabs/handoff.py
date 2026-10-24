@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import contextlib
 import os
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Callable, NamedTuple
 
-from .clock import iso, now_ms, parse_iso
+from .clock import iso, iso_ms, now_ms
 from .files import file_lock, read_text_if_exists, write_atomically, write_new_private_file
 from .jsjson import parse, stringify, trim, utf16_len
 from .messaging.messaging import MAX_WAIT_S
@@ -32,6 +31,7 @@ class HandoffDeps(NamedTuple):
     find_host: Callable[[str], str | None]
     random_id: Callable[[], str] | None = None
     now: Callable[[], float] | None = None
+    log: Callable[[str], None] | None = None
 
 
 def _new_handoff_id() -> str:
@@ -108,16 +108,54 @@ def _parse_record(text: str | None) -> HandoffRecord | None:
         return None
     if not isinstance(r.get("closeAfter"), bool):
         return None
-    if r.get("oldTab") is not None and not isinstance(r.get("oldTab"), str):
-        return None
-    if "oldTab" not in r:
+    if "oldTab" not in r or not (r["oldTab"] is None or isinstance(r["oldTab"], str)):
         return None
     return r
 
 
-def _ms(text: str) -> float:
-    found = parse_iso(text)
-    return float("nan") if found is None else float(found)
+def _brief_fields(given: Mapping[str, Any]) -> str:
+    if given.get("brief") is not None:
+        return given["brief"]
+    parts = [
+        given.get("goal"),
+        given.get("done"),
+        given.get("next"),
+        *(given.get("files") or []),
+        *(given.get("openQuestions") or []),
+    ]
+    return "".join(p or "" for p in parts)
+
+
+def _check_brief(given: Mapping[str, Any]) -> None:
+    goal = given.get("goal")
+    follow = given.get("next")
+    if given.get("brief") is None and not (goal is not None and trim(goal)) and not (follow is not None and trim(follow)):
+        raise ToolError("give a brief, or at least goal or next, so the new session knows the work")
+    if utf16_len(_brief_fields(given)) > MAX_BRIEF_CHARS:
+        raise ToolError(f"the brief exceeds {MAX_BRIEF_CHARS} characters; put long material in files and list their paths")
+
+
+def _new_tab_id(opened: Mapping[str, Any], brief: str) -> str:
+    value = opened.get("id")
+    new_tab = value if isinstance(value, str) else ""
+    if not is_session_id(new_tab):
+        raise ToolError(
+            "the new tab opened without a usable id, so it can't confirm the handoff; this session keeps the work and nothing was closed. "
+            f"The brief stays at {brief}."
+        )
+    return new_tab
+
+
+def _next_steps(new_tab: str, confirm_by: str, will_close: bool) -> str:
+    stay = "The new session then closes this tab. " if will_close else "This session stays open, marked as handed off. "
+    return (
+        f"Call wait_for_message with from set to {new_tab} and timeout {MAX_WAIT_S}; wait again if it returns empty before {confirm_by}. "
+        "When the takeover message arrives, finish only the current step, so no command runs and no file is half-written, "
+        'then call send_message to the sender with replyTo set to the message id and text "stopped", end your turn, and do nothing more on this work. '
+        f"{stay}"
+        f"If no takeover message comes by {confirm_by}, tell your user the new session never confirmed; "
+        "this tab stays open and keeps the work, and a later takeover message needs your user's OK."
+    )
 
 
 class Handoffs:
@@ -156,24 +194,7 @@ class Handoffs:
         return None if host is None else tab
 
     def start(self, given: Mapping[str, Any]) -> dict[str, Any]:
-        brief_text = given.get("brief")
-        if brief_text is not None:
-            fields = brief_text
-        else:
-            parts = [
-                given.get("goal"),
-                given.get("done"),
-                given.get("next"),
-                *(given.get("files") or []),
-                *(given.get("openQuestions") or []),
-            ]
-            fields = "".join(p or "" for p in parts)
-        goal = given.get("goal")
-        follow = given.get("next")
-        if brief_text is None and not (goal is not None and trim(goal)) and not (follow is not None and trim(follow)):
-            raise ToolError("give a brief, or at least goal or next, so the new session knows the work")
-        if utf16_len(fields) > MAX_BRIEF_CHARS:
-            raise ToolError(f"the brief exceeds {MAX_BRIEF_CHARS} characters; put long material in files and list their paths")
+        _check_brief(given)
         old_session = self.deps.session_id()
         handoff_id = (self.deps.random_id or _new_handoff_id)()
         if _HANDOFF_ID.fullmatch(handoff_id) is None:
@@ -187,22 +208,8 @@ class Handoffs:
         prompt = takeover_prompt(
             {"id": handoff_id, "brief": brief, "oldSession": old_session, "oldTab": old_tab, "closeAfter": close_after}
         )
-        request: dict[str, Any] = {"path": given["path"], "prompt": prompt}
-        for key in ("agent", "model", "via", "ide", "focus"):
-            if given.get(key) is not None:
-                request[key] = given[key]
-        try:
-            opened = self.deps.open_tab(request)
-        except Exception as e:
-            raise ToolError(
-                f"the new tab did not open, so this session keeps the work and nothing was closed: {error_text(e)}. The brief stays at {brief}."
-            ) from e
-        new_tab = opened.get("id") if isinstance(opened.get("id"), str) else ""
-        if not is_session_id(new_tab):
-            raise ToolError(
-                "the new tab opened without a usable id, so it can't confirm the handoff; this session keeps the work and nothing was closed. "
-                f"The brief stays at {brief}."
-            )
+        opened = self._open_new_tab(given, prompt, brief)
+        new_tab = _new_tab_id(opened, brief)
         record: HandoffRecord = {
             "id": handoff_id,
             "brief": brief,
@@ -217,36 +224,42 @@ class Handoffs:
         write_new_private_file(handoff_path(self.deps.home, handoff_id, "json"), stringify(record, 2))
         will_close = close_after and old_tab is not None
         if not will_close:
-            with contextlib.suppress(Exception):
-                update_presence(self.deps.home, old_session, lambda p: p if p is None else {**p, "handedOffTo": new_tab})
-        stay = "The new session then closes this tab. " if will_close else "This session stays open, marked as handed off. "
-        result: dict[str, Any] = {
-            "handoff": handoff_id,
-            "brief": brief,
-            "newTab": new_tab,
-            "ide": opened.get("ide"),
-            "agent": opened.get("agent"),
-            "oldTab": old_tab,
-            "closeAfter": will_close,
-            "confirmBy": record["confirmBy"],
-            "next": (
-                f"Call wait_for_message with from set to {new_tab} and timeout {MAX_WAIT_S}; wait again if it returns empty before {record['confirmBy']}. "
-                "When the takeover message arrives, finish only the current step, so no command runs and no file is half-written, "
-                'then call send_message to the sender with replyTo set to the message id and text "stopped", end your turn, and do nothing more on this work. '
-                f"{stay}"
-                f"If no takeover message comes by {record['confirmBy']}, tell your user the new session never confirmed; "
-                "this tab stays open and keeps the work, and a later takeover message needs your user's OK."
-            ),
-        }
-        if "ide" not in opened:
-            del result["ide"]
-        if "agent" not in opened:
-            del result["agent"]
+            self._mark_handed_off(old_session, new_tab)
+        result: dict[str, Any] = {"handoff": handoff_id, "brief": brief, "newTab": new_tab}
+        for key in ("ide", "agent"):
+            if key in opened:
+                result[key] = opened[key]
+        result["oldTab"] = old_tab
+        result["closeAfter"] = will_close
+        result["confirmBy"] = record["confirmBy"]
+        result["next"] = _next_steps(new_tab, record["confirmBy"], will_close)
         if opened.get("note") is not None:
             result["note"] = opened["note"]
         if setting.get("warning") is not None:
             result["warning"] = setting["warning"]
         return result
+
+    def _open_new_tab(self, given: Mapping[str, Any], prompt: str, brief: str) -> dict[str, Any]:
+        request: dict[str, Any] = {"path": given["path"], "prompt": prompt}
+        for key in ("agent", "model", "via", "ide", "focus"):
+            if given.get(key) is not None:
+                request[key] = given[key]
+        try:
+            return self.deps.open_tab(request)
+        except Exception as e:
+            raise ToolError(
+                f"the new tab did not open, so this session keeps the work and nothing was closed: {error_text(e)}. The brief stays at {brief}."
+            ) from e
+
+    def _mark_handed_off(self, old_session: str, new_tab: str) -> None:
+        try:
+            update_presence(self.deps.home, old_session, lambda p: p if p is None else {**p, "handedOffTo": new_tab})
+        except Exception as e:  # noqa: BLE001
+            self._log(f"marking session {old_session} as handed off failed: {e}")
+
+    def _log(self, message: str) -> None:
+        if self.deps.log is not None:
+            self.deps.log(message)
 
     def _records(self) -> list[HandoffRecord]:
         folder = os.path.join(self.deps.home, HANDOFFS_DIR)
@@ -266,12 +279,12 @@ class Handoffs:
         return records
 
     def confirmation(self, r: HandoffRecord) -> dict[str, Any]:
-        deadline = _ms(r["confirmBy"])
-        created = _ms(r["createdAt"])
+        deadline = iso_ms(r["confirmBy"])
+        created = iso_ms(r["createdAt"])
         takeovers = [
             m
             for m in mail_to(self.deps.home, r["oldSession"])
-            if m["from"]["id"] == r["newTab"] and created <= _ms(m["sentAt"]) <= deadline
+            if m["from"]["id"] == r["newTab"] and created <= iso_ms(m["sentAt"]) <= deadline
         ]
         replies = [m for m in mail_to(self.deps.home, r["newTab"]) if m["from"]["id"] == r["oldSession"] and m.get("replyTo") is not None]
         for takeover in takeovers:
@@ -304,7 +317,10 @@ class Handoffs:
                 f"wait_for_message with replyTo {takeover['id']}, then close"
             )
         file = handoff_path(self.deps.home, record["id"], "json")
-        with contextlib.suppress(Exception), file_lock(file):
-            current = _parse_record(read_text_if_exists(file)) or record
-            confirmed = {**current, "takeoverId": takeover["id"], "stoppedId": stopped["id"], "confirmedAt": iso(int(self._now()))}
-            write_atomically(file, stringify(confirmed, 2))
+        try:
+            with file_lock(file):
+                current = _parse_record(read_text_if_exists(file)) or record
+                confirmed = {**current, "takeoverId": takeover["id"], "stoppedId": stopped["id"], "confirmedAt": iso(int(self._now()))}
+                write_atomically(file, stringify(confirmed, 2))
+        except Exception as e:  # noqa: BLE001
+            self._log(f"recording the confirmation of handoff {record['id']} failed: {e}")

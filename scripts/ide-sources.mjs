@@ -1,14 +1,13 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { root } from './shared.mjs';
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const BINARY = /\.(png|jpe?g|gif|ico|woff2?|ttf|jar|zip|vsix)$/i;
 
 const SOURCES = {
-  vscode: ['src', 'package.json', 'resources'],
-  jetbrains: ['src/main', 'build.gradle.kts', 'gradle.properties', 'settings.gradle.kts'],
+  vscode: ['src', 'package.json', 'package-lock.json', 'tsconfig.json', 'esbuild.mjs', '.vscodeignore', 'resources'],
+  jetbrains: ['src/main', 'build.gradle.kts', 'gradle.properties', 'settings.gradle.kts', 'gradle/wrapper/gradle-wrapper.properties'],
 };
 
 const filesUnder = (base, rel) => {
@@ -20,10 +19,13 @@ const filesUnder = (base, rel) => {
 
 export function hashIdeSources(ide, base = root) {
   const dir = path.join(base, ide);
-  const files = SOURCES[ide].flatMap((entry) => filesUnder(dir, entry)).sort();
+  const files = [
+    ...SOURCES[ide].flatMap((entry) => filesUnder(dir, entry)).map((file) => [dir, file]),
+    ...filesUnder(base, 'shared').map((file) => [base, file]),
+  ].sort(([, a], [, b]) => (a < b ? -1 : a > b ? 1 : 0));
   const hash = createHash('sha256');
-  for (const file of files) {
-    const bytes = readFileSync(path.join(dir, file));
+  for (const [from, file] of files) {
+    const bytes = readFileSync(path.join(from, file));
     const content = BINARY.test(file) ? bytes : Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'));
     hash.update(`${file}\n${createHash('sha256').update(content).digest('hex')}\n`);
   }

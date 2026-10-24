@@ -3,10 +3,10 @@ from __future__ import annotations
 import contextlib
 import os
 import re
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from ..files import ensure_private_dir, read_text_if_exists, remove_file, write_atomically, write_new_private_file
-from ..jsjson import parse, stringify, trim
+from ..jsjson import is_number, parse, stringify, trim
 
 SERVICE = "ide-agent-tabs"
 DEFAULT_PORT = 47828
@@ -20,6 +20,10 @@ HEADER_AGENT = "x-agent-tabs-agent"
 HEADER_PID = "x-agent-tabs-pid"
 HEADER_PID_START = "x-agent-tabs-pid-start"
 HEADER_CWD = "x-agent-tabs-cwd"
+GENERATED_ID_PREFIX = "s-"
+CODEX_ID_PREFIX = "codex-"
+TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+AGENT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _PORT = re.compile("[0-9]{1,5}")
 _TOKEN = re.compile("[0-9a-f]{64}")
 _LOOPBACK_URL = re.compile(r"http://127\.0\.0\.1:([0-9]{1,5})(?:[/?#].*)?", re.IGNORECASE | re.DOTALL)
@@ -61,10 +65,6 @@ def new_token() -> str:
     return os.urandom(32).hex()
 
 
-def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
 def read_token(home: str) -> str | None:
     try:
         text = read_text_if_exists(token_path(home))
@@ -86,7 +86,7 @@ def read_state(home: str, port: int) -> ServerState | None:
     pid = data.get("pid")
     token = data.get("shutdownToken")
     version = data.get("version")
-    if not isinstance(pid, (int, float)) or isinstance(pid, bool) or not _is_number(data.get("port")) or data.get("port") != port:
+    if not isinstance(pid, (int, float)) or isinstance(pid, bool) or not is_number(data.get("port")) or data.get("port") != port:
         return None
     if not isinstance(token, str) or not isinstance(version, str):
         return None

@@ -3,8 +3,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-export const PROTOCOL_VERSION = 1;
-export const HOME_ENV = 'IDE_AGENT_TABS_HOME';
+const PROTOCOL_VERSION = 1;
+const HOME_ENV = 'IDE_AGENT_TABS_HOME';
 export const ENDPOINT_BASE = '/ide-agent-tabs';
 export const ENDPOINT_BEAT_MS = 60_000;
 
@@ -25,7 +25,7 @@ export function endpointFileName(pid: number, windowId: string): string {
   return `vscode-${pid}-${windowId}.json`;
 }
 
-export interface Endpoint {
+interface Endpoint {
   product: string;
   version: string;
   pid: number;
@@ -68,10 +68,10 @@ export function writeAtomically(target: string, content: string, secret = false)
   return target;
 }
 
-export function beatEndpoint(file: string, content: string, secret = true, now = new Date()): void {
+export function beatEndpoint(file: string, content: string, now = new Date()): void {
   try {
     fs.utimesSync(file, now, now);
   } catch {
-    writeAtomically(file, content, secret);
+    writeAtomically(file, content, true);
   }
 }

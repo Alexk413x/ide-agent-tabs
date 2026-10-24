@@ -4,11 +4,12 @@ import functools
 import os
 import socket
 import sys
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from typing import Any, NamedTuple
 
-from ..jsjson import js_ordered, parse, stringify
+from ..jsjson import is_number, js_ordered, parse, stringify
 from ..version import compare_versions
 from .state import SERVICE, ServerState, read_state, read_token
 
@@ -54,7 +55,7 @@ def _wsa_ioctl() -> Any:
 
 
 # Windows retries a refused SYN for about two seconds, so a probe of a free port would time out and read as
-# "another program" instead of "free"; libuv turns the retries off for loopback the same way.
+# "another program" instead of "free".
 def _no_syn_retries(sock: socket.socket) -> None:
     if sys.platform != "win32":
         return
@@ -135,10 +136,6 @@ def request(
         sock.close()
 
 
-def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
 def probe(port: int, timeout_ms: float = HEALTH_TIMEOUT_MS) -> Probe:
     reply = request(port, "GET", "/health", None, timeout_ms)
     if reply is None:
@@ -151,7 +148,7 @@ def probe(port: int, timeout_ms: float = HEALTH_TIMEOUT_MS) -> Probe:
         reply.status == 200
         and isinstance(health, dict)
         and health.get("service") == SERVICE
-        and _is_number(health.get("pid"))
+        and is_number(health.get("pid"))
         and isinstance(health.get("version"), str)
     ):
         return Probe("ours", js_ordered(health))
@@ -199,43 +196,22 @@ def server_command(launcher: str, port: int, python: str | None = None) -> list[
 
 
 def start_server(command: Sequence[str], home: str, env: Mapping[str, str] | None = None) -> int | None:
-    import subprocess
-
-    from ..processes import CREATE_BREAKAWAY_FROM_JOB, detached_flags
-    from ..terminals.processes import terminal_environment
+    from ..processes import spawn_detached, terminal_environment
 
     child_env = terminal_environment(os.environ if env is None else env)
     child_env["IDE_AGENT_TABS_HOME"] = home
     # The helper runs in the plugin's versioned folder; a server left in it would keep Windows from removing
     # that folder when the plugin updates.
     cwd = os.path.expanduser("~")
-    for flags in (detached_flags(), detached_flags() & ~CREATE_BREAKAWAY_FROM_JOB):
-        try:
-            child = subprocess.Popen(
-                list(command),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=child_env,
-                cwd=cwd,
-                creationflags=flags,
-                start_new_session=sys.platform != "win32",
-            )
-        except PermissionError:
-            # A job object that forbids breakaway refuses CREATE_BREAKAWAY_FROM_JOB with access denied.
-            if sys.platform != "win32":
-                return None
-            continue
-        except OSError:
-            return None
-        if sys.platform != "win32":
-            # On POSIX a server that exits while its starter still runs stays a zombie until the starter reaps it,
-            # and pid_alive counts a zombie as running.
-            import threading
-
-            threading.Thread(target=child.wait, daemon=True).start()
-        return child.pid
-    return None
+    try:
+        child = spawn_detached(command, child_env, cwd)
+    except OSError:
+        return None
+    if sys.platform != "win32":
+        # On POSIX a server that exits while its starter still runs stays a zombie until the starter reaps it,
+        # and pid_alive counts a zombie as running.
+        threading.Thread(target=child.wait, daemon=True).start()
+    return child.pid
 
 
 class Ensured(NamedTuple):

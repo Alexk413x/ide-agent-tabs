@@ -1,4 +1,3 @@
-# Sourced by bash or zsh from the tab's startup command, after the user's startup files.
 __ide_agent_tabs() {
     [ -n "${ZSH_VERSION-}" ] && emulate -L zsh
     local -a a

@@ -12,9 +12,9 @@ import sys
 import threading
 from typing import Any, Callable, NamedTuple, cast
 
-from ..jsjson import js_string, parse, stringify
+from ..jsjson import MAX_SAFE_INTEGER, js_string, parse, stringify
 from .hub import ROOTS_REQUEST, Identity
-from .state import HEADER_AGENT, HEADER_CLIENT, HEADER_CWD, HEADER_PID, HEADER_PID_START, HEADER_TAB
+from .state import AGENT_NAME, HEADER_AGENT, HEADER_CLIENT, HEADER_CWD, HEADER_PID, HEADER_PID_START, HEADER_TAB, TAB_ID
 
 MODERN_PROTOCOL = "2026-07-28"
 CLASSIC_PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
@@ -44,10 +44,7 @@ NOT_ONE_MESSAGE = "Body must be a single JSON-RPC request or notification object
 CLAUDE_AGENT = "claude"
 MAX_CWD_CHARS = 1024
 _CLIENT_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
-_TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
-_AGENT_NAME = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _DIGITS = re.compile(r"[0-9]{1,16}")
-_MAX_SAFE_INTEGER = 2**53 - 1
 _WATCH_POLL_S = 0.25
 _WATCH_LIMIT = 500
 _DISCARD_LIMIT = 1024 * 1024
@@ -79,7 +76,7 @@ class FrontDeps(NamedTuple):
     server_info: dict[str, str]
     health: Callable[[], dict[str, Any]]
     tools: Callable[[str], list[dict[str, Any]]]
-    instructions: Callable[[str], str]
+    instructions: Callable[[], str]
     call: Callable[[Identity, dict[str, Any], threading.Event], dict[str, Any]]
     end: Callable[[int], int]
     on_request: Callable[[], None]
@@ -90,24 +87,29 @@ def positive_int(value: str | None, minimum: int) -> int | None:
     if value is None or not _DIGITS.fullmatch(value):
         return None
     number = int(value)
-    return number if minimum <= number <= _MAX_SAFE_INTEGER else None
+    return number if minimum <= number <= MAX_SAFE_INTEGER else None
 
 
 def percent_decoded(text: str) -> str:
     return _PERCENT_RUN.sub(lambda m: bytes.fromhex(m.group().replace("%", "")).decode("utf-8", "replace"), text)
 
 
+def _valid_request_id(request_id: Any) -> bool:
+    valid_number = isinstance(request_id, (int, float)) and not isinstance(request_id, bool) and math.isfinite(request_id)
+    return isinstance(request_id, str) or valid_number
+
+
 def _bearer(value: str | None, expected: str) -> bool:
     import hmac
 
     parts = (value or "").split(" ")
-    if len(parts) < 1 or parts[0].lower() != "bearer" or expected == "":
+    if parts[0].lower() != "bearer" or expected == "":
         return False
     token = (parts[1] if len(parts) > 1 else "").strip()
     return hmac.compare_digest(token.encode("utf-8"), expected.encode("utf-8"))
 
 
-# A client that drops its connection while a tool call runs cancels the call, as Node's response 'close' does.
+# A client that drops its connection while a tool call runs cancels the call.
 # One thread watches every open call's socket for the end of the stream.
 class DropWatch:
     def __init__(self) -> None:
@@ -276,8 +278,8 @@ class Handler(socketserver.StreamRequestHandler):
         pid_start = positive_int(self.header(HEADER_PID_START), 0)
         return Identity(
             client if client is not None and _CLIENT_ID.fullmatch(client) else None,
-            tab if tab is not None and _TAB_ID.fullmatch(tab) else None,
-            agent if agent is not None and _AGENT_NAME.fullmatch(agent) else None,
+            tab if tab is not None and TAB_ID.fullmatch(tab) else None,
+            agent if agent is not None and AGENT_NAME.fullmatch(agent) else None,
             pid,
             pid_start if pid is not None else None,
         )
@@ -316,28 +318,17 @@ class Handler(socketserver.StreamRequestHandler):
         self.send(STATUS.get(error.code, 200), {"jsonrpc": "2.0", "id": request_id, "error": body})
 
     def route(self) -> None:
-        front = self.front
-        deps = front.deps
-        if (self.header("host") or "").lower() not in front.hosts:
-            self.refuse(403, "Host is not this server")
-            return
-        origin = self.header("origin")
-        if origin is not None and origin.lower() not in front.origins:
-            self.refuse(403, "Origin not allowed")
+        deps = self.front.deps
+        refusal = self._origin_refusal()
+        if refusal is not None:
+            self.refuse(403, refusal)
             return
         path = self.path.split("?", 1)[0]
         if path == "/health" and self.command == "GET":
             self.send(200, deps.health())
             return
         if path == "/shutdown":
-            if not _bearer(self.header("authorization"), deps.shutdown_token):
-                self.refuse(403, "missing or wrong bearer token")
-                return
-            if self.command != "POST":
-                self.refuse(405, "use POST")
-                return
-            self.send(200, {"ok": True}, close=True)
-            deps.on_shutdown()
+            self._shutdown()
             return
         # A 401 starts Claude Code's OAuth flow, which this server doesn't offer, so a bad token gets 403.
         if not _bearer(self.header("authorization"), deps.token):
@@ -349,10 +340,33 @@ class Handler(socketserver.StreamRequestHandler):
         if path != "/mcp":
             self.refuse(404, "not found")
             return
+        self._mcp_post()
+
+    def _origin_refusal(self) -> str | None:
+        front = self.front
+        if (self.header("host") or "").lower() not in front.hosts:
+            return "Host is not this server"
+        origin = self.header("origin")
+        if origin is not None and origin.lower() not in front.origins:
+            return "Origin not allowed"
+        return None
+
+    def _shutdown(self) -> None:
+        deps = self.front.deps
+        if not _bearer(self.header("authorization"), deps.shutdown_token):
+            self.refuse(403, "missing or wrong bearer token")
+            return
+        if self.command != "POST":
+            self.refuse(405, "use POST")
+            return
+        self.send(200, {"ok": True}, close=True)
+        deps.on_shutdown()
+
+    def _mcp_post(self) -> None:
         if self.command != "POST":
             self.send(405, close=True, headers={"Allow": "POST"})
             return
-        deps.on_request()
+        self.front.deps.on_request()
         accept = self.header("accept") or ""
         if "application/json" not in accept and "*/*" not in accept:
             self.refuse(406, "accept application/json")
@@ -432,61 +446,72 @@ class Handler(socketserver.StreamRequestHandler):
             self.classic_message(msg)
             return
 
-        def unsupported(request_id: Any) -> None:
-            data = {"supported": [MODERN_PROTOCOL, *CLASSIC_PROTOCOLS], "requested": version or ""}
-            self.rpc_error(request_id, RpcError(UNSUPPORTED_VERSION, "Unsupported protocol version", data))
-
         if "id" not in msg:
             if version != MODERN_PROTOCOL:
-                unsupported(None)
+                self._unsupported(None, version)
             else:
                 self.send(202)
             return
         request_id = msg["id"]
-        valid_number = isinstance(request_id, (int, float)) and not isinstance(request_id, bool) and math.isfinite(request_id)
-        if not isinstance(request_id, str) and not valid_number:
+        if not _valid_request_id(request_id):
             self.rpc_error(None, RpcError(INVALID_REQUEST, NOT_ONE_MESSAGE))
             return
         if version != MODERN_PROTOCOL:
-            unsupported(request_id)
-            return
-        params = msg.get("params")
-        meta = params.get("_meta") if isinstance(params, dict) else None
-        if not isinstance(params, dict) or not isinstance(meta, dict) or VERSION_KEY not in meta or CAPABILITIES_KEY not in meta:
-            text = f"params._meta must carry the {VERSION_KEY} and {CAPABILITIES_KEY} keys"
-            self.rpc_error(request_id, RpcError(INVALID_PARAMS, text))
+            self._unsupported(request_id, version)
             return
         method = msg["method"]
+        try:
+            params = self._modern_params(method, msg.get("params"), version)
+        except RpcError as e:
+            self.rpc_error(request_id, e)
+            return
+        self._answer(request_id, method, lambda: self.dispatch(method, params), self._modern_result)
+
+    def _unsupported(self, request_id: Any, version: str | None) -> None:
+        data = {"supported": [MODERN_PROTOCOL, *CLASSIC_PROTOCOLS], "requested": version or ""}
+        self.rpc_error(request_id, RpcError(UNSUPPORTED_VERSION, "Unsupported protocol version", data))
+
+    def _modern_params(self, method: str, params: Any, version: str) -> dict[str, Any]:
+        meta = params.get("_meta") if isinstance(params, dict) else None
+        if not isinstance(params, dict) or not isinstance(meta, dict) or VERSION_KEY not in meta or CAPABILITIES_KEY not in meta:
+            raise RpcError(INVALID_PARAMS, f"params._meta must carry the {VERSION_KEY} and {CAPABILITIES_KEY} keys")
         if meta[VERSION_KEY] != version:
-            text = "mcp-protocol-version header does not match the request envelope's protocol version"
-            self.rpc_error(request_id, RpcError(HEADER_MISMATCH, text))
-            return
+            raise RpcError(HEADER_MISMATCH, "mcp-protocol-version header does not match the request envelope's protocol version")
         if self.header("mcp-method") != method:
-            self.rpc_error(request_id, RpcError(HEADER_MISMATCH, "mcp-method header does not match the request body's method"))
-            return
+            raise RpcError(HEADER_MISMATCH, "mcp-method header does not match the request body's method")
         if (
             method == "tools/call"
             and isinstance(params.get("name"), str)
             and percent_decoded(self.header("mcp-name") or "") != params["name"]
         ):
-            self.rpc_error(request_id, RpcError(HEADER_MISMATCH, "mcp-name header does not match the request body's name"))
-            return
+            raise RpcError(HEADER_MISMATCH, "mcp-name header does not match the request body's name")
         capabilities = meta[CAPABILITIES_KEY]
         if method == "tools/call" and "inputResponses" not in params and not (isinstance(capabilities, dict) and "roots" in capabilities):
-            params = {**params, "inputResponses": self.classic_roots()}
+            return {**params, "inputResponses": self.classic_roots()}
+        return params
+
+    def _modern_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        return {"resultType": "complete", "_meta": {SERVER_INFO_KEY: self.front.deps.server_info}, **result}
+
+    def _answer(
+        self,
+        request_id: Any,
+        method: str,
+        call: Callable[[], dict[str, Any] | None],
+        wrap: Callable[[dict[str, Any]], dict[str, Any]],
+    ) -> None:
         try:
-            result = self.dispatch(method, params)
+            result = call()
         except RpcError as e:
             self.rpc_error(request_id, e)
             return
-        except Exception as e:  # noqa: BLE001 - any tool failure becomes a JSON-RPC error, as the Node front answers
+        except Exception as e:  # noqa: BLE001 - any tool failure becomes a JSON-RPC error
             self.rpc_error(request_id, RpcError(INTERNAL_ERROR, str(e)))
             return
         if result is None:
             self.rpc_error(request_id, RpcError(METHOD_NOT_FOUND, "Method not found", method))
             return
-        meta_out = {SERVER_INFO_KEY: self.front.deps.server_info}
-        self.send(200, {"jsonrpc": "2.0", "id": request_id, "result": {"resultType": "complete", "_meta": meta_out, **result}})
+        self.send(200, {"jsonrpc": "2.0", "id": request_id, "result": wrap(result)})
 
     # Codex and other clients that open with `initialize` get the classic, stateless form: no session id, no
     # roots request (the folder comes from X-Agent-Tabs-Cwd), and plain JSON results. A modern client that declares
@@ -496,25 +521,13 @@ class Handler(socketserver.StreamRequestHandler):
             self.send(202)
             return
         request_id = msg["id"]
-        valid_number = isinstance(request_id, (int, float)) and not isinstance(request_id, bool) and math.isfinite(request_id)
-        if not isinstance(request_id, str) and not valid_number:
+        if not _valid_request_id(request_id):
             self.rpc_error(None, RpcError(INVALID_REQUEST, NOT_ONE_MESSAGE))
             return
         method = msg["method"]
         params = msg.get("params")
         params = params if isinstance(params, dict) else {}
-        try:
-            result = self.classic_dispatch(method, params)
-        except RpcError as e:
-            self.rpc_error(request_id, e)
-            return
-        except Exception as e:  # noqa: BLE001 - any tool failure becomes a JSON-RPC error, as in the modern path
-            self.rpc_error(request_id, RpcError(INTERNAL_ERROR, str(e)))
-            return
-        if result is None:
-            self.rpc_error(request_id, RpcError(METHOD_NOT_FOUND, "Method not found", method))
-            return
-        self.send(200, {"jsonrpc": "2.0", "id": request_id, "result": result})
+        self._answer(request_id, method, lambda: self.classic_dispatch(method, params), lambda result: result)
 
     def classic_roots(self) -> dict[str, Any]:
         cwd = percent_decoded(self.header(HEADER_CWD) or "")
@@ -541,7 +554,7 @@ class Handler(socketserver.StreamRequestHandler):
                 "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": False}},
                 "serverInfo": deps.server_info,
-                "instructions": deps.instructions(self.classic_agent()),
+                "instructions": deps.instructions(),
             }
         if method == "tools/list":
             return {"tools": deps.tools(self.classic_agent())}
@@ -557,8 +570,7 @@ class Handler(socketserver.StreamRequestHandler):
         deps = self.front.deps
         if method == "server/discover":
             capabilities = {"tools": {"listChanged": False}}
-            instructions = deps.instructions(self.identity().agent or CLAUDE_AGENT)
-            return {**LISTED, "supportedVersions": [MODERN_PROTOCOL], "capabilities": capabilities, "instructions": instructions}
+            return {**LISTED, "supportedVersions": [MODERN_PROTOCOL], "capabilities": capabilities, "instructions": deps.instructions()}
         if method == "tools/list":
             return {"tools": deps.tools(self.identity().agent or CLAUDE_AGENT), **LISTED}
         if method == "ping":

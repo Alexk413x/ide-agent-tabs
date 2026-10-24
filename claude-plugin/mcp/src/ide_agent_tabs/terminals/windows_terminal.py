@@ -6,14 +6,14 @@ import re
 import sys
 
 from ..clock import now_ms
-from ..files import write_new_private_file
+from ..files import discard_file, write_new_private_file
 from ..installed import exists, find_on_path
 from ..jsjson import is_safe_integer
-from ..processes import run
+from ..processes import run, terminal_environment
 from ..spec import LaunchSpec, power_shell_spec
 from .driver import OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
 from .powershell import default_power_shell
-from .processes import STARTUP_GRACE_MS, read_pid, start_detached, terminal_environment
+from .processes import STARTUP_GRACE_MS, read_pid, start_detached
 from .shell import LAUNCHER_PS1, check_argv_paths, tab_title
 from .window_memory import DEDICATED_NAME
 
@@ -100,8 +100,7 @@ class WindowsTerminal(TerminalDriver):
         try:
             start_detached(wt, args, terminal_environment(ctx.env), WT_SETTLE_MS)
         except BaseException:
-            with contextlib.suppress(OSError):
-                os.remove(spec_file)
+            discard_file(spec_file)
             raise
         tab: TerminalTab = {
             "id": spec.id,

@@ -1,11 +1,12 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { root } from './shared.mjs';
 
-const plugin = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'claude-plugin');
+const plugin = path.join(root, 'claude-plugin');
 
-// The release tree drops evals/ and *.test.tsx; dist/ide/ holds the IDE packages, and the .tsx mods run inside Claude Code.
-const NOT_SHIPPED = /^(evals\/|dist\/ide\/)|\.test\.tsx$/;
+// The release tree drops evals/; dist/ide/ holds the IDE packages, and the .tsx mods run inside Claude Code.
+const NOT_SHIPPED = /^(evals\/|dist\/ide\/)/;
 const NODE_RUNTIME = /\.(mjs|cjs)$|(^|\/)package(-lock)?\.json$/;
 const NODE_COMMANDS = [
   /(^|[\s"'`(=;&|])node(\.exe)?["']?\s+("[^"]*|'[^']*|\S*)\.[mc]?js\b/m,

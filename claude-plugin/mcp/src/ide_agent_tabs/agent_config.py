@@ -7,11 +7,10 @@ from typing import Any, NamedTuple
 
 from .jsjson import stringify
 from .messaging.hook import HOOK_EVENTS
-from .profiles import AGENT_ENV, TAB_ID_ENV
+from .profiles import AGENT_ENV, TAB_ID_ENV, ConfigError
 from .yaml_block import YamlDoc
 
-HOOK_AGENTS = ("codex", "copilot", "agy", "grok", "hermes", "qwen", "goose")
-SETTINGS_AGENTS = ("codex", "qwen")
+HOOK_AGENTS = tuple(cli for cli in HOOK_EVENTS if cli != "claude")
 AGY_HOOK_GROUP = "ide-agent-tabs"
 # Only tools that read or message: open_tab, close_tab and handoff start or stop agents, and jev_ sends text
 # off the machine, so those keep Antigravity CLI's own per-call confirmation.
@@ -36,10 +35,6 @@ _BARE_POSIX = re.compile(r"[A-Za-z0-9_\-./:]+\Z")
 _POSIX_SAFE = re.compile(r"[A-Za-z0-9_@%+=:,./-]+\Z")
 _HOOK_PATH_END = re.compile(r"(?:[\\/]agent-hook\.mjs|[\\/]mcp[\\/]py[\\/]launch[\\/]agent_hook\.py)(?:[\"'\s]|$)")
 _CODEX_TABLE = re.compile(r"^\[\s*mcp_servers\s*\.\s*(?:ide-agent-tabs|\"ide-agent-tabs\"|'ide-agent-tabs')\s*\]\s*(?:#.*)?$")
-
-
-class ConfigError(ValueError):
-    pass
 
 
 class HookTarget(NamedTuple):

@@ -4,8 +4,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import { beatEndpoint, endpointFileName, endpointJson, ideAgentTabsHome, newToken, newWindowId, writeAtomically } from '../registry';
+import { tempDir } from './support';
 
-const home = fs.mkdtempSync(path.join(os.tmpdir(), 'iat-home-'));
+const home = tempDir('iat-home-');
 const token = newToken();
 const entry = endpointJson({ product: 'Visual Studio Code', version: '1.118.1', pid: 12345, url: 'http://127.0.0.1:50000/ide-agent-tabs', token, startedAt: 1700000000000, beatMs: 60000 });
 
@@ -60,14 +61,14 @@ test('a beat touches the file and keeps its content', () => {
   const old = new Date(Date.now() - 600_000);
   fs.utimesSync(target, old, old);
   const now = new Date();
-  beatEndpoint(target, 'ignored', true, now);
+  beatEndpoint(target, 'ignored', now);
   assert.equal(fs.readFileSync(target, 'utf8'), entry);
   assert.ok(Math.abs(fs.statSync(target).mtimeMs - now.getTime()) < 2000);
 });
 
 test('a beat rewrites a deleted file', () => {
   const target = path.join(home, 'beat-gone', 'vscode-4-a.json');
-  beatEndpoint(target, entry, true);
+  beatEndpoint(target, entry);
   assert.equal(fs.readFileSync(target, 'utf8'), entry);
   assert.deepEqual(fs.readdirSync(path.dirname(target)), ['vscode-4-a.json']);
 });

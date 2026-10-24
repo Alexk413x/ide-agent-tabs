@@ -19,11 +19,15 @@ const val VIA_LABEL = "via OpenRouter"
 
 fun viaLabel(text: String, via: LaunchVia) = if (via == LaunchVia.ORI) "$text ($VIA_LABEL)" else text
 
+class AgentRow(val entry: AgentEntry, val icon: Icon, val label: String)
+
 object Agents {
 
     private val LOG = logger<Agents>()
 
-    val settings = AgentSettings(ideAgentTabsHome()) { LOG.warn(it) }
+    private val warn: (String) -> Unit = { LOG.warn(it) }
+
+    val settings = AgentSettings(ideAgentTabsHome(), warn)
 
     private val neutralIcon: Icon = IconLoader.getIcon("/icons/agentTab.svg", Agents::class.java)
 
@@ -50,7 +54,7 @@ object Agents {
 
     private val customButtonIcons = ConcurrentHashMap<String, Icon>()
 
-    private val searchPath: String
+    val searchPath: String
         get() = EnvironmentUtil.getValue("PATH") ?: System.getenv("PATH").orEmpty()
 
     fun launchFor(
@@ -73,26 +77,22 @@ object Agents {
                 ori = settings.detected().ori,
                 windows = SystemInfo.isWindows,
                 searchPath = searchPath,
-                python = codexPython(ideAgentTabsHome(), SystemInfo.isWindows),
-                http = codexHttp(ideAgentTabsHome(), SystemInfo.isWindows, tabId, profile.name),
+                python = codexPython(ideAgentTabsHome(), SystemInfo.isWindows, warn),
+                http = codexHttp(ideAgentTabsHome(), SystemInfo.isWindows, tabId, profile.name, warn),
                 copilot = copilot,
                 claudeSettings = claudeTabSettings(ideAgentTabsHome(), SystemInfo.isWindows),
                 cwd = cwd,
+                warn = warn,
             ),
         )
 
     fun copilotFor(profile: AgentProfile): CopilotHttp? {
         if (!isCopilotCommand(profile.command)) return null
         val copilotHome = EnvironmentUtil.getValue("COPILOT_HOME") ?: System.getenv("COPILOT_HOME")
-        return copilotHttp(ideAgentTabsHome(), SystemInfo.isWindows, copilotHooksFile(copilotHome, System.getProperty("user.home")))
+        return copilotHttp(ideAgentTabsHome(), SystemInfo.isWindows, copilotHooksFile(copilotHome, System.getProperty("user.home")), warn)
     }
 
     fun isInstalled(profile: AgentProfile): Boolean = isInstalled(profile.command, searchPath, SystemInfo.isWindows)
-
-    fun installedProfiles(): List<AgentProfile> {
-        val path = searchPath
-        return settings.profiles().filter { isInstalled(it.command, path, SystemInfo.isWindows) }
-    }
 
     fun entries(): List<AgentEntry> {
         val path = searchPath
@@ -101,7 +101,19 @@ object Agents {
         }
     }
 
-    fun entryLabel(entry: AgentEntry): String = if (entry.via == null) viaLabel(entry.label, launchFor(entry.profile).via) else entry.label
+    fun rows(): List<AgentRow> = entries().map { AgentRow(it, icon(it.profile), entryLabel(it)) }
+
+    fun viaFor(profile: AgentProfile): LaunchVia = planVia(
+        profile,
+        LaunchContext(
+            setting = settings.shared().launchVia,
+            ori = settings.detected().ori,
+            windows = SystemInfo.isWindows,
+            searchPath = searchPath,
+        ),
+    )
+
+    fun entryLabel(entry: AgentEntry): String = if (entry.via == null) viaLabel(entry.label, viaFor(entry.profile)) else entry.label
 
     fun icon(profile: AgentProfile): Icon {
         profile.icon?.let { return customIcons.computeIfAbsent(it, ::loadCustomIcon) }
@@ -133,29 +145,25 @@ object Agents {
         neutralIcon
     }
 
-    fun setDefaultAgent(profile: AgentProfile): Boolean = settings.setDefaultAgent(profile.name)
-
     @RequiresEdt
     fun open(project: Project, profile: AgentProfile, via: LaunchVia? = null) {
         val directory = project.basePath ?: System.getProperty("user.home")
         val id = UUID.randomUUID().toString()
-        val start = { copilot: CopilotHttp? ->
-            val launch = try {
-                launchFor(profile, cwd = directory, tabId = id, copilot = copilot, via = via)
-            } catch (e: IllegalArgumentException) {
-                Messages.showErrorDialog(project, e.message, "Agent Tabs")
-                null
-            }
-            if (launch != null) AgentTabLauncher.open(project, directory, profile, launch, focus = true, id = id)
-        }
-        if (!isCopilotCommand(profile.command)) {
-            start(null)
-            return
-        }
         val application = ApplicationManager.getApplication()
         application.executeOnPooledThread {
-            val copilot = copilotFor(profile)
-            application.invokeLater({ start(copilot) }, project.disposed)
+            if (project.isDisposed) return@executeOnPooledThread
+            val planned = runCatching {
+                val launch = launchFor(profile, cwd = directory, tabId = id, copilot = copilotFor(profile), via = via)
+                launch to AgentTabLauncher.prepare(launch, id)
+            }
+            application.invokeLater({
+                val (launch, shell) = planned.getOrElse {
+                    if (it !is IllegalArgumentException) throw it
+                    Messages.showErrorDialog(project, it.message, "Agent Tabs")
+                    return@invokeLater
+                }
+                AgentTabLauncher.open(project, directory, profile, launch, shell, focus = true, id = id)
+            }, project.disposed)
         }
     }
 }

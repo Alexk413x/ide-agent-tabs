@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import threading
 import unittest
 from typing import Any
 
@@ -10,69 +9,15 @@ from ide_agent_tabs.messaging import sessions, store
 from ide_agent_tabs.messaging.db import MailError
 from ide_agent_tabs.messaging.history import Who, history
 from ide_agent_tabs.messaging.hook import run_hook
-from ide_agent_tabs.messaging.messaging import MOD_DELIVERY_NOTE, Messaging, MessagingDeps
-from ide_agent_tabs.scheduler import Scheduler
-from support import temp_home
-
-
-class FakeHosts:
-    def __init__(self, host: str | None = None) -> None:
-        self.host = host
-        self.typed: list[tuple[str, str, str]] = []
-
-    def find_host(self, tab_id: str) -> str | None:
-        return self.host
-
-    def type_into(self, tab_id: str, host: str, text: str) -> dict[str, Any]:
-        self.typed.append((tab_id, host, text))
-        return {"ok": True}
-
-    def describe_host(self, host: str) -> str | None:
-        return None
-
-
-class Clock:
-    def __init__(self, start: float) -> None:
-        self.at = start
-
-    def __call__(self) -> float:
-        return self.at
+from ide_agent_tabs.messaging.messaging import MOD_DELIVERY_NOTE, Messaging
+from support import Clock, FakeHosts, patch, temp_home, texts
+from support import session as base_session
 
 
 def session(
-    test: unittest.TestCase,
-    home: str,
-    tab_id: str | None,
-    agent: str,
-    pid: int,
-    hosts: FakeHosts | None = None,
-    **over: Any,
+    test: unittest.TestCase, home: str, tab_id: str | None, agent: str, pid: int, hosts: FakeHosts | None = None, **over: Any
 ) -> Messaging:
-    scheduler = Scheduler()
-    test.addCleanup(scheduler.stop)
-    env = {} if tab_id is None else {"IDE_AGENT_TABS_ID": tab_id, "IDE_AGENT_TABS_AGENT": agent}
-    deps = {
-        "home": home,
-        "env": env,
-        "pid": pid,
-        "cwd": f"/w/{tab_id or 'x'}",
-        "hosts": hosts if hosts is not None else FakeHosts(),
-        "is_alive": lambda _pid: True,
-        "scheduler": scheduler,
-        **over,
-    }
-    messaging = Messaging(MessagingDeps(**deps))
-    test.addCleanup(messaging.stop_sync)
-    messaging.start()
-    # start() queues a session scan; a send that joins a scan begun before the peer registered would not see the peer.
-    scanned = threading.Event()
-    scheduler.soon(scanned.set)
-    scanned.wait(10)
-    return messaging
-
-
-def patch(home: str, tab_id: str, **fields: Any) -> None:
-    sessions.update_presence(home, tab_id, lambda p: p if p is None else {**p, **fields})
+    return base_session(test, home, tab_id, agent, pid, hosts, settle=True, **over)
 
 
 def presence(home: str, tab_id: str) -> dict[str, Any]:
@@ -86,10 +31,6 @@ def idle(home: str, tab_id: str, at: float | None = None) -> None:
 def deliver(home: str, to: str, text: str) -> str:
     out = {"from": {"id": "codex-1a2b", "agent": "codex", "path": "/w"}, "to": to, "text": text}
     return store.send_message(home, out)["id"]
-
-
-def texts(messages: list[dict[str, Any]]) -> list[str]:
-    return [m["text"] for m in messages]
 
 
 def read_ids(home: str, tab_id: str) -> list[str]:

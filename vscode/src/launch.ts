@@ -1,6 +1,6 @@
 import * as path from 'node:path';
-import type { AgentLaunch } from './profiles';
-import { findOnPath } from './profiles';
+import { findOnPath } from './pathLookup';
+import { AgentLaunch } from './profiles';
 import { isReservedEnv, PLUGIN_ENV_PREFIX } from './request';
 
 export const TAB_ID_ENV = `${PLUGIN_ENV_PREFIX}ID`;
@@ -15,7 +15,7 @@ export function editorLocation<Column>(column: Column, focus: boolean): { viewCo
   return { viewColumn: column, preserveFocus: !focus };
 }
 
-export type ShellKind = 'powershell' | 'posix' | 'fish';
+type ShellKind = 'powershell' | 'posix' | 'fish';
 
 export interface LaunchScripts {
   powershell: string;
@@ -100,13 +100,13 @@ export function terminalEnv(
   return env;
 }
 
-export interface TerminalCreation {
+interface TerminalCreation {
   name?: string;
   cwd?: string | { fsPath: string };
   env?: { [key: string]: string | null | undefined };
 }
 
-export interface RevivedTab<T> {
+interface RevivedTab<T> {
   id: string;
   agent: string;
   path: string;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import stat
@@ -8,6 +9,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any, Callable, NamedTuple
 
 from .agent_config import (
+    AGY_HOOK_GROUP,
+    CODEX_TOOL_TIMEOUT_S,
     PYTHON_FLAGS,
     ConfigError,
     HookTarget,
@@ -47,6 +50,7 @@ from .editor_clis import find_cli_on_path, path_var_of
 from .files import ensure_private_dir, read_text_if_exists, remove_file, replace_retrying, write_atomically
 from .installed import is_installed
 from .jsjson import parse, stringify
+from .mcp_tools import SERVER_NAME
 from .processes import RunResult
 from .profiles import AGENT_ENV, BUILTIN_PROFILES, CLAUDE_TAB_SETTINGS_FILE, TAB_ID_ENV
 from .server_copy import (
@@ -67,14 +71,13 @@ from .server_copy import (
 from .toml_table import read_toml_table, toml_table, with_toml_table
 from .yaml_block import YamlDoc, edit_yaml, yaml_value
 
-SERVER_NAME = "ide-agent-tabs"
 AGENTS = ("codex", "agy", "copilot", "grok", "pi", "hermes", "opencode", "qwen", "goose")
 CLI_TIMEOUT_S = 30.0
 OPENCODE_SCHEMA = "https://opencode.ai/config.json"
-OPENCODE_TIMEOUT_MS = 660_000
-TOOL_TIMEOUT_S = 660
+TOOL_TIMEOUT_S = CODEX_TOOL_TIMEOUT_S
+OPENCODE_TIMEOUT_MS = TOOL_TIMEOUT_S * 1000
 GOOSE_TIMEOUT_S = 700
-QWEN_TIMEOUT_MS = 700_000
+QWEN_TIMEOUT_MS = GOOSE_TIMEOUT_S * 1000
 _SERVER_FILE = re.compile(r"\.(?:[cm]?js|py)$", re.IGNORECASE)
 
 # The Codex desktop app shares ~/.codex with the CLI, and on Windows, Codex before 0.159 opens a console
@@ -110,39 +113,52 @@ def _profile_of(agent: str) -> tuple[str, str]:
     return (builtin.command, builtin.label) if builtin is not None else (agent, agent)
 
 
+class _ConfigLookup(NamedTuple):
+    env: Mapping[str, str]
+    user_home: str
+    exists: Callable[[str], bool]
+    platform: str
+
+    def var(self, name: str) -> str | None:
+        return self.env.get(name) or None
+
+
+def _opencode_config(c: _ConfigLookup) -> str:
+    folder = os.path.join(c.var("XDG_CONFIG_HOME") or os.path.join(c.user_home, ".config"), "opencode")
+    plain = os.path.join(folder, "opencode.json")
+    jsonc = os.path.join(folder, "opencode.jsonc")
+    return jsonc if not c.exists(plain) and c.exists(jsonc) else plain
+
+
+def _goose_config(c: _ConfigLookup) -> str:
+    root = goose_root(c.env)
+    if root is not None:
+        return os.path.join(root, "config", "config.yaml")
+    if c.platform == "win32":
+        return os.path.join(c.var("APPDATA") or os.path.join(c.user_home, "AppData", "Roaming"), "Block", "goose", "config", "config.yaml")
+    return os.path.join(c.user_home, ".config", "goose", "config.yaml")
+
+
+_CONFIG_FILES: dict[str, Callable[[_ConfigLookup], str]] = {
+    "codex": lambda c: os.path.join(c.var("CODEX_HOME") or os.path.join(c.user_home, ".codex"), "config.toml"),
+    "copilot": lambda c: os.path.join(c.var("COPILOT_HOME") or os.path.join(c.user_home, ".copilot"), "mcp-config.json"),
+    "agy": lambda c: os.path.join(c.user_home, ".gemini", "config", "mcp_config.json"),
+    "opencode": _opencode_config,
+    "grok": lambda c: os.path.join(grok_home(c.env, c.user_home), "config.toml"),
+    "pi": lambda c: os.path.join(c.var("PI_CODING_AGENT_DIR") or os.path.join(c.user_home, ".pi", "agent"), "mcp.json"),
+    "hermes": lambda c: os.path.join(hermes_home(c.env, c.user_home, c.platform), "config.yaml"),
+    "qwen": lambda c: os.path.join(qwen_home(c.env, c.user_home), "settings.json"),
+    "goose": _goose_config,
+}
+
+
 def config_file(
     agent: str, env: Mapping[str, str], user_home: str, exists: Callable[[str], bool] = os.path.exists, platform: str = sys.platform
 ) -> str:
-    def var(name: str) -> str | None:
-        return env.get(name) or None
-
-    if agent == "codex":
-        return os.path.join(var("CODEX_HOME") or os.path.join(user_home, ".codex"), "config.toml")
-    if agent == "copilot":
-        return os.path.join(var("COPILOT_HOME") or os.path.join(user_home, ".copilot"), "mcp-config.json")
-    if agent == "agy":
-        return os.path.join(user_home, ".gemini", "config", "mcp_config.json")
-    if agent == "opencode":
-        folder = os.path.join(var("XDG_CONFIG_HOME") or os.path.join(user_home, ".config"), "opencode")
-        plain = os.path.join(folder, "opencode.json")
-        jsonc = os.path.join(folder, "opencode.jsonc")
-        return jsonc if not exists(plain) and exists(jsonc) else plain
-    if agent == "grok":
-        return os.path.join(grok_home(env, user_home), "config.toml")
-    if agent == "pi":
-        return os.path.join(var("PI_CODING_AGENT_DIR") or os.path.join(user_home, ".pi", "agent"), "mcp.json")
-    if agent == "hermes":
-        return os.path.join(hermes_home(env, user_home, platform), "config.yaml")
-    if agent == "qwen":
-        return os.path.join(qwen_home(env, user_home), "settings.json")
-    if agent == "goose":
-        root = goose_root(env)
-        if root is not None:
-            return os.path.join(root, "config", "config.yaml")
-        if platform == "win32":
-            return os.path.join(var("APPDATA") or os.path.join(user_home, "AppData", "Roaming"), "Block", "goose", "config", "config.yaml")
-        return os.path.join(user_home, ".config", "goose", "config.yaml")
-    raise ValueError(f"unknown agent: {agent}")
+    find = _CONFIG_FILES.get(agent)
+    if find is None:
+        raise ValueError(f"unknown agent: {agent}")
+    return find(_ConfigLookup(env, user_home, exists, platform))
 
 
 def server_argv(ctx: RegisterContext) -> list[str]:
@@ -416,7 +432,7 @@ def has_any_hooks(ctx: RegisterContext, agent: str) -> bool:
         return has_any_hermes_hooks(yaml_value(read_text_if_exists(file), file, "hooks"))
     root = _read_json_if_exists(file)
     if agent == "agy":
-        return root is not None and "ide-agent-tabs" in root
+        return root is not None and AGY_HOOK_GROUP in root
     return has_any_settings_hooks(root)
 
 
@@ -483,10 +499,8 @@ def _remove_hooks(ctx: RegisterContext, agent: str) -> None:
         remove_file(file)
         remove_file(os.path.join(folder, "plugin.json"))
         for empty in (os.path.dirname(file), folder):
-            try:
+            with contextlib.suppress(OSError):
                 os.rmdir(empty)
-            except OSError:
-                pass
         return
     if agent == "hermes":
         allowlist = hermes_allowlist_file(ctx.env, ctx.user_home, ctx.platform)

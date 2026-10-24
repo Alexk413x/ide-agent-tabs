@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from collections.abc import Mapping, Sequence
 from typing import Callable
 
 from .home import agent_tabs_home
-from .ide_installs import node_platform
 from .jsjson import stringify
 from .parallel import Task
+from .processes import platform_name
 from .register import RegisterContext, agents_report, register_agents, unregister_agents
 from .server_copy import Source, base_interpreter, plugin_source
 from .sync import append_log, sync_hook, sync_install, sync_status
@@ -32,7 +33,7 @@ def bundle_dir(source: Source) -> str:
 
 def system_context(env: Mapping[str, str] | None = None) -> RegisterContext:
     env = os.environ if env is None else env
-    return RegisterContext(plugin_source(), agent_tabs_home(env), node_platform(), env, os.path.expanduser("~"), base_interpreter())
+    return RegisterContext(plugin_source(), agent_tabs_home(env), platform_name(), env, os.path.expanduser("~"), base_interpreter())
 
 
 def _refresh_detection(ctx: RegisterContext) -> None:
@@ -42,10 +43,8 @@ def _refresh_detection(ctx: RegisterContext) -> None:
     try:
         refresh_detection_file(ctx.home, ctx.platform, ctx.env, TERMINAL_DRIVERS)
     except Exception as e:  # noqa: BLE001
-        try:
+        with contextlib.suppress(OSError):
             append_log(ctx.home, f"detection: {e}")
-        except OSError:
-            pass
 
 
 def run(
@@ -65,10 +64,8 @@ def run(
                     + "\n"
                 )
         except Exception as e:  # noqa: BLE001
-            try:
+            with contextlib.suppress(OSError):
                 append_log(ctx.home, f"hook: {e}")
-            except OSError:
-                pass
         detection.thread.join()
         return 0
     if mode == "--status":

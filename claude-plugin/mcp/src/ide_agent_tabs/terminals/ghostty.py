@@ -8,12 +8,12 @@ import sys
 from typing import NamedTuple, Union
 
 from ..clock import now_ms
-from ..files import write_new_private_file
+from ..files import discard_file, write_new_private_file
 from ..jsjson import CONTROL
-from ..processes import run
+from ..processes import platform_name, run, terminal_environment
 from ..spec import LaunchSpec, check_posix_env_names, posix_spec
 from .driver import Capabilities, OpenOptions, TerminalContext, TerminalDriver, TerminalTab, caps
-from .processes import GUI_SETTLE_MS, find_executable, hang_up, pid_tabs_alive, start_detached, terminal_environment
+from .processes import GUI_SETTLE_MS, find_executable, hang_up, pid_tabs_alive, start_detached
 from .shell import LoginShell, check_argv_paths, check_input_line, launcher_name, login_shell, surface_argv, surface_command
 from .window_memory import RememberedWindow, read_window, remember_window
 
@@ -221,15 +221,10 @@ def _ghostty_app(home: str) -> str | None:
     return next((p for p in ("/Applications/Ghostty.app", os.path.join(home, "Applications", "Ghostty.app")) if os.path.exists(p)), None)
 
 
-def _remove(file: str) -> None:
-    with contextlib.suppress(OSError):
-        os.remove(file)
-
-
 class Ghostty(TerminalDriver):
     name = GHOSTTY
     label = "Ghostty"
-    capabilities = ghostty_capabilities("linux" if sys.platform.startswith("linux") else sys.platform)
+    capabilities = ghostty_capabilities(platform_name())
     can_input = True
 
     def available(self, ctx: TerminalContext) -> bool:
@@ -248,13 +243,13 @@ class Ghostty(TerminalDriver):
         try:
             start_detached(exe, args, env, GUI_SETTLE_MS)
         except BaseException:
-            _remove(spec_file)
+            discard_file(spec_file)
             raise
         return {"id": spec.id, "terminal": GHOSTTY, "agent": spec.agent, "path": spec.cwd, "createdAt": now_ms(), "pidFile": pid_file}
 
     def open(self, ctx: TerminalContext, spec: LaunchSpec, title: str, options: OpenOptions | None = None) -> TerminalTab:
         check_posix_env_names(spec.env)
-        platform = "linux" if sys.platform.startswith("linux") else sys.platform
+        platform = platform_name()
         shell = login_shell(ctx.env.get("SHELL"), platform)
         spec_file = os.path.join(ctx.home, "launch", f"{spec.id}.spec")
         launcher = os.path.join(ctx.scripts_dir, launcher_name(shell))
@@ -277,7 +272,7 @@ class Ghostty(TerminalDriver):
         try:
             ids = parse_open_result(osascript(script))
         except BaseException:
-            _remove(spec_file)
+            discard_file(spec_file)
             raise
         if dedicated and ids.window_id is not None and ids.window_id != (remembered or {}).get("id"):
             with contextlib.suppress(OSError, TimeoutError):

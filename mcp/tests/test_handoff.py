@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-import threading
 import unittest
 from typing import Any
 
+import support
 from ide_agent_tabs.clock import now_ms
 from ide_agent_tabs.handoff import HANDOFF_TIMEOUT_MS, MAX_BRIEF_CHARS, HandoffDeps, Handoffs, brief_markdown, handoff_path, takeover_prompt
 from ide_agent_tabs.messaging import sessions
-from ide_agent_tabs.messaging.messaging import Messaging, MessagingDeps
-from ide_agent_tabs.scheduler import Scheduler
+from ide_agent_tabs.messaging.messaging import Messaging
 from ide_agent_tabs.service import ToolError
 from support import temp_home
 
@@ -28,15 +27,9 @@ FIELDS: dict[str, Any] = {
 }
 
 
-class FakeHosts:
+class FakeHosts(support.FakeHosts):
     def find_host(self, tab_id: str) -> str | None:
         return host_of(tab_id)
-
-    def type_into(self, tab_id: str, host: str, text: str) -> dict[str, Any]:
-        return {"ok": True}
-
-    def describe_host(self, host: str) -> str | None:
-        return None
 
 
 def host_of(tab_id: str) -> str | None:
@@ -44,28 +37,9 @@ def host_of(tab_id: str) -> str | None:
 
 
 def session(test: unittest.TestCase, home: str, tab_id: str | None, pid: int) -> Messaging:
-    scheduler = Scheduler()
-    test.addCleanup(scheduler.stop)
-    env = {} if tab_id is None else {"IDE_AGENT_TABS_ID": tab_id, "IDE_AGENT_TABS_AGENT": "claude"}
-    deps = MessagingDeps(
-        home=home,
-        env=env,
-        pid=pid,
-        cwd=f"/w/{tab_id or 'x'}",
-        hosts=FakeHosts(),
-        is_alive=lambda _pid: True,
-        random_id=lambda: "s-notab0000001",
-        rewake_every_ms=60_000,
-        scheduler=scheduler,
+    return support.session(
+        test, home, tab_id, "claude", pid, FakeHosts(), settle=True, random_id=lambda: "s-notab0000001", rewake_every_ms=60_000
     )
-    messaging = Messaging(deps)
-    test.addCleanup(messaging.stop_sync)
-    messaging.start()
-    # start() queues a session scan; a send that joins a scan begun before the peer registered would not see the peer.
-    scanned = threading.Event()
-    scheduler.soon(scanned.set)
-    scanned.wait(10)
-    return messaging
 
 
 def handoffs(home: str, old: Messaging, **over: Any) -> tuple[Handoffs, list[dict[str, Any]]]:

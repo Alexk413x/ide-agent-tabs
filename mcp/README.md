@@ -933,5 +933,6 @@ commit. See [Checks](../README.md#checks).
 - The launcher tests run the real launch scripts with `pwsh`, Windows PowerShell and bash when they're
   installed, and skip the rest.
 - `mcp/bench/shared_server.py` measures the shared server's start and the headers helper, against the
-  0.8.0 build unless you pass `--no-node`. `mcp/bench/hook_startup.py` and `mcp/bench/hook_forms.py`
-  measure hook start-up.
+  0.8.0 build unless you pass `--no-node`. `mcp/bench/bench.py` measures the stdio server's start-up,
+  memory and messaging latency, and CLI timing. `mcp/bench/hook_startup.py` measures hook start-up, and
+  `mcp/bench/claude_tab_hooks.py` measures the Claude Code tab hooks.

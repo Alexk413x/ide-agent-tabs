@@ -13,19 +13,11 @@ from ide_agent_tabs.clock import iso, parse_iso
 from ide_agent_tabs.messaging import store, wake
 from ide_agent_tabs.messaging.db import MailError, query
 from ide_agent_tabs.messaging.wake import wake_path
-from support import SRC, temp_home
+from support import SRC, js_fixtures, out, temp_home, texts
 
 T0 = parse_iso("2026-10-07T12:00:00Z") or 0
 MINUTE = 60_000
 INF = float("inf")
-
-
-def out(to: str, text: str, sender: str = "tab-a", **over: Any) -> dict[str, Any]:
-    return {"from": {"id": sender, "agent": "codex", "path": f"/w/{sender}"}, "to": to, "text": text, **over}
-
-
-def texts(messages: list[dict[str, Any]]) -> list[str]:
-    return [m["text"] for m in messages]
 
 
 class SendTest(unittest.TestCase):
@@ -60,6 +52,11 @@ class SendTest(unittest.TestCase):
         later = store.send_message(home, out("tab-b", "review this"), T0 + store.DEDUPE_MS)
         self.assertNotEqual(later["id"], first["id"])
         self.assertNotIn("duplicate", later)
+
+    def test_send_digest_matches_the_node_digests(self) -> None:
+        for case in js_fixtures()["digests"]:
+            with self.subTest(case=case):
+                self.assertEqual(store.send_digest(case["to"], case["text"], case.get("replyTo")), case["digest"])
 
     def test_unread_cap_and_reading_frees_a_slot(self) -> None:
         home = temp_home(self)

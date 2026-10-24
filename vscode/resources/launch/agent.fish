@@ -1,4 +1,3 @@
-# Sourced by fish through --init-command, after the user's config files.
 function __ide_agent_tabs
     set -l c $IDE_AGENT_TABS_COMMAND
     set -e IDE_AGENT_TABS_COMMAND

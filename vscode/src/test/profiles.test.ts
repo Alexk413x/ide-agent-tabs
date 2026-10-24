@@ -2,45 +2,30 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
+import { AgentSettings, readDefaultAgent } from '../agentSettings';
 import {
-  AGENTS_FILE,
-  agentEntries,
-  AgentProfile,
-  AgentSettings,
-  answersHealth,
-  BUILTIN_PROFILES,
-  CLAUDE_TAB_SETTINGS_FILE,
-  claudeTabSettings,
-  CODEX_TAB_ARGS,
-  codexHttp,
-  codexHttpArg,
-  codexPython,
-  CONFIG_FILE,
-  copilotHooksFile,
-  copilotHttp,
   CWD_ENV,
+  codexHttpArg,
   cwdHeader,
-  findOnPath,
-  findProfile,
   isCopilotCommand,
-  isInstalled,
   launchOf,
   LaunchContext,
   planLaunch,
-  profile,
-  readDefaultAgent,
   withCodexHttp,
   withCodexPython,
   withCopilotHttp,
-} from '../profiles';
+} from '../launchPlan';
+import { answersHealth, CLAUDE_TAB_SETTINGS_FILE, claudeTabSettings, codexHttp, codexPython, copilotHooksFile, copilotHttp } from '../mcpHome';
+import { findOnPath, isInstalled } from '../pathLookup';
+import { AGENTS_FILE, agentEntries, AgentProfile, BUILTIN_PROFILES, CODEX_TAB_ARGS, findProfile, profile } from '../profiles';
 import { BadRequest, checkEnv } from '../request';
-import { DETECTED_FILE, DetectedOri, parseDetected, SHARED_DEFAULTS, SharedSettings, userSettingValue, withSharedValue } from '../sharedSettings';
+import { CONFIG_FILE, DETECTED_FILE, DetectedOri, parseDetected, SHARED_DEFAULTS, SharedSettings, userSettingValue, withSharedValue } from '../sharedSettings';
+import { onWindows, tempDir } from './support';
 
 function fixture() {
-  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-agents-'));
+  const home = tempDir('iat-agents-');
   const warnings: string[] = [];
   const settings = new AgentSettings(home, w => warnings.push(w));
   let clock = Date.now() / 1000;
@@ -215,7 +200,7 @@ test('default agent comes from config and falls back to claude', () => {
 });
 
 test('a preferred agent wins over config unless it has no profile', () => {
-  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-agents-'));
+  const home = tempDir('iat-agents-');
   let preferred: string | undefined = 'codex';
   const settings = new AgentSettings(home, () => {}, () => preferred);
   fs.writeFileSync(path.join(home, CONFIG_FILE), '{"defaultAgent": "copilot"}');
@@ -268,7 +253,7 @@ test('installed means the command is on PATH, with Windows extensions on Windows
 });
 
 test('finds an executable on PATH and skips blank, quoted and invalid entries', () => {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-path-'));
+  const dir = tempDir('iat-path-');
   fs.writeFileSync(path.join(dir, 'tool.exe'), '');
   const searchPath = ['', '  ', path.join(dir, 'no', 'such'), 'bad<>|dir', `"${dir}"`].join(path.delimiter);
   assert.equal(findOnPath(searchPath, 'tool.exe'), path.join(dir, 'tool.exe'));
@@ -284,7 +269,7 @@ test('finds the Microsoft Store pwsh alias', t => {
   } catch {
     present = false;
   }
-  if (process.platform !== 'win32' || !present) return t.skip('Store pwsh not installed');
+  if (!onWindows || !present) return t.skip('Store pwsh not installed');
   assert.equal(fs.existsSync(alias), false, 'existsSync follows the alias and misses it');
   assert.equal(findOnPath(windowsApps, 'pwsh.exe'), alias);
 });
@@ -337,7 +322,7 @@ test('choosing Automatic removes the terminal and shell keys', () => {
   assert.ok(settings.setShared('terminal', 'auto'));
   assert.ok(settings.setShared('shell', ''));
   assert.deepEqual(JSON.parse(fs.readFileSync(config, 'utf8')), { other: 1 });
-  assert.equal(withSharedValue(undefined, CONFIG_FILE, 'terminal', 'auto'), '{}' + String.fromCharCode(10));
+  assert.equal(withSharedValue(undefined, 'terminal', 'auto'), '{}\n');
 });
 
 test('saving a shared setting leaves a broken config alone', () => {
@@ -413,8 +398,8 @@ test('showOriAgents is a shared flag that defaults to off and saves only when on
   assert.equal(settings.shared().showOriAgents, true);
   write(CONFIG_FILE, '{"showOriAgents": "yes"}');
   assert.deepEqual(settings.sharedFound(), {});
-  assert.equal(withSharedValue('{"showOriAgents": true}', CONFIG_FILE, 'showOriAgents', false), '{}\n');
-  assert.equal(withSharedValue(undefined, CONFIG_FILE, 'showOriAgents', true), '{\n  "showOriAgents": true\n}\n');
+  assert.equal(withSharedValue('{"showOriAgents": true}', 'showOriAgents', false), '{}\n');
+  assert.equal(withSharedValue(undefined, 'showOriAgents', true), '{\n  "showOriAgents": true\n}\n');
 });
 
 const toggles = (on: Partial<SharedSettings> = {}) => ({ ...SHARED_DEFAULTS, ...on });
@@ -427,8 +412,8 @@ test('the local toggles are shared flags that default to off and save only when 
     assert.equal(settings.shared()[key], true);
     write(CONFIG_FILE, `{"${key}": "yes"}`);
     assert.deepEqual(settings.sharedFound(), {});
-    assert.equal(withSharedValue(`{"${key}": true}`, CONFIG_FILE, key, false), '{}\n');
-    assert.equal(withSharedValue(undefined, CONFIG_FILE, key, true), `{\n  "${key}": true\n}\n`);
+    assert.equal(withSharedValue(`{"${key}": true}`, key, false), '{}\n');
+    assert.equal(withSharedValue(undefined, key, true), `{\n  "${key}": true\n}\n`);
   }
 });
 
@@ -566,7 +551,7 @@ test('an explicit Ori launch that cannot run fails with the reason', () => {
 });
 
 function shimFixture(files: string[]) {
-  const bin = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-shim-'));
+  const bin = tempDir('iat-shim-');
   for (const name of files) fs.writeFileSync(path.join(bin, name), '');
   return bin;
 }
@@ -703,13 +688,13 @@ test('closeAfterHandoff writes false only when unchecked and removes the key whe
 });
 
 test('a Codex tab runs its server on the interpreter python.json records, or on py -3 or python3', () => {
-  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-python-'));
+  const home = tempDir('iat-python-');
   const python = path.join(home, 'python.exe');
   fs.writeFileSync(python, '');
-  assert.deepEqual(codexPython(home, process.platform === 'win32'), process.platform === 'win32' ? ['py', '-3'] : ['python3']);
+  assert.deepEqual(codexPython(home, onWindows), onWindows ? ['py', '-3'] : ['python3']);
   fs.mkdirSync(path.join(home, 'mcp'));
   fs.writeFileSync(path.join(home, 'mcp', 'python.json'), JSON.stringify({ python }));
-  assert.deepEqual(codexPython(home, process.platform === 'win32'), [python]);
+  assert.deepEqual(codexPython(home, onWindows), [python]);
   fs.writeFileSync(path.join(home, 'mcp', 'python.json'), JSON.stringify({ python: `${python}'x` }));
   assert.deepEqual(codexPython(home, true), ['py', '-3']);
   assert.deepEqual(codexPython(home, false), ['python3']);
@@ -720,14 +705,12 @@ test('a Codex tab runs its server on the interpreter python.json records, or on 
   assert.equal(args[2]!.slice(args[2]!.indexOf("'-I'")), CODEX_TAB_ARGS[2]!.slice(CODEX_TAB_ARGS[2]!.indexOf("'-I'")));
   assert.deepEqual(args.filter((_, i) => i !== 2), CODEX_TAB_ARGS.filter((_, i) => i !== 2));
   assert.deepEqual(withCodexPython(CODEX_TAB_ARGS, undefined), [...CODEX_TAB_ARGS]);
-  const plan = planLaunch(BUILTIN_PROFILES[1]!, { setting: 'direct', ori: null, windows: false, searchPath: '', python: ['/usr/bin/python3'] });
+  const plan = planLaunch(BUILTIN_PROFILES[1]!, context({ ori: null, python: ['/usr/bin/python3'] }));
   assert.match(plan.args[2]!, /command = '\/usr\/bin\/python3', args = \['-I'/);
 });
 
-const onWindows = process.platform === 'win32';
-
 function httpHome(options: { port?: unknown; stub?: boolean; python?: string } = {}): string {
-  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-http-'));
+  const home = tempDir('iat-http-');
   const mcp = path.join(home, 'mcp');
   fs.mkdirSync(path.join(mcp, 'py', 'launch'), { recursive: true });
   const python = options.python ?? path.join(home, 'python.exe');
@@ -768,7 +751,7 @@ test('a Codex tab stays on the stdio server without a port, a headers stub or a 
   assert.equal(codexHttp(httpHome(), onWindows, 'tab 1', 'codex'), undefined);
   assert.equal(codexHttp(httpHome(), onWindows, 'tab-1', 'co dex'), undefined);
   assert.equal(codexHttp(httpHome(), onWindows, 'a'.repeat(129), 'codex'), undefined);
-  const spacedDir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-sp ace-'));
+  const spacedDir = tempDir('iat-sp ace-');
   const spaced = path.join(spacedDir, 'python.exe');
   fs.writeFileSync(spaced, '');
   assert.equal(codexHttp(httpHome({ python: spaced }), onWindows, 'tab-1', 'codex'), undefined);
@@ -797,22 +780,21 @@ test('planLaunch gives a Codex tab the HTTP server argument when http is set and
 });
 
 test('a Claude Code tab gets the tab settings file after its profile arguments', () => {
-  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-claude-'));
-  const windows = process.platform === 'win32';
+  const home = tempDir('iat-claude-');
   const settings = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
   fs.mkdirSync(path.join(home, 'mcp'));
-  assert.equal(claudeTabSettings(home, windows), undefined);
+  assert.equal(claudeTabSettings(home, onWindows), undefined);
   fs.writeFileSync(settings, '{}');
-  assert.equal(claudeTabSettings(home, windows), undefined);
+  assert.equal(claudeTabSettings(home, onWindows), undefined);
   const python = path.join(home, 'python.exe');
   fs.writeFileSync(python, '');
   fs.writeFileSync(path.join(home, 'mcp', 'python.json'), JSON.stringify({ python }));
-  assert.equal(claudeTabSettings(home, windows), settings);
+  assert.equal(claudeTabSettings(home, onWindows), settings);
   fs.rmSync(settings);
-  assert.equal(claudeTabSettings(home, windows), undefined);
+  assert.equal(claudeTabSettings(home, onWindows), undefined);
 
   const claude = BUILTIN_PROFILES[0]!;
-  const ctx: LaunchContext = { setting: 'direct', ori: null, windows: false, searchPath: '', prompt: 'hi', claudeSettings: '/h/s.json' };
+  const ctx = context({ ori: null, prompt: 'hi', claudeSettings: '/h/s.json' });
   assert.deepEqual(planLaunch(claude, { ...ctx, model: 'opus', args: ['--resume', 'abc'] }).args, [
     '--settings',
     '/h/s.json',
@@ -838,7 +820,7 @@ test('a Claude Code tab gets the tab settings file after its profile arguments',
 });
 
 test('a Claude Code tab that brings its own settings gets one file that merges them with the tab hooks', () => {
-  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'iat-merge-'));
+  const home = tempDir('iat-merge-');
   const ours = { hooks: { Stop: [{ hooks: [{ type: 'command', command: '/py', args: ['hook', 'claude', 'Stop'] }] }] } };
   const settings = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
   fs.mkdirSync(path.dirname(settings));
@@ -851,7 +833,7 @@ test('a Claude Code tab that brings its own settings gets one file that merges t
   };
   const claude = BUILTIN_PROFILES[0]!;
   const override = { ...claude, args: ['--permission-mode', 'bypassPermissions', '--settings', path.join(home, 'mine.json')] };
-  const ctx: LaunchContext = { setting: 'direct', ori: null, windows: false, searchPath: '', claudeSettings: settings, model: 'opus' };
+  const ctx = context({ ori: null, claudeSettings: settings, model: 'opus' });
   const args = planLaunch(override, ctx).args;
   assert.equal(args.filter(a => a === '--settings').length, 1);
   const { rest, file } = merged(args);
@@ -868,8 +850,44 @@ test('a Claude Code tab that brings its own settings gets one file that merges t
   }
 });
 
+test('the Claude settings merge logs a settings value it cannot read or write and stays silent for a missing file', () => {
+  const home = tempDir('iat-merge-warn-');
+  const settings = path.join(home, 'mcp', CLAUDE_TAB_SETTINGS_FILE);
+  fs.mkdirSync(path.dirname(settings));
+  fs.writeFileSync(settings, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: '/py' }] }] } }));
+  const claude = BUILTIN_PROFILES[0]!;
+  const warnings: string[] = [];
+  const ctx = context({ ori: null, claudeSettings: settings, warn: m => warnings.push(m) });
+  const argsFor = (value: string) => planLaunch(claude, { ...ctx, args: ['--settings', value] }).args;
+
+  assert.deepEqual(argsFor(path.join(home, 'missing.json')), ['--settings', path.join(home, 'missing.json')]);
+  assert.equal(warnings.length, 0);
+
+  const broken = path.join(home, 'broken.json');
+  fs.writeFileSync(broken, '{not json');
+  assert.deepEqual(argsFor(broken), ['--settings', broken]);
+  assert.equal(warnings.length, 1);
+  assert.ok(warnings[0]!.includes(broken), warnings[0]);
+
+  assert.deepEqual(argsFor('{not json'), ['--settings', '{not json']);
+  assert.equal(warnings.length, 2);
+  assert.ok(warnings[1]!.includes('inline'), warnings[1]);
+
+  const mine = path.join(home, 'mine.json');
+  fs.writeFileSync(mine, '{}');
+  const merged = argsFor(mine)[1]!;
+  assert.equal(warnings.length, 2);
+  fs.rmSync(merged);
+  fs.mkdirSync(merged);
+  assert.deepEqual(argsFor(mine), ['--settings', mine]);
+  assert.equal(warnings.length, 3);
+  assert.ok(warnings[2]!.includes(merged), warnings[2]);
+
+  assert.deepEqual(planLaunch(claude, { ...context({ ori: null, claudeSettings: settings }), args: ['--settings', broken] }).args, ['--settings', broken]);
+});
+
 function copilotHome(options: { port?: number | null; configPort?: number | null; prefix?: string; hooks?: boolean } = {}): string {
-  const home = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), options.prefix ?? 'iat-copilot-'));
+  const home = tempDir(options.prefix ?? 'iat-copilot-');
   fs.mkdirSync(path.join(home, 'mcp'));
   if (options.port !== null) fs.writeFileSync(path.join(home, 'mcp', 'port.json'), JSON.stringify({ port: options.port ?? 47951 }));
   if (options.configPort !== null) {
