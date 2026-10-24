@@ -237,7 +237,7 @@ fun mergedClaudeSettings(settings: String, value: String, cwd: String?, warn: (S
         .joinToString("") { "%02x".format(it) }.take(16)
     val file = Path.of(settings).resolveSibling("${CLAUDE_TAB_SETTINGS_FILE.removeSuffix(".json")}-$digest.json")
     return try {
-        if (!Files.isRegularFile(file) || Files.readString(file) != text) writeAtomically(file, text)
+        if (!Files.isRegularFile(file) || Files.readString(file) != text) writeAtomically(file, text, private = true)
         file.toString()
     } catch (e: Exception) {
         warn("Could not write the merged settings $file: ${e.message ?: e.javaClass.simpleName}")

@@ -235,7 +235,7 @@ function mergedClaudeSettings(settings: string, value: string, cwd: string | und
   const digest = createHash('sha256').update(text, 'utf8').digest('hex').slice(0, 16);
   const file = path.join(path.dirname(settings), `${CLAUDE_TAB_SETTINGS_FILE.replace(/\.json$/, '')}-${digest}.json`);
   try {
-    if (!isFile(file) || fs.readFileSync(file, 'utf8') !== text) writeAtomically(file, text);
+    if (!isFile(file) || fs.readFileSync(file, 'utf8') !== text) writeAtomically(file, text, true);
   } catch (e) {
     warn(`Could not write ${file}, so the tab hooks are not merged into the --settings value: ${(e as Error).message}`);
     return undefined;
