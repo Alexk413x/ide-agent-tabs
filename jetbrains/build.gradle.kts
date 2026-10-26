@@ -52,6 +52,18 @@ intellijPlatform {
     instrumentCode = false
 }
 
+val testTmpDir = layout.buildDirectory.dir("tmp/test-tmp")
+
+tasks.test {
+    val dir = testTmpDir
+    systemProperty("java.io.tmpdir", dir.get().asFile.absolutePath)
+    doFirst {
+        val folder = dir.get().asFile
+        folder.deleteRecursively()
+        folder.mkdirs()
+    }
+}
+
 val pluginRepositoryDir = providers.gradleProperty("pluginRepositoryDir")
     .orElse(providers.systemProperty("user.home").map { "$it/.ide-agent-tabs/repository" })
 
