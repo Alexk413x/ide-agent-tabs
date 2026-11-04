@@ -17,7 +17,6 @@ from .agent_config import (
     agy_python,
     agy_settings_file,
     claude_tab_settings,
-    copilot_hooks,
     goose_hooks,
     goose_manifest,
     goose_plugin_dir,
@@ -46,6 +45,9 @@ from .agent_config import (
 )
 from .cli_run import cli_failure, run_cli_result
 from .clock import now_ms
+from .copilot_config import has_hooks as has_copilot_hooks
+from .copilot_config import merge_hooks as merge_copilot_hooks
+from .copilot_config import server_entry as copilot_server_entry
 from .editor_clis import find_cli_on_path, path_var_of
 from .files import ensure_private_dir, read_text_if_exists, remove_file, replace_retrying, write_atomically
 from .installed import is_installed
@@ -181,11 +183,6 @@ def unregister_args() -> list[str]:
 
 def _tab_env() -> dict[str, str]:
     return {TAB_ID_ENV: f"${{{TAB_ID_ENV}}}", AGENT_ENV: f"${{{AGENT_ENV}}}"}
-
-
-# Copilot CLI passes an MCP server only PATH from its environment; the rest must be named here.
-def copilot_entry(argv: Sequence[str]) -> dict[str, Any]:
-    return {"type": "local", "command": argv[0], "args": list(argv[1:]), "env": _tab_env(), "tools": ["*"]}
 
 
 def agy_argv(argv: Sequence[str], platform: str) -> list[str]:
@@ -418,7 +415,7 @@ def hooks_installed(ctx: RegisterContext, agent: str) -> bool:
             os.path.join(goose_plugin_dir(ctx.env, ctx.user_home), "plugin.json")
         )
     if agent == "copilot":
-        return root is not None and _same_json(root, copilot_hooks(target))
+        return root is not None and has_copilot_hooks(root, target, ctx.home)
     if agent == "agy":
         return root is not None and has_agy_hooks(root, target)
     return root is not None and has_our_hooks(root, agent, target)
@@ -473,7 +470,7 @@ def install_hooks(ctx: RegisterContext, agent: str) -> None:
     target = hook_target(ctx)
     file = _hook_file(ctx, agent)
     if agent == "copilot":
-        _change_json(file, lambda _: copilot_hooks(target))
+        _change_json(file, lambda root: merge_copilot_hooks(root, file, target, ctx.home))
     elif agent == "grok":
         _change_json(file, lambda _: grok_hooks(target))
     elif agent == "goose":
@@ -491,7 +488,16 @@ def install_hooks(ctx: RegisterContext, agent: str) -> None:
 
 def _remove_hooks(ctx: RegisterContext, agent: str) -> None:
     file = _hook_file(ctx, agent)
-    if agent in ("copilot", "grok"):
+    if agent == "copilot":
+        root = _read_json_if_exists(file)
+        if root is not None:
+            kept = merge_copilot_hooks(root, file, None, ctx.home)
+            if not kept["hooks"] and not (kept.keys() - {"version", "hooks"}):
+                remove_file(file)
+            else:
+                _change_json(file, lambda _: kept)
+        return
+    if agent == "grok":
         remove_file(file)
         return
     if agent == "goose":
@@ -577,6 +583,10 @@ def agent_status(ctx: RegisterContext, agent: str) -> dict[str, Any]:
             settings = has_codex_settings(read_text_if_exists(config))
         elif agent == "agy":
             settings = has_agy_allow_rule(_read_json_if_exists(agy_settings_file(ctx.user_home)))
+        elif agent == "copilot":
+            expected = copilot_server_entry(server_argv(ctx), ctx.home)["env"]
+            env = entry.get("env")
+            settings = isinstance(env, dict) and all(env.get(key) == value for key, value in expected.items())
         else:
             settings = True
         status.update(
@@ -590,7 +600,7 @@ def agent_status(ctx: RegisterContext, agent: str) -> dict[str, Any]:
 
 
 _JSON_ENTRIES: dict[str, Callable[[RegisterContext, list[str]], Any]] = {
-    "copilot": lambda _, argv: copilot_entry(argv),
+    "copilot": lambda ctx, argv: copilot_server_entry(argv, ctx.home),
     "agy": lambda ctx, argv: agy_entry(argv, ctx.platform),
     "opencode": lambda _, argv: opencode_entry(argv),
     "pi": lambda _, argv: pi_entry(argv),

@@ -699,7 +699,9 @@ it runs `py -3` on Windows, and `python3` elsewhere when the interpreter path ha
 - Codex passes a server only a fixed set of environment variables, so `--register codex` adds
   `env_vars` for `IDE_AGENT_TABS_ID`, `IDE_AGENT_TABS_AGENT` and `IDE_AGENT_TABS_HOME` to the server's
   table in `config.toml`. It also sets `tool_timeout_sec = 660`, so `wait_for_message` can wait its
-  full 10 minutes. The Copilot CLI entry forwards the first two variables in its `env`.
+  full 10 minutes. The Copilot CLI entry forwards the tab and agent variables and explicitly sets
+  `IDE_AGENT_TABS_HOME` to the data folder selected during registration. Its hooks use that same folder.
+  See [Copilot CLI setup](../claude-plugin/COPILOT.md) for standalone setup without starting Claude Code.
 - OpenCode applies the entry's `timeout` (milliseconds) to tool calls, and its default would end
   `wait_for_message` early, so `--register opencode` sets `timeout` to 660000. Register again to update an
   entry written earlier.

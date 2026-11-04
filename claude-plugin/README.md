@@ -6,6 +6,8 @@ extensions and keeps them up to date.
 
 For an overview of the whole project, see the [root README](https://github.com/Alexk413x/ide-agent-tabs#readme).
 
+For additive Copilot CLI setup without starting Claude Code, see [Copilot CLI setup](COPILOT.md).
+
 ## Install
 
 Add the marketplace and install the plugin:

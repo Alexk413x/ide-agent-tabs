@@ -3,6 +3,24 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.9.11
+
+Plugin and MCP server 0.9.11.
+
+### Fixed
+
+- Copilot CLI registration passes the selected Agent Tabs data folder to its MCP process and messaging
+  hooks. Registration and removal preserve unrelated Copilot hook handlers and metadata.
+- Copilot registration status detects entries that need the data-folder setting or refreshed hooks.
+
+### Added
+
+- Standalone Copilot CLI setup instructions that do not require starting Claude Code, with isolated
+  checks and explicit support boundaries. Copilot plugin installation alone discovers skills; MCP and
+  messaging hooks require the documented registration command.
+- Regression tests for Copilot registration, hook preservation, Windows paths, and setup from the
+  flattened release folder.
+
 ## 0.9.10
 
 Plugin and MCP server 0.9.10, with VS Code extension 0.1.36 and JetBrains plugin 0.4.19 bundled.
