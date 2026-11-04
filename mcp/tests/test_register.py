@@ -127,7 +127,8 @@ class Register(unittest.TestCase):
         copilot = read_json(s.file("copilot"))
         self.assertEqual(copilot["mcpServers"]["github"], {"type": "http", "url": "https://example.test/mcp"})
         self.assertEqual(
-            copilot["mcpServers"]["ide-agent-tabs"], {"type": "local", "command": argv[0], "args": argv[1:], "env": TAB_ENV, "tools": ["*"]}
+            copilot["mcpServers"]["ide-agent-tabs"],
+            {"type": "local", "command": argv[0], "args": argv[1:], "env": {**TAB_ENV, "IDE_AGENT_TABS_HOME": ctx.home}, "tools": ["*"]},
         )
         self.assertEqual(read_json(s.hooks("copilot"))["hooks"]["agentStop"][0]["args"], ["-I", "-S", hook, "copilot", "agentStop"])
         agy_command = ["py", "-3"] if WINDOWS else [argv[0]]
