@@ -236,6 +236,26 @@ def live_session(home: str, session_id: str, alive: Callable[[int], bool], now: 
     return {**presence, "state": effective_state(presence, now)}
 
 
+# A session forked from a tab, or started headless from it while the tab sat idle, inherits the tab's id, but its
+# own server registers under another id while the tab's server still runs.
+def session_owned_by(
+    home: str, owner: str, besides: str, alive: Callable[[int], bool] = pid_alive, now: float | None = None
+) -> Presence | None:
+    now = now_ms() if now is None else now
+    try:
+        names = sorted(os.listdir(os.path.join(home, SESSIONS_DIR)))
+    except OSError:
+        return None
+    for name in names:
+        session_id = name[: -len(".json")]
+        if not name.endswith(".json") or session_id == besides:
+            continue
+        presence = live_session(home, session_id, alive, now)
+        if presence is not None and presence.get("owner") == owner:
+            return presence
+    return None
+
+
 def live_sessions(
     home: str,
     alive: Callable[[int], bool] = pid_alive,

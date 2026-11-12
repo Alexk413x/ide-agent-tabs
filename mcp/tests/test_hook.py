@@ -306,6 +306,22 @@ class HookOwnershipTest(unittest.TestCase):
         hook(home, "agy", "Stop", {"conversationId": "first"})
         self.assertEqual(state(home), "busy")
 
+    def test_a_fork_with_its_own_server_is_reminded_of_its_own_mail_not_the_tabs(self) -> None:
+        home = temp_home(self, "iat-hook-")
+        hook(home, "claude", "SessionStart", {"source": "startup", "session_id": "tab-agent"})
+        hook(home, "claude", "Stop", {"session_id": "tab-agent"})
+        fork = "s-0123456789ab"
+        own = {"id": fork, "agent": "claude", "path": "/w", "pid": os.getpid(), "startedAt": now_iso(), "owner": "fork-agent"}
+        update_presence(home, fork, lambda _: own)
+        mail(home)
+        self.assertIsNone(hook(home, "claude", "Stop", {"session_id": "fork-agent"}))
+        self.assertEqual(presence(home)["owner"], "tab-agent")
+        self.assertEqual(presence(home).get("nudges", 0), 0)
+        store.send_message(home, {"from": {"id": "abcdef0123456", "agent": "codex", "path": "/w"}, "to": fork, "text": "for the fork"})
+        self.assertEqual(hook(home, "claude", "Stop", {"session_id": "fork-agent"})["decision"], "block")
+        self.assertEqual((read_presence(home, fork) or {}).get("nudges"), 1)
+        self.assertEqual(hook(home, "claude", "Stop", {"session_id": "tab-agent"})["decision"], "block")
+
     def test_a_hook_from_another_cli_than_the_tab_agent_is_ignored(self) -> None:
         home = temp_home(self, "iat-hook-")
         update_presence(home, ID, lambda _: {"id": ID, "agent": "codex", "state": "busy", "stateAt": now_iso()})
