@@ -1,29 +1,14 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
+import { idePackagesAreCurrent } from './check-ide-sources.mjs';
 import { shipsNoNode } from './check-no-node.mjs';
-import { hashAllIdeSources } from './ide-sources.mjs';
 import { root, runCommand } from './shared.mjs';
 
-const dist = path.join(root, 'claude-plugin', 'dist');
 const skipTests = process.argv.includes('--skip-tests');
 const skipIde = process.argv.includes('--skip-ide');
 
 const run = (command, args, cwd, env = process.env) => runCommand(command, args, { cwd, env }) === 0;
 const RUFF = 'ruff@0.16.10';
 const pythonTests = (version) => () =>
-  run('uv', ['run', '--python', version, '--no-project', 'python', '-I', '-S', 'mcp/tests/run.py'], root, { ...process.env, IDE_AGENT_TABS_INTEROP: '1' });
-
-const idePackagesAreCurrent = () => {
-  const recorded = JSON.parse(readFileSync(path.join(dist, 'ide', 'versions.json'), 'utf8')).sources;
-  const current = hashAllIdeSources();
-  if (!recorded) {
-    console.error('claude-plugin/dist/ide/versions.json has no source hashes; run node scripts/pack-ides.mjs');
-    return false;
-  }
-  const stale = Object.keys(current).filter((ide) => recorded[ide] !== current[ide]);
-  for (const ide of stale) console.error(`${ide}/ changed since the last repack; run node scripts/pack-ides.mjs`);
-  return !stale.length;
-};
+  run('uv', ['run', '--python', version, '--no-project', 'python', '-I', '-S', 'mcp/tests/run.py'], root);
 
 const unlessSkipped = (skipped, name, step) => (skipped ? [] : [[name, step]]);
 

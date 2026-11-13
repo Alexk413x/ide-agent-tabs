@@ -139,6 +139,12 @@ test('reserved variables inherited from the editor are unset in the tab', () => 
   assert.equal(Object.keys(env).includes('ide_agent_tabs_id'), false);
 });
 
+test('the Agent Tabs folder the editor was started with reaches the tab', () => {
+  const env = terminalEnv('posix', launchOf(claude), 'tab-6', { IDE_AGENT_TABS_HOME: '/data/iat', IDE_AGENT_TABS_ARGS: '[]' });
+  assert.equal(Object.keys(env).includes('IDE_AGENT_TABS_HOME'), false);
+  assert.equal(env.IDE_AGENT_TABS_ARGS, null);
+});
+
 test('launch scripts ship with LF line endings', () => {
   for (const name of ['agent.sh', 'agent.fish', 'agent.ps1']) {
     const text = fs.readFileSync(path.join(scriptDir, name), 'utf8');

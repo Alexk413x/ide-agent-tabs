@@ -15,6 +15,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const status = createStatus();
   const refresh = () => refreshStatus(ext, status);
   const follow = () => followShared(ext.sync);
+  // Startup waits for trust; the settings are read again once the workspace is trusted.
+  let awaitingTrust = false;
+  const startup = (folders: readonly vscode.WorkspaceFolder[]) => {
+    if (vscode.workspace.isTrusted) openOnStartup(ext, folders);
+    else awaitingTrust = true;
+  };
   refresh();
   status.show();
 
@@ -33,7 +39,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.onDidChangeConfiguration(e => {
       if (settingsChanged(ext.sync, section => e.affectsConfiguration(section))) refresh();
     }),
-    vscode.workspace.onDidChangeWorkspaceFolders(e => openOnStartup(ext, e.added)),
+    vscode.workspace.onDidChangeWorkspaceFolders(e => startup(e.added)),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => {
+      if (!awaitingTrust) return;
+      awaitingTrust = false;
+      openOnStartup(ext, fileFolders());
+    }),
   );
 
   await followSharedDefault(ext.sync);
@@ -43,7 +54,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   refresh();
   const revived = adopt(ext, vscode.window.terminals);
   if (revived > 0) ext.log.info(`Found ${revived} agent tab${revived === 1 ? '' : 's'} from before the extension host restarted`);
-  else openOnStartup(ext, fileFolders());
+  else startup(fileFolders());
 
   await serveApi(ext);
 }

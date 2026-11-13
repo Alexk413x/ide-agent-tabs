@@ -50,6 +50,23 @@ class OpenOnStartupTest {
     }
 
     @Test
+    fun `an untrusted project waits for trust and a trusted one opens at once`() {
+        assertEquals(Startup.OPEN, startupAction(OpenOnStartup.CLAUDE_FOLDER, withClaude, trusted = true))
+        assertEquals(Startup.AFTER_TRUST, startupAction(OpenOnStartup.CLAUDE_FOLDER, withClaude, trusted = false))
+        assertEquals(Startup.AFTER_TRUST, startupAction(OpenOnStartup.ALWAYS, plain, trusted = false))
+        assertEquals(Startup.OPEN, startupAction(OpenOnStartup.ALWAYS, plain, trusted = true))
+    }
+
+    @Test
+    fun `nothing opens or waits when the setting or the folder says no, trusted or not`() {
+        for (trusted in listOf(true, false)) {
+            assertEquals(Startup.NONE, startupAction(OpenOnStartup.NEVER, withClaude, trusted))
+            assertEquals(Startup.NONE, startupAction(OpenOnStartup.CLAUDE_FOLDER, plain, trusted))
+            assertEquals(Startup.NONE, startupAction(OpenOnStartup.ALWAYS, null, trusted))
+        }
+    }
+
+    @Test
     fun `a project without a folder never opens`() {
         for (mode in OpenOnStartup.entries) assertFalse(mode.name, opensOnStartup(mode, null))
     }

@@ -57,10 +57,14 @@ class FakeMessaging:
 
     def __init__(self) -> None:
         self.threads: list[Any] = []
+        self.settled = 0
         self.release = threading.Event()
 
     def note_thread(self, thread_id: Any) -> None:
         self.threads.append(thread_id)
+
+    def settle_reads(self) -> None:
+        self.settled += 1
 
     def hook(self, event: str, data: dict[str, Any]) -> dict[str, Any] | None:
         return {"event": event, "keys": sorted(data)}
@@ -172,6 +176,25 @@ class StdioServerTest(unittest.TestCase):
         assert hooked is not None
         self.assertEqual(json.loads(hooked["result"]["content"][0]["text"]), {"event": "Stop", "keys": ["event", "session_id"]})
         self.assertEqual(self.messaging.threads, ["019a-thread", "019a-other"])
+
+    def test_every_tool_call_settles_the_sessions_reads_before_it_runs_but_a_hook_event_does_not(self) -> None:
+        self.init("codex-mcp-client")
+        self.call(50, "list_agents")
+        self.reply(50)
+        self.call(51, "agent_tabs_hook", {"event": "Stop"})
+        self.reply(51)
+        self.call(52, "agent_tabs_hook", {"event": "Stop", "session_id": "bad"})
+        self.reply(52)
+        self.assertEqual(self.messaging.settled, 1)
+        self.call(53, "no_such_tool")
+        self.reply(53)
+        self.assertEqual(self.messaging.settled, 1)
+
+    def test_a_mod_call_settles_no_reads_because_the_mod_polls_on_a_timer(self) -> None:
+        self.init("claude-code")
+        self.call(54, "agent_tabs_mod", {"op": "unread"})
+        self.reply(54)
+        self.assertEqual(self.messaging.settled, 0)
 
     def test_invalid_arguments_and_hidden_tools_are_tool_errors(self) -> None:
         self.init("claude-code")

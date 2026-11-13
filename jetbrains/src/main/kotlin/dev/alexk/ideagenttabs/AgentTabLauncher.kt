@@ -5,8 +5,12 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.PathManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerKeys
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTabsManager
 import com.intellij.util.EnvironmentUtil
 import com.intellij.util.concurrency.AppExecutorUtil
@@ -25,6 +29,7 @@ const val COMMAND_ENV = "${PLUGIN_ENV_PREFIX}COMMAND"
 const val ARGS_ENV = "${PLUGIN_ENV_PREFIX}ARGS"
 const val ARG_COUNT_ENV = "${PLUGIN_ENV_PREFIX}ARGC"
 const val ARG_ENV_PREFIX = "${PLUGIN_ENV_PREFIX}ARG_"
+private const val TERMINAL_TOOL_WINDOW = "Terminal"
 const val CHAR_DELAY_MS = 20L
 const val ENTER_DELAY_MS = 300L
 
@@ -66,7 +71,8 @@ object AgentTabLauncher {
         } else {
             unixShell(EnvironmentUtil.getValue("SHELL") ?: System.getenv("SHELL"), SystemInfo.isMac)
         }
-        return shellLaunch(shell, SCRIPT_DIR, agent, id)
+        val inherited = EnvironmentUtil.getEnvironmentMap()
+        return shellLaunch(shell, SCRIPT_DIR, agent, id, homeOverride()?.toString(), inherited)
     }
 
     @RequiresEdt
@@ -88,17 +94,46 @@ object AgentTabLauncher {
             .requestFocus(false)
             .createTab()
 
+        // TerminalEditorFiles reaches a class of the terminal plugin that a platform update can change, which
+        // surfaces as a LinkageError. The file is made while the tab is still in the tool window, so a failure
+        // there closes the tab instead of leaving a running agent attached to nothing.
+        val file = try {
+            TerminalEditorFiles.of(tab)
+        } catch (e: Throwable) {
+            cleanUp(e) { manager.closeTab(tab) }
+            throw e
+        }
         // Mirrors the terminal's own MoveTerminalSessionToEditorAction: the tab is detached from the
         // tool window, then reopened as an editor; CLOSING_TO_REOPEN keeps the session alive across the move.
         manager.detachTab(tab)
-        val file = TerminalEditorFiles.of(tab)
         file.putUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN, true)
         try {
             FileEditorManager.getInstance(project).openFile(file, focus)
+        } catch (e: Throwable) {
+            cleanUp(e) { returnToToolWindow(project, manager, tab) }
+            throw e
         } finally {
             file.putUserData(FileEditorManagerKeys.CLOSING_TO_REOPEN, null)
         }
         AgentTabRegistry.getInstance().add(AgentTabRegistry.Entry(id, profile.name, project, file, directory, tab))
+    }
+
+    // A detached tab is no longer in the tool window, where closeTab looks for it, so it goes back there first.
+    private fun returnToToolWindow(project: Project, manager: TerminalToolWindowTabsManager, tab: TerminalToolWindowTab) {
+        val contents = ToolWindowManager.getInstance(project).getToolWindow(TERMINAL_TOOL_WINDOW)?.contentManager
+        if (contents == null) Disposer.dispose(tab.content) else manager.attachTab(tab, contents)
+        manager.closeTab(tab)
+    }
+
+    // The failure being handled is the one reported; a failure in the cleanup rides along as suppressed.
+    private fun cleanUp(cause: Throwable, cleanup: () -> Unit) {
+        try {
+            cleanup()
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: Throwable) {
+            cause.addSuppressed(e)
+        }
     }
 
     @RequiresEdt
@@ -147,40 +182,74 @@ fun launchScript(kind: ShellKind, dir: Path): Path {
 
 class ShellLaunch(val command: List<String>, val env: Map<String, String>)
 
-fun shellLaunch(shell: Shell, scriptDir: Path, agent: AgentLaunch, tabId: String): ShellLaunch {
+fun shellLaunch(
+    shell: Shell,
+    scriptDir: Path,
+    agent: AgentLaunch,
+    tabId: String,
+    home: String? = null,
+    inherited: Map<String, String> = emptyMap(),
+): ShellLaunch {
     val script = launchScript(shell.kind, scriptDir)
     return when (shell.kind) {
-        ShellKind.POWERSHELL -> powerShellLaunch(shell.path, script, agent, tabId)
-        else -> sourcedLaunch(shell, script, agent, tabId)
+        ShellKind.POWERSHELL -> powerShellLaunch(shell.path, script, agent, tabId, home, inherited)
+        else -> sourcedLaunch(shell, script, agent, tabId, home, inherited)
     }
 }
 
-private fun launchEnv(agent: AgentLaunch, tabId: String): MutableMap<String, String> =
+// home is the Agent Tabs folder when the IDE was pointed at another one, so the tab's agent and MCP server use it too.
+private fun launchEnv(agent: AgentLaunch, tabId: String, home: String?): MutableMap<String, String> =
     agent.env.toMutableMap().apply {
         this[TAB_ID_ENV] = tabId
         this[AGENT_ENV] = agent.agent
         this[COMMAND_ENV] = agent.command
+        if (home != null) this[HOME_ENV] = home
     }
+
+// The terminal starts the shell with the IDE's own environment, and a tab can only add or replace variables. An
+// IDE started from an agent tab carries that tab's reserved variables, so those the launch doesn't set are
+// emptied; the launch scripts treat an empty one as unset.
+private fun MutableMap<String, String>.emptyInheritedReserved(inherited: Map<String, String>): MutableMap<String, String> {
+    val own = keys.mapTo(HashSet()) { it.uppercase() }
+    for (name in inherited.keys) {
+        if (isReservedEnv(name) && !name.equals(HOME_ENV, ignoreCase = true) && name.uppercase() !in own) this[name] = ""
+    }
+    return this
+}
 
 // The terminal appends its own "-NoExit -ExecutionPolicy Bypass -File powershell-integration.ps1" after
 // the shell's arguments, so any "-Command" here would swallow them. The shell gets no arguments; the
 // integration script runs the JEDITERM_SOURCE file once its setup is done.
-fun powerShellLaunch(shell: String, script: Path, agent: AgentLaunch, tabId: String): ShellLaunch {
-    val env = launchEnv(agent, tabId)
+fun powerShellLaunch(
+    shell: String,
+    script: Path,
+    agent: AgentLaunch,
+    tabId: String,
+    home: String? = null,
+    inherited: Map<String, String> = emptyMap(),
+): ShellLaunch {
+    val env = launchEnv(agent, tabId, home)
     if (agent.args.isNotEmpty()) env[ARGS_ENV] = JsonArray().apply { agent.args.forEach(::add) }.toString()
     if (agent.prompt != null) env[PROMPT_ENV] = agent.prompt
     env[STARTUP_ENV] = script.toString()
-    return ShellLaunch(listOf(shell), env)
+    return ShellLaunch(listOf(shell), env.emptyInheritedReserved(inherited))
 }
 
 // bash, zsh and fish have no JSON parser, so unlike the PowerShell launch each arg travels in its own variable.
-fun sourcedLaunch(shell: Shell, script: Path, agent: AgentLaunch, tabId: String): ShellLaunch {
-    val env = launchEnv(agent, tabId)
+fun sourcedLaunch(
+    shell: Shell,
+    script: Path,
+    agent: AgentLaunch,
+    tabId: String,
+    home: String? = null,
+    inherited: Map<String, String> = emptyMap(),
+): ShellLaunch {
+    val env = launchEnv(agent, tabId, home)
     if (agent.args.isNotEmpty()) {
         env[ARG_COUNT_ENV] = agent.args.size.toString()
         agent.args.forEachIndexed { i, arg -> env["$ARG_ENV_PREFIX$i"] = arg }
     }
     if (agent.prompt != null) env[PROMPT_ENV] = agent.prompt
     env[STARTUP_ENV] = script.toString()
-    return ShellLaunch(listOf(shell.path) + shell.flags, env)
+    return ShellLaunch(listOf(shell.path) + shell.flags, env.emptyInheritedReserved(inherited))
 }

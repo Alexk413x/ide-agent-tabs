@@ -9,7 +9,7 @@ import unittest
 from typing import Any
 
 from ide_agent_tabs.agent_config import HookTarget, claude_tab_settings
-from ide_agent_tabs.clock import now_iso
+from ide_agent_tabs.clock import now_iso, now_ms
 from ide_agent_tabs.jsjson import stringify
 from ide_agent_tabs.messaging import store
 from ide_agent_tabs.messaging.hook import HOOK_EVENTS, run_hook
@@ -44,6 +44,10 @@ def mail(home: str) -> None:
 
 def take(home: str) -> None:
     store.take_batch(home, ID)
+
+
+def held(home: str) -> int:
+    return len([m for m in store.stored_for(home, ID, []) if m["state"] == "held"])
 
 
 def presence(home: str) -> dict[str, Any]:
@@ -163,6 +167,44 @@ class HookStateTest(unittest.TestCase):
         take(home)
         hook(home, "claude", "PostToolUse")
         self.assertNotIn("reminded", presence(home))
+
+    def test_a_claimed_read_is_not_announced_and_only_a_successful_read_tool_hook_settles_it(self) -> None:
+        home = temp_home(self, "iat-hook-")
+        mail(home)
+        self.assertEqual(hook(home, "claude", "PostToolUse"), context("PostToolUse"))
+        take(home)
+        for event in ("PostToolUse", "UserPromptSubmit", "Stop"):
+            self.assertIsNone(hook(home, "claude", event, {"tool_name": "mcp__ide-agent-tabs__send_message"}), event)
+        self.assertIsNone(hook(home, "claude", "PostToolUse", {}))
+        self.assertIsNone(hook(home, "claude", "PostToolUseFailure", {"tool_name": "mcp__ide-agent-tabs__read_messages"}))
+        self.assertEqual(held(home), 1)
+        for cli, event, tool in (
+            ("codex", "PostToolUse", "mcp__ide-agent-tabs__wait_for_message"),
+            ("copilot", "postToolUse", "x__read_messages"),
+        ):
+            self.assertIsNone(hook(home, cli, event, {"toolName" if cli == "copilot" else "tool_name": tool}))
+            self.assertEqual(held(home), 0)
+            self.assertEqual(store.peek_unread(home, ID), [])
+            mail(home)
+            take(home)
+            self.assertEqual(held(home), 1)
+        hook(home, "claude", "PostToolUse", {"tool_name": "mcp__plugin_ide-agent-tabs_ide-agent-tabs__read_messages"})
+        self.assertEqual(held(home), 0)
+
+    def test_a_claim_nobody_settles_is_announced_again_after_the_tool_claim_timeout(self) -> None:
+        home = temp_home(self, "iat-hook-")
+        mail(home)
+        take(home)
+        at = now_ms()
+        self.assertIsNone(run_hook("claude", "PostToolUse", {}, home, ID, at + store.TOOL_CLAIM_TIMEOUT_MS - 1000))
+        self.assertEqual(run_hook("claude", "PostToolUse", {}, home, ID, at + store.TOOL_CLAIM_TIMEOUT_MS + 1000), context("PostToolUse"))
+
+    def test_a_mod_claim_is_left_alone_by_a_read_tool_hook(self) -> None:
+        home = temp_home(self, "iat-hook-")
+        mail(home)
+        store.claim_batch(home, ID, float("inf"))
+        run_hook("claude", "PostToolUse", {"tool_name": "x__read_messages"}, home, ID)
+        self.assertEqual(held(home), 1)
 
     def test_turn_end_blocks_at_most_three_times_and_a_prompt_or_read_resets_the_count(self) -> None:
         home = temp_home(self, "iat-hook-")
@@ -395,7 +437,7 @@ class HookScriptTest(unittest.TestCase):
         self.assertEqual(sorted(settings["hooks"]), sorted(HOOK_EVENTS["claude"]))
         matchers = {event: groups[0].get("matcher") for event, groups in settings["hooks"].items()}
         self.assertEqual(matchers["SessionStart"], "startup|resume|clear")
-        self.assertEqual(matchers["Notification"], "permission_prompt|idle_prompt")
+        self.assertEqual(matchers["Notification"], "permission_prompt|idle_prompt|elicitation_dialog")
         home = temp_home(self, "iat-hook-")
         mail(home)
         clean = {k: v for k, v in os.environ.items() if not k.startswith("IDE_AGENT_TABS")}

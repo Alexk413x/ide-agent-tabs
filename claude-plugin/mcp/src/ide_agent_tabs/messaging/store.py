@@ -33,18 +33,23 @@ MAX_SENDERS = 20
 KEEP_MS = 7 * 24 * 60 * 60 * 1000
 DEDUPE_MS = 60_000
 CLAIM_TIMEOUT_MS = 2 * 60_000
+# A tool read is acknowledged by the session's next Agent Tabs tool call or its PostToolUse hook; this only bounds how
+# long a result that never arrived stays hidden, and a session without hooks that works on what it read can be quiet for a while.
+TOOL_CLAIM_TIMEOUT_MS = 10 * 60_000
 RECHECK_MS = 10_000
 _MINUTE_MS = 60_000
 _CLOCK_SLACK_MS = 60_000
 _CLEAN_BATCH = 500
 _MESSAGE_ID = re.compile(r"m-[0-9a-f]{16}")
 _CLAIM_ID = re.compile(r"c-[0-9a-f]{16}")
+_TOOL_CLAIM_ID = re.compile(r"t-[0-9a-f]{16}")
 
 _COLUMNS = (
     "seq, id, route, owner, direction, from_id, from_name, from_agent, from_path, to_id, to_name, to_agent, to_path, "
     "text, reply_to, sent_at, delivery, state"
 )
-_PENDING = "(state = 'unread' OR (state = 'held' AND (state_ms <= ? OR state_ms > ?)))"
+_STALE = "(state_ms <= CASE WHEN claim GLOB 't-*' THEN ? ELSE ? END OR state_ms > ?)"
+_PENDING = f"(state = 'unread' OR (state = 'held' AND {_STALE}))"
 
 Message = dict[str, Any]
 
@@ -53,8 +58,8 @@ def new_message_id() -> str:
     return f"m-{os.urandom(8).hex()}"
 
 
-def _new_claim_id() -> str:
-    return f"c-{os.urandom(8).hex()}"
+def _new_claim_id(prefix: str = "c") -> str:
+    return f"{prefix}-{os.urandom(8).hex()}"
 
 
 def check_message_id(value: str, field: str) -> None:
@@ -74,7 +79,7 @@ def _bind(value: object) -> object:
 
 
 def _pending_args(now: float) -> list[float]:
-    return [now - CLAIM_TIMEOUT_MS, now + _CLOCK_SLACK_MS]
+    return [now - TOOL_CLAIM_TIMEOUT_MS, now - CLAIM_TIMEOUT_MS, now + _CLOCK_SLACK_MS]
 
 
 def _now(now: float | None) -> int:
@@ -205,9 +210,9 @@ def send_message(
                 raise MailError("the disk is full; the message was not sent") from e
             raise
         if not sent.get("duplicate"):
-            from .wake import signal_wake
+            from .wake import notify_local
 
-            signal_wake(home, out["to"])
+            notify_local(home, out["to"])
         return sent
 
 
@@ -221,7 +226,7 @@ def set_delivery(home: str, message_id: str, delivery: str) -> None:
 def _return_stale(db: Db, session_id: str, now: int) -> None:
     db.run(
         "UPDATE messages SET state = 'unread', claim = NULL, state_ms = ? WHERE route = 'agent-tabs' AND to_id = ? AND state = 'held' "
-        "AND (state_ms <= ? OR state_ms > ?)",
+        f"AND {_STALE}",
         now,
         _bind(session_id),
         *_pending_args(now),
@@ -259,6 +264,17 @@ def _pick(rows: Sequence[sqlite3.Row], count: float, chars: float) -> tuple[list
     return picked, remaining
 
 
+def _claim_rows(db: Db, session_id: str, flt: dict[str, str] | None, count: float, chars: float, at: int, prefix: str) -> Message:
+    _return_stale(db, session_id, at)
+    picked, remaining = _pick(_unread_rows(db, session_id, flt), count, chars)
+    messages = [_to_message(r) for r in picked]
+    claim = _new_claim_id(prefix) if picked else None
+    for row in picked:
+        db.run("UPDATE messages SET state = 'held', claim = ?, state_ms = ? WHERE seq = ? AND state = 'unread'", claim, at, row["seq"])
+    return {"claim": claim, "messages": messages, "ids": [m["id"] for m in messages], "remaining": remaining, "unreadable": 0}
+
+
+# A read tool claims what it returns; the session's next tool call settles the claim (settle_read_claims).
 def take_batch(
     home: str,
     session_id: str,
@@ -270,48 +286,44 @@ def take_batch(
     label: str | None = "read",
 ) -> Message:
     at = _now(now)
-
-    def work(db: Db) -> Message:
-        _return_stale(db, session_id, at)
-        picked, remaining = _pick(_unread_rows(db, session_id, flt), count, chars)
-        for row in picked:
-            db.run("UPDATE messages SET state = 'read', state_ms = ? WHERE seq = ? AND state = 'unread'", at, row["seq"])
-        messages = [_to_message(r) for r in picked]
-        return {"messages": messages, "ids": [m["id"] for m in messages], "remaining": remaining, "unreadable": 0}
-
-    return tx(home, work, deadline_ms, label)
-
-
-def put_back(home: str, session_id: str, ids: Sequence[str], now: float | None = None) -> None:
-    if not ids:
-        return
-    at = _now(now)
-
-    def work(db: Db) -> None:
-        for message_id in ids:
-            db.run(
-                "UPDATE messages SET state = 'unread', state_ms = ? WHERE route = 'agent-tabs' AND to_id = ? AND id = ? AND state = 'read'",
-                at,
-                _bind(session_id),
-                _bind(message_id),
-            )
-
-    tx(home, work, label="put back")
+    return tx(home, lambda db: _claim_rows(db, session_id, flt, count, chars, at, "t"), deadline_ms, label)
 
 
 def claim_batch(home: str, session_id: str, count: float, chars: float = MAX_READ_CHARS, now: float | None = None) -> Message:
     at = _now(now)
+    return tx(home, lambda db: _claim_rows(db, session_id, None, count, chars, at, "c"), label="claim")
 
-    def work(db: Db) -> Message:
-        _return_stale(db, session_id, at)
-        picked, remaining = _pick(_unread_rows(db, session_id, None), count, chars)
-        messages = [_to_message(r) for r in picked]
-        claim = _new_claim_id() if picked else None
-        for row in picked:
-            db.run("UPDATE messages SET state = 'held', claim = ?, state_ms = ? WHERE seq = ? AND state = 'unread'", claim, at, row["seq"])
-        return {"claim": claim, "messages": messages, "ids": [m["id"] for m in messages], "remaining": remaining, "unreadable": 0}
 
-    return tx(home, work, label="claim")
+def settle_read_claims(
+    home: str,
+    session_id: str,
+    claims: Collection[str] | None,
+    op: str = "ack",
+    now: float | None = None,
+    deadline_ms: float = TOOL_DEADLINE_MS,
+) -> int:
+    where = ["route = 'agent-tabs'", "to_id = ?", "state = 'held'"]
+    args: list[object] = [_bind(session_id)]
+    if claims is None:
+        where.append("claim GLOB 't-*'")
+    else:
+        valid = [c for c in claims if _TOOL_CLAIM_ID.fullmatch(c) is not None]
+        if not valid:
+            return 0
+        where.append(f"claim IN ({', '.join('?' for _ in valid)})")
+        args.extend(valid)
+    at = _now(now)
+    return tx(
+        home,
+        lambda db: db.run(
+            f"UPDATE messages SET state = ?, claim = NULL, state_ms = ? WHERE {' AND '.join(where)}",
+            "read" if op == "ack" else "unread",
+            at,
+            *args,
+        ),
+        deadline_ms,
+        op,
+    )
 
 
 def settle_claim(home: str, session_id: str, claim: str, op: str, now: float | None = None) -> int:
@@ -395,7 +407,7 @@ def mail_to(home: str, session_id: str) -> list[Message]:
         lambda db: [
             _to_message(r)
             for r in db.all(
-                f"SELECT {_COLUMNS} FROM messages WHERE route = 'agent-tabs' AND to_id = ? AND state IN ('unread', 'read') ORDER BY seq",
+                f"SELECT {_COLUMNS} FROM messages WHERE route = 'agent-tabs' AND to_id = ? ORDER BY seq",
                 _bind(session_id),
             )
         ],
@@ -435,7 +447,10 @@ def log_native(home: str, record: Message) -> None:
     )
 
 
-def stored_for(home: str, session_id: str | None, names: Sequence[str]) -> list[Message]:
+# A claim past its timeout is unread again, so a history row shows it as unread before any read hands it back.
+def stored_for(home: str, session_id: str | None, names: Sequence[str], now: float | None = None) -> list[Message]:
+    at = _now(now)
+    columns = f"{_COLUMNS[: -len('state')]}CASE WHEN state = 'held' AND {_STALE} THEN 'unread' ELSE state END AS state"
     marks = ", ".join("?" for _ in names)
     by_name = f" OR from_name IN ({marks}) OR to_name IN ({marks})" if names else ""
     bound = [_bind(n) for n in names]
@@ -445,7 +460,8 @@ def stored_for(home: str, session_id: str | None, names: Sequence[str]) -> list[
         lambda db: [
             _to_stored(r)
             for r in db.all(
-                f"SELECT {_COLUMNS} FROM messages WHERE from_id = ? OR to_id = ? OR owner = ?{by_name} ORDER BY seq",
+                f"SELECT {columns} FROM messages WHERE from_id = ? OR to_id = ? OR owner = ?{by_name} ORDER BY seq",
+                *_pending_args(at),
                 sid,
                 sid,
                 sid,
@@ -463,6 +479,7 @@ def wait_for_message(
     timeout_ms: float,
     cancel: threading.Event | None = None,
     now: Callable[[], float] | None = None,
+    claimed: Callable[[str], None] | None = None,
 ) -> Message | None:
     clock = now or now_ms
     deadline = time.monotonic() + timeout_ms / 1000
@@ -480,9 +497,11 @@ def wait_for_message(
                 if has_unread(home, session_id, flt, clock()):
                     batch = take_batch(home, session_id, flt, count=1, now=clock())
                     if batch["messages"] and cancel is not None and cancel.is_set():
-                        put_back(home, session_id, batch["ids"], clock())
+                        settle_read_claims(home, session_id, [batch["claim"]], "release", clock())
                         return None
                     if batch["messages"]:
+                        if claimed is not None:
+                            claimed(batch["claim"])
                         return batch["messages"][0]
             left = deadline - time.monotonic()
             if left <= 0 or (cancel is not None and cancel.is_set()):
@@ -536,8 +555,5 @@ def clean_store(home: str, live: Collection[str], now: float | None = None) -> N
                 [to],
             )
         query(home, lambda db: db.all("PRAGMA wal_checkpoint(TRUNCATE)"), CLEAN_DEADLINE_MS)
-        from .wake import remove_stale_wakes
-
-        remove_stale_wakes(home, live, cutoff)
     except StoreBusyError:
         return

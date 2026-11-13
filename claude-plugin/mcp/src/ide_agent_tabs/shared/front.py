@@ -442,7 +442,8 @@ class Handler(socketserver.StreamRequestHandler):
             self.rpc_error(None, RpcError(INVALID_REQUEST, NOT_ONE_MESSAGE))
             return
 
-        if version != MODERN_PROTOCOL and (version in CLASSIC_PROTOCOLS or (version is None and msg["method"] == "initialize")):
+        # 2025-03-26 predates the header, so a request without one is that version.
+        if version != MODERN_PROTOCOL and (version is None or version in CLASSIC_PROTOCOLS):
             self.classic_message(msg)
             return
 

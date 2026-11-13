@@ -60,9 +60,11 @@ The file name without `.json` is the IDE's id in the MCP tools.
   without `startedAt` takes its modification time as the start time.
 - A reader that sees a `protocol` value it doesn't know skips that file.
 
-To use a folder other than `~/.ide-agent-tabs`, set the environment variable `IDE_AGENT_TABS_HOME` (VS Code
-extension and MCP server) or the Java system property `ide.agent.tabs.home` (JetBrains). Tests and the
-sandbox IDE use this so they never mix with real IDEs.
+To use a folder other than `~/.ide-agent-tabs`, set the environment variable `IDE_AGENT_TABS_HOME`. The VS Code
+extension, the MCP server and the JetBrains plugin all read it, and a blank value counts as unset. JetBrains also
+reads the Java system property `ide.agent.tabs.home`, which wins over the variable. Tests and the sandbox IDE use
+the property so they never mix with real IDEs. A tab that an IDE opens gets `IDE_AGENT_TABS_HOME` in its
+environment when the IDE was pointed at another folder, so the agent and its MCP server use the same one.
 
 ## HTTP API
 
@@ -339,7 +341,18 @@ started through Ori has a different command line; see [Model and Ori](#model-and
   `ConvertFrom-Json` turns a string such as `2024-01-01T00:00:00Z` into a date.
 - Windows PowerShell 5.1 strips embedded double quotes from arguments it passes to native programs.
   Launchers that may run under 5.1 must escape them.
-
+- A launcher treats a reserved variable that is set but empty as unset. An IDE can only add or replace
+  variables in a terminal tab, so the JetBrains plugin empties the reserved variables its own environment
+  carries (from an IDE started in an agent tab) that the launch doesn't set. VS Code unsets them. Both leave
+  `IDE_AGENT_TABS_HOME` alone.
+- When the agent command is a `.cmd` or `.bat` file, `cmd.exe` would run the `&`, `|` and `>` of an argument or
+  prompt. The PowerShell launchers (`agent.ps1` in the IDEs and `agent-launch.ps1`) start such a file through
+  `cmd.exe /d /v:off /s /c` with every argument quoted: `"` becomes `""`, with the backslashes
+  before it doubled, `%` becomes `%%cd:~,%` so `%NAME%` isn't expanded, and the file gets each argument
+  intact through `%1` and `%*`. A line break can't cross `cmd.exe`, so in a batch agent's arguments and prompt
+  `\r\n`, `\r` and `\n` each become one space; that is the only altered character. `cmd.exe` also limits the
+  whole command line to 8,191 characters. A `.ps1` shim and a native program take the earlier paths. Ori still
+  refuses these characters, as above.
 ### Model and Ori
 
 A request's `model` picks the agent's model. The server and the IDEs add `[modelFlag, model]` after the
@@ -570,6 +583,7 @@ Two diagnostics run on the command line instead of as tools, from the same packa
 `claude-plugin/mcp/launch/agent-tabs` is a POSIX `sh` launcher: it runs `agent_tabs.py` with `py -3` on
 Windows, else the first `python3` or `python` on `PATH` outside `WindowsApps`, whose Microsoft Store
 stubs open the Store instead of running Python. Without Python it prints a JSON error and exits 127.
+`agent-tabs.ps1` beside it does the same in PowerShell, for Windows without Git Bash.
 `list-ides` prints the running IDEs with their projects, from the registry and each IDE's `info`, the
 terminals, the PowerShell installs, and under `installed` the IDEs found on disk that aren't running
 (`name`, `product`, `kind`, `version`). It reuses a detection file less than an hour old. It exits 1
@@ -674,8 +688,16 @@ as the default, as for the tab settings.
 read an existing value when they open a tab, so a `launchVia` of `ori` keeps starting supported agents
 through Ori. They never write the key, and they keep the value the file holds.
 
-The VS Code settings have machine scope, so only the user-level value reaches `config.json`. A workspace's
-`.vscode/settings.json` can't set the shell or the terminal, and an untrusted workspace can't change them.
+The VS Code settings in the two tables above have machine scope, so only the user-level value reaches
+`config.json`. A workspace's `.vscode/settings.json` can't set the shell or the terminal.
+
+`ideAgentTabs.defaultAgent` and `ideAgentTabs.openOnStartup` can be set per workspace, and both are listed in
+`restrictedConfigurations`, so VS Code ignores a workspace value while the workspace is untrusted. An untrusted
+workspace never opens an agent on startup, whatever the setting or a `.claude` folder says; the extension waits for
+`onDidGrantWorkspaceTrust` and then reads the settings again. JetBrains has no project-level setting for either: the
+default agent comes from `config.json` and **Open on startup** is an application setting. It also waits for trust:
+a project that isn't trusted (`TrustedProjects.isProjectTrusted`) doesn't open the agent until the user trusts it.
+Only the user-level `defaultAgent` is written to `config.json`; a workspace value never is.
 
 ### Detection file
 
@@ -736,7 +758,8 @@ to ask the client for its roots. The shared server therefore speaks 2026-07-28 i
 server uses no MCP SDK: it implements both transports and the tool layer with the standard library.
 
 **The headers helper and the session start hook find the same Claude Code process.** Claude Code runs
-the `headersHelper` through `cmd.exe /d /s /c` and a hook command string through Git Bash. The helper's
+the `headersHelper` through `cmd.exe /d /s /c` and a hook command string through Git Bash (this trace is from a
+machine with Git Bash). The helper's
 ancestors were `node`, `cmd.exe`, then `claude.exe`; the hook's were `node`, `bash`, `bash`, then the same
 `claude.exe`. The hook's `CLAUDE_PID` named that process too. The helper gets no `CLAUDE_PID` or
 `CLAUDE_CODE_SESSION_ID` of its own: in a nested session it inherits the outer session's values, so the
@@ -896,9 +919,8 @@ database returns at once, and the retry with jitter waits outside SQLite's own b
 connection sits behind a lock, so its own sessions' write transactions take turns and never wait on each
 other's database lock.
 
-Its waiters don't watch `~/.ide-agent-tabs/wake/`. One thread reads the store's `data_version` every
-100 ms for all waiters in the process, and a send to a session waiting in the same process wakes it
-directly, without a wake file.
+One thread reads the store's `data_version` every 100 ms for all waiters in the process, and a send to a
+session waiting in the same process wakes it directly.
 
 Calls that list sessions and overlap share one read of the presence files.
 
@@ -908,8 +930,7 @@ Calls that list sessions and overlap share one read of the presence files.
 - A newer build that finds an older one on the port asks it to stop with `POST /shutdown` and the token
   from the older one's state file, after it checks that the state file names that pid and port, and
   then takes the port. An older build leaves a newer one running. Claude Code sends the next call to the
-  newer server, with its old headers. The Python server of 0.9.0 takes the port from a running 0.8.0
-  Node server this way.
+  newer server, with its old headers.
 - A server whose state file is gone or names another pid exits within 5 s.
 - A server exits after 8 hours with no request and no live session. A stopped server isn't restarted
   mid-session, so a short idle timeout would strand sessions.
@@ -941,9 +962,9 @@ start-up don't depend on load.
 | 32 HTTP sessions and 8 stdio processes | 296-1,588 / 79-256 ms; 0 failed, lost or read twice | 0 failed, lost or read twice; aim under 150 ms |
 | Sessions marked "needs auth" after 20 cold starts | 0 of 20 | 0 of 20 |
 
-`mcp/bench/shared_server.py` measures the shared server's start, idle memory and headers helper against
-the 0.8.0 build in `mcp/tests/node080/`. `mcp/bench/hook_startup.py` measures hook start-up, and
-`mcp/bench/claude_tab_hooks.py` measures hooks inside Claude Code.
+`mcp/bench/shared_server.py` measures the shared server's start, idle memory and headers helper, and
+`mcp/bench/claude_tab_hooks.py` measures hooks inside Claude Code. The 0.8.0 numbers above come from the
+Node build, which the repo no longer holds.
 
 ## Python implementation
 
@@ -981,9 +1002,12 @@ scripts in `scripts/` use it.
 - Claude Code runs the headers helper as `py -3 -I -S … || python3 -I -S … || python -I -S …` (see
   [Process and transport](#process-and-transport)), and the hooks as described in
   [Claude Code's hooks](#claude-codes-hooks).
-- Skills and users run `claude-plugin/mcp/launch/agent-tabs`, a POSIX `sh` launcher. It picks the
-  interpreter once (`py -3` on Windows, else the first `python3` or `python` on `PATH` outside
-  `WindowsApps`) and `exec`s it. Without Python it prints a JSON error and exits 127.
+- Skills and users run `claude-plugin/mcp/launch/agent-tabs`, a POSIX `sh` launcher, or on Windows
+  without Git Bash `agent-tabs.ps1`. It picks the interpreter once (`py -3` on Windows, else the first
+  `python3` or `python` on `PATH` outside `WindowsApps`) and runs it. Without Python it prints a JSON
+  error and exits 127. The PowerShell launcher builds the child's command line itself, because Windows
+  PowerShell 5.1 drops the quotes inside an argument, and writes a piped request to the child as UTF-8.
+  It doesn't put the output in the PowerShell pipeline: the child writes to the console handles.
 - Other agent CLIs and Codex tabs run the server copy with the absolute interpreter recorded in
   `~/.ide-agent-tabs/mcp/python.json`, so no `py.exe` stays behind as the server's parent. Antigravity
   CLI refuses a command path with spaces, so it runs `py -3` on Windows. See
@@ -992,7 +1016,7 @@ scripts in `scripts/` use it.
 ### Foundations
 
 - `files` writes files atomically (a temp file renamed over the target, retried while Windows refuses
-  the rename) and takes lock files in the 0.8.0 format: `<file>.lock` holds `"<pid> <16 hex digits>"`,
+  the rename) and takes lock files: `<file>.lock` holds `"<pid> <16 hex digits>"`,
   and a waiter breaks a lock whose owner is dead or whose file is more than 10 s old.
 - On Windows, Python's `open()` doesn't share delete access, so a reader would stop another process
   from releasing a lock or renaming over a presence file. `winapi.open_shared_read` opens files with
@@ -1001,20 +1025,19 @@ scripts in `scripts/` use it.
   `os.kill(pid, 0)` there ends the process.
 - `jsjson.stringify` writes what `JSON.stringify` writes: compact or indented, no ASCII escaping,
   lone surrogates as `\udXXX`, integer-like keys first, and numbers in JavaScript's format.
-  `utf16_len` and `utf16_slice` count and cut strings the way JavaScript strings do. The IDEs, the mod
-  and 0.8.0 servers read what the server writes, so it keeps their formats.
+  `utf16_len` and `utf16_slice` count and cut strings the way JavaScript strings do. The IDEs and the mod
+  read what the server writes, so it keeps their formats.
 - `clock.iso` writes `Date.prototype.toISOString` timestamps, and `clock.parse_iso` reads the ISO forms
   `Date.parse` reads.
 
 ### Message store
 
 `ide_agent_tabs.messaging` opens `messages.db` with the schema, `user_version`, pragmas, busy timeout,
-retry jitter and deadlines of 0.8.0, so 0.8.0 servers that still run share the store. A process keeps
+retry jitter and deadlines of earlier builds. A process keeps
 one connection per home behind a lock, so its threads take turns. Text with a lone surrogate is stored
-with U+FFFD, and the dedupe digest hashes the `JSON.stringify` form, so a send deduplicates against one
-from a 0.8.0 server.
+with U+FFFD, and the dedupe digest hashes the `JSON.stringify` form.
 
-A waiter doesn't watch the wake folder. One thread per home polls `PRAGMA data_version` every 100 ms and
+One thread per home polls `PRAGMA data_version` every 100 ms and
 wakes that home's waiters when it changes; a send in the same process wakes them directly.
 
 ### Claude Code's hooks
@@ -1023,24 +1046,34 @@ wakes that home's waiters when it changes; a send in the same process wakes them
 and `SessionEnd`, and `sync-ides --hook` at startup. It has no agent hooks, so a Claude Code session
 outside an Agent Tabs tab starts no hook process when a prompt is submitted, a tool runs or a turn ends.
 
-The session hooks are bash-style shell strings:
+The session hooks are shell strings that work in sh and in PowerShell:
 
 ```sh
 set -- server SessionStart; . "${CLAUDE_PLUGIN_ROOT}/mcp/launch/server-hook.ps1"
+. "${CLAUDE_PLUGIN_ROOT}/mcp/launch/sync-hook.ps1"
 ```
 
-Claude Code runs a shell string with `sh -c` on macOS and Linux and with Git Bash on Windows, so Windows
-needs Git Bash. A plugin hook has no per-platform command, and the exec form (`command` with `args`) spawns
-one executable by name with no shell. No such name exists on every OS: `py` is Windows-only, `python3` and
-`python` on Windows are often the Microsoft Store stubs, and the exec form can't run a `.cmd` or a script.
+Claude Code runs a shell string with `sh -c` on macOS and Linux, with Git Bash on Windows, and with
+PowerShell on Windows when Git Bash isn't installed. A hook can set `"shell": "powershell"`, but that
+forces PowerShell on every OS and breaks macOS and Linux, and a plugin hook has no per-platform command.
+The exec form (`command` with `args`) spawns one executable by name with no shell, and no such name exists
+on every OS: `py` is Windows-only, `python3` and `python` on Windows are often the Microsoft Store stubs,
+and the exec form can't run a `.cmd` or a script. So both hook scripts read the same in either shell.
 
-`server-hook.ps1` is both a POSIX sh script and a PowerShell script. In sh, `set --` sets the arguments.
-The file starts with `echo @'`, which sh reads as one quoted word and PowerShell as the start of a
-here-string, so sh runs the first part and exits. The PowerShell part, for Windows without Git Bash, is a
-fallback, not a supported path. The script runs the interpreter recorded in
+`server-hook.ps1` is both a POSIX sh script and a PowerShell script. In sh, `set --` sets the arguments;
+in PowerShell, `set` is `Set-Variable`, so the same words set `$server` to the event. The file starts
+with `echo @'`, which sh reads as one quoted word and PowerShell as the start of a
+here-string, so sh runs the first part and exits, and PowerShell runs the rest. The script runs the
+interpreter recorded in
 `~/.ide-agent-tabs/mcp/hook-python`, else `py -3` on Windows, else the first `python3` or `python` outside
 `WindowsApps`, with `-I -S`. A hook that found no recorded interpreter sets `IDE_AGENT_TABS_HOOK_PYTHON`,
 and the Python script writes its own path there, so later hooks skip `py.exe`.
+
+`sync-hook.ps1` is built the same way and runs `agent_tabs.py sync-ides --hook` with `-I -S`: `py -3` on
+Windows, else the first `python3` or `python` outside `WindowsApps`. It doesn't use the recorded
+interpreter. Unlike `agent-tabs`, it exits 0 and prints nothing when it finds no Python, so a machine
+without Python doesn't get a hook error at every session start; the setup skill reports the missing
+Python. `powershell -Command` reports a script that exited non-zero as exit code 1.
 
 #### Tab hooks
 
@@ -1080,7 +1113,7 @@ settings file and runs no agent hooks until it restarts. A headless `claude -p` 
 `IDE_AGENT_TABS_ID` but not the tab's flag, so it runs no agent hooks.
 
 `agent_hook.py` imports only what the common path needs: the store, presence files and the reminder text.
-The wake files and `processes` load only on the paths that use them, and `pid_alive` lives in its own
+`processes` loads only on the paths that use it, and `pid_alive` lives in its own
 module, `liveness`, so a hook doesn't build `processes`' named tuples. `test_hook.py` fails when `shutil`,
 `subprocess`, `secrets`, `hashlib`, `ctypes`, `random`, `asyncio`, `processes` or the wake module comes
 back on the hook's import path.
@@ -1125,14 +1158,14 @@ server copy.
 ### Shared server internals
 
 `ide_agent_tabs.shared` serves Claude Code sessions with the routes, headers, token and state files of
-0.8.0, so a 0.9.0 server takes the port from a running 0.8.0 server.
+earlier builds, so a newer server takes the port from an older one.
 
 - `front.py` speaks MCP 2026-07-28 on `socketserver.ThreadingTCPServer` with a small HTTP/1.1 reader.
   `http.server` would load `email`, `mimetypes` and `ssl` and double the start-up. A dropped connection
   cancels its tool call: one thread watches the sockets of open calls for the end of the stream.
 - `hub.py` keys sessions on the pid and start time, else the client id, else the tab id, asks for roots on
   a client's first call, ends a session when its process exits (checked every 15 s) or `/end` names its
-  pid, and sets the store's shared mode (busy timeout 0, no wake files for waiters in the process) before
+  pid, and sets the store's shared mode (busy timeout 0) before
   the first bind.
 - Tools come through `host.ToolHost`: `tools_for` and `instructions`, and `bind` for one
   session, whose `end` records the session as closed and whose `release` keeps its presence for the next
@@ -1154,12 +1187,6 @@ server copy.
 - Lint: `uvx ruff@0.16.10 check`, `uvx ruff@0.16.10 format --check`, `uv run --frozen pyright` and
   `uv run --frozen pyright --pythonplatform Linux`. The root `pyproject.toml` holds their settings and
   the pyright dev group, targets Python 3.9, and declares no runtime dependencies.
-- `mcp/tests/node080/` holds the 0.8.0 Node build as a fixture that doesn't ship. The interop tests run
-  it next to the Python code: lock files, a store shared with 0.8.0 servers (`test_store_interop.py`),
-  a mixed stress run of Node and Python workers on one home under the 0.8.0 limits of a 600 ms median
-  burst send and a 750 ms p99 loop delay (`test_stress_mixed.py`), the hooks (`test_hook_interop.py`),
-  and handover from a running 0.8.0 shared server. They need Node.js on `PATH`, and skip without it
-  unless `IDE_AGENT_TABS_INTEROP=1` is set, which `scripts/check.mjs` and the CI interop job set.
 - `node scripts/check.mjs` runs all of these with the repo's other checks, and is the local gate. CI
   runs the tests on Python 3.9 and 3.13 on Windows, macOS and Linux, and on macOS also on
   `/usr/bin/python3` when it exists.
@@ -1358,7 +1385,7 @@ other agent CLIs. For that, every session that runs the MCP server can message e
   nothing native ships with the plugin. The file is owner-only (0600).
 - A message is one row: `id` (`m-` and 16 hex characters), `from` (`id`, `agent`, `path`), `to`,
   `text`, an optional `replyTo`, `sentAt`, the `delivery` the send returned, and a state: `unread`,
-  `held` (claimed by the Claude Code mod) or `read`. The server sets `from` from its own session, so an
+  `held` (claimed, not yet confirmed) or `read`. The server sets `from` from its own session, so an
   agent can't send as another session. Rows keep the order they were sent in, whatever the clock does.
 - The database runs in WAL mode with `synchronous=NORMAL`: readers never wait for a writer, and a power
   loss can lose the last few messages but never corrupts the file. Each process holds one connection.
@@ -1376,8 +1403,6 @@ other agent CLIs. For that, every session that runs the MCP server can message e
   once an hour after that, 500 rows per transaction. The same run checks the database with
   `PRAGMA quick_check`; a corrupt database is copied with `VACUUM INTO` where it can be, moved aside as
   `messages.corrupt-<ms>.db`, and replaced by an empty one. Unread messages in it can be lost.
-- The first open of the database deletes the file mailbox of earlier builds, `~/.ide-agent-tabs/mail/`.
-  Messages in it are dropped.
 - The database must sit on a local disk: SQLite's locks don't hold on a network file system. The server
   refuses a UNC home on Windows, and an NFS, SMB or 9P home on Linux (such as WSL's `/mnt/c`), with
   advice to set `IDE_AGENT_TABS_HOME` to a local folder. Keep the home out of folders that a sync tool
@@ -1389,14 +1414,25 @@ other agent CLIs. For that, every session that runs the MCP server can message e
 |---|---|
 | `list_sessions` | Lists live sessions in a fixed agent order (claude, codex, agy, copilot, grok, pi, hermes, opencode, qwen, goose, codex-lmstudio, codex-ollama with codex-local, then others by name): `name` (the native name of a Claude session whose mod runs, else the id), `id`, `agent`, `route` (`native` or `agent-tabs`), `state`, `tab` (the tab id, or `null`), `host` (the IDE product and project, or the terminal), `ide` (the host's id), `path`, `via` when known, `startedAt`, `handedOffTo` for a session that handed its work to another, and `self` for the caller. |
 | `send_message` | Sends `text` to the session `to`, optionally as a reply to `replyTo`. Returns the message `id`, and `delivery`: `woken` or `queued`. A `note` says why a wake-up failed. |
-| `read_messages` | Returns the caller's unread messages and marks them read. |
-| `wait_for_message` | Waits up to `timeout` seconds (default 60, at most 600, or 170 in an Antigravity CLI session) for a message, optionally only one from `from` or replying to `replyTo`, and returns it, marked read. Returns `message: null` on timeout. Messages the filter skips stay unread. |
+| `read_messages` | Returns the caller's unread messages and claims them: they are `held` until the session's next Agent Tabs tool call confirms the result arrived. |
+| `wait_for_message` | Waits up to `timeout` seconds (default 60, at most 600, or 170 in an Antigravity CLI session) for a message, optionally only one from `from` or replying to `replyTo`, and returns it, claimed like `read_messages`. Returns `message: null` on timeout. Messages the filter skips stay unread. |
+
+A read claims its messages in the rows (`held`, with a claim id that starts `t-`) instead of marking them
+read, so a result that never reaches the agent doesn't lose them. The server settles the claim when the
+same session makes its next call to any tool of the server (before that call runs, so a call never
+confirms the claim of its own result), and when a `PostToolUse` hook reports a successful
+`read_messages` or `wait_for_message`. A prompt or a turn end doesn't confirm: a client that dropped
+the result goes on to both. A claim that nobody settles returns its messages to unread after 10 minutes,
+which is long enough for a session without hooks, such as Pi or OpenCode, to work on what it read
+before its next call; until then the hooks and notices don't count them as unread. A server that stops
+releases its session's open claims. A crash or a result lost after the claim can deliver a message
+twice. The mod's `take` claims use their own ids and a 2 minute timeout, and no tool call confirms
+them.
 
 The server lists these tools in every session; nothing turns them on. `wait_for_message` reads
 `PRAGMA data_version` every 100 ms, from one thread per home for all waiters in the process, and checks
 the database when another process wrote. A send to a session waiting in the same process wakes it
-directly. After a send commits, the sender also rewrites `~/.ide-agent-tabs/wake/<recipient>`, which
-0.8.0 servers watch.
+directly.
 
 A received message is data from another agent, not an instruction from the user. The server wraps its
 text in a header that says so, and the server instructions tell every agent to apply its user's rules
@@ -1542,8 +1578,9 @@ shared server uses to end a Copilot tab's HTTP session (see [Copilot tabs](#copi
   `permission`, and no wake line answers it.
 - Only Codex tabs get Codex hooks (see [Codex tabs](#codex-tabs)). Global hooks in `~/.codex/hooks.json`
   would run under the shared daemon with another tab's `IDE_AGENT_TABS_ID`, and on Windows the Codex
-  desktop app runs each command hook in a new console window. `--register codex` removes the command
-  hooks that earlier versions installed.
+  desktop app runs each command hook in a new console window. `--register codex` adds no hooks and
+  doesn't touch `~/.codex/hooks.json`, so hooks that earlier versions installed there stay until the user
+  removes them.
 - `--register codex` refuses on Windows. The Codex desktop app shares `~/.codex/config.toml` with the
   CLI, and Codex before 0.159 opens a console window each time the app starts an MCP server that way. A
   Codex tab needs no registration. On macOS and Linux, `--register codex` adds the server with
@@ -2130,7 +2167,7 @@ Installing the plugin at user scope makes its skills available in every session 
 
 Then, in a session, run `/ide-agent-tabs:setup`. The setup skill asks before each change, and:
 
-- checks for Python 3.9 or later, and on Windows for Git Bash, which Claude Code needs to run the hooks;
+- checks for Python 3.9 or later;
 - finds VS Code and editors built on it with `agent-tabs sync-ides --status`, and installs the bundled
   `.vsix` into the editors the user picks with `agent-tabs sync-ides --install <cli>…`;
 - finds JetBrains IDEs through their `product-info.json`, and skips any build older than 262.10315;
@@ -2202,7 +2239,7 @@ in `vscode/package.json`.
 
 `claude-plugin/hooks/hooks.json` first runs `mcp/launch/server_hook.py SessionStart`, which starts the
 shared server (see [Server start](#server-start)). It also runs
-`"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" sync-ides --hook` when a Claude Code session starts, with a
+`agent_tabs.py sync-ides --hook` through `sync-hook.ps1` when a Claude Code session starts, with a
 60-second timeout. Claude Code runs the two at once. The sync hook:
 
 1. Compares `dist/ide/versions.json` with `~/.ide-agent-tabs/synced.json`, and stops when the versions
@@ -2260,12 +2297,9 @@ copy of the server in `~/.ide-agent-tabs/mcp/`, because the plugin's own folder 
 - A refresh keeps the current and the previous build and deletes older ones. It runs under a lock file,
   and a plugin older than the current build leaves the copy alone.
 - `--register` writes the copy too, so a first registration works before any sync.
-- Registrations and hook entries that run the 0.8.0 Node copy (`node …/mcp-server.mjs`,
-  `…/agent-hook.mjs`), or an interpreter that changed, move to the current command; for Hermes the
-  approvals in `shell-hooks-allowlist.json` move with them. An agent registered with another server, or
-  not at all, stays as it is. Once no registration it found runs the Node copy, the hook deletes that
-  copy's files: `mcp-server.mjs`, `agent-hook.mjs`, `THIRD_PARTY_NOTICES.txt` and `launch/`. It rewrites
-  `version.json` with the current version, so a 0.8.0 plugin still installed elsewhere leaves the copy alone.
+- Registrations and hook entries that run the copy with an interpreter that changed move to the current
+  command; for Hermes the approvals in `shell-hooks-allowlist.json` move with them. An agent registered
+  with another server, or not at all, stays as it is.
 
 ### Update skill
 

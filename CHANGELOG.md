@@ -3,6 +3,65 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.10.0
+
+Plugin and MCP server 0.10.0, with VS Code extension 0.1.37 and JetBrains plugin 0.4.20 bundled.
+
+### Upgrading from 0.8.0 or earlier
+
+- Run `/ide-agent-tabs:setup` again after the update. This version no longer recognises or rewrites the
+  registrations and hook entries that the Node server of 0.8.0 and earlier wrote, and no longer cleans up
+  its files. Old Node hook entries in other agents' configs fail until you remove them.
+
+### Security
+
+- VS Code: in a workspace you have not trusted, the extension ignores workspace values of
+  `ideAgentTabs.defaultAgent` and `ideAgentTabs.openOnStartup` and never opens an agent on startup,
+  including for a folder that holds `.claude`. It opens once you trust the workspace. A workspace default
+  is never copied to `~/.ide-agent-tabs/config.json`.
+- JetBrains: a project you have not trusted no longer opens an agent on startup.
+- Windows: an agent command that is a `.cmd` or `.bat` file gets its arguments and prompt quoted for
+  `cmd.exe`, so no part of them runs as a command. A line break in an argument becomes a space.
+
+### Changed
+
+- `read_messages` and `wait_for_message` no longer lose messages when their result does not arrive. A
+  read claims the messages. The session's next Agent Tabs tool call, or the agent's post-tool hook for
+  the read, confirms the claim. An unconfirmed claim returns to unread after 10 minutes and is delivered
+  again, so a message can arrive twice after a crash.
+- The plugin works on Windows without Git Bash. The startup sync hook runs in PowerShell as well as `sh`,
+  and `mcp/launch/agent-tabs.ps1` is the PowerShell form of the `agent-tabs` launcher. Goose hooks still
+  need Git Bash, because Goose runs hooks with `sh -c`.
+- Before the server changes another agent's config file, it saves the file as `<name>.agent-tabs.bak`
+  beside it. It writes nothing when the content would not change.
+- The server deletes handoff briefs 30 days after the old tab was confirmed stopped, Jev ledger lines
+  older than 30 days, and merged Claude tab settings 30 days after the last live Claude session.
+- The JetBrains plugin reads the `IDE_AGENT_TABS_HOME` environment variable, as VS Code and the server do.
+- The VS Code extension activates after startup instead of with the window, and checks which agents are
+  installed at most once every 30 seconds for the status bar.
+- The Claude `Notification` hook also reports an elicitation dialog as waiting for permission.
+- The release branch is published only after CI passes on `main`. CI also validates the plugin, checks
+  that the bundled IDE packages match their sources, verifies the JetBrains plugin, and runs the
+  JetBrains tests on Windows.
+- The plugin has an icon and a privacy policy link. The root README says what leaves the machine.
+
+### Fixed
+
+- The shared server serves a client that sends no `MCP-Protocol-Version` header as protocol 2025-03-26.
+  It used to refuse every request after `initialize` from such a client.
+- A failure in the JetBrains terminal integration answers the request with an error and closes the tab.
+  It used to leave the request unanswered and the agent in a tab attached to nothing.
+- The JetBrains plugin rejects a NUL character in `args` and `prompt`, and clears inherited
+  `IDE_AGENT_TABS_` variables in a new tab.
+- A VS Code tab inherits the Agent Tabs data folder the editor was started with.
+- The docs no longer say that Codex registration cleans `~/.codex/hooks.json`, or that
+  `hooks/codex-hooks.json` holds hooks.
+
+### Removed
+
+- The migration from the Node server of 0.8.0 and earlier, the wake files only that server read, and the
+  tests and CI job that ran against it.
+
 ## 0.9.11
 
 Plugin and MCP server 0.9.11.

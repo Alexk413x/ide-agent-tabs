@@ -16,13 +16,12 @@ def count(home: str) -> int:
 
 
 class OpenTest(unittest.TestCase):
-    def test_the_first_open_creates_a_wal_database_at_the_current_schema_and_a_wake_folder(self) -> None:
+    def test_the_first_open_creates_a_wal_database_at_the_current_schema(self) -> None:
         home = temp_home(self)
         d = db.open_db(home)
         self.assertEqual(d.one("PRAGMA journal_mode")[0], "wal")  # type: ignore[index]
         self.assertEqual(d.one("PRAGMA user_version")[0], db.SCHEMA_VERSION)  # type: ignore[index]
         self.assertEqual(d.one("PRAGMA journal_size_limit")[0], db.JOURNAL_SIZE_LIMIT)  # type: ignore[index]
-        self.assertTrue(os.path.isdir(db.wake_dir(home)))
         if sys.platform != "win32":
             self.assertEqual(os.stat(db.db_path(home)).st_mode & 0o777, 0o600)
 
@@ -37,12 +36,6 @@ class OpenTest(unittest.TestCase):
                 t.join()
         self.assertEqual(len({id(d) for d in opened}), 1)
         self.assertEqual(connect.call_count, 1)
-
-    def test_the_old_file_mailbox_is_deleted(self) -> None:
-        home = temp_home(self)
-        os.makedirs(os.path.join(home, "mail", "tab-b", "new"))
-        db.open_db(home)
-        self.assertFalse(os.path.exists(os.path.join(home, "mail")))
 
     def test_a_newer_schema_is_used_as_it_is(self) -> None:
         home = temp_home(self)

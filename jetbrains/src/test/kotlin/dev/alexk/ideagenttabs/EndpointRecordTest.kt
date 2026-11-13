@@ -84,11 +84,22 @@ class EndpointRecordTest {
         val previous = System.getProperty(HOME_PROPERTY)
         try {
             System.setProperty(HOME_PROPERTY, home.toString())
-            assertEquals(home, ideAgentTabsHome())
+            assertEquals(home, ideAgentTabsHome(homeOverride(env = null)))
             System.clearProperty(HOME_PROPERTY)
-            assertEquals(Path.of(System.getProperty("user.home"), ".ide-agent-tabs"), ideAgentTabsHome())
+            assertEquals(Path.of(System.getProperty("user.home"), ".ide-agent-tabs"), ideAgentTabsHome(homeOverride(env = null)))
         } finally {
             if (previous == null) System.clearProperty(HOME_PROPERTY) else System.setProperty(HOME_PROPERTY, previous)
         }
+    }
+
+    @Test
+    fun `home folder follows IDE_AGENT_TABS_HOME, and the system property wins over it`() {
+        val other = home.resolve("other")
+        assertEquals(home, homeOverride(property = null, env = home.toString()))
+        assertEquals(other, homeOverride(property = other.toString(), env = home.toString()))
+        assertEquals(home, homeOverride(property = " ", env = home.toString()))
+        assertEquals(null, homeOverride(property = null, env = "  "))
+        assertEquals(null, homeOverride(property = "", env = null))
+        assertEquals(home, ideAgentTabsHome(homeOverride(property = null, env = home.toString())))
     }
 }

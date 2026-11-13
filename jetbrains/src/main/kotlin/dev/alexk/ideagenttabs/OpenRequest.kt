@@ -131,6 +131,8 @@ data class OpenRequest(
             }
             if (args.size > MAX_ENTRIES) throw IllegalArgumentException("args exceeds $MAX_ENTRIES entries")
             if (args.any { it.length > MAX_PROMPT_CHARS }) throw IllegalArgumentException("an arg exceeds $MAX_PROMPT_CHARS characters")
+            if (args.any { '\u0000' in it }) throw IllegalArgumentException("an arg holds a NUL")
+            if (prompt != null && '\u0000' in prompt) throw IllegalArgumentException("prompt holds a NUL")
             checkEnv(env, "env")
             if (agent != null && agent.isBlank()) throw IllegalArgumentException("agent must not be blank")
             if (model != null && !MODEL_PATTERN.matches(model)) {

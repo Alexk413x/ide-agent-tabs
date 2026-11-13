@@ -10,10 +10,9 @@ __ide_agent_tabs() {
         i=$((i + 1))
     done
     unset IDE_AGENT_TABS_ARGC
-    if [ -n "${IDE_AGENT_TABS_PROMPT+set}" ]; then
-        a+=("$IDE_AGENT_TABS_PROMPT")
-        unset IDE_AGENT_TABS_PROMPT
-    fi
+    # A variable that is set but empty counts as unset, so a launcher that cannot remove one can empty it.
+    if [ -n "${IDE_AGENT_TABS_PROMPT-}" ]; then a+=("$IDE_AGENT_TABS_PROMPT"); fi
+    unset IDE_AGENT_TABS_PROMPT
     # bash 3.2 (macOS) treats an empty "${a[@]}" as unset under set -u.
     "$c" ${a[@]+"${a[@]}"}
 }

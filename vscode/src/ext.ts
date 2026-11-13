@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { AgentSettings } from './agentSettings';
 import { LaunchScripts, launchScripts } from './launch';
 import { wouldUseOri } from './launchPlan';
-import { isInstalled } from './pathLookup';
+import { InstallScan, isInstalled } from './pathLookup';
 import { agentEntries, AgentProfile, BUILTIN_PROFILES, ORI_PROFILES } from './profiles';
 import { ideAgentTabsHome } from './registry';
 import { closestBase } from './request';
@@ -14,6 +14,7 @@ import { IdeSettings, SHARED_SETTING_NAMES, SyncDeps } from './sharedSync';
 
 export const BUILTIN_AGENTS = new Set(BUILTIN_PROFILES.map(p => p.name));
 export const ORI_MENU_AGENTS = ORI_PROFILES.filter(name => BUILTIN_AGENTS.has(name));
+const INSTALL_SCAN_TTL_MS = 30_000;
 const ICON_FILES: Record<string, string> = { 'codex-lmstudio': 'codex', 'codex-ollama': 'codex' };
 
 export interface Tab extends TabInfo {
@@ -27,6 +28,7 @@ export interface Ext {
   settings: AgentSettings;
   sync: SyncDeps;
   scripts: LaunchScripts;
+  scan: InstallScan;
   tabs: Map<string, Tab>;
   windows: boolean;
 }
@@ -40,7 +42,10 @@ export function createExt(context: vscode.ExtensionContext): Ext {
   const warn = (message: string) => log.warn(message);
   const settings = new AgentSettings(home, warn, () => config().get<string>('defaultAgent') || undefined);
   const ide: IdeSettings = {
-    defaultAgent: () => config().get<string>('defaultAgent'),
+    defaultAgent: () => {
+      const inspected = config().inspect<string>('defaultAgent');
+      return inspected?.globalValue ?? inspected?.defaultValue;
+    },
     value: <K extends SyncedSetting>(key: K) => userSettingValue(key, config().inspect<SharedSettings[K]>(SHARED_SETTING_NAMES[key])),
     update: (name, value) => config().update(name, value, vscode.ConfigurationTarget.Global),
   };
@@ -51,6 +56,7 @@ export function createExt(context: vscode.ExtensionContext): Ext {
     settings,
     sync: { settings, ide, warn },
     scripts: launchScripts(context.asAbsolutePath(path.join('resources', 'launch'))),
+    scan: new InstallScan(INSTALL_SCAN_TTL_MS),
     tabs: new Map(),
     windows: process.platform === 'win32',
   };
@@ -78,8 +84,11 @@ export const installed = (ext: Ext, profile: AgentProfile) => isInstalled(profil
 export const usesOri = (ext: Ext, profile: AgentProfile) =>
   wouldUseOri(profile, { setting: ext.settings.shared().launchVia, ori: ext.settings.detected().ori, windows: ext.windows, searchPath: searchPath() });
 
-export const entries = (ext: Ext) =>
-  agentEntries(ext.settings.profiles(), ext.settings.detected().ori, ext.settings.shared(), p => installed(ext, p));
+// The status bar passes cached: it refreshes on every window focus. Menus and requests scan afresh.
+export const entries = (ext: Ext, cached = false) =>
+  agentEntries(ext.settings.profiles(), ext.settings.detected().ori, ext.settings.shared(), p =>
+    cached ? ext.scan.isInstalled(p.command, searchPath(), ext.windows) : installed(ext, p),
+  );
 
 export const fileFolders = () => (vscode.workspace.workspaceFolders ?? []).filter(f => f.uri.scheme === 'file');
 

@@ -7,13 +7,17 @@ import threading
 import time
 import unittest
 from typing import Any, Callable
+from unittest import mock
 
 from ide_agent_tabs import closed
 from ide_agent_tabs.clock import iso, now_ms
 from ide_agent_tabs.closed import TranscriptDirs
+from ide_agent_tabs.mcp_tools import Call, ToolDeps, Tools
+from ide_agent_tabs.messaging import messaging as messaging_module
 from ide_agent_tabs.messaging import sessions, store
 from ide_agent_tabs.messaging.codex_config import parse_codex_config
-from ide_agent_tabs.messaging.db import MailError
+from ide_agent_tabs.messaging.db import MailError, query
+from ide_agent_tabs.messaging.history import Who
 from ide_agent_tabs.messaging.hook import run_hook
 from ide_agent_tabs.messaging.messaging import (
     AGY_MAX_WAIT_S,
@@ -657,6 +661,207 @@ class ReadTest(unittest.TestCase):
             b.read(cancel)
         self.assertEqual(unread_texts(home, "tab-b"), ["keep me"])
         self.assertEqual(b.read()["messages"][0]["text"], "keep me")
+
+
+def tool_call(m: Messaging, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    deps = ToolDeps(None, None, m, None, None)
+    result = Tools(lambda: deps, False).call("claude-code", name, arguments, Call({}, threading.Event(), lambda *_a: None))
+    assert not result.get("isError"), result
+    return json.loads(result["content"][0]["text"])
+
+
+def states(home: str, tab_id: str, now: float | None = None) -> dict[str, str]:
+    return {
+        m["text"]: m["state"] for m in store.stored_for(home, tab_id, [], now) if m["route"] == "agent-tabs" and m["to"]["id"] == tab_id
+    }
+
+
+def claim_of(home: str, text: str) -> str:
+    row = query(home, lambda db: db.one("SELECT claim FROM messages WHERE text = ?", text))
+    assert row is not None
+    return str(row["claim"])
+
+
+class ReadClaimTest(unittest.TestCase):
+    def test_a_read_claims_and_the_next_tool_call_of_the_same_session_settles_it_but_the_read_itself_does_not(self) -> None:
+        home = temp_home(self)
+        a, b = pair(self, home)
+        a.send({"to": "tab-b", "text": "one"})
+        a.stop_follow_ups()
+        first = tool_call(b, "read_messages")
+        self.assertEqual([m["text"] for m in first["messages"]], ["one"])
+        self.assertEqual(states(home, "tab-b"), {"one": "held"})
+        self.assertEqual(unread_texts(home, "tab-b"), [])
+        tool_call(a, "list_sessions")
+        self.assertEqual(states(home, "tab-b"), {"one": "held"})
+        tool_call(b, "list_sessions")
+        self.assertEqual(states(home, "tab-b"), {"one": "read"})
+        self.assertEqual(tool_call(b, "read_messages")["messages"], [])
+
+    def test_a_second_read_confirms_the_first_batch_so_paging_does_not_loop(self) -> None:
+        home = temp_home(self)
+        a, b = pair(self, home)
+        for i in range(3):
+            a.send({"to": "tab-b", "text": str(i) * store.MAX_TEXT_CHARS})
+        a.stop_follow_ups()
+        seen: list[str] = []
+        reply = tool_call(b, "read_messages")
+        while reply["messages"]:
+            seen.extend(m["text"][0] for m in reply["messages"])
+            reply = tool_call(b, "read_messages")
+        self.assertEqual(seen, ["0", "1", "2"])
+        self.assertEqual(set(states(home, "tab-b").values()), {"read"})
+
+    def test_a_result_that_never_arrives_is_delivered_again_after_the_timeout_and_not_before(self) -> None:
+        home = temp_home(self)
+        clock = Clock(now_ms())
+        a = session(self, home, "tab-a", "codex", 1)
+        b = session(self, home, "tab-b", "claude", 2, now=clock)
+        a.send({"to": "tab-b", "text": "lost"})
+        a.stop_follow_ups()
+        self.assertEqual(b.read()["messages"][0]["text"], "lost")
+        clock.at += store.TOOL_CLAIM_TIMEOUT_MS - 1
+        self.assertEqual(b.read(), {"messages": []})
+        clock.at += 1
+        self.assertEqual(states(home, "tab-b", clock()), {"lost": "unread"})
+        self.assertEqual(b.mod_unread()["count"], 1)
+        self.assertEqual(b.read()["messages"][0]["text"], "lost")
+
+    def test_a_session_busy_past_the_mod_claim_timeout_is_not_handed_its_messages_again(self) -> None:
+        home = temp_home(self)
+        clock = Clock(now_ms())
+        a = session(self, home, "tab-a", "codex", 1)
+        b = session(self, home, "tab-b", "claude", 2, now=clock)
+        a.send({"to": "tab-b", "text": "working on it"})
+        a.stop_follow_ups()
+        b.read()
+        clock.at += store.CLAIM_TIMEOUT_MS * 3
+        self.assertEqual(b.mod_unread(), {"count": 0, "senders": []})
+        self.assertEqual(b.read(), {"messages": []})
+
+    def test_a_call_that_starts_while_a_read_runs_leaves_that_reads_new_claim_alone(self) -> None:
+        home = temp_home(self)
+        a, b = pair(self, home)
+        for i in range(6):
+            a.send({"to": "tab-b", "text": f"m{i}"})
+        a.stop_follow_ups()
+        claimed = threading.Event()
+        proceed = threading.Event()
+        real = messaging_module.take_batch
+
+        def paused(*args: Any, **kwargs: Any) -> Any:
+            batch = real(*args, **kwargs)
+            claimed.set()
+            proceed.wait(10)
+            return batch
+
+        with mock.patch.object(messaging_module, "take_batch", paused):
+            reader, box = in_thread(b.read)
+            self.assertTrue(claimed.wait(10))
+            b.settle_reads()
+            proceed.set()
+            reader.join(10)
+        self.assertEqual(len(box["value"]["messages"]), 6)
+        self.assertEqual(set(states(home, "tab-b").values()), {"held"})
+        b.settle_reads()
+        self.assertEqual(set(states(home, "tab-b").values()), {"read"})
+
+    def test_parallel_reads_hand_out_nothing_twice(self) -> None:
+        home = temp_home(self)
+        a, b = pair(self, home)
+        for i in range(18):
+            a.send({"to": "tab-b", "text": f"n{i}"})
+        a.stop_follow_ups()
+        got: list[str] = []
+        lock = threading.Lock()
+
+        def drain() -> None:
+            while True:
+                reply = b.read()
+                if not reply["messages"]:
+                    return
+                with lock:
+                    got.extend(m["text"] for m in reply["messages"])
+
+        threads = [threading.Thread(target=drain) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(30)
+        self.assertEqual(sorted(got), sorted(f"n{i}" for i in range(18)))
+
+    def test_a_mod_claim_is_not_settled_by_a_tool_call_and_a_tool_claim_is_not_settled_by_the_mod(self) -> None:
+        home = temp_home(self)
+        a, b = pair(self, home)
+        a.send({"to": "tab-b", "text": "mod one"})
+        a.stop_follow_ups()
+        taken = b.mod_take()
+        a.send({"to": "tab-b", "text": "tool one"})
+        a.stop_follow_ups()
+        self.assertEqual(b.read()["messages"][0]["text"], "tool one")
+        tool_claim = claim_of(home, "tool one")
+        tool_call(b, "list_sessions")
+        self.assertEqual(states(home, "tab-b"), {"mod one": "held", "tool one": "read"})
+        a.send({"to": "tab-b", "text": "tool two"})
+        a.stop_follow_ups()
+        b.read()
+        tool_claim = claim_of(home, "tool two")
+        with self.assertRaisesRegex(MailError, "no open claim"):
+            b.mod_settle(tool_claim, "ack")
+        self.assertEqual(states(home, "tab-b"), {"mod one": "held", "tool one": "read", "tool two": "held"})
+        self.assertEqual(b.mod_settle(taken["claim"], "ack"), {"claim": taken["claim"], "read": 1})
+        self.assertEqual(states(home, "tab-b")["tool two"], "held")
+
+    def test_a_filtered_wait_claims_only_its_match_and_the_next_call_settles_it(self) -> None:
+        home = temp_home(self)
+        a, b = pair(self, home)
+        first = a.send({"to": "tab-b", "text": "ask"})
+        a.send({"to": "tab-b", "text": "noise"})
+        a.send({"to": "tab-b", "text": "answer", "replyTo": first["id"]})
+        a.stop_follow_ups()
+        got = tool_call(b, "wait_for_message", {"timeout": 5, "replyTo": first["id"]})
+        self.assertEqual(got["message"]["text"], "answer")
+        self.assertEqual(states(home, "tab-b"), {"ask": "unread", "noise": "unread", "answer": "held"})
+        sender = tool_call(b, "wait_for_message", {"timeout": 5, "from": "tab-a"})
+        self.assertEqual(sender["message"]["text"], "ask")
+        self.assertEqual(states(home, "tab-b"), {"ask": "held", "noise": "unread", "answer": "read"})
+
+    def test_a_cancelled_read_and_a_cancelled_wait_release_their_claim(self) -> None:
+        home = temp_home(self)
+        a, b = pair(self, home)
+        a.send({"to": "tab-b", "text": "keep"})
+        a.stop_follow_ups()
+        cancel = threading.Event()
+        cancel.set()
+        with self.assertRaisesRegex(MailError, "cancelled"):
+            b.read(cancel)
+        self.assertEqual(states(home, "tab-b"), {"keep": "unread"})
+        self.assertIsNone(b.wait({"timeout": 5}, cancel)["message"])
+        self.assertEqual(states(home, "tab-b"), {"keep": "unread"})
+
+    def test_a_session_that_ends_returns_what_it_read_but_never_confirmed(self) -> None:
+        home = temp_home(self)
+        a, b = pair(self, home)
+        a.send({"to": "tab-b", "text": "confirmed"})
+        a.stop_follow_ups()
+        b.read()
+        tool_call(b, "list_sessions")
+        a.send({"to": "tab-b", "text": "last"})
+        a.stop_follow_ups()
+        b.read()
+        b.stop_sync()
+        self.assertEqual(states(home, "tab-b"), {"confirmed": "read", "last": "unread"})
+
+    def test_the_sender_sees_delivering_while_claimed_and_read_once_confirmed(self) -> None:
+        home = temp_home(self)
+        a, b = pair(self, home)
+        a.send({"to": "tab-b", "text": "status"})
+        a.stop_follow_ups()
+        b.read()
+        who = Who("tab-a", [])
+        self.assertEqual([m["status"] for m in a.mod_history(who)["messages"]], ["delivering"])
+        tool_call(b, "list_sessions")
+        self.assertEqual([m["status"] for m in a.mod_history(who)["messages"]], ["read"])
 
 
 class WaitTest(unittest.TestCase):

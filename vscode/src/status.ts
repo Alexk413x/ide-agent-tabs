@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { BUILTIN_AGENTS, entries, Ext, icon, iconUri, installed, ORI_MENU_AGENTS, usesOri } from './ext';
+import { BUILTIN_AGENTS, entries, Ext, icon, iconUri, ORI_MENU_AGENTS, searchPath, usesOri } from './ext';
 import { agentLink, commandKey, statusTooltip } from './labels';
 import { AgentProfile, variantShown } from './profiles';
 
@@ -26,10 +26,10 @@ export function refreshStatus(ext: Ext, status: vscode.StatusBarItem): void {
   setContext('ideAgentTabs.buttonAgent', BUILTIN_AGENTS.has(profile.name) ? commandKey(profile.name) : 'other');
   status.text = `$(agent-tabs) ${profile.label}`;
   const all = settings.profiles();
-  const installedProfiles = all.filter(p => installed(ext, p));
+  const listed = entries(ext, true);
+  const installedProfiles = all.filter(p => ext.scan.isInstalled(p.command, searchPath(), ext.windows));
   const shared = settings.shared();
   const missing = all.filter(p => !installedProfiles.includes(p) && variantShown(p.name, shared));
-  const listed = entries(ext);
   const dark = [vscode.ColorThemeKind.Dark, vscode.ColorThemeKind.HighContrast].includes(vscode.window.activeColorTheme.kind);
   const viaLogo = iconUri(ext, dark ? 'openrouter_dark.svg' : 'openrouter.svg').toString();
   const links = listed.map(entry => {

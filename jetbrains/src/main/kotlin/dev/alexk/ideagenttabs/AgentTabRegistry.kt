@@ -2,6 +2,7 @@ package dev.alexk.ideagenttabs
 
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
 import com.intellij.openapi.project.Project
@@ -9,6 +10,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.terminal.frontend.toolwindow.TerminalToolWindowTab
 import com.intellij.util.concurrency.annotations.RequiresEdt
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Service(Service.Level.APP)
 class AgentTabRegistry {
@@ -24,6 +26,8 @@ class AgentTabRegistry {
 
     private val entries = ConcurrentHashMap<String, Entry>()
 
+    private val warnedAboutLinkage = AtomicBoolean(false)
+
     fun add(entry: Entry) {
         entries[entry.id] = entry
     }
@@ -33,14 +37,22 @@ class AgentTabRegistry {
     fun find(id: String): Entry? = entries[id]?.takeUnless { it.project.isDisposed }
 
     // The terminal plugin owns the editor tabs, so they outlive this plugin's unload and reload while the map does not.
+    // The terminal plugin's internals can change under a platform update, which surfaces as a LinkageError. The
+    // tabs found so far stay registered, and one warning says why the rest are not.
     @RequiresEdt
     fun revive(project: Project): Int {
         var count = 0
-        for (file in FileEditorManager.getInstance(project).openFiles) {
-            val tab = TerminalEditorFiles.tabOf(file) ?: continue
-            val found = revivedTab(tab.processOptions.envVariables, tab.processOptions.workingDirectory) ?: continue
-            if (entries.values.any { it.file == file }) continue
-            if (entries.putIfAbsent(found.id, Entry(found.id, found.agent, project, file, found.path, tab)) == null) count++
+        try {
+            for (file in FileEditorManager.getInstance(project).openFiles) {
+                val tab = TerminalEditorFiles.tabOf(file) ?: continue
+                val found = revivedTab(tab.processOptions.envVariables, tab.processOptions.workingDirectory) ?: continue
+                if (entries.values.any { it.file == file }) continue
+                if (entries.putIfAbsent(found.id, Entry(found.id, found.agent, project, file, found.path, tab)) == null) count++
+            }
+        } catch (e: LinkageError) {
+            if (!warnedAboutLinkage.getAndSet(true)) {
+                LOG.warn("Agent tabs left open by an earlier session can't be found: this IDE's terminal plugin is not compatible with the plugin", e)
+            }
         }
         return count
     }
@@ -55,6 +67,8 @@ class AgentTabRegistry {
     }
 
     companion object {
+        private val LOG = logger<AgentTabRegistry>()
+
         fun getInstance(): AgentTabRegistry = service()
     }
 }

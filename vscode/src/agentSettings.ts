@@ -17,7 +17,7 @@ import {
   withSharedValue,
 } from './sharedSettings';
 
-const DEFAULT_AGENT = 'claude';
+export const DEFAULT_AGENT = 'claude';
 
 export function readDefaultAgent(text: string): string | undefined {
   const value = parseObject(text, CONFIG_FILE).defaultAgent;

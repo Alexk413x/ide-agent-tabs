@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs\" sync-ides --hook",
+            "command": ". \"${CLAUDE_PLUGIN_ROOT}/mcp/launch/sync-hook.ps1\"",
             "timeout": 60
           }
         ]

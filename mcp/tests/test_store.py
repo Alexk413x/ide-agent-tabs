@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 import threading
@@ -12,7 +11,6 @@ from unittest import mock
 from ide_agent_tabs.clock import iso, parse_iso
 from ide_agent_tabs.messaging import store, wake
 from ide_agent_tabs.messaging.db import MailError, query
-from ide_agent_tabs.messaging.wake import wake_path
 from support import SRC, js_fixtures, out, temp_home, texts
 
 T0 = parse_iso("2026-10-07T12:00:00Z") or 0
@@ -138,12 +136,100 @@ class ReadTest(unittest.TestCase):
         self.assertEqual(store.settle_claim(home, "tab-c", lost["claim"], "ack", T0 + 9 + store.CLAIM_TIMEOUT_MS), 0)
         self.assertEqual(texts(store.peek_unread(home, "tab-c", T0 - 2 * MINUTE)), ["three"])
 
-    def test_put_back_returns_taken_messages_to_unread(self) -> None:
+    def test_a_read_claims_instead_of_marking_read_and_the_next_call_settles_it(self) -> None:
+        home = temp_home(self)
+        store.send_message(home, out("tab-b", "one"), T0)
+        batch = store.take_batch(home, "tab-b", now=T0 + 1)
+        self.assertRegex(batch["claim"], r"^t-[0-9a-f]{16}$")
+        self.assertEqual([r["state"] for r in store.stored_for(home, "tab-b", [], T0 + 1)], ["held"])
+        self.assertEqual([r["state"] for r in store.stored_for(home, "tab-b", [], T0 + store.TOOL_CLAIM_TIMEOUT_MS + 1)], ["unread"])
+        self.assertEqual(store.peek_unread(home, "tab-b", T0 + 2), [])
+        self.assertFalse(store.has_unread(home, "tab-b", None, T0 + 2))
+        self.assertEqual(store.unread_summary(home, "tab-b", T0 + 2), {"count": 0, "senders": []})
+        self.assertEqual(store.settle_read_claims(home, "tab-b", [batch["claim"]], "ack", T0 + 3), 1)
+        self.assertEqual([r["state"] for r in store.stored_for(home, "tab-b", [], T0 + store.TOOL_CLAIM_TIMEOUT_MS + 1)], ["read"])
+        self.assertEqual(store.settle_read_claims(home, "tab-b", [batch["claim"]], "ack", T0 + 4), 0)
+        self.assertEqual(store.take_batch(home, "tab-b", now=T0 + store.TOOL_CLAIM_TIMEOUT_MS * 2)["messages"], [])
+
+    def test_a_result_that_never_arrives_returns_the_messages_after_the_tool_claim_timeout(self) -> None:
+        home = temp_home(self)
+        store.send_message(home, out("tab-b", "lost"), T0)
+        lost = store.take_batch(home, "tab-b", now=T0 + 1)
+        later = T0 + 1 + store.TOOL_CLAIM_TIMEOUT_MS
+        self.assertGreater(store.TOOL_CLAIM_TIMEOUT_MS, store.CLAIM_TIMEOUT_MS)
+        self.assertEqual(store.peek_unread(home, "tab-b", later - 1), [])
+        self.assertEqual(store.has_unread(home, "tab-b", None, later - 1), False)
+        self.assertEqual(texts(store.peek_unread(home, "tab-b", later)), ["lost"])
+        self.assertEqual(store.unread_summary(home, "tab-b", later)["count"], 1)
+        again = store.take_batch(home, "tab-b", now=later)
+        self.assertEqual(texts(again["messages"]), ["lost"])
+        self.assertNotEqual(again["claim"], lost["claim"])
+        self.assertEqual(store.settle_read_claims(home, "tab-b", [lost["claim"]], "ack", later), 0)
+        self.assertEqual(store.settle_read_claims(home, "tab-b", [again["claim"]], "ack", later), 1)
+
+    def test_a_release_returns_a_claim_to_unread_and_only_the_named_session_and_claim_move(self) -> None:
         home = temp_home(self)
         store.send_message(home, out("tab-b", "keep me"), T0)
+        store.send_message(home, out("tab-c", "other"), T0)
         batch = store.take_batch(home, "tab-b", now=T0)
-        store.put_back(home, "tab-b", batch["ids"], T0)
+        other = store.take_batch(home, "tab-c", now=T0)
+        self.assertEqual(store.settle_read_claims(home, "tab-c", [batch["claim"]], "ack", T0), 0)
+        self.assertEqual(store.settle_read_claims(home, "tab-b", [batch["claim"]], "release", T0), 1)
         self.assertEqual(texts(store.peek_unread(home, "tab-b", T0)), ["keep me"])
+        self.assertEqual(store.settle_read_claims(home, "tab-b", ["t-nothex", "c-0000000000000000"], "ack", T0), 0)
+        self.assertEqual(store.settle_read_claims(home, "tab-c", None, "ack", T0), 1)
+        self.assertEqual(other["claim"][:2], "t-")
+
+    def test_tool_claims_and_mod_claims_never_settle_each_other(self) -> None:
+        home = temp_home(self)
+        store.send_message(home, out("tab-b", "for the tool"), T0)
+        tool = store.take_batch(home, "tab-b", now=T0)
+        store.send_message(home, out("tab-b", "for the mod"), T0 + 1)
+        mod = store.claim_batch(home, "tab-b", INF, store.MAX_READ_CHARS, T0 + 2)
+        self.assertRegex(mod["claim"], r"^c-")
+        self.assertEqual(store.settle_read_claims(home, "tab-b", [mod["claim"]], "ack", T0 + 3), 0)
+        self.assertEqual(store.settle_read_claims(home, "tab-b", None, "ack", T0 + 3), 1)
+        self.assertEqual(store.settle_claim(home, "tab-b", tool["claim"], "ack", T0 + 3), 0)
+        self.assertEqual(store.settle_claim(home, "tab-b", mod["claim"], "release", T0 + 3), 1)
+        self.assertEqual(texts(store.peek_unread(home, "tab-b", T0 + 3)), ["for the mod"])
+
+    def test_a_mod_claim_still_times_out_after_two_minutes_beside_a_tool_claim(self) -> None:
+        home = temp_home(self)
+        store.send_message(home, out("tab-b", "mod"), T0)
+        store.claim_batch(home, "tab-b", INF, store.MAX_READ_CHARS, T0)
+        store.send_message(home, out("tab-b", "tool"), T0)
+        store.take_batch(home, "tab-b", {"from": "tab-a"}, count=1, now=T0)
+        self.assertEqual(texts(store.peek_unread(home, "tab-b", T0 + store.CLAIM_TIMEOUT_MS)), ["mod"])
+
+    def test_two_reads_at_once_never_hand_out_a_message_twice(self) -> None:
+        home = temp_home(self)
+        for i in range(30):
+            store.send_message(home, out("tab-b", f"m{i}", f"s-{i:012d}"), T0)
+        got: list[list[str]] = []
+        lock = threading.Lock()
+
+        def read() -> None:
+            while True:
+                batch = store.take_batch(home, "tab-b", count=3, now=T0 + 1)
+                if not batch["messages"]:
+                    return
+                with lock:
+                    got.append(texts(batch["messages"]))
+
+        threads = [threading.Thread(target=read) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+        flat = sorted(t for batch in got for t in batch)
+        self.assertEqual(flat, sorted(f"m{i}" for i in range(30)))
+
+    def test_a_held_message_no_longer_matches_a_reply_filter(self) -> None:
+        home = temp_home(self)
+        asked = store.send_message(home, out("tab-a", "question", "tab-b"), T0)
+        store.send_message(home, out("tab-b", "answer", "tab-a", replyTo=asked["id"]), T0)
+        store.take_batch(home, "tab-b", {"replyTo": asked["id"]}, now=T0)
+        self.assertFalse(store.has_unread(home, "tab-b", {"replyTo": asked["id"]}, T0))
 
     def test_unread_summary_counts_and_names_senders_newest_first(self) -> None:
         home = temp_home(self)
@@ -196,7 +282,7 @@ class HistoryTest(unittest.TestCase):
         home = temp_home(self)
         old = T0 - store.KEEP_MS - 1
         store.send_message(home, out("live", "old read"), old)
-        store.take_batch(home, "live", now=old)
+        store.settle_read_claims(home, "live", [store.take_batch(home, "live", now=old)["claim"]], "ack", old)
         store.send_message(home, out("live", "old unread"), old + 1)
         store.send_message(home, out("gone", "old unread", "tab-q"), old)
         store.send_message(home, out("gone-recent", "new unread", "tab-q"), T0)
@@ -213,15 +299,9 @@ class HistoryTest(unittest.TestCase):
                     "sentAt": iso(at),
                 },
             )
-        for name in ("gone", "live"):
-            with open(wake_path(home, name), "w", encoding="utf-8") as f:
-                f.write("1")
-            os.utime(wake_path(home, name), (old / 1000, old / 1000))
         store.clean_store(home, {"live"}, T0)
         left = query(home, lambda db: [f"{r['to_id']}: {r['text']}" for r in db.all("SELECT to_id, text FROM messages ORDER BY seq")])
         self.assertEqual(left, ["live: old unread", "gone-recent: new unread", "live: new native"])
-        self.assertFalse(os.path.exists(wake_path(home, "gone")))
-        self.assertTrue(os.path.exists(wake_path(home, "live")))
 
 
 class WaitTest(unittest.TestCase):
@@ -237,7 +317,6 @@ class WaitTest(unittest.TestCase):
         waiter.join()
         self.assertEqual(found[0]["text"], "local")
         self.assertLess(time.monotonic() - started, 0.5)
-        self.assertTrue(os.path.exists(wake_path(home, "tab-b")))
 
     def test_a_cancelled_wait_returns_nothing_and_a_timeout_returns_nothing(self) -> None:
         home = temp_home(self)
@@ -273,7 +352,7 @@ class WaitTest(unittest.TestCase):
         sender.start()
         return sender
 
-    def test_a_waiter_wakes_on_a_send_from_another_process_through_the_wake_file(self) -> None:
+    def test_a_waiter_wakes_on_a_send_from_another_process(self) -> None:
         home = temp_home(self)
         store.peek_unread(home, "tab-b")
         sender = self.send_from_another_process(home, "from afar")

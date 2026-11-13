@@ -13,13 +13,11 @@ sys.path.insert(
 )
 
 from ide_agent_tabs.clock import now_ms
-from ide_agent_tabs.files import file_lock, read_text_if_exists
-from ide_agent_tabs.messaging import db, sessions, store, wake
-from ide_agent_tabs.messaging.hook import run_hook
+from ide_agent_tabs.files import file_lock
+from ide_agent_tabs.messaging import db, store
 from ide_agent_tabs.processes import utf8_stdio
 
 MODES: dict[str, Callable[[dict[str, Any]], None]] = {}
-INF = float("inf")
 
 
 def mode(fn: Callable[[dict[str, Any]], None]) -> Callable[[dict[str, Any]], None]:
@@ -82,78 +80,6 @@ def lock_hold(args: dict[str, Any]) -> None:
     done({"released": True})
 
 
-def run_op(home: str, o: dict[str, Any]) -> Any:
-    op = o["op"]
-    sid = str(o.get("id") or "")
-    now = o.get("now")
-    if op == "send":
-        return store.send_message(home, o["out"], now)
-    if op == "take":
-        return store.take_batch(home, sid, o.get("filter"), count=o.get("count", INF), now=now)
-    if op == "claim":
-        return store.claim_batch(home, sid, o.get("count", INF), now=now)
-    if op == "settle":
-        return store.settle_claim(home, sid, o["claim"], "ack" if o.get("how") == "ack" else "release", now)
-    if op == "peek":
-        return store.peek_unread(home, sid, now)
-    if op == "summary":
-        return store.unread_summary(home, sid, now)
-    if op == "mailTo":
-        return store.mail_to(home, sid)
-    if op == "logNative":
-        return store.log_native(home, o["record"])
-    if op == "stored":
-        return store.stored_for(home, o.get("id"), o.get("names") or [])
-    if op == "presenceWrite":
-        return sessions.update_presence(home, sid, lambda _: o["presence"])
-    if op == "presenceRead":
-        return sessions.read_presence(home, sid)
-    if op == "presenceText":
-        return read_text_if_exists(sessions.presence_path(home, sid))
-    if op == "live":
-        return sessions.live_sessions(home, now=now)
-    if op == "schema":
-
-        def schema(d: db.Db) -> dict[str, Any]:
-            return {
-                "master": [dict(r) for r in d.all("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY name")],
-                "userVersion": d.one("PRAGMA user_version")[0],  # type: ignore[index]
-                "journalMode": d.one("PRAGMA journal_mode")[0],  # type: ignore[index]
-            }
-
-        return db.query(home, schema)
-    if op == "hook":
-        return run_hook(o["cli"], o["event"], o.get("input") or {}, home, sid, now)
-    if op == "rows":
-        return db.query(home, lambda d: [dict(r) for r in d.all("SELECT * FROM messages ORDER BY seq")])
-    raise ValueError(f"unknown op {op}")
-
-
-@mode
-def store_ops(args: dict[str, Any]) -> None:
-    home = args["home"]
-    results: list[Any] = []
-    for o in args["ops"]:
-        try:
-            results.append({"ok": run_op(home, o)})
-        except (db.MailError, ValueError, OSError) as e:
-            results.append({"error": str(e)})
-    db.close_db(home)
-    done({"results": results})
-
-
-MODES["store"] = store_ops
-
-
-@mode
-def wait_once(args: dict[str, Any]) -> None:
-    home = args["home"]
-    db.open_db(home)
-    go()
-    message = store.wait_for_message(home, args["id"], None, float(args.get("timeoutMs", 10_000)))
-    done({"message": message, "returned": now_ms()})
-
-
 @mode
 def mesh(args: dict[str, Any]) -> None:
     home = args["home"]
@@ -166,7 +92,9 @@ def mesh(args: dict[str, Any]) -> None:
     pairs: list[float] = []
 
     def take() -> None:
-        for m in store.take_batch(home, me)["messages"]:
+        batch = store.take_batch(home, me)
+        store.settle_read_claims(home, me, [batch["claim"]] if batch["claim"] else [])
+        for m in batch["messages"]:
             read.append({"id": m["id"], "from": m["from"]["id"], "to": m["to"]})
 
     db.open_db(home)
@@ -194,6 +122,7 @@ def read_loop(args: dict[str, Any]) -> None:
     while True:
         stopping = os.path.exists(args["stop"])
         batch = store.take_batch(home, args["target"], count=2)
+        store.settle_read_claims(home, args["target"], [batch["claim"]] if batch["claim"] else [])
         ids.extend(batch["ids"])
         if stopping and not batch["ids"]:
             break
@@ -268,24 +197,9 @@ MODES["open"] = open_store
 
 
 @mode
-def wake_send(args: dict[str, Any]) -> None:
-    home = args["home"]
-    db.open_db(home)
-    commits: list[int] = []
-    for i in range(int(args["rounds"])):
-        go()
-        time.sleep(float(args["delayMs"]) / 1000)
-        store.send_message(home, outgoing(args["from"], args["to"], f"wake {args['tag']} {i}"))
-        commits.append(now_ms())
-        say(f"sent {now_ms()}")
-    done({"commits": commits})
-
-
-@mode
 def shared(args: dict[str, Any]) -> None:
     home = args["home"]
     db.set_busy_timeout(db.SHARED_BUSY_TIMEOUT_MS)
-    wake.skip_wake_files_for_local_waiters(True)
     ids: list[str] = args["sessions"]
     internal = int(args["internal"])
     expected = int(args["expected"])

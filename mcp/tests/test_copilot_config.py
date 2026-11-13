@@ -10,7 +10,7 @@ import unittest
 from config_support import read_json, write
 from ide_agent_tabs.agent_config import HookTarget, copilot_hooks
 from ide_agent_tabs.copilot_config import desired_hooks, has_hooks, merge_hooks, server_entry
-from ide_agent_tabs.register import agents_report, migrate_registrations, register_agents, unregister_agents
+from ide_agent_tabs.register import agents_report, refresh_registrations, register_agents, unregister_agents
 from support import ROOT, temp_home
 from test_register import Setup
 
@@ -48,11 +48,11 @@ class CopilotConfig(unittest.TestCase):
         self.assertEqual(first["hooks"]["sessionEnd"], [foreign])
         self.assertEqual(register_agents(s.ctx, ["copilot"])["errors"], [])
         self.assertEqual(read_json(s.hooks("copilot")), first)
-        self.assertEqual(migrate_registrations(s.ctx), ([], []))
+        self.assertEqual(refresh_registrations(s.ctx), ([], []))
         self.assertEqual(unregister_agents(s.ctx, ["copilot"])["errors"], [])
         self.assertEqual(read_json(s.hooks("copilot")), original)
 
-    def test_migration_repairs_home_propagation_in_both_server_and_hooks(self) -> None:
+    def test_refresh_repairs_home_propagation_in_both_server_and_hooks(self) -> None:
         s = Setup(self, installed=("copilot",))
         self.assertEqual(register_agents(s.ctx, ["copilot"])["errors"], [])
         config = read_json(s.file("copilot"))
@@ -64,8 +64,8 @@ class CopilotConfig(unittest.TestCase):
         status = next(a for a in agents_report(s.ctx)["agents"] if a["agent"] == "copilot")
         self.assertFalse(status["stable"])
         self.assertFalse(status["hooks"])
-        self.assertEqual(migrate_registrations(s.ctx), (["copilot"], []))
-        self.assertEqual(migrate_registrations(s.ctx), ([], []))
+        self.assertEqual(refresh_registrations(s.ctx), (["copilot"], []))
+        self.assertEqual(refresh_registrations(s.ctx), ([], []))
         self.assertEqual(read_json(s.file("copilot"))["mcpServers"]["ide-agent-tabs"]["env"]["IDE_AGENT_TABS_HOME"], s.ctx.home)
 
     def test_malformed_hook_documents_fail_without_replacing_the_file(self) -> None:
@@ -77,9 +77,13 @@ class CopilotConfig(unittest.TestCase):
             with open(s.hooks("copilot"), encoding="utf-8") as f:
                 self.assertEqual(f.read(), text)
 
-    def test_replacing_legacy_handlers_keeps_other_events(self) -> None:
+    def test_replacing_handlers_of_another_interpreter_keeps_other_events(self) -> None:
         target = HookTarget("python", "/home/mcp/py/launch/agent_hook.py", "linux")
-        legacy = {"type": "command", "exec": "node", "args": ["/home/mcp/agent-hook.mjs", "copilot", "agentStop"]}
+        legacy = {
+            "type": "command",
+            "exec": "/old/python",
+            "args": ["-I", "-S", "/home/mcp/py/launch/agent_hook.py", "copilot", "agentStop"],
+        }
         foreign = {"type": "command", "command": "echo audit"}
         root = {"version": 1, "hooks": {"agentStop": [legacy, foreign]}}
         merged = merge_hooks(root, "hooks.json", target, "/home")

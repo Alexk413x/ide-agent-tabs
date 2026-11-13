@@ -1,15 +1,11 @@
 from __future__ import annotations
 
-import contextlib
 import os
 import sqlite3
 import threading
-from collections.abc import Collection
 from typing import Callable
 
-from ..clock import now_ms
-from ..files import mtime_ms
-from .db import Db, MailError, query, wake_dir
+from .db import Db, MailError, query
 
 POLL_MS = 100
 
@@ -26,20 +22,10 @@ class _Folder:
 
 _folders: dict[str, _Folder] = {}
 _lock = threading.Lock()
-_skip_local_files = False
-
-
-def skip_wake_files_for_local_waiters(skip: bool) -> None:
-    global _skip_local_files
-    _skip_local_files = skip
-
-
-def wake_path(home: str, session_id: str) -> str:
-    return os.path.join(wake_dir(home), session_id)
 
 
 def _key(home: str) -> str:
-    return os.path.abspath(wake_dir(home))
+    return os.path.abspath(home)
 
 
 def _dispatch(folder: _Folder, session_id: str | None) -> None:
@@ -56,18 +42,6 @@ def notify_local(home: str, session_id: str) -> None:
     folder = _folders.get(_key(home))
     if folder is not None:
         _dispatch(folder, session_id)
-
-
-def signal_wake(home: str, session_id: str) -> None:
-    folder = _folders.get(_key(home))
-    local = folder is not None and session_id in folder.listeners
-    notify_local(home, session_id)
-    if local and _skip_local_files:
-        return
-    with contextlib.suppress(OSError):
-        fd = os.open(wake_path(home, session_id), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(str(now_ms()).encode("ascii"))
 
 
 def data_version(home: str) -> int:
@@ -123,21 +97,3 @@ def on_wake(home: str, session_id: str, listener: Listener, poll_ms: int = POLL_
                     del _folders[key]
 
     return stop
-
-
-def remove_stale_wakes(home: str, live: Collection[str], cutoff_ms: float) -> None:
-    folder = wake_dir(home)
-    try:
-        names = os.listdir(folder)
-    except OSError:
-        return
-    for name in names:
-        if name in live:
-            continue
-        path = os.path.join(folder, name)
-        if not os.path.isfile(path):
-            continue
-        mtime = mtime_ms(path)
-        if mtime is not None and mtime < cutoff_ms:
-            with contextlib.suppress(OSError):
-                os.remove(path)

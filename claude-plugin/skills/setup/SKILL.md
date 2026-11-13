@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set up Agent Tabs on this machine - check Python (and Git Bash on Windows), install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and where new tabs open, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin and turn on Jev judgments. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
+description: Set up Agent Tabs on this machine - check Python, install the IDE extensions that ship with this plugin into JetBrains IDEs, VS Code and editors built on it, pick a default agent and where new tabs open, let other agent CLIs use Agent Tabs, and optionally add OpenAI's Codex plugin and turn on Jev judgments. Use after installing the ide-agent-tabs plugin, or when the user asks to set up, repair or check Agent Tabs.
 argument-hint: "[--check]"
 disable-model-invocation: true
 ---
@@ -17,16 +17,21 @@ This plugin carries the IDE extensions in `${CLAUDE_PLUGIN_ROOT}/dist/ide/`. You
 anything. `"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" sync-ides` installs them and reports on them. Every step runs
 on this machine and needs a local shell, so this skill can't run in claude.ai chat or a cloud session.
 
+Claude Code runs shell commands in Git Bash on Windows, or in PowerShell when Git Bash isn't installed. In
+PowerShell, run `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1" <arguments>` wherever this skill shows
+`"${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" <arguments>`; the arguments are the same.
+
 ## 1. Prerequisites
 
-The MCP server, its hooks and the `agent-tabs` command need Python 3.9 or later. On Windows, Claude Code
-also needs Git Bash to run the plugin's hooks. Nothing else is required.
+The MCP server, its hooks and the `agent-tabs` command need Python 3.9 or later. Nothing else is required.
+On Windows, Git Bash is optional: the plugin runs in PowerShell without it.
 
 1. Check Python:
 
-   - Windows: run `py -3 --version`. If the `py` launcher is missing, run `command -v python3 python`
-     and ignore any path under `WindowsApps`: those are Microsoft Store stubs that open the Store
-     instead of running Python. Run `--version` on a path that remains.
+   - Windows: run `py -3 --version`. If the `py` launcher is missing, list `python3` and `python` (in Git
+     Bash `command -v python3 python`, in PowerShell `(Get-Command python3.exe, python.exe -All -ErrorAction
+     SilentlyContinue).Source`) and ignore any path under `WindowsApps`: those are Microsoft Store stubs that
+     open the Store instead of running Python. Run `--version` on a path that remains.
    - macOS and Linux: run `python3 --version`.
 
    If no Python 3.9 or later is found, tell the user how to install it, and stop:
@@ -36,12 +41,6 @@ also needs Git Bash to run the plugin's hooks. Nothing else is required.
    - macOS: the installer from https://www.python.org/downloads/, or `brew install python`. The
      `/usr/bin/python3` that the Xcode Command Line Tools install is Python 3.9 and works.
    - Linux: the distribution's `python3` package, such as `sudo apt install python3`.
-
-2. On Windows, check Git Bash. If `CLAUDE_CODE_GIT_BASH_PATH` is set, check that the file it names
-   exists. Otherwise run `command -v bash`, or look for `bin\bash.exe` under the Git install folder,
-   usually `C:\Program Files\Git`. If there is no Git Bash, tell the user to install Git for Windows
-   from https://git-scm.com/download/win or with `winget install Git.Git`, then restart Claude Code,
-   and stop.
 
 ## 2. Find the IDEs
 
@@ -165,8 +164,9 @@ config and would open a console window each time it starts the server.
    `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` for the tools that read or message, so
    the agent doesn't ask before each of those calls. `open_tab`, `close_tab`, `handoff` and the `jev_`
    tools still ask. For Codex, it sets `env_vars` and
-   `tool_timeout_sec` in the server's table in `~/.codex/config.toml`, and removes Agent Tabs hooks that
-   earlier versions added to `~/.codex/hooks.json`. The script keeps every other entry in those files.
+   `tool_timeout_sec` in the server's table in `~/.codex/config.toml`; it adds no hooks and leaves
+   `~/.codex/hooks.json` alone. The script keeps every other entry in the other files, and saves each
+   config file it changes as `<name>.agent-tabs.bak` beside it first.
 
    The JSON report lists each agent with `ok`, or an `error`. For a config file the script can't edit
    safely, such as a JSON file with comments, the error says so; show the user the entry to add by hand

@@ -13,6 +13,7 @@ import { AgentLaunch, AgentProfile } from './profiles';
 import { BadRequest } from './request';
 import { Host, TabInfo } from './server';
 import { LaunchVia } from './sharedSettings';
+import { startupFolder } from './startup';
 
 interface OpenOptions {
   id: string;
@@ -59,15 +60,10 @@ export function openFromButton(ext: Ext, profile: AgentProfile, via?: LaunchVia)
   void openInFolder(ext, activeFolder?.uri.scheme === 'file' ? activeFolder : fileFolders()[0], profile, via);
 }
 
-function opensOnStartup(ext: Ext, folder: vscode.WorkspaceFolder): boolean {
-  const mode = config().get<string>('openOnStartup', 'claudeFolder');
-  if (mode === 'always') return true;
-  if (mode !== 'claudeFolder') return false;
-  return isDirectory(path.join(folderPath(ext, folder), '.claude'));
-}
-
 export function openOnStartup(ext: Ext, folders: readonly vscode.WorkspaceFolder[]): void {
-  const folder = folders.find(f => f.uri.scheme === 'file' && opensOnStartup(ext, f));
+  const mode = config().get<string>('openOnStartup', 'claudeFolder');
+  const candidates = folders.filter(f => f.uri.scheme === 'file');
+  const folder = startupFolder(mode, vscode.workspace.isTrusted, candidates, f => isDirectory(path.join(folderPath(ext, f), '.claude')));
   if (folder) void openInFolder(ext, folder, ext.settings.defaultProfile());
 }
 

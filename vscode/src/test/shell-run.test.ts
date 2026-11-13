@@ -62,15 +62,21 @@ describe('PowerShell launcher delivers every argument byte for byte', { skip: pw
   const scripts = launchScripts(scriptDir);
   const probeProfile = (promptFlag?: string) => profile('test', 'Test', pwsh!, { args: ['-NoProfile', '-File', probe], promptFlag });
 
-  async function runPwsh(p: AgentProfile, prompt?: string, args: string[] = [], env: Record<string, string> = {}, shellPath = pwsh!) {
+  async function runPwsh(p: AgentProfile, prompt?: string, args: string[] = [], env: Record<string, string> = {}, shellPath = pwsh!, emptied: string[] = []) {
     const shell: ShellPlan = { path: shellPath, kind: 'powershell', args: powerShellArgs(scripts.powershell, onWindows) };
-    const result = await run(shell, terminalEnv('powershell', launchOf(p, prompt, args, env), 'tab-3', process.env), alive);
+    const launchEnv = { ...terminalEnv('powershell', launchOf(p, prompt, args, env), 'tab-3', process.env), ...Object.fromEntries(emptied.map(name => [name, ''])) };
+    const result = await run(shell, launchEnv, alive);
     assert.equal(result.alive, 'alive|tab-3|unset', 'the shell stays open with the tab id and without the command');
     return JSON.parse(result.out);
   }
 
   test('plain launch passes no arguments', async () => {
     assert.deepEqual(await runPwsh(probeProfile()), { args: [], left: 'null', agent: 'test', id: 'tab-3', v: null });
+  });
+
+  test('a reserved prompt variable that is set but empty counts as unset', async () => {
+    const out = await runPwsh(probeProfile(), undefined, [], {}, pwsh!, ['IDE_AGENT_TABS_PROMPT']);
+    assert.deepEqual(out, { args: [], left: 'null', agent: 'test', id: 'tab-3', v: null });
   });
 
   test('a nasty prompt arrives as one intact argument', async () => {
@@ -112,6 +118,45 @@ describe('PowerShell launcher delivers every argument byte for byte', { skip: pw
     assert.deepEqual(out.args, ['--model', 'm b', 'hello world']);
   });
 });
+
+const batchShells: [string, string | undefined][] = onWindows ? [['pwsh', pwsh], ['Windows PowerShell 5.1', findOnPath(searchPath, 'powershell.exe')]] : [];
+for (const [name, shellPath] of batchShells) {
+  describe(`a batch agent under ${name} gets every argument and runs nothing else`, { skip: shellPath ? false : `${name} not found` }, () => {
+    const batch = path.join(dir, `agent ${name.split(' ')[0]}.cmd`);
+    fs.writeFileSync(
+      path.join(dir, 'batch-probe.js'),
+      "const e = process.env; require('fs').writeFileSync(e.IAT_OUT, JSON.stringify({ args: process.argv.slice(2) }));",
+    );
+    fs.writeFileSync(batch, `@echo off\r\n"${process.execPath}" "${path.join(dir, 'batch-probe.js')}" %*\r\n`);
+    const scripts = launchScripts(scriptDir);
+    const done = 'exit\n';
+
+    // A line break cannot cross cmd.exe, so the launcher turns it into a space.
+    const args = [
+      'a&echo x>canary-amp',
+      'x|y',
+      '"quoted & amp"',
+      '100%PATH%',
+      '%',
+      '^caret',
+      'a<b>c',
+      'trailing\\',
+      '',
+      'q\\"uote & echo x>canary-quote',
+      '!x!',
+      '(a),b;c=d',
+    ];
+    const prompt = 'he said "hi & echo x>canary-prompt & rem \nsecond line';
+
+    test('hostile arguments arrive intact and no canary command runs', async () => {
+      const shell: ShellPlan = { path: shellPath!, kind: 'powershell', args: powerShellArgs(scripts.powershell, onWindows) };
+      const agent = profile('batch', 'Batch', batch, { promptFlag: '--prompt' });
+      const result = await run(shell, terminalEnv('powershell', launchOf(agent, prompt, args, {}), 'tab-5', process.env), done);
+      assert.deepEqual(JSON.parse(result.out).args, [...args, '--prompt', prompt.replace('\n', ' ')]);
+      assert.deepEqual(fs.readdirSync(dir).filter(f => f.startsWith('canary')), []);
+    });
+  });
+}
 
 function toWsl(p: string): string {
   return `/mnt/${p[0].toLowerCase()}${p.slice(2).replace(/\\/g, '/')}`;

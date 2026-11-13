@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import { AgentSettings } from '../agentSettings';
 import { CONFIG_FILE, SHARED_DEFAULTS, SharedSettings, SyncedSetting } from '../sharedSettings';
-import { followSharedDefault, followSharedSettings, settingsChanged, SHARED_KEYS, SHARED_SETTING_NAMES, shareSettings, SyncDeps } from '../sharedSync';
+import { followSharedDefault, followSharedSettings, settingsChanged, SHARED_KEYS, SHARED_SETTING_NAMES, shareDefault, shareSettings, SyncDeps } from '../sharedSync';
 import { tempDir } from './support';
 
 function fixture(values: Partial<SharedSettings> = {}, defaultAgent?: string, fail = false) {
@@ -81,4 +81,23 @@ test('a configuration change reports whether a shared setting or the default age
   assert.deepEqual(saved(), { focusNewTabs: 'never' });
   assert.equal(settingsChanged(deps, s => s === 'ideAgentTabs.defaultAgent'), true);
   assert.deepEqual(saved(), { focusNewTabs: 'never', defaultAgent: 'claude' });
+});
+
+test('a workspace default agent never reaches config.json', () => {
+  const { deps, saved, warnings } = fixture({}, 'claude');
+  const workspace = new AgentSettings(deps.settings.home, w => warnings.push(w), () => 'codex');
+  assert.equal(workspace.defaultProfile().name, 'codex');
+  shareDefault({ ...deps, settings: workspace });
+  assert.equal(saved().defaultAgent, 'claude');
+});
+
+test('a changed user default agent is shared, and an unknown one leaves the shared default alone', () => {
+  const { deps, config, saved } = fixture({}, 'codex');
+  shareDefault(deps);
+  assert.equal(saved().defaultAgent, 'codex');
+  const unknown = fixture({}, 'nope');
+  fs.writeFileSync(unknown.config, '{"defaultAgent": "copilot"}');
+  shareDefault(unknown.deps);
+  assert.equal(unknown.saved().defaultAgent, 'copilot');
+  assert.ok(config);
 });

@@ -11,13 +11,11 @@ import time
 from typing import Any, Callable, TypeVar
 
 from ..clock import now_ms
-from ..files import ensure_private_dir, file_lock, remove_tree
+from ..files import ensure_private_dir, file_lock
 
 T = TypeVar("T")
 
 DB_FILE = "messages.db"
-WAKE_DIR = "wake"
-FILE_MAILBOX_DIR = "mail"
 SCHEMA_VERSION = 1
 BUSY_TIMEOUT_MS = 200
 SHARED_BUSY_TIMEOUT_MS = 0
@@ -31,7 +29,7 @@ CORRUPT_MESSAGE = (
     "and unread messages in it can be lost"
 )
 
-# The 0.8.0 build runs this text byte for byte: SQLite keeps each CREATE statement's text in sqlite_master.
+# SQLite keeps each CREATE statement's text in sqlite_master, so this text is not reformatted.
 # Migrations stay additive (new tables, columns with defaults, indexes): an older build keeps using a database
 # that a newer build migrated, with no version check.
 MIGRATIONS = (
@@ -152,10 +150,6 @@ def db_path(home: str) -> str:
     return os.path.join(home, DB_FILE)
 
 
-def wake_dir(home: str) -> str:
-    return os.path.join(home, WAKE_DIR)
-
-
 class Db:
     def __init__(self, home: str, file: str, sql: sqlite3.Connection, ino: int) -> None:
         self.home = home
@@ -264,7 +258,6 @@ def _connect(home: str, file: str, deadline: float) -> Db:
     if reason is not None:
         raise MailError(reason)
     ensure_private_dir(home)
-    ensure_private_dir(wake_dir(home))
     os.close(os.open(file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))
     fresh = os.stat(file).st_size == 0
     sql = sqlite3.connect(file, timeout=_busy_timeout_ms / 1000, isolation_level=None, check_same_thread=False)
@@ -284,9 +277,6 @@ def _connect(home: str, file: str, deadline: float) -> Db:
         if is_corrupt(e):
             raise MailError(CORRUPT_MESSAGE) from e
         raise
-    mailbox = os.path.join(home, FILE_MAILBOX_DIR)
-    if os.path.isdir(mailbox):
-        remove_tree(mailbox)
     return Db(home, file, sql, os.stat(file).st_ino)
 
 

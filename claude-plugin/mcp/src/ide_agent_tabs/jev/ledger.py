@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 from ..clock import now_ms, parse_iso
-from ..files import ensure_private_dir, read_text_if_exists
+from ..files import ensure_private_dir, file_lock, read_text_if_exists, write_atomically
 from ..jsjson import is_finite, parse, stringify, trim
 from ..winapi import FILE_ATTRIBUTE_NORMAL, FILE_SHARE_ALL, INVALID_HANDLE_VALUE, kernel32
 
@@ -41,11 +41,38 @@ def append_ledger(home: str, entry: dict[str, Any]) -> None:
     path = ledger_path(home)
     ensure_private_dir(os.path.dirname(path))
     data = (stringify(entry) + "\n").encode("utf-8", "surrogatepass")
-    fd = _open_append(path)
+    # Trimming replaces the file under this lock, so a line appended meanwhile isn't lost with the old file.
+    with file_lock(path):
+        fd = _open_append(path)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
+
+
+def _older_than(line: str, cutoff_ms: float) -> bool:
     try:
-        os.write(fd, data)
-    finally:
-        os.close(fd)
+        e = parse(line)
+    except ValueError:
+        return False
+    at = parse_iso(e["at"]) if isinstance(e, dict) and isinstance(e.get("at"), str) else None
+    return at is not None and at < cutoff_ms
+
+
+def _without_older(text: str, cutoff_ms: float) -> list[str]:
+    return [line for line in text.split("\n") if not _older_than(line, cutoff_ms)]
+
+
+# Lines without a readable time stay, since only an entry that is known to be old is dropped.
+def trim_ledger(home: str, cutoff_ms: float) -> None:
+    path = ledger_path(home)
+    text = read_text_if_exists(path)
+    if text is None or len(_without_older(text, cutoff_ms)) == text.count("\n") + 1:
+        return
+    with file_lock(path):
+        text = read_text_if_exists(path)
+        if text is not None:
+            write_atomically(path, "\n".join(_without_older(text, cutoff_ms)))
 
 
 def to_fixed(value: float, digits: int) -> float:

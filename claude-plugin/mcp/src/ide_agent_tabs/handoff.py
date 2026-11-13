@@ -12,9 +12,9 @@ from .messaging.messaging import MAX_WAIT_S
 from .messaging.sessions import is_session_id, update_presence
 from .messaging.store import mail_to
 from .profiles import CONFIG_FILE, TAB_ID_ENV
+from .retention import HANDOFFS_DIR
 from .service import ToolError, error_text
 
-HANDOFFS_DIR = "handoffs"
 CLOSE_AFTER_KEY = "closeAfterHandoff"
 HANDOFF_TIMEOUT_MS = MAX_WAIT_S * 1000
 MAX_BRIEF_CHARS = 100_000
