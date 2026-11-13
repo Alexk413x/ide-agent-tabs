@@ -5,6 +5,7 @@ import sys
 import time
 import unittest
 from email.message import Message
+from typing import NoReturn
 
 from ide_agent_tabs.jev import client
 from ide_agent_tabs.jev.client import JevError, call_jev, js_to_number, retry_delay_ms
@@ -105,6 +106,33 @@ class Connection(unittest.TestCase):
         self.assertEqual(client.base_url_of({}), "https://api.typesafe.ai")
         self.assertEqual(client.base_url_of({"TYPESAFE_BASE_URL": ""}), "https://api.typesafe.ai")
         self.assertEqual(client.base_url_of({"TYPESAFE_BASE_URL": "http://127.0.0.1:9/api//"}), "http://127.0.0.1:9/api")
+
+    def test_a_base_url_must_be_https_unless_it_is_loopback(self) -> None:
+        for ok in ("https://example.com/api", "http://localhost:8080", "http://127.0.0.1:9/api//", "http://127.5.5.5", "http://[::1]:80"):
+            with self.subTest(ok=ok):
+                self.assertEqual(client.base_url_of({"TYPESAFE_BASE_URL": ok}), ok.rstrip("/"))
+        for bad in (
+            "http://api.typesafe.ai",
+            "http://10.0.0.5:8000",
+            "http://localhost.evil.com",
+            "http://127.0.0.1@evil.com",
+            "ftp://localhost",
+            "api.typesafe.ai",
+            "https://",
+        ):
+            with self.subTest(bad=bad), self.assertRaisesRegex(JevError, "TYPESAFE_BASE_URL"):
+                client.base_url_of({"TYPESAFE_BASE_URL": bad})
+
+    def test_call_jev_refuses_a_plain_http_address_before_sending_anything(self) -> None:
+        sent: list[str] = []
+
+        def transport(url: str, method: str, headers: dict[str, str], body: bytes, timeout_s: float) -> NoReturn:
+            sent.append(url)
+            raise AssertionError("must not send")
+
+        with self.assertRaisesRegex(JevError, "TYPESAFE_BASE_URL"):
+            call_jev("secret-key", "http://example.com", "s", QUESTIONS, transport=transport)
+        self.assertEqual(sent, [])
 
     def test_runtime_header_names_python(self) -> None:
         v = sys.version_info

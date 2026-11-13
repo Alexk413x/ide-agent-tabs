@@ -925,7 +925,7 @@ class Service:
         driver = self._driver(host)
         if driver is not None:
             if not driver.can_input:
-                return {"ok": False, "reason": f"{driver.label} can't take input from outside"}
+                return {"ok": False, "reason": f"{driver.label} can't take input from outside", "canInput": False, "host": host}
             record = next((t for t in self.store.read() if t["id"] == tab_id and t["terminal"] == host), None)
             if record is None:
                 return {"ok": False, "reason": f"no {driver.label} tab with id {tab_id}"}

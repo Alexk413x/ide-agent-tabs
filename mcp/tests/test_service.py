@@ -417,6 +417,16 @@ class TabsTest(unittest.TestCase):
         self.assertEqual(ide.requests[-1], ("input", {"id": "t", "text": "wake"}))
         self.assertEqual(s.service.type_into("t", "gone", "x"), {"ok": False, "reason": "no running IDE or terminal with id gone"})
 
+    def test_type_into_a_terminal_that_cannot_take_input_says_so_for_good(self) -> None:
+        s = Setup(self)
+        s.service.open_tab({"path": s.work})
+        s.terminal.can_input = False
+        self.assertEqual(
+            s.service.type_into("term-1", "fake-term", "wake"),
+            {"ok": False, "reason": f"{s.terminal.label} can't take input from outside", "canInput": False, "host": "fake-term"},
+        )
+        self.assertEqual(s.terminal.typed, [])
+
 
 class AgentsTest(unittest.TestCase):
     def test_list_agents_marks_installed_commands_and_warnings(self) -> None:

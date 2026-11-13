@@ -49,7 +49,7 @@ class McpJsonTest(unittest.TestCase):
         # Claude Code hands cmd.exe the command line as is, which list2cmdline's quoting would change.
         shell: str | list[str] = f'cmd.exe /d /s /c "{command}"' if sys.platform == "win32" else ["/bin/sh", "-c", command]
         env = clean_env(home, CLAUDE_CODE_MCP_SERVER_URL=f"http://127.0.0.1:{server.port}/mcp")
-        done = subprocess.run(shell, env=env, capture_output=True, timeout=60, check=False)
+        done = subprocess.run(shell, env=env, capture_output=True, timeout=60, check=False, stdin=subprocess.DEVNULL)
         headers = json.loads(done.stdout.decode("utf-8").strip().splitlines()[-1])
         self.assertEqual(headers["Authorization"], f"Bearer {server.token}")
         self.assertRegex(headers["X-Agent-Tabs-Pid"], r"^\d+$")

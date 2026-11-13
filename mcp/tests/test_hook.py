@@ -458,7 +458,10 @@ class HookScriptTest(unittest.TestCase):
             "'ide_agent_tabs.processes', 'ide_agent_tabs.messaging.wake') if m in sys.modules))"
         )
         out = subprocess.run(
-            [sys.executable, "-I", "-S", "-c", code, os.path.join(ROOT, "claude-plugin", "mcp", "src")], capture_output=True, check=True
+            [sys.executable, "-I", "-S", "-c", code, os.path.join(ROOT, "claude-plugin", "mcp", "src")],
+            capture_output=True,
+            check=True,
+            stdin=subprocess.DEVNULL,
         )
         self.assertEqual(out.stdout.decode().strip(), "[]")
 

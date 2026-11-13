@@ -41,6 +41,12 @@ class ThrowingHosts(FakeHosts):
         raise RuntimeError("no input here")
 
 
+class NoInputHosts(FakeHosts):
+    def type_into(self, tab_id: str, host: str, text: str) -> dict[str, Any]:
+        self.typed.append((tab_id, host, text))
+        return {"ok": False, "reason": "Windows Terminal can't take input from outside", "canInput": False, "host": host}
+
+
 class DescribeFailsHosts(FakeHosts):
     def describe_host(self, host: str) -> str | None:
         raise RuntimeError("no endpoint")
@@ -474,6 +480,33 @@ class SendTest(unittest.TestCase):
         result = a.send({"to": "tab-b", "text": "x"})
         self.assertEqual(result["delivery"], "queued")
         self.assertRegex(result["note"], "no input here")
+        self.assertEqual((sessions.read_presence(home, "tab-b") or {}).get("state"), "idle")
+
+    def test_a_host_that_cannot_take_input_is_tried_once_and_gets_no_follow_up(self) -> None:
+        home = temp_home(self)
+        hosts = NoInputHosts("fake-term")
+        a, b = pair(self, home, hosts, rewake_every_ms=20)
+        patch(home, "tab-b", state="idle")
+        result = a.send({"to": "tab-b", "text": "x"})
+        self.assertEqual(result["delivery"], "queued")
+        self.assertEqual(follow_up_peers(a), [])
+        time.sleep(0.15)
+        self.assertEqual(len(hosts.typed), 1)
+        self.assertEqual((sessions.read_presence(home, "tab-b") or {}).get("state"), "idle")
+        self.assertEqual(a.send({"to": "tab-b", "text": "y"})["delivery"], "queued")
+        self.assertEqual(len(hosts.typed), 1)
+        self.assertEqual([m["text"] for m in b.read()["messages"]], ["x", "y"])
+
+    def test_a_follow_up_that_meets_a_host_without_input_stops(self) -> None:
+        home = temp_home(self)
+        hosts = NoInputHosts("fake-term")
+        a, _b = pair(self, home, hosts, rewake_every_ms=20)
+        self.assertEqual(a.send({"to": "tab-b", "text": "x"})["delivery"], "queued")
+        self.assertEqual(follow_up_peers(a), ["tab-b"])
+        patch(home, "tab-b", state="idle")
+        self.assertTrue(until(lambda: len(hosts.typed) > 0 and follow_up_peers(a) == [], 5))
+        time.sleep(0.1)
+        self.assertEqual(len(hosts.typed), 1)
         self.assertEqual((sessions.read_presence(home, "tab-b") or {}).get("state"), "idle")
 
     def test_a_thrown_wake_up_leaves_the_message_queued_and_the_session_idle(self) -> None:
@@ -918,7 +951,13 @@ class WaitTest(unittest.TestCase):
         b.send({"to": "tab-a", "text": "need an answer"})
         b.stop_follow_ups()
         patch(home, "tab-a", state="idle")
-        self.assertTrue(b.wait({"from": "tab-a", "timeout": 0.5})["timedOut"])
+        cancel = threading.Event()
+        thread, box = in_thread(lambda: b.wait({"from": "tab-a", "timeout": 60}, cancel))
+        woken = until(lambda: len(hosts.typed) > 0, 30)
+        cancel.set()
+        thread.join(30)
+        self.assertTrue(woken)
+        self.assertTrue(box["value"]["timedOut"])
         self.assertEqual([t[0] for t in hosts.typed], ["tab-a"])
         self.assertEqual(a.read()["messages"][0]["text"], "need an answer")
 

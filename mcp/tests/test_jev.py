@@ -214,6 +214,13 @@ class Timing(unittest.TestCase):
         self.assertEqual(jev.status()["key"], "env")
         self.assertLess(time.monotonic() - started, 1.0)
 
+    def test_a_plain_http_base_url_is_an_error_not_a_fallback(self) -> None:
+        home = temp_home(self)
+        env = {"TYPESAFE_API_KEY": "k", "TYPESAFE_BASE_URL": "http://api.example.com"}
+        jev = Jev(JevDeps(settings=parse_jev_settings({"enabled": True}), home=home, env=env, platform=sys.platform))
+        with self.assertRaisesRegex(JevError, "TYPESAFE_BASE_URL must use https://"):
+            jev.ask({"state": "s", "questions": {"q": {"type": "boolean", "criteria": "is it true"}}})
+
 
 if __name__ == "__main__":
     unittest.main()

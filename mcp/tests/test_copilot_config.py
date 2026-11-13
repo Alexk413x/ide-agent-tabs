@@ -109,6 +109,7 @@ class CopilotReleaseSetup(unittest.TestCase):
             text=True,
             timeout=30,
             check=False,
+            stdin=subprocess.DEVNULL,
         )
         self.assertEqual(done.returncode, 0, done.stderr + done.stdout)
         report = json.loads(done.stdout)

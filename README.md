@@ -148,7 +148,8 @@ the VS Code extension and the JetBrains plugin makes these network requests, and
 
 - **Jev.** Only with `"jev": {"enabled": true}` in `config.json`, and only when a `jev_` tool runs, the
   server sends that call's `state` and questions, with your TypeSafe API key, to TypeSafe's API
-  (`https://api.typesafe.ai`, or the address in `TYPESAFE_BASE_URL`). With Jev off it makes no network call.
+  (`https://api.typesafe.ai`, or the address in `TYPESAFE_BASE_URL`, which must be `https://` unless it is
+  `localhost`, `127.0.0.0/8` or `::1`). With Jev off it makes no network call.
   Don't put secrets in a Jev request.
 - **Ori.** Only when you launch a tab with `via: "ori"` (or `launchVia` in `config.json`), the agent runs
   through the Ori CLI, which uses OpenRouter. Agent Tabs itself sends nothing there. A tab started

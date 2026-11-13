@@ -346,7 +346,7 @@ class WaitTest(unittest.TestCase):
 
         def run() -> None:
             time.sleep(0.2)
-            subprocess.run([sys.executable, "-I", "-S", "-c", script, SRC, home, text], check=True, timeout=60)
+            subprocess.run([sys.executable, "-I", "-S", "-c", script, SRC, home, text], check=True, timeout=60, stdin=subprocess.DEVNULL)
 
         sender = threading.Thread(target=run)
         sender.start()

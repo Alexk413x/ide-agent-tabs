@@ -2,28 +2,30 @@ from __future__ import annotations
 
 import hashlib
 import os
-import sys
 import threading
+import time
 from collections import OrderedDict
 from typing import Any, Callable, NamedTuple
 
 from ..liveness import pid_alive
+from .ancestry import START_SLACK_MS, Lookup, process_lookup
 from .host import Binding, BoundSession, ToolHost
 from .state import GENERATED_ID_PREFIX
 
 ROOTS_REQUEST = "agent-tabs-roots"
 LIVENESS_S = 15.0
 MAX_CLIENTS = 1024
+# A session with no owning process has nothing to tell the server it is gone, and each reconnect of a client that
+# vanished leaves another one. A healthy session is never idle this long: a wait_for_message holds a request open
+# for at most 600 s and returns before the next starts, and a call in flight counts as activity. Three times that
+# cap also leaves a slow turn between calls alone; a session cut off anyway binds again with its next request.
+UNOWNED_IDLE_S = 1800.0
 
 
 def _file_path(url_path: str) -> str:
-    if sys.platform == "win32":
-        from nturl2path import url2pathname
+    from urllib.request import url2pathname
 
-        return url2pathname(url_path)
-    from urllib.parse import unquote
-
-    return unquote(url_path)
+    return url2pathname(url_path)
 
 
 class Identity(NamedTuple):
@@ -68,10 +70,13 @@ def derived_id(key: str) -> str:
 
 
 class _Entry:
-    def __init__(self, key: str, pid: int, owned: bool) -> None:
+    def __init__(self, key: str, pid: int, owned: bool, pid_start: int | None, now: float) -> None:
         self.key = key
         self.pid = pid
         self.owned = owned
+        self.pid_start = pid_start
+        self.last_active = now
+        self.calls = 0
         self.ready = threading.Event()
         self.session: BoundSession | None = None
         self.error: BaseException | None = None
@@ -92,8 +97,12 @@ class Hub:
         log: Callable[[str], None] = lambda _m: None,
         prepare: Callable[[], None] | None = None,
         tab_owner: Callable[[str], tuple[int, int | None] | None] | None = None,
+        now: Callable[[], float] = time.monotonic,
+        process_info: Callable[[], Lookup] = process_lookup,
     ) -> None:
         self.host = host
+        self.now = now
+        self._process_info = process_info
         self.tab_owner = tab_owner
         self._prepare = prepare
         self._prepared = threading.Lock()
@@ -132,14 +141,44 @@ class Hub:
         self._timer = threading.Thread(target=loop, name="liveness", daemon=True)
         self._timer.start()
 
+    # A pid can be reused once its process has ended, so an owner also counts as gone when the process now holding
+    # its pid started at another time than the one the client reported. A start time that can't be read proves nothing.
+    def _starts(self) -> Callable[[int], float | None]:
+        info: list[Lookup | None] = [None]
+
+        def started(pid: int) -> float | None:
+            try:
+                if info[0] is None:
+                    info[0] = self._process_info()
+                found = info[0](pid)
+            except Exception:  # noqa: BLE001
+                return None
+            return None if found is None else found.start_ms
+
+        return started
+
+    def _owner_gone(self, entry: _Entry, started: Callable[[int], float | None]) -> bool:
+        if not self.alive(entry.pid):
+            return True
+        if not entry.pid_start:
+            return False
+        now = started(entry.pid)
+        return now is not None and abs(now - entry.pid_start) > START_SLACK_MS
+
+    def _idle(self, entry: _Entry, now: float) -> bool:
+        return not entry.owned and entry.ready.is_set() and entry.calls == 0 and now - entry.last_active >= UNOWNED_IDLE_S
+
     def sweep(self) -> int:
-        dead = [e for e in self._snapshot() if e.owned and not self.alive(e.pid)]
-        for entry in dead:
+        started = self._starts()
+        now = self.now()
+        gone = [e for e in self._snapshot() if (self._owner_gone(e, started) if e.owned else self._idle(e, now))]
+        for entry in gone:
             self._drop(entry, end=True)
-        return len(dead)
+        return len(gone)
 
     def live_sessions(self) -> int:
-        return sum(1 for e in self._snapshot() if e.owned and self.alive(e.pid))
+        started = self._starts()
+        return sum(1 for e in self._snapshot() if e.owned and not self._owner_gone(e, started))
 
     def end_pid(self, pid: int) -> int:
         matching = [e for e in self._snapshot() if e.owned and e.pid == pid]
@@ -194,8 +233,9 @@ class Hub:
     def _entry(self, key: str, identity: Identity, params: dict[str, Any]) -> _Entry | dict[str, Any]:
         with self._lock:
             entry = self._entries.get(key)
-        if entry is not None:
-            return entry
+            if entry is not None:
+                entry.last_active = self.now()
+                return entry
         cwd = self._cwd_of(identity, params.get("inputResponses"))
         if cwd is None:
             return {"resultType": "input_required", "inputRequests": {ROOTS_REQUEST: {"method": "roots/list"}}}
@@ -206,7 +246,7 @@ class Hub:
             entry = self._entries.get(key)
             if entry is not None:
                 return entry
-            entry = _Entry(key, pid, owned)
+            entry = _Entry(key, pid, owned, owner[1] if owner is not None else None, self.now())
             self._entries[key] = entry
         with self._prepared:
             if self._prepare is not None:
@@ -232,11 +272,21 @@ class Hub:
         found = self._entry(key, identity, params)
         if isinstance(found, dict):
             return found
-        found.ready.wait()
-        if found.session is None:
-            raise RuntimeError(str(found.error) if found.error is not None else "the session ended")
-        arguments = params.get("arguments")
-        return found.session.call(str(params.get("name")), arguments if isinstance(arguments, dict) else {}, cancel)
+        with self._lock:
+            found.calls += 1
+        try:
+            found.ready.wait()
+            if found.session is None:
+                raise RuntimeError(str(found.error) if found.error is not None else "the session ended")
+            arguments = params.get("arguments")
+            meta = params.get("_meta")
+            return found.session.call(
+                str(params.get("name")), arguments if isinstance(arguments, dict) else {}, cancel, meta if isinstance(meta, dict) else {}
+            )
+        finally:
+            with self._lock:
+                found.calls -= 1
+                found.last_active = self.now()
 
     def close(self) -> None:
         self._stop.set()

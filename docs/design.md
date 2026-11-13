@@ -2407,7 +2407,8 @@ Listed only when `jev.enabled` is `true`.
 - The server refuses a Choice with more than 255 options, a Score with fewer than 2 or more than 10
   levels, and a request whose text is over 200,000 characters, before it calls the API.
 - Every call is one `POST /v1/systemone` through the standard library's `urllib`, honouring
-  `TYPESAFE_BASE_URL`. The client retries 408, 429 and 5xx twice, with a 500 ms backoff that doubles up
+  `TYPESAFE_BASE_URL`, which must be `https://` unless it names `localhost`, an address in `127.0.0.0/8` or `::1`;
+  any other value is a Jev error, not a fallback to the default host. The client retries 408, 429 and 5xx twice, with a 500 ms backoff that doubles up
   to 5 s and 25% jitter, and honours `retry-after-ms` and `Retry-After` up to 60 s. Jev answers in well
   under a second, so each attempt has a 10-second limit and a tool call 30 seconds in total.
 

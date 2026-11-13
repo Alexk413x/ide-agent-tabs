@@ -14,6 +14,7 @@ from ..home import agent_tabs_home
 from ..liveness import pid_alive
 from ..server_copy import copy_root, write_copilot_config, write_port
 from ..version import PACKAGE_VERSION
+from .ancestry import Lookup, process_lookup
 from .front import Front, FrontDeps
 from .handover import HANDOVER_MS, claim_port
 from .host import ToolHost
@@ -70,6 +71,7 @@ class SharedServer:
         log: Callable[[str], None] | None = None,
         now: Callable[[], float] = time.monotonic,
         alive: Callable[[int], bool] | None = None,
+        process_info: Callable[[], Lookup] | None = None,
     ) -> None:
         self.home = home
         self.port = port
@@ -82,7 +84,15 @@ class SharedServer:
         self.last_request = now()
         self.token = ensure_token(home)
         self.shutdown_token = new_token()
-        self.hub = Hub(host, alive=alive or pid_alive, log=self.log, prepare=shared_store_mode, tab_owner=lambda tab: tab_owner(home, tab))
+        self.hub = Hub(
+            host,
+            alive=alive or pid_alive,
+            log=self.log,
+            prepare=shared_store_mode,
+            tab_owner=lambda tab: tab_owner(home, tab),
+            now=now,
+            process_info=process_info or process_lookup,
+        )
         self.front: Front | None = None
         self.stopped = threading.Event()
         self._stopping = threading.Lock()

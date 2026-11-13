@@ -7,12 +7,15 @@ import sys
 import threading
 import time
 import unittest
+from collections.abc import Mapping
 from typing import Any
 
 from ide_agent_tabs.clock import now_iso
 from ide_agent_tabs.messaging.sessions import read_presence, update_presence
+from ide_agent_tabs.shared import ancestry
+from ide_agent_tabs.shared.ancestry import Lookup, ProcessInfo
 from ide_agent_tabs.shared.host import Binding, BoundSession
-from ide_agent_tabs.shared.hub import Identity, derived_id, root_path, session_key
+from ide_agent_tabs.shared.hub import UNOWNED_IDLE_S, Identity, derived_id, root_path, session_key
 from ide_agent_tabs.shared.server import IDLE_EXIT_MS, SharedServer
 from ide_agent_tabs.shared.state import port_from_url, read_state, state_path
 from shared_support import PROTOCOL, McpHttp, Reply, free_port, pid_headers, request, reset_store_mode, serve
@@ -29,7 +32,7 @@ class _Blocking:
     def id(self) -> str:
         return "s-blocking"
 
-    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event) -> dict[str, Any]:
+    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event, meta: Mapping[str, Any]) -> dict[str, Any]:
         self.started.set()
         self.done.append("cancelled" if cancel.wait(20) else "timed out")
         return {"content": []}
@@ -49,6 +52,40 @@ class BlockingHost(Catalog):
 
     def bind(self, binding: Binding) -> BoundSession:
         return _Blocking(self.started, self.done)
+
+    def close(self) -> None:
+        return None
+
+
+class _Gated:
+    def __init__(self, started: threading.Event, gate: threading.Event) -> None:
+        self.started = started
+        self.gate = gate
+
+    @property
+    def id(self) -> str:
+        return "s-gated"
+
+    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event, meta: Mapping[str, Any]) -> dict[str, Any]:
+        self.started.set()
+        self.gate.wait(20)
+        return {"content": [{"type": "text", "text": "{}"}]}
+
+    def end(self) -> None:
+        return None
+
+    def release(self) -> None:
+        return None
+
+
+class GatedHost(Catalog):
+    def __init__(self, home: str) -> None:
+        super().__init__(home)
+        self.started = threading.Event()
+        self.gate = threading.Event()
+
+    def bind(self, binding: Binding) -> BoundSession:
+        return _Gated(self.started, self.gate)
 
     def close(self) -> None:
         return None
@@ -263,6 +300,72 @@ class LifecycleTest(unittest.TestCase):
         self.assertIsNone(read_presence(home, id_b))
         self.assertEqual(server.hub.size, 0)
         self.assertEqual(host.ended, [id_a, id_b])
+
+    def test_a_session_without_an_owning_process_ends_after_a_quiet_hour_and_binds_again_with_its_next_request(self) -> None:
+        home = temp_home(self, "iat-shared-")
+        clock = [1000.0]
+        host = StoreHost(home)
+        server = serve(self, home, host, now=lambda: clock[0])
+        client = McpHttp(server.port, server.token, {"x-agent-tabs-client": "no-owner"})
+        owned = McpHttp(server.port, server.token, pid_headers(os.getpid(), 21))
+        id_client, id_owned = client.self_id(), owned.self_id()
+        self.assertEqual(server.hub.size, 2)
+        self.assertEqual(server.hub.live_sessions(), 1)
+        clock[0] += UNOWNED_IDLE_S - 1
+        self.assertEqual(server.hub.sweep(), 0)
+        owned.call("list_sessions")
+        clock[0] += 2
+        self.assertEqual(server.hub.sweep(), 1)
+        self.assertEqual((server.hub.size, host.ended), (1, [id_client]))
+        self.assertIsNone(read_presence(home, id_client))
+        self.assertIsNotNone(read_presence(home, id_owned))
+        self.assertEqual(client.self_id(), id_client)
+        self.assertEqual(server.hub.size, 2)
+        clock[0] += 10 * UNOWNED_IDLE_S
+        self.assertEqual(server.hub.sweep(), 1)
+        self.assertEqual(server.hub.live_sessions(), 1, "an owned session is not ended for being quiet")
+
+    def test_a_call_in_flight_keeps_a_session_without_an_owner(self) -> None:
+        home = temp_home(self, "iat-shared-")
+        clock = [1000.0]
+        host = GatedHost(home)
+        server = serve(self, home, host, now=lambda: clock[0])
+        client = McpHttp(server.port, server.token, {"x-agent-tabs-client": "waiting"})
+        thread = threading.Thread(target=lambda: client.call("wait_for_message"), daemon=True)
+        thread.start()
+        self.assertTrue(host.started.wait(10))
+        clock[0] += 3 * UNOWNED_IDLE_S
+        self.assertEqual(server.hub.sweep(), 0)
+        host.gate.set()
+        thread.join(10)
+        self.assertEqual(server.hub.sweep(), 0, "the end of a call is activity")
+        clock[0] += UNOWNED_IDLE_S
+        self.assertEqual(server.hub.sweep(), 1)
+
+    def test_a_pid_that_now_belongs_to_another_process_ends_the_session_it_owned(self) -> None:
+        home = temp_home(self, "iat-shared-")
+        started = [1_700_000_000_000.0]
+        found = [True]
+
+        def info() -> Lookup:
+            return lambda pid: ProcessInfo(pid, 0, "claude", started[0]) if found[0] else None
+
+        host = StoreHost(home)
+        server = serve(self, home, host, process_info=info)
+        McpHttp(server.port, server.token, pid_headers(os.getpid(), 1_700_000_000_000)).self_id()
+        unknown = McpHttp(server.port, server.token, pid_headers(os.getppid(), 0))
+        unknown.self_id()
+        self.assertEqual((server.hub.live_sessions(), server.hub.sweep()), (2, 0))
+        started[0] += ancestry.START_SLACK_MS
+        self.assertEqual(server.hub.sweep(), 0)
+        found[0] = False
+        self.assertEqual(server.hub.sweep(), 0, "a start time that can't be read proves nothing")
+        found[0] = True
+        started[0] += 1
+        self.assertEqual(server.hub.live_sessions(), 1)
+        self.assertEqual(server.hub.sweep(), 1)
+        self.assertEqual(server.hub.size, 1)
+        self.assertEqual(len(host.ended), 1)
 
     def test_a_dropped_request_cancels_its_tool_call(self) -> None:
         home = temp_home(self, "iat-shared-")

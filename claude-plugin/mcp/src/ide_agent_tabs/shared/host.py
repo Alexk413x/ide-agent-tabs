@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from typing import Any, NamedTuple, Protocol
 
 
@@ -17,7 +18,7 @@ class BoundSession(Protocol):
     @property
     def id(self) -> str: ...
 
-    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event) -> dict[str, Any]: ...
+    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event, meta: Mapping[str, Any]) -> dict[str, Any]: ...
 
     def end(self) -> None: ...
 

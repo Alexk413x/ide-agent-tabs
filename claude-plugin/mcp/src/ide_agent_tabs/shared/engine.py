@@ -80,11 +80,12 @@ class _Session:
     def id(self) -> str:
         return self.messaging.id
 
-    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event) -> dict[str, Any]:
+    # Progress notifications have no channel on a plain HTTP response, so a progressToken in meta only reaches _no_notify.
+    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event, meta: Mapping[str, Any]) -> dict[str, Any]:
         from ..mcp_tools import Call
 
         self.tools.jev_enabled = self.host.jev_enabled()
-        return self.tools.call(self.client_name, name, arguments, Call({}, cancel, _no_notify))
+        return self.tools.call(self.client_name, name, arguments, Call(meta, cancel, _no_notify))
 
     def _finish(self) -> bool:
         with self._lock:

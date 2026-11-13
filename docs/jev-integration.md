@@ -70,7 +70,8 @@ The command line is a subcommand of the same server package, `agent-tabs jev <to
 The server calls the API with a small client on the standard library's `urllib`, not an SDK. It sends
 one `POST /v1/systemone` with a bearer key, retries 408, 429 and 5xx with backoff, honours
 `retry-after-ms` and `Retry-After`, and reads `TYPESAFE_BASE_URL`, which lets the tests point it at a
-fake server on loopback.
+fake server on loopback. The variable must be an `https://` address unless its host is `localhost`,
+an address in `127.0.0.0/8` or `::1`; any other value is a Jev error, so the key is never sent unencrypted.
 
 ### Why build this and not use an existing server
 

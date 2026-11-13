@@ -109,6 +109,7 @@ class LauncherTest(unittest.TestCase):
                     encoding="utf-8",
                     errors="replace",
                     timeout=120,
+                    stdin=subprocess.DEVNULL,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 got = self.read_probe(out)
@@ -161,6 +162,7 @@ class LauncherTest(unittest.TestCase):
             encoding="utf-8",
             errors="replace",
             timeout=120,
+            stdin=subprocess.DEVNULL,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([name for name in os.listdir(self.work) if name.startswith("canary")], [], "no argument ran as a command")
@@ -191,6 +193,7 @@ class LauncherTest(unittest.TestCase):
                     encoding="utf-8",
                     errors="replace",
                     timeout=120,
+                    stdin=subprocess.DEVNULL,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
                 got = self.read_probe(out)
@@ -218,6 +221,7 @@ class LauncherTest(unittest.TestCase):
             encoding="utf-8",
             errors="replace",
             timeout=120,
+            stdin=subprocess.DEVNULL,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         got = self.read_probe(out)

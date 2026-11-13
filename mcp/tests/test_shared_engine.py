@@ -5,6 +5,7 @@ import os
 import threading
 import time
 import unittest
+from typing import Any
 
 from ide_agent_tabs.clock import now_iso
 from ide_agent_tabs.messaging.sessions import read_presence, update_presence
@@ -74,6 +75,34 @@ class EngineTest(unittest.TestCase):
         waiter.join(30)
         self.assertIn("wake up", json.dumps(got))
         self.assertIn(id_a, json.dumps(got))
+
+    def test_the_meta_of_a_tool_call_reaches_the_tools_and_a_progress_token_has_nowhere_to_go(self) -> None:
+        a = self.client(5)
+        a.self_id()
+        thread = "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b"
+        meta = {"threadId": thread, "progressToken": "p1"}
+        reply = a.rpc("tools/call", {"name": "list_sessions", "arguments": {}, "_meta": meta})
+        self.assertNotIn("isError", reply.json["result"], reply.text)
+        self.assertEqual(a.self_id(), f"codex-{thread}")
+
+    def test_a_classic_call_passes_its_meta_on_and_ignores_a_meta_that_is_not_an_object(self) -> None:
+        headers = {
+            "Authorization": f"Bearer {self.server.token}",
+            "Accept": "application/json",
+            "mcp-protocol-version": "2025-06-18",
+            **pid_headers(os.getpid(), 6, x_agent_tabs_cwd=self.home),
+        }
+
+        def classic(meta: object) -> Any:
+            params = {"name": "list_sessions", "arguments": {}, "_meta": meta}
+            body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params})
+            return request(self.server.port, "/mcp", headers=headers, body=body).json["result"]
+
+        thread = "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5c"
+        self.assertNotIn("isError", classic("not an object"))
+        self.assertNotIn("isError", classic({"threadId": thread, "progressToken": 7}))
+        ids = json.loads(classic({})["content"][0]["text"])["sessions"]
+        self.assertEqual([s["id"] for s in ids if s["self"]], [f"codex-{thread}"])
 
     def test_a_tab_claim_binds_only_a_free_tab(self) -> None:
         held = {"id": "tab-held", "agent": "claude", "path": "/x", "pid": os.getppid(), "startedAt": now_iso(), "state": "idle"}
