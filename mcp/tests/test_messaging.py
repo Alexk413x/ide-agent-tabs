@@ -1216,6 +1216,10 @@ class EndedSessionTest(unittest.TestCase):
         m = session(self, home, "tab-x", "codex", 1, is_alive=lambda pid: pid != 999, transcripts=self.dirs(home))
         self.assertEqual([s["id"] for s in m.list_sessions()["sessions"]], ["tab-x"])
         self.assertFalse(os.path.exists(sessions.presence_path(home, "tab-dead")))
+        # The background clean the session starts can end the dead session first and still be writing its record.
+        deadline = time.monotonic() + 10
+        while not closed.read_closed(home) and time.monotonic() < deadline:
+            time.sleep(0.02)
         self.assertEqual([[r["id"], r["tab"]] for r in closed.read_closed(home)], [[THREAD, "tab-dead"]])
 
 
