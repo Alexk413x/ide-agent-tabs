@@ -86,7 +86,7 @@ class RealProcessTest(unittest.TestCase):
             command: list[str] = ["cmd.exe", "/d", "/s", "/c", subprocess.list2cmdline(args)]
         else:
             command = ["/bin/sh", "-c", " ".join(f"'{a}'" for a in args) + "; true"]
-        out = subprocess.run(command, capture_output=True, timeout=60, check=True)
+        out = subprocess.run(command, capture_output=True, timeout=60, check=True, stdin=subprocess.DEVNULL)
         self.assertEqual(int(out.stdout.decode().strip()), os.getpid())
 
     def test_the_lookup_from_this_process_names_a_live_ancestor(self) -> None:

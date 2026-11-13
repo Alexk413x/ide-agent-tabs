@@ -87,7 +87,7 @@ class StartedServerTest(unittest.TestCase):
             else f'"{sys.executable}" -I -S "{script}"'
         )
         shell = ["cmd.exe", "/d", "/s", "/c", quoted] if sys.platform == "win32" else ["/bin/sh", "-c", f"{quoted}; true"]
-        out = subprocess.run(shell, env=env, capture_output=True, timeout=60, check=True)
+        out = subprocess.run(shell, env=env, capture_output=True, timeout=60, check=True, stdin=subprocess.DEVNULL)
         headers = json.loads(out.stdout.decode("utf-8"))
         self.assertEqual(headers["X-Agent-Tabs-Pid"], str(os.getpid()))
         self.assertEqual(headers["Authorization"], f"Bearer {ensured.token}")
@@ -123,7 +123,9 @@ class StartedServerTest(unittest.TestCase):
     def test_a_second_server_of_the_same_build_leaves_the_port_and_exits(self) -> None:
         home, port, ensured = self.started()
         env = {**os.environ, "IDE_AGENT_TABS_HOME": home}
-        second = subprocess.run(server_command(LAUNCHER, port), env=env, capture_output=True, timeout=60, check=False)
+        second = subprocess.run(
+            server_command(LAUNCHER, port), env=env, capture_output=True, timeout=60, check=False, stdin=subprocess.DEVNULL
+        )
         self.assertEqual(second.returncode, 0)
         self.assertEqual(probe(port).health["pid"], ensured.health["pid"])  # type: ignore[index]
 

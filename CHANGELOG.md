@@ -3,6 +3,36 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.10.1
+
+Plugin and MCP server 0.10.1. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Security
+
+- Jev refuses a `TYPESAFE_BASE_URL` that is not `https://`, unless it points at localhost, so the API key
+  never travels unencrypted. A refused value is reported as an error; nothing is sent.
+
+### Fixed
+
+- The shared server ends a session it could not tie to a process after 30 minutes with no request, and
+  ends a session whose process id was reused by another process. Such sessions used to stay listed until
+  the server exited.
+- A message to a session in a terminal that can't take typed input, such as Windows Terminal, no longer
+  sets off 10 minutes of wake retries. The message waits for the session's next prompt or tool call.
+- Tool calls over HTTP receive the request's `_meta`, so a Codex thread id names the session as it does
+  over stdio.
+- A YAML or TOML config that starts with a byte order mark no longer gets a second `mcp_servers`
+  section when an agent is registered. The byte order mark is kept.
+- The shared server converts `file:` roots with `urllib.request.url2pathname` instead of `nturl2path`,
+  which Python 3.14 deprecates.
+
+### Changed
+
+- `scripts/check.mjs` runs the Python tests on an installed interpreter outside any virtual environment,
+  so the tests that walk process ancestry pass on Windows after the type-check step creates `.venv`.
+- Tests that start a shell no longer inherit the runner's standard input, and the wait-and-wake test
+  waits for the wake instead of a fixed half second.
+
 ## 0.10.0
 
 Plugin and MCP server 0.10.0, with VS Code extension 0.1.37 and JetBrains plugin 0.4.20 bundled.

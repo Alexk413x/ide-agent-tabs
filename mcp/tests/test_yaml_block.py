@@ -4,6 +4,7 @@ import unittest
 
 from ide_agent_tabs.yaml_block import YamlDoc, YamlError, edit_yaml, yaml_value
 
+BOM = chr(0xFEFF)
 ENTRY = {"command": "/usr/bin/python3", "args": ["-I", "-S", "/h/mcp_server.py"], "env": {"A": "${A}"}, "timeout": 660}
 
 
@@ -40,6 +41,17 @@ class RoundTrips(unittest.TestCase):
         assert added is not None
         self.assertNotIn("\n", added.replace("\r\n", ""))
         self.assertTrue(added.endswith("\r\n"))
+
+    def test_a_section_behind_a_byte_order_mark_is_found_and_the_mark_is_kept(self) -> None:
+        text = BOM + "mcp_servers:\n  other:\n    command: x\n"
+        added = set_entry(text)
+        assert added is not None
+        self.assertTrue(added.startswith(BOM + "mcp_servers:\n  other:"))
+        self.assertEqual(added.count("mcp_servers:"), 1)
+        self.assertEqual(added.count(BOM), 1)
+        self.assertEqual(yaml_value(added, "f", "mcp_servers"), {"other": {"command": "x"}, "ide-agent-tabs": ENTRY})
+        self.assertIsNone(set_entry(added))
+        self.assertTrue((set_entry(BOM + "a: 1\n") or "").startswith(BOM + "a: 1\n"))
 
     def test_a_section_is_created_at_the_end_or_filled_when_empty(self) -> None:
         self.assertEqual(set_entry(None, entry={"a": 1}), "mcp_servers:\n  ide-agent-tabs:\n    a: 1\n")

@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from typing import Any, Callable
 
+from ide_agent_tabs.shared.ancestry import Lookup
 from ide_agent_tabs.shared.host import ToolHost
 from ide_agent_tabs.shared.server import SharedServer
 
@@ -71,10 +72,15 @@ class McpHttp:
 
     def rpc(self, method: str, params: dict[str, Any] | None = None, extra: dict[str, str] | None = None) -> Reply:
         params = dict(params or {})
+        sent_meta = params.pop("_meta", {})
         with self._lock:
             request_id = self.next
             self.next += 1
-        meta = {"io.modelcontextprotocol/protocolVersion": PROTOCOL, "io.modelcontextprotocol/clientCapabilities": {"roots": {}}}
+        meta = {
+            "io.modelcontextprotocol/protocolVersion": PROTOCOL,
+            "io.modelcontextprotocol/clientCapabilities": {"roots": {}},
+            **sent_meta,
+        }
         body = json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": {**params, "_meta": meta}})
         headers = {
             "Authorization": f"Bearer {self.token}",
@@ -115,9 +121,11 @@ def serve(
     alive: Callable[[int], bool] | None = None,
     version: str = "test",
     now: Callable[[], float] | None = None,
+    process_info: Callable[[], Lookup] | None = None,
 ) -> SharedServer:
     port = free_port()
-    kwargs: dict[str, Any] = {"version": version, "log": lambda _m: None}
+    # The tests report invented start times for real pids, so by default no process start is readable.
+    kwargs: dict[str, Any] = {"version": version, "log": lambda _m: None, "process_info": process_info or (lambda: lambda _pid: None)}
     if alive is not None:
         kwargs["alive"] = alive
     if now is not None:

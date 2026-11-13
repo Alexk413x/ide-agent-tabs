@@ -102,7 +102,13 @@ class CodexTabTest(unittest.TestCase):
         def run(home_var: str) -> str:
             env = {**os.environ, "HOME": user, "USERPROFILE": user, "IDE_AGENT_TABS_HOME": home_var}
             result = subprocess.run(
-                [sys.executable, "-I", "-S", "-c", code], env=env, capture_output=True, check=False, encoding="utf-8", timeout=60
+                [sys.executable, "-I", "-S", "-c", code],
+                env=env,
+                capture_output=True,
+                check=False,
+                encoding="utf-8",
+                timeout=60,
+                stdin=subprocess.DEVNULL,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             return result.stdout

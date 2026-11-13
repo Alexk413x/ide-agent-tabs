@@ -247,9 +247,35 @@ def runtime_header() -> str:
     return f"python/{v.major}.{v.minor}.{v.micro} ({sys.platform}; {_machine_arch()})"
 
 
+def check_base_url(url: str) -> str:
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        _ = parts.port
+    except ValueError:
+        raise JevError(f"{BASE_URL_ENV} is not a valid URL.") from None
+    if parts.scheme == "https" and host:
+        return url
+    shown = f"{parts.scheme}://{host}"
+    if parts.scheme != "http" or not host:
+        raise JevError(f"{BASE_URL_ENV} must be an https:// address (http:// only for localhost); got {shown}.")
+    try:
+        loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = host.lower() == "localhost"
+    if not loopback:
+        raise JevError(
+            f"{BASE_URL_ENV} must use https:// unless it points at localhost, or the API key would travel unencrypted; got {shown}."
+        )
+    return url
+
+
 def base_url_of(env: Mapping[str, str]) -> str:
     given = env.get(BASE_URL_ENV) or None
-    return re.sub(r"/+$", "", given or DEFAULT_BASE_URL)
+    return check_base_url(re.sub(r"/+$", "", given or DEFAULT_BASE_URL))
 
 
 @functools.cache
@@ -330,6 +356,7 @@ def call_jev(
     attempt_ms: float = ATTEMPT_TIMEOUT_MS,
 ) -> dict[str, Any]:
     try:
+        check_base_url(base_url)
         return _call(api_key, base_url, state, questions, transport, sleep, clock, rand, limit_ms, attempt_ms)
     except JevError as e:
         raise JevError(_scrub(e.message, api_key), e.status) from None

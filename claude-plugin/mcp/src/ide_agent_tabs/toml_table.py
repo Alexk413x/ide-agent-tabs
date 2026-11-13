@@ -6,6 +6,7 @@ from typing import Union
 from .jsjson import parse, quote
 
 TomlValue = Union[str, int, "list[str]", "dict[str, str]"]
+_BOM = chr(0xFEFF)
 _EOL = re.compile(r"\r?\n")
 _HEADER_LINE = re.compile(r"^\s*\[")
 _TRAILING = re.compile(r"^\s*(?:#.*)?$")
@@ -64,7 +65,16 @@ def toml_table(section: str, name: str, values: dict[str, TomlValue]) -> list[st
 # Only the [section.name] form can be found and replaced; any other spelling of the same table would be a
 # duplicate key once a second one is added.
 def with_toml_table(text: str | None, file: str, section: str, name: str, table: list[str] | None) -> str | None:
-    source = text or ""
+    bom, source = _split_bom(text or "")
+    edited = _with_toml_table(source, file, section, name, table)
+    return None if edited is None else bom + edited
+
+
+def _split_bom(text: str) -> tuple[str, str]:
+    return (_BOM, text[1:]) if text.startswith(_BOM) else ("", text)
+
+
+def _with_toml_table(source: str, file: str, section: str, name: str, table: list[str] | None) -> str | None:
     eol = "\r\n" if "\r\n" in source else "\n"
     lines = split_lines(source)
     blocks = toml_blocks(lines, section, name)
@@ -143,7 +153,7 @@ def _parse_value(src: str, i: int) -> str | list[str] | None:
 def read_toml_table(text: str | None, section: str, name: str) -> dict[str, str | list[str] | None] | None:
     if text is None:
         return None
-    lines = split_lines(text)
+    lines = split_lines(_split_bom(text)[1])
     header = toml_header(section, name)
     main = next(
         (b for b in toml_blocks(lines, section, name) if (m := header.search(lines[b[0]])) is not None and m.group(1) is None), None

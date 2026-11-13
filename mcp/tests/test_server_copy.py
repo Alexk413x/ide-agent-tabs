@@ -25,7 +25,15 @@ from support import temp_home
 
 
 def run_python(*args: str, env: dict[str, str] | None = None) -> str:
-    done = subprocess.run([sys.executable, "-I", "-S", *args], capture_output=True, encoding="utf-8", env=env, check=False, timeout=60)
+    done = subprocess.run(
+        [sys.executable, "-I", "-S", *args],
+        capture_output=True,
+        encoding="utf-8",
+        env=env,
+        check=False,
+        timeout=60,
+        stdin=subprocess.DEVNULL,
+    )
     if done.returncode != 0:
         raise AssertionError(done.stderr)
     return done.stdout
@@ -60,7 +68,11 @@ class ServerCopy(unittest.TestCase):
         self.assertEqual(argv, ["a b", "c"])
         os.remove(os.path.join(copy_dir(home), CURRENT_FILE))
         done = subprocess.run(
-            [sys.executable, "-I", "-S", server_copy_path(home, sys.platform)], capture_output=True, encoding="utf-8", check=False
+            [sys.executable, "-I", "-S", server_copy_path(home, sys.platform)],
+            capture_output=True,
+            encoding="utf-8",
+            check=False,
+            stdin=subprocess.DEVNULL,
         )
         self.assertEqual(done.returncode, 1)
         self.assertIn("incomplete", done.stderr)

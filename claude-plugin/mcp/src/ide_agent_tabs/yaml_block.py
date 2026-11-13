@@ -426,6 +426,9 @@ def render_seq(value: list[Any], indent: int) -> list[str]:
     return out
 
 
+_BOM = chr(0xFEFF)
+
+
 class _Section(NamedTuple):
     key: Any
     start: int
@@ -435,6 +438,8 @@ class _Section(NamedTuple):
 class YamlDoc:
     def __init__(self, text: str | None, file: str) -> None:
         source = text or ""
+        self.bom = _BOM if source.startswith(_BOM) else ""
+        source = source[len(self.bom) :]
         self.file = file
         self.eol = "\r\n" if "\r\n" in source else "\n"
         self.lines = _EOL.split(source)
@@ -595,7 +600,7 @@ class YamlDoc:
             raise YamlError(f"{self.file}: {section_key}.{key} isn't a list; edit it by hand")
 
     def text(self) -> str:
-        return "".join(line + self.eol for line in self.lines)
+        return self.bom + "".join(line + self.eol for line in self.lines)
 
 
 def edit_yaml(text: str | None, file: str, change: Callable[[YamlDoc], None]) -> str | None:

@@ -221,6 +221,8 @@ class Messaging:
         self._own_host: Task[str | None] | None = None
         self._identify_lock = threading.Lock()
         self._follow_ups: dict[str, Job] = {}
+        # Recipients whose host cannot take typed input, by the host that said so; typing again would only flip their presence.
+        self._cannot_type: dict[str, str] = {}
         self._follow_lock = threading.Lock()
         self._heartbeat: Job | None = None
         self._start_error: str | None = None
@@ -666,7 +668,8 @@ class Messaging:
                 set_delivery(self.deps.home, sent["id"], wake["delivery"])
             except Exception as e:  # noqa: BLE001
                 self._failed(f"recording the delivery of message {sent['id']}", e)
-        self._follow_up(to)
+        if to not in self._cannot_type:
+            self._follow_up(to)
         self.scheduler.soon(self._clean)
         return {"id": sent["id"], "to": to, **wake, **self._warnings()}
 
@@ -693,7 +696,7 @@ class Messaging:
         host = recipient.get("host")
         if host is None and _may_be_tab(recipient["id"]):
             host = self.deps.hosts.find_host(recipient["id"])
-        if host is None:
+        if host is None or self._cannot_type.get(recipient["id"]) == host:
             return {"delivery": "queued"}
         fields = {"host": host} if host == recipient.get("host") else self._host_fields(host)
         claimed: Presence | None = None
@@ -731,7 +734,10 @@ class Messaging:
                 )
                 typed = self._type_wake_line(recipient["id"], found)
         if typed.get("ok"):
+            self._cannot_type.pop(recipient["id"], None)
             return {"delivery": "woken"}
+        if typed.get("canInput") is False:
+            self._cannot_type[recipient["id"]] = typed.get("host") or host
         self._restore_failed_wake(recipient, claimed)
         return {"delivery": "queued", "note": f"the session was idle, but typing the wake line failed: {typed.get('reason')}"}
 
@@ -760,7 +766,7 @@ class Messaging:
         if recipient is None:
             return False
         self._wake(recipient, now)
-        return True
+        return peer not in self._cannot_type
 
     @property
     def _rewake_s(self) -> float:

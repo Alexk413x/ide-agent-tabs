@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from ide_agent_tabs.clock import now_iso
@@ -79,7 +80,7 @@ class StoreSession:
         p.update({"startedAt": self.started_at, "state": "unknown", "beatMs": HEARTBEAT_MS, "mail": MAIL_VERSION})
         return p
 
-    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event) -> dict[str, Any]:
+    def call(self, name: str, arguments: dict[str, Any], cancel: threading.Event, meta: Mapping[str, Any]) -> dict[str, Any]:
         self.calls.append(name)
         home = self.host.home
         try:

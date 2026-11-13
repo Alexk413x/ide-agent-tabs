@@ -114,7 +114,7 @@ class PowerShellLauncherTest(unittest.TestCase):
             line = [*base, "-EncodedCommand", encoded]
         else:
             line = [*base, "-File", script, *args]
-        return subprocess.run(line, env=clean_env(home, **extra), capture_output=True, timeout=60, check=False)
+        return subprocess.run(line, env=clean_env(home, **extra), capture_output=True, timeout=60, check=False, stdin=subprocess.DEVNULL)
 
     def test_arguments_with_spaces_and_quotes_arrive_intact(self) -> None:
         for name, exe in power_shells():
@@ -146,6 +146,7 @@ class PowerShellLauncherTest(unittest.TestCase):
                     capture_output=True,
                     timeout=60,
                     check=False,
+                    stdin=subprocess.DEVNULL,
                 )
                 self.assertEqual(done.returncode, 0, done.stderr)
                 reply = json.loads(done.stdout)

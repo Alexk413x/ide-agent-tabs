@@ -71,5 +71,21 @@ class ConfigParity(unittest.TestCase):
                 self.assertEqual(run(*case["args"]), case["result"])
 
 
+class ByteOrderMark(unittest.TestCase):
+    def test_a_toml_table_behind_a_byte_order_mark_is_replaced_in_place_and_the_mark_is_kept(self) -> None:
+        bom = chr(0xFEFF)
+        text = bom + '[mcp_servers.ide-agent-tabs]\ncommand = "old"\n\n[other]\nx = 1\n'
+        table = toml_table("mcp_servers", "ide-agent-tabs", {"command": "new"})
+        out = with_toml_table(text, "f", "mcp_servers", "ide-agent-tabs", table)
+        self.assertEqual(out, bom + '[mcp_servers.ide-agent-tabs]\ncommand = "new"\n\n[other]\nx = 1\n')
+        self.assertEqual(read_toml_table(text, "mcp_servers", "ide-agent-tabs"), {"command": "old"})
+        removed = with_toml_table(text, "f", "mcp_servers", "ide-agent-tabs", None) or ""
+        self.assertTrue(removed.startswith(bom))
+        self.assertNotIn("ide-agent-tabs", removed)
+        appended = with_toml_table(bom + "a = 1\n", "f", "mcp_servers", "ide-agent-tabs", table) or ""
+        self.assertTrue(appended.startswith(bom + "a = 1\n"))
+        self.assertEqual(appended.count(bom), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
