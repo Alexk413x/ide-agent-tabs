@@ -35,7 +35,24 @@ $piped = $MyInvocation.ExpectingInput
 if ($piped) {
   $info.RedirectStandardInput = $true
 }
-$process = [System.Diagnostics.Process]::Start($info)
+# Windows PowerShell 5.1 opens the child's stdin with the console input encoding, and a UTF-8 console (code page
+# 65001) makes it send a byte order mark ahead of the input. A UTF-8 encoding without one is set for the start.
+$inputEncoding = $null
+if ($piped) {
+  try {
+    $inputEncoding = [Console]::InputEncoding
+    [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
+  } catch {
+    $inputEncoding = $null
+  }
+}
+try {
+  $process = [System.Diagnostics.Process]::Start($info)
+} finally {
+  if ($inputEncoding) {
+    try { [Console]::InputEncoding = $inputEncoding } catch {}
+  }
+}
 if ($piped) {
   # Bytes, not StandardInput.Write: Windows PowerShell 5.1 would encode the text in the console code page.
   $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes((@($input) -join "`n"))

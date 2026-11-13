@@ -323,8 +323,9 @@ class Backup(unittest.TestCase):
 
     @unittest.skipIf(WINDOWS, "POSIX modes")
     def test_the_backup_has_the_mode_of_the_file(self) -> None:
-        file = write(os.path.join(temp_home(self), "owner.json"), "{}\n")
+        home = temp_home(self)
         for mode in (0o600, 0o644):
+            file = write(os.path.join(home, f"owner-{mode:o}.json"), "{}\n")
             os.chmod(file, mode)
             write_config(file, f'{{"m": {mode}}}\n')
             self.assertEqual(os.stat(self.bak(file)).st_mode & 0o777, mode)

@@ -137,7 +137,9 @@ class PowerShellLauncherTest(unittest.TestCase):
                 with open(request, "w", encoding="utf-8", newline="") as f:
                     f.write(text)
                 script = os.path.join(root, "mcp", "launch", "agent-tabs.ps1")
-                command = f"Get-Content -Raw -Encoding UTF8 -LiteralPath '{request}' | & '{script}' jev choose; exit $LASTEXITCODE"
+                # A UTF-8 console, as on a CI runner, is where Windows PowerShell would send a byte order mark first.
+                piped = f"Get-Content -Raw -Encoding UTF8 -LiteralPath '{request}' | & '{script}' jev choose; exit $LASTEXITCODE"
+                command = f"try {{ [Console]::InputEncoding = [System.Text.Encoding]::UTF8 }} catch {{}}; {piped}"
                 done = subprocess.run(
                     [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
                     env=clean_env(temp_home(self), STUB_STDIN="1"),
