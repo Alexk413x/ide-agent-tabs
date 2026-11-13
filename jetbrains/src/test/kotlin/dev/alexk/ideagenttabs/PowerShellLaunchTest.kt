@@ -62,6 +62,49 @@ class PowerShellLaunchTest {
     }
 
     @Test
+    fun `tabs get the Agent Tabs home only when the IDE was pointed at another one`() {
+        assertEquals(null, powerShellLaunch("pwsh.exe", script, claude.launch(null), tabId = "t").env[HOME_ENV])
+        assertEquals("D:\\iat home", powerShellLaunch("pwsh.exe", script, claude.launch(null), tabId = "t", home = "D:\\iat home").env[HOME_ENV])
+        val sourced = sourcedLaunch(Shell("/bin/bash", ShellKind.POSIX), script, claude.launch(null), tabId = "t", home = "/x/iat")
+        assertEquals("/x/iat", sourced.env[HOME_ENV])
+    }
+
+    @Test
+    fun `reserved variables the IDE inherited are emptied unless the launch sets them`() {
+        val inherited = mapOf(
+            "PATH" to "/bin",
+            PROMPT_ENV to "old prompt",
+            ARGS_ENV to "[\"old\"]",
+            "ide_agent_tabs_argc" to "3",
+            "IDE_AGENT_TABS_ARG_0" to "old",
+            TAB_ID_ENV to "parent",
+            HOME_ENV to "/kept",
+            "JEDITERM_SOURCE_ARGS" to "x",
+        )
+        for (launch in listOf(
+            powerShellLaunch("pwsh.exe", script, claude.launch(null), tabId = "tab-7", inherited = inherited),
+            sourcedLaunch(Shell("/bin/bash", ShellKind.POSIX), script, claude.launch(null), tabId = "tab-7", inherited = inherited),
+        )) {
+            assertEquals("", launch.env[PROMPT_ENV])
+            assertEquals("", launch.env[ARGS_ENV])
+            assertEquals("", launch.env["ide_agent_tabs_argc"])
+            assertEquals("", launch.env["IDE_AGENT_TABS_ARG_0"])
+            assertEquals("", launch.env["JEDITERM_SOURCE_ARGS"])
+            assertEquals("tab-7", launch.env[TAB_ID_ENV])
+            assertEquals(script.toString(), launch.env[STARTUP_ENV])
+            assertEquals(null, launch.env["PATH"])
+            assertEquals(null, launch.env[HOME_ENV])
+        }
+        val withPrompt = powerShellLaunch("pwsh.exe", script, claude.launch("new"), tabId = "t", inherited = inherited)
+        assertEquals("new", withPrompt.env[PROMPT_ENV])
+    }
+
+    @Test
+    fun `an emptied prompt and args reach no agent`() {
+        assertEquals("0||null|test", runThroughIntegration(prompt = null, env = emptyMap(), inheritedReserved = true))
+    }
+
+    @Test
     fun `every launch carries its tab id so the session can close its own tab`() {
         assertEquals("tab-2", powerShellLaunch("pwsh.exe", script, claude.launch("hi"), tabId = "tab-2").env[TAB_ID_ENV])
     }
@@ -121,6 +164,21 @@ second line"""
         assertEquals("--verbose||null|test", out)
     }
 
+    @Test
+    fun `a batch agent gets hostile arguments intact and nothing else runs`() {
+        assumeTrue("batch files run on Windows only", IS_WINDOWS)
+        val windowsPowerShell = findOnPath(System.getenv("PATH").orEmpty(), "powershell.exe")?.let { Path.of(it) }
+        // A line break cannot cross cmd.exe, so the launcher turns it into a space.
+        val prompt = "he said \"hi & echo x>canary-prompt & rem \nsecond line"
+        val args = listOf(
+            "a&echo x>canary-amp", "x|y", "\"quoted & amp\"", "100%PATH%", "%", "^caret", "a<b>c", "trailing\\", "", "q\\\"uote & echo x>canary-quote", "!x!", "(a),b;c=d",
+        )
+        for (shell in listOfNotNull(pwsh, windowsPowerShell)) {
+            val expected = (args + "--prompt" + prompt.replace("\n", " ")).joinToString("\u001f") + "||null|test"
+            assertEquals(shell.toString(), expected, runThroughIntegration(prompt, args, listArgs = true, promptFlag = "--prompt", shell = shell, viaBatch = true))
+        }
+    }
+
     private fun runThroughIntegration(
         prompt: String?,
         args: List<String> = emptyList(),
@@ -128,6 +186,8 @@ second line"""
         listArgs: Boolean = false,
         promptFlag: String? = null,
         shell: Path? = pwsh,
+        viaBatch: Boolean = false,
+        inheritedReserved: Boolean = false,
     ): String {
         assumeTrue("pwsh not on PATH", pwsh != null)
         val integration = javaClass.classLoader.getResource("shell-integrations/powershell/powershell-integration.ps1")
@@ -149,11 +209,20 @@ second line"""
             [Console]::OpenStandardOutput().Write(${'$'}bytes, 0, ${'$'}bytes.Length)
         """.trimIndent(), Charsets.UTF_8)
 
-        val profile = AgentProfile("test", "Test", pwsh.toString(), listOf("-NoProfile", "-File", echo.toString()), promptFlag)
-        val launch = powerShellLaunch(shell.toString(), launchScript(ShellKind.POWERSHELL, dir), profile.launch(prompt, args, env), tabId = "tab-3")
+        val batch = dir.resolve("fake agent.cmd")
+        Files.writeString(batch, "@echo off\r\n\"$pwsh\" -NoProfile -File \"$echo\" %*\r\n")
+        val profile = if (viaBatch) {
+            AgentProfile("test", "Test", batch.toString(), emptyList(), promptFlag)
+        } else {
+            AgentProfile("test", "Test", pwsh.toString(), listOf("-NoProfile", "-File", echo.toString()), promptFlag)
+        }
+        val inherited = if (inheritedReserved) mapOf(PROMPT_ENV to "old", ARGS_ENV to "[\"old\"]") else emptyMap()
+        val launch = powerShellLaunch(shell.toString(), launchScript(ShellKind.POWERSHELL, dir), profile.launch(prompt, args, env), tabId = "tab-3", inherited = inherited)
         val command = launch.command + listOf("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.toString())
-        val process = ProcessBuilder(command).apply { environment().putAll(launch.env) }.start()
+        val process = ProcessBuilder(command).directory(dir.toFile()).apply { environment().putAll(launch.env) }.start()
         process.waitFor(60, TimeUnit.SECONDS)
-        return process.inputStream.readAllBytes().toString(Charsets.UTF_8)
+        val out = process.inputStream.readAllBytes().toString(Charsets.UTF_8)
+        assertEquals("no argument ran as a command", emptyList<String>(), dir.toFile().list().orEmpty().filter { it.startsWith("canary") })
+        return out
     }
 }

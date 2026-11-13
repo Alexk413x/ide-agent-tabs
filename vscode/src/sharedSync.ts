@@ -1,4 +1,4 @@
-import type { AgentSettings } from './agentSettings';
+import { AgentSettings, DEFAULT_AGENT } from './agentSettings';
 import { SHARED_DEFAULTS, SharedSettings, SyncedSetting } from './sharedSettings';
 
 export const SHARED_SETTING_NAMES: Record<SyncedSetting, string> = {
@@ -18,6 +18,7 @@ export const SHARED_SETTING_NAMES: Record<SyncedSetting, string> = {
 export const SHARED_KEYS = Object.keys(SHARED_SETTING_NAMES) as SyncedSetting[];
 
 export interface IdeSettings {
+  // The user-level value only: a workspace's own value is never shared or overwritten.
   defaultAgent(): string | undefined;
   value<K extends SyncedSetting>(key: K): SharedSettings[K];
   update(name: string, value: unknown): PromiseLike<void>;
@@ -32,8 +33,8 @@ export interface SyncDeps {
 const updateIde = (deps: SyncDeps, name: string, value: unknown) =>
   deps.ide.update(name, value).then(undefined, e => deps.warn(`Could not update ideAgentTabs.${name}: ${(e as Error).message}`));
 
-export function shareDefault({ settings }: SyncDeps): void {
-  const name = settings.defaultProfile().name;
+export function shareDefault({ settings, ide }: SyncDeps): void {
+  const name = (settings.profile(ide.defaultAgent() ?? '') ?? settings.profile(settings.sharedDefault() ?? ''))?.name ?? DEFAULT_AGENT;
   if (settings.sharedDefault() !== name) settings.setDefaultAgent(name);
 }
 

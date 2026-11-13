@@ -265,6 +265,8 @@ def _read_settings(value: str, cwd: str | None) -> dict[str, Any] | None:
 
 
 def merged_claude_settings(settings: str, value: str, cwd: str | None) -> str | None:
+    import contextlib
+
     from .files import read_text_if_exists, write_atomically
     from .jsjson import stringify
 
@@ -286,6 +288,10 @@ def merged_claude_settings(settings: str, value: str, cwd: str | None) -> str | 
     try:
         if read_text_if_exists(path) != text:
             write_atomically(path, text)
+        else:
+            # Retention deletes these files by age, so a reused one counts as new.
+            with contextlib.suppress(OSError):
+                os.utime(path)
     except OSError:
         return None
     return path

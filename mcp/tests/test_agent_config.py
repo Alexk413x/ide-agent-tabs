@@ -26,7 +26,7 @@ HOOK = "/home/a/.ide-agent-tabs/mcp/py/launch/agent_hook.py"
 WIN_HOOK = "C:/Users/a/.ide-agent-tabs/mcp/py/launch/agent_hook.py"
 POSIX = HookTarget("/usr/bin/python3", HOOK, "linux")
 WINDOWS = HookTarget("C:/Python313/python.exe", WIN_HOOK, "win32")
-OLD_NODE = "node /home/a/.ide-agent-tabs/mcp/agent-hook.mjs"
+OTHER_PYTHON = f"/opt/old/python3 -I -S {HOOK}"
 
 
 class Commands(unittest.TestCase):
@@ -82,17 +82,20 @@ class Commands(unittest.TestCase):
         )
 
 
-class Migration(unittest.TestCase):
-    def test_old_node_and_new_python_hooks_both_count_as_ours(self) -> None:
-        for text in (f"{OLD_NODE} codex Stop", 'node "C:/x/agent-hook.mjs" qwen Stop', f"/usr/bin/python3 -I -S {HOOK} goose Stop", HOOK):
+class Refresh(unittest.TestCase):
+    def test_hooks_of_any_interpreter_count_as_ours(self) -> None:
+        for text in (f"{OTHER_PYTHON} codex Stop", f"/usr/bin/python3 -I -S {HOOK} goose Stop", HOOK):
             self.assertTrue(mentions_hook(text), text)
-        for text in ("python /home/a/agent_hook.py", "node /x/my-agent-hook.mjs.bak", None):
+        for text in ("python /home/a/agent_hook.py", "node /x/agent-hook.mjs codex Stop", None):
             self.assertFalse(mentions_hook(text), text)
 
-    def test_settings_hooks_from_node_are_replaced(self) -> None:
+    def test_settings_hooks_of_another_interpreter_are_replaced(self) -> None:
         theirs = {"matcher": "Bash", "hooks": [{"type": "command", "command": "python check.py"}]}
         root = {
-            "hooks": {"PreToolUse": [theirs], "Stop": [{"hooks": [{"type": "command", "command": f"{OLD_NODE} qwen Stop", "timeout": 5}]}]}
+            "hooks": {
+                "PreToolUse": [theirs],
+                "Stop": [{"hooks": [{"type": "command", "command": f"{OTHER_PYTHON} qwen Stop", "timeout": 5}]}],
+            }
         }
         self.assertTrue(has_any_settings_hooks(root))
         self.assertFalse(has_our_hooks(root, "qwen", POSIX))
@@ -104,21 +107,18 @@ class Migration(unittest.TestCase):
         )
         self.assertFalse(has_any_settings_hooks(merge_hook_settings(merged, "f", "qwen", None)))
 
-    def test_hermes_approvals_move_to_the_python_commands(self) -> None:
+    def test_hermes_approvals_move_to_the_current_commands(self) -> None:
         mine = {"event": "pre_llm_call", "command": "echo hi"}
         root = {
             "approvals": [
                 mine,
-                {
-                    "event": "pre_llm_call",
-                    "command": f"node '{HOOK.replace('py/launch/agent_hook.py', 'agent-hook.mjs')}' hermes pre_llm_call",
-                },
+                {"event": "pre_llm_call", "command": f"{OTHER_PYTHON} hermes pre_llm_call"},
             ]
         }
         nxt = with_hermes_approvals(root, "f", POSIX)
         self.assertEqual(nxt["approvals"], [mine, *({"event": i["event"], "command": i["command"]} for i in hermes_hook_items(POSIX))])
         self.assertEqual(with_hermes_approvals(nxt, "f", None), {"approvals": [mine]})
-        self.assertTrue(has_any_hermes_hooks({"pre_llm_call": [{"command": f"{OLD_NODE} hermes pre_llm_call"}]}))
+        self.assertTrue(has_any_hermes_hooks({"pre_llm_call": [{"command": f"{OTHER_PYTHON} hermes pre_llm_call"}]}))
 
     def test_antigravity_allow_rules_drop_the_old_wildcard(self) -> None:
         old = {"permissions": {"allow": ["command(git)", "mcp(ide-agent-tabs/*)"]}}

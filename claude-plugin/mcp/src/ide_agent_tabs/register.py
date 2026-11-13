@@ -49,7 +49,7 @@ from .copilot_config import has_hooks as has_copilot_hooks
 from .copilot_config import merge_hooks as merge_copilot_hooks
 from .copilot_config import server_entry as copilot_server_entry
 from .editor_clis import find_cli_on_path, path_var_of
-from .files import ensure_private_dir, read_text_if_exists, remove_file, replace_retrying, write_atomically
+from .files import ensure_private_dir, read_bytes, read_text_if_exists, remove_file, replace_retrying, write_atomically
 from .installed import is_installed
 from .jsjson import parse, stringify
 from .mcp_tools import SERVER_NAME
@@ -61,8 +61,6 @@ from .server_copy import (
     copy_root,
     current_build,
     hook_copy_path,
-    old_hook_path,
-    old_server_path,
     refresh_server_copy,
     server_copy_path,
     slashes,
@@ -352,24 +350,47 @@ def _is_codex_not_found(output: str) -> bool:
     return re.search(r"No MCP server named", output, re.IGNORECASE) is not None
 
 
-def write_config(file: str, text: str) -> None:
-    target = os.path.realpath(file) if os.path.lexists(file) else file
-    os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
-    try:
-        mode = stat.S_IMODE(os.stat(target).st_mode)
-    except OSError:
-        mode = 0o600
+BACKUP_SUFFIX = ".agent-tabs.bak"
+
+
+def _replace_file(target: str, data: bytes, mode: int) -> None:
     temp = f"{target}.{os.getpid()}.{now_ms()}.tmp"
     try:
         fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), mode)
         with os.fdopen(fd, "wb") as f:
-            f.write(text.encode("utf-8"))
+            f.write(data)
         if sys.platform != "win32":
             os.chmod(temp, mode)
         replace_retrying(temp, target)
     except BaseException:
         remove_file(temp)
         raise
+
+
+# What this process last wrote to each config, so a later write in the same run (a hermes registration writes its
+# server entry and then its hooks) doesn't replace the backup of the user's file with its own earlier write.
+_written: dict[str, bytes] = {}
+
+
+# The one writer of files that belong to other agent CLIs. A change keeps the bytes it replaces in
+# <name>.agent-tabs.bak beside the file, with the same mode, and a write that changes nothing touches nothing.
+# A failed backup stops the change.
+def write_config(file: str, text: str) -> None:
+    target = os.path.realpath(file) if os.path.lexists(file) else file
+    data = text.encode("utf-8")
+    try:
+        mode = stat.S_IMODE(os.stat(target).st_mode)
+        before: bytes | None = read_bytes(target)
+    except FileNotFoundError:
+        mode = 0o600
+        before = None
+    if before == data:
+        return
+    os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
+    if before is not None and _written.get(target) != before:
+        _replace_file(target + BACKUP_SUFFIX, before, mode)
+    _replace_file(target, data, mode)
+    _written[target] = data
 
 
 # Agent CLIs also read project config from their working folder, so every call runs from the Agent Tabs home,
@@ -437,7 +458,7 @@ def hooks_name_this_home(ctx: RegisterContext, agent: str) -> bool:
     text = read_text_if_exists(_hook_file(ctx, agent))
     if text is None:
         return False
-    paths = [hook_copy_path(ctx.home, ctx.platform), old_hook_path(ctx.home, ctx.platform)]
+    paths = [hook_copy_path(ctx.home, ctx.platform)]
     if ctx.platform == "win32":
         text = text.replace("\\\\", "/").replace("\\", "/")
         paths = [p.replace("\\", "/") for p in paths]
@@ -772,15 +793,13 @@ def unregister_agents(ctx: RegisterContext, names: Sequence[str]) -> dict[str, A
 
 
 def _is_our_server(path: str | None, ctx: RegisterContext) -> bool:
-    return path is not None and any(
-        same_path(path, ours, ctx.platform) for ours in (server_copy_path(ctx.home, ctx.platform), old_server_path(ctx.home, ctx.platform))
-    )
+    return path is not None and same_path(path, server_copy_path(ctx.home, ctx.platform), ctx.platform)
 
 
-# Registrations and hooks written by an older plugin, or for an interpreter that changed, move to the
-# current command; an agent registered with another server, or not at all, stays as it is.
-def migrate_registrations(ctx: RegisterContext) -> tuple[list[str], list[str]]:
-    migrated: list[str] = []
+# Registrations and hooks written for an interpreter that changed move to the current command; an agent
+# registered with another server, or not at all, stays as it is.
+def refresh_registrations(ctx: RegisterContext) -> tuple[list[str], list[str]]:
+    refreshed: list[str] = []
     errors: list[str] = []
     for agent in AGENTS:
         try:
@@ -789,19 +808,13 @@ def migrate_registrations(ctx: RegisterContext) -> tuple[list[str], list[str]]:
                 errors.append(f"{agent}: {status['error']}")
                 continue
             if agent == "codex" and ctx.platform == "win32":
-                if (
-                    status["registered"]
-                    and status["path"] is not None
-                    and same_path(status["path"], old_server_path(ctx.home, ctx.platform), ctx.platform)
-                ):
-                    errors.append(f"codex: registered with {status['path']}; run sync-ides --unregister codex")
                 continue
             if status["registered"] and _is_our_server(status["path"], ctx) and not status["stable"]:
                 register(ctx, agent, status["config"])
-                migrated.append(agent)
+                refreshed.append(agent)
             elif takes_hooks(agent) and status["hooks"] is False and has_any_hooks(ctx, agent) and hooks_name_this_home(ctx, agent):
                 install_hooks(ctx, agent)
-                migrated.append(agent)
+                refreshed.append(agent)
         except (OSError, ValueError, RuntimeError, TimeoutError) as e:
             errors.append(f"{agent}: {e}")
-    return migrated, errors
+    return refreshed, errors

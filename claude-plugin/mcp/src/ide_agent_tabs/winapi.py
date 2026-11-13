@@ -37,7 +37,7 @@ def kernel32() -> Any:
 
 
 # Python's open() on Windows withholds FILE_SHARE_DELETE, so while it reads a file no other process can delete
-# or rename over it, and the 0.8.0 build's lock release gives up on that refusal.
+# or rename over it.
 def open_shared_read(path: str) -> int:
     if sys.platform != "win32":
         return os.open(path, os.O_RDONLY)

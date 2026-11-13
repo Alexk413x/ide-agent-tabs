@@ -1,12 +1,13 @@
 {
   "name": "ide-agent-tabs",
-  "version": "0.9.11",
+  "version": "0.10.0",
   "description": "Open agent sessions in IDE tabs and delegate work to other agent CLIs.",
   "author": {
     "name": "Alexk413x"
   },
   "repository": "https://github.com/Alexk413x/ide-agent-tabs",
   "license": "LicenseRef-No-Resale-1.0",
+  "privacyPolicyUrl": "https://github.com/Alexk413x/ide-agent-tabs#privacy",
   "types": "./types/index.d.ts",
   "mcpServers": "./mcp/claude.mcp.json",
   "userConfig": {

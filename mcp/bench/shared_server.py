@@ -22,8 +22,6 @@ from ide_agent_tabs.shared.state import read_token
 
 PY_SERVER = os.path.join(PLUGIN, "mcp", "launch", "shared_server.py")
 PY_HELPER = os.path.join(PLUGIN, "mcp", "launch", "headers.py")
-NODE_SERVER = os.path.join(ROOT, "mcp", "tests", "node080", "shared-server.mjs")
-NODE_HELPER = os.path.join(ROOT, "mcp", "tests", "node080", "headers.mjs")
 SESSION_ENV = ("IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_MOD", "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_OPTION_SERVER_PORT")
 
 
@@ -61,13 +59,6 @@ def stop(child: subprocess.Popen[bytes], home: str, port: int) -> None:
         child.kill()
 
 
-def servers(node: str | None) -> dict[str, list[str]]:
-    out = {"python": [sys.executable, "-I", "-S", PY_SERVER]}
-    if node and os.path.exists(NODE_SERVER):
-        out["node 0.8.0"] = [node, "--max-semi-space-size=1", NODE_SERVER]
-    return out
-
-
 def first_call(port: int, home: str) -> None:
     from shared_support import McpHttp
 
@@ -75,9 +66,9 @@ def first_call(port: int, home: str) -> None:
     McpHttp(port, token, {"x-agent-tabs-client": "bench", "x-agent-tabs-pid": str(os.getpid())}, home).call("list_sessions")
 
 
-def bench_start(port: int, runs: int, node: str | None) -> list[dict[str, Any]]:
+def bench_start(port: int, runs: int) -> list[dict[str, Any]]:
     rows = []
-    for name, command in servers(node).items():
+    for name, command in {"python": [sys.executable, "-I", "-S", PY_SERVER]}.items():
         times, idle, after = [], [], []
         for _ in range(runs):
             home = tempfile.mkdtemp(prefix="iat-bench-")
@@ -101,17 +92,13 @@ def bench_start(port: int, runs: int, node: str | None) -> list[dict[str, Any]]:
     return rows
 
 
-def bench_helper(port: int, runs: int, node: str | None) -> list[dict[str, Any]]:
+def bench_helper(port: int, runs: int) -> list[dict[str, Any]]:
     home = tempfile.mkdtemp(prefix="iat-bench-")
     child, _ = start([sys.executable, "-I", "-S", PY_SERVER, "--port", str(port)], home, port)
     env = env_for(home, CLAUDE_CODE_MCP_SERVER_URL=f"http://127.0.0.1:{port}/mcp")
     commands: dict[str, list[str]] = {"python -I -S -c pass": [sys.executable, "-I", "-S", "-c", "pass"], "python headers.py": [sys.executable, "-I", "-S", PY_HELPER]}
     if sys.platform == "win32" and shutil.which("py"):
         commands["py -3 headers.py"] = ["py", "-3", "-I", "-S", PY_HELPER]
-    if node:
-        commands["node -e 0"] = [node, "-e", "0"]
-        if os.path.exists(NODE_HELPER):
-            commands["node headers.mjs (0.8.0)"] = [node, NODE_HELPER]
     times: dict[str, list[float]] = {name: [] for name in commands}
     try:
         for _ in range(runs):
@@ -132,16 +119,14 @@ def main() -> int:
     parser.add_argument("what", choices=("start", "helper", "all"))
     parser.add_argument("--port", type=int, default=47912)
     parser.add_argument("--runs", type=int, default=10)
-    parser.add_argument("--no-node", action="store_true")
     args = parser.parse_args()
     if 47821 <= args.port <= 47829:
         parser.error("use a port outside 47821-47829")
-    node = None if args.no_node else shutil.which("node")
     rows: list[dict[str, Any]] = []
     if args.what in ("start", "all"):
-        rows += bench_start(args.port, args.runs, node)
+        rows += bench_start(args.port, args.runs)
     if args.what in ("helper", "all"):
-        rows += bench_helper(args.port, args.runs, node)
+        rows += bench_helper(args.port, args.runs)
     for row in rows:
         print(json.dumps(row))
     return 0

@@ -28,8 +28,9 @@ the new plugin as a normal plugin update.
 - Claude Code, at a version that speaks MCP 2026-07-28 over HTTP. Tested with 2.1.293.
 - Python 3.9 or later. The MCP server, its hooks and the `agent-tabs` command run on it and import only
   the standard library. On macOS, the `/usr/bin/python3` from the Xcode Command Line Tools works.
-- On Windows, Git Bash. Claude Code runs the plugin's hooks through it; install
-  [Git for Windows](https://git-scm.com/download/win).
+- On Windows, Git Bash is optional. Claude Code runs the plugin's hooks and commands in PowerShell when Git Bash
+  isn't installed, and the plugin works in both. Only a Goose hook needs it (`sh -c`); install
+  [Git for Windows](https://git-scm.com/download/win) for that.
 - An IDE: IntelliJ IDEA, Android Studio or another JetBrains IDE at build 262.10315 or later (2026.2.2),
   or VS Code 1.100 or later and editors built on it, such as Cursor, Windsurf, VSCodium, Antigravity, Kiro,
   Positron and Trae.
@@ -139,6 +140,24 @@ Commit the copies: the `vsce` and Gradle builds read only their own folder and d
 `node scripts/check.mjs` and CI run it. `node scripts/pack-ides.mjs` syncs before it builds. Icons used by
 one IDE only, such as `newBadge*.svg` (JetBrains) and `openrouter*.svg` (VS Code), stay in that IDE's
 folder.
+
+## Privacy
+
+Agent Tabs sends nothing to its author and has no telemetry or analytics. The code in the MCP server,
+the VS Code extension and the JetBrains plugin makes these network requests, and no others:
+
+- **Jev.** Only with `"jev": {"enabled": true}` in `config.json`, and only when a `jev_` tool runs, the
+  server sends that call's `state` and questions, with your TypeSafe API key, to TypeSafe's API
+  (`https://api.typesafe.ai`, or the address in `TYPESAFE_BASE_URL`). With Jev off it makes no network call.
+  Don't put secrets in a Jev request.
+- **Ori.** Only when you launch a tab with `via: "ori"` (or `launchVia` in `config.json`), the agent runs
+  through the Ori CLI, which uses OpenRouter. Agent Tabs itself sends nothing there. A tab started
+  directly runs the agent CLI as you would, and that CLI talks to its own provider.
+- **Update.** The `update` skill reads `plugin.json` from `raw.githubusercontent.com` on this repository's
+  `release` branch when you run it.
+
+Everything else stays on your machine. The MCP server and the IDE endpoints listen on `127.0.0.1`
+only, and the message store, handoff briefs, Jev ledger and settings are files under `~/.ide-agent-tabs`.
 
 ## License
 

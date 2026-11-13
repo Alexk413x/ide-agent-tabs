@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import subprocess
-import sys
 import threading
 import time
 import unittest
@@ -12,15 +9,10 @@ from http.server import BaseHTTPRequestHandler
 from typing import Any
 
 from ide_agent_tabs import server_cli
-from ide_agent_tabs.shared import client
-from ide_agent_tabs.shared.state import parse_port, read_state, read_token, state_path, token_path
+from ide_agent_tabs.shared.state import parse_port, state_path
 from jev_support import QuietServer
 from shared_support import free_port
-from support import NODE_080, ROOT, require_node, temp_home
-
-LAUNCHER = os.path.join(ROOT, "claude-plugin", "mcp", "launch", "agent_tabs.py")
-NODE_SERVER = os.path.join(NODE_080, "shared-server.mjs")
-NODE_CLI = os.path.join(NODE_080, "mcp-server.mjs")
+from support import temp_home
 
 
 def run_cli(args: list[str], home: str) -> tuple[int, Any]:
@@ -149,35 +141,6 @@ class AgainstFakes(unittest.TestCase):
         out: list[str] = []
         server_cli.main(["status"], {"IDE_AGENT_TABS_HOME": home, "CLAUDE_PLUGIN_OPTION_SERVER_PORT": str(port)}, out.append)
         self.assertEqual(json.loads("".join(out))["port"], port)
-
-
-class AgainstNodeServer(unittest.TestCase):
-    def test_python_cli_reads_and_stops_the_node_server(self) -> None:
-        require_node(self)
-        node = shutil.which("node")
-        assert node is not None
-        home = temp_home(self)
-        port = free_port()
-        env = {**os.environ, "IDE_AGENT_TABS_HOME": home}
-        server = subprocess.Popen([node, NODE_SERVER, "--port", str(port)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        self.addCleanup(lambda: server.poll() is None and server.kill())
-        deadline = time.monotonic() + 15
-        while client.probe(port).kind != "ours" or read_state(home, port) is None:
-            self.assertLess(time.monotonic(), deadline, "the Node shared server did not start")
-            time.sleep(0.05)
-        self.assertIsNotNone(read_token(home), token_path(home))
-
-        def cli(command: list[str]) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(command, env=env, capture_output=True, encoding="utf-8", timeout=60, check=False)
-
-        node_status = cli([node, NODE_CLI, "server", "status", "--port", str(port)])
-        py_status = cli([sys.executable, "-I", "-S", LAUNCHER, "server", "status", "--port", str(port)])
-        self.assertEqual((py_status.returncode, py_status.stdout), (node_status.returncode, node_status.stdout))
-        self.assertTrue(json.loads(py_status.stdout)["running"])
-        stopped = cli([sys.executable, "-I", "-S", LAUNCHER, "server", "stop", "--port", str(port)])
-        self.assertEqual(stopped.returncode, 0, stopped.stdout)
-        self.assertEqual(json.loads(stopped.stdout), {"port": port, "stopped": True, "pid": server.pid})
-        server.wait(timeout=15)
 
 
 if __name__ == "__main__":

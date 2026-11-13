@@ -6,6 +6,7 @@ import sys
 import unittest
 
 from config_support import calls, context, fake_cli, make_source, read_json, read_text, system_env, write
+from ide_agent_tabs import register as register_module
 from ide_agent_tabs.agent_config import (
     AGY_ALLOW_RULES,
     agy_hook_command,
@@ -21,15 +22,16 @@ from ide_agent_tabs.register import (
     agents_report,
     config_file,
     hook_target,
-    migrate_registrations,
     refresh_copy,
+    refresh_registrations,
     register_agents,
     same_path,
     server_argv,
     takes_hooks,
     unregister_agents,
+    write_config,
 )
-from ide_agent_tabs.server_copy import hook_copy_path, old_server_path, read_python, server_copy_path
+from ide_agent_tabs.server_copy import hook_copy_path, read_python, server_copy_path
 from support import temp_home
 
 WINDOWS = sys.platform == "win32"
@@ -243,153 +245,126 @@ class Register(unittest.TestCase):
         self.assertEqual(read_text(s.file("hermes")), text)
 
 
-def node_era(s: Setup) -> dict[str, str]:
-    home = s.ctx.home
-    platform = s.ctx.platform
-    server = old_server_path(home, platform)
-    hook = old_server_path(home, platform).replace("mcp-server.mjs", "agent-hook.mjs")
-    write(os.path.join(home, "mcp", "mcp-server.mjs"), "// 0.8.0\n")
-    node = {"command": "node", "args": [server]}
-    write(
-        s.file("copilot"),
-        json.dumps({"mcpServers": {"ide-agent-tabs": {"type": "local", **node, "env": TAB_ENV, "tools": ["*"]}}}, indent=2),
-    )
-    write(
-        s.hooks("copilot"),
-        json.dumps(
-            {
-                "version": 1,
-                "hooks": {"agentStop": [{"type": "command", "exec": "node", "args": [hook, "copilot", "agentStop"], "timeoutSec": 5}]},
-            },
-            indent=2,
-        ),
-    )
-    write(s.file("agy"), json.dumps({"mcpServers": {"ide-agent-tabs": node}}, indent=2))
-    write(
-        s.hooks("agy"),
-        json.dumps(
-            {"ide-agent-tabs": {"Stop": [{"type": "command", "command": f"node {hook} agy Stop", "timeout": 5}]}, "mine": {}}, indent=2
-        ),
-    )
-    write(
-        s.file("opencode"),
-        json.dumps(
-            {"mcp": {"ide-agent-tabs": {"type": "local", "command": ["node", server], "enabled": True, "timeout": 660000}}}, indent=2
-        ),
-    )
-    write(
-        s.file("pi"),
-        json.dumps({"mcpServers": {"ide-agent-tabs": {**node, "env": TAB_ENV, "timeout": 660, "exposure": "direct"}}}, indent=2),
-    )
-    write(
-        s.file("qwen"),
-        json.dumps(
-            {
-                "mcpServers": {"ide-agent-tabs": {**node, "env": TAB_ENV, "timeout": 700000}},
-                "hooks": {"Stop": [{"hooks": [{"type": "command", "command": f'node "{hook}" qwen Stop', "timeout": 5}]}]},
-            },
-            indent=2,
-        ),
-    )
-    write(s.file("grok"), f'model = "x"\n\n[mcp_servers.ide-agent-tabs]\ncommand = "node"\nargs = [{json.dumps(server)}]\n')
-    write(
-        s.hooks("grok"),
-        json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": f'node "{hook}" grok Stop', "timeout": 5}]}]}}),
-    )
-    hermes_cmd = f"node '{hook}' hermes pre_llm_call"
-    write(
-        s.file("hermes"),
-        f'mcp_servers:\n  ide-agent-tabs:\n    command: node\n    args:\n      - {server}\n    timeout: 660\nhooks:\n  pre_llm_call:\n    - command: echo hi\n    - command: "{hermes_cmd}"\n      timeout: 5\n',
-    )
-    write(
-        os.path.join(s.env["HERMES_HOME"], "shell-hooks-allowlist.json"),
-        json.dumps({"approvals": [{"event": "pre_llm_call", "command": "echo hi"}, {"event": "pre_llm_call", "command": hermes_cmd}]}),
-    )
-    write(
-        s.file("goose"),
-        f"extensions:\n  ide-agent-tabs:\n    name: ide-agent-tabs\n    type: stdio\n    cmd: node\n    args:\n      - {server}\n    enabled: true\n",
-    )
-    write(
-        s.hooks("goose"),
-        json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": f"node '{hook}' goose Stop", "timeout": 5}]}]}}),
-    )
-    write(
-        os.path.join(s.user, ".gemini", "antigravity-cli", "settings.json"),
-        json.dumps({"permissions": {"allow": ["mcp(ide-agent-tabs/*)"]}}),
-    )
-    return {"server": server, "hook": hook}
-
-
-class Migration(unittest.TestCase):
-    def test_node_registrations_and_hooks_move_to_python(self) -> None:
-        s = Setup(self, installed=tuple(a for a in AGENTS if a != "codex"))
-        old = node_era(s)
-        refresh_copy(s.ctx)
-        migrated, errors = migrate_registrations(s.ctx)
-        self.assertEqual(errors, [])
-        self.assertEqual(sorted(migrated), sorted(a for a in AGENTS if a != "codex"))
-        report = agents_report(s.ctx)
-        for a in report["agents"]:
-            if a["agent"] == "codex":
-                continue
-            self.assertTrue(a["registered"] and a["stable"], a)
-            self.assertIn(a["hooks"], (True, None), a)
-        for agent in [a for a in AGENTS if a != "codex"]:
-            self.assertNotIn("mcp-server.mjs", read_text(s.file(agent)), agent)
-            if takes_hooks(agent):
-                self.assertNotIn("agent-hook.mjs", read_text(s.hooks(agent)), agent)
-        self.assertIn("pre_llm_call:\n    - command: echo hi\n", read_text(s.file("hermes")))
-        approvals = read_json(os.path.join(s.env["HERMES_HOME"], "shell-hooks-allowlist.json"))["approvals"]
-        self.assertEqual(approvals[0], {"event": "pre_llm_call", "command": "echo hi"})
-        self.assertFalse(any(old["hook"] in a["command"] for a in approvals))
-        self.assertEqual(len(approvals), 1 + len(HERMES_EVENTS))
-        self.assertIn("mine", read_json(s.hooks("agy")))
-        self.assertEqual(
-            read_json(os.path.join(s.user, ".gemini", "antigravity-cli", "settings.json"))["permissions"]["allow"], list(AGY_ALLOW_RULES)
-        )
-        self.assertEqual(migrate_registrations(s.ctx), ([], []), "a second run finds nothing to move")
-
+class Refresh(unittest.TestCase):
+    def test_a_changed_interpreter_moves_registrations_and_hooks_to_the_new_one(self) -> None:
+        names = [a for a in AGENTS if a != "codex"]
+        s = Setup(self, installed=tuple(names))
+        self.assertEqual(register_agents(s.ctx, names)["errors"], [])
+        self.assertEqual(refresh_registrations(s.ctx), ([], []), "nothing to move while the interpreter is the same")
         moved = RegisterContext(*s.ctx[:5], python=os.path.join(s.root, "new python", "python3"))
         self.assertTrue(refresh_copy(moved)[1])
-        migrated, errors = migrate_registrations(moved)
+        refreshed, errors = refresh_registrations(moved)
         self.assertEqual(errors, [])
-        self.assertEqual(sorted(migrated), sorted(a for a in AGENTS if a != "codex" and not (WINDOWS and a == "agy")))
+        self.assertEqual(sorted(refreshed), sorted(a for a in names if not (WINDOWS and a == "agy")))
         self.assertIn("new python", read_json(s.file("pi"))["mcpServers"]["ide-agent-tabs"]["command"])
+        self.assertEqual(refresh_registrations(moved), ([], []), "a second run finds nothing to move")
 
     def test_an_agent_registered_with_another_server_stays_as_it_is(self) -> None:
         s = Setup(self, installed=("pi",))
         text = json.dumps({"mcpServers": {"ide-agent-tabs": {"command": "uvx", "args": ["someone-else"]}}}, indent=2)
         write(s.file("pi"), text)
         refresh_copy(s.ctx)
-        self.assertEqual(migrate_registrations(s.ctx), ([], []))
+        self.assertEqual(refresh_registrations(s.ctx), ([], []))
         self.assertEqual(read_text(s.file("pi")), text)
 
     def test_hooks_that_run_another_homes_copy_stay_as_they_are(self) -> None:
         s = Setup(self, installed=("qwen", "copilot"))
-        other = os.path.join(s.root, "other home", "mcp", "agent-hook.mjs").replace("\\", "/")
-        qwen = json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": f'node "{other}" qwen Stop'}]}]}})
+        other = os.path.join(s.root, "other home", "mcp", "py", "launch", "agent_hook.py").replace("\\", "/")
+        qwen = json.dumps({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": f'python -I -S "{other}" qwen Stop'}]}]}})
         copilot = json.dumps(
-            {"version": 1, "hooks": {"agentStop": [{"type": "command", "exec": "node", "args": [other, "copilot", "agentStop"]}]}}
+            {
+                "version": 1,
+                "hooks": {"agentStop": [{"type": "command", "exec": "python", "args": ["-I", "-S", other, "copilot", "agentStop"]}]},
+            }
         )
         write(s.hooks("qwen"), qwen)
         write(s.hooks("copilot"), copilot)
         refresh_copy(s.ctx)
-        self.assertEqual(migrate_registrations(s.ctx), ([], []))
+        self.assertEqual(refresh_registrations(s.ctx), ([], []))
         self.assertEqual((read_text(s.hooks("qwen")), read_text(s.hooks("copilot"))), (qwen, copilot))
 
-    @unittest.skipIf(WINDOWS, "Codex is not registered on Windows")
-    def test_a_node_codex_registration_moves_through_the_codex_cli(self) -> None:
-        s = Setup(self, installed=("codex",))
-        server = old_server_path(s.ctx.home, s.ctx.platform)
-        write(os.path.join(s.env["CODEX_HOME"], "fake-mcp.json"), json.dumps({"ide-agent-tabs": {"command": "node", "args": [server]}}))
-        write(
-            s.file("codex"),
-            f'[mcp_servers.ide-agent-tabs]\nenv_vars = ["IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_HOME"]\ntool_timeout_sec = 660\ncommand = "node"\nargs = ["{server}"]\n',
-        )
-        refresh_copy(s.ctx)
-        self.assertEqual(migrate_registrations(s.ctx), (["codex"], []))
-        status = agents_report(s.ctx)["agents"][0]
-        self.assertTrue(status["stable"], status)
+
+class Backup(unittest.TestCase):
+    def bak(self, file: str) -> str:
+        return file + ".agent-tabs.bak"
+
+    def test_a_change_keeps_the_exact_bytes_it_replaces_and_the_next_change_overwrites_them(self) -> None:
+        file = os.path.join(temp_home(self), "cfg", "settings.json")
+        original = b'\xef\xbb\xbf{\r\n  "a": 1, "caf\xc3\xa9": 2\r\n}\r\n'
+        os.makedirs(os.path.dirname(file))
+        with open(file, "wb") as f:
+            f.write(original)
+        write_config(file, "{}\n")
+        with open(self.bak(file), "rb") as f:
+            self.assertEqual(f.read(), original)
+        with open(file, "wb") as f:
+            f.write(b'{"edited": true}\n')
+        write_config(file, '{"b": 1}\n')
+        with open(self.bak(file), "rb") as f:
+            self.assertEqual(f.read(), b'{"edited": true}\n')
+        self.assertEqual(read_text(file), '{"b": 1}\n')
+        self.assertEqual(sorted(os.listdir(os.path.dirname(file))), ["settings.json", "settings.json.agent-tabs.bak"])
+
+    def test_a_second_write_in_one_run_keeps_the_backup_of_the_users_file(self) -> None:
+        file = write(os.path.join(temp_home(self), "hermes.yaml"), "mine\n")
+        write_config(file, "mine\nserver\n")
+        write_config(file, "mine\nserver\nhooks\n")
+        self.assertEqual(read_text(self.bak(file)), "mine\n")
+
+    def test_a_new_file_gets_no_backup_and_an_unchanged_one_is_left_alone(self) -> None:
+        file = os.path.join(temp_home(self), "cfg", "mcp.json")
+        write_config(file, "{}\n")
+        self.assertFalse(os.path.exists(self.bak(file)))
+        old = 1_000_000_000
+        os.utime(file, (old, old))
+        write_config(file, "{}\n")
+        self.assertFalse(os.path.exists(self.bak(file)))
+        self.assertEqual(os.stat(file).st_mtime, old)
+
+    @unittest.skipIf(WINDOWS, "POSIX modes")
+    def test_the_backup_has_the_mode_of_the_file(self) -> None:
+        home = temp_home(self)
+        for mode in (0o600, 0o644):
+            file = write(os.path.join(home, f"owner-{mode:o}.json"), "{}\n")
+            os.chmod(file, mode)
+            write_config(file, f'{{"m": {mode}}}\n')
+            self.assertEqual(os.stat(self.bak(file)).st_mode & 0o777, mode)
+            self.assertEqual(os.stat(file).st_mode & 0o777, mode)
+
+    @unittest.skipIf(WINDOWS, "symlinks")
+    def test_a_linked_file_is_backed_up_beside_its_target(self) -> None:
+        root = temp_home(self)
+        real = write(os.path.join(root, "dotfiles", "cfg.json"), "{}\n")
+        link = os.path.join(root, "cfg.json")
+        os.symlink(real, link)
+        write_config(link, '{"x": 1}\n')
+        self.assertTrue(os.path.islink(link))
+        self.assertEqual(read_text(self.bak(real)), "{}\n")
+        self.assertFalse(os.path.lexists(self.bak(link)))
+
+    def test_register_and_unregister_back_up_each_config_they_change_and_a_repeat_changes_nothing(self) -> None:
+        s = Setup(self, ("pi", "hermes", "grok"))
+        originals = {
+            "pi": json.dumps({"mcpServers": {"other": {"command": "x"}}}, indent=2),
+            "hermes": "# mine\nmodel:\n  default: x\n",
+            "grok": '# grok\nmodel = "grok-4"\n',
+        }
+        for agent, text in originals.items():
+            write(s.file(agent), text)
+        register_agents(s.ctx, list(originals))
+        registered = {agent: read_text(s.file(agent)) for agent in originals}
+        for agent, text in originals.items():
+            self.assertEqual(read_text(self.bak(s.file(agent))), text, agent)
+            self.assertNotEqual(registered[agent], text, agent)
+        register_module._written.clear()  # a new run
+        register_agents(s.ctx, list(originals))
+        for agent, text in originals.items():
+            self.assertEqual(read_text(self.bak(s.file(agent))), text, agent)
+        register_module._written.clear()
+        unregister_agents(s.ctx, list(originals))
+        for agent in originals:
+            self.assertEqual(read_text(self.bak(s.file(agent))), registered[agent], agent)
+            self.assertNotIn("ide-agent-tabs", read_text(s.file(agent)), agent)
 
 
 if __name__ == "__main__":

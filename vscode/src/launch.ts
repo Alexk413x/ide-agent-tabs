@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import { findOnPath } from './pathLookup';
 import { AgentLaunch } from './profiles';
+import { HOME_ENV } from './registry';
 import { isReservedEnv, PLUGIN_ENV_PREFIX } from './request';
 
 export const TAB_ID_ENV = `${PLUGIN_ENV_PREFIX}ID`;
@@ -94,8 +95,9 @@ export function terminalEnv(
   }
   if (launch.prompt !== undefined) env[PROMPT_ENV] = launch.prompt;
   const own = new Set(Object.keys(env).map(k => k.toUpperCase()));
+  // The Agent Tabs folder the editor was started with stays, so the tab's agent and MCP server use the same one.
   for (const name of Object.keys(inherited)) {
-    if (isReservedEnv(name) && !own.has(name.toUpperCase())) env[name] = null;
+    if (isReservedEnv(name) && name.toUpperCase() !== HOME_ENV && !own.has(name.toUpperCase())) env[name] = null;
   }
   return env;
 }

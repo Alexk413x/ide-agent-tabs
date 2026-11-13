@@ -33,7 +33,7 @@ _AGY_UNSAFE = re.compile('[\\s"%^&|<>()!\x00-\x1f\x7f-\x9f]')
 _BARE_WINDOWS = re.compile(r"[A-Za-z0-9_\-./:\\]+\Z")
 _BARE_POSIX = re.compile(r"[A-Za-z0-9_\-./:]+\Z")
 _POSIX_SAFE = re.compile(r"[A-Za-z0-9_@%+=:,./-]+\Z")
-_HOOK_PATH_END = re.compile(r"(?:[\\/]agent-hook\.mjs|[\\/]mcp[\\/]py[\\/]launch[\\/]agent_hook\.py)(?:[\"'\s]|$)")
+_HOOK_PATH_END = re.compile(r"[\\/]mcp[\\/]py[\\/]launch[\\/]agent_hook\.py(?:[\"'\s]|$)")
 _CODEX_TABLE = re.compile(r"^\[\s*mcp_servers\s*\.\s*(?:ide-agent-tabs|\"ide-agent-tabs\"|'ide-agent-tabs')\s*\]\s*(?:#.*)?$")
 
 
@@ -197,7 +197,7 @@ def has_our_hooks(root: dict[str, Any], agent: str, target: HookTarget) -> bool:
     return True
 
 
-_CLAUDE_MATCHERS = {"SessionStart": "startup|resume|clear", "Notification": "permission_prompt|idle_prompt"}
+_CLAUDE_MATCHERS = {"SessionStart": "startup|resume|clear", "Notification": "permission_prompt|idle_prompt|elicitation_dialog"}
 
 
 def claude_tab_settings(target: HookTarget) -> dict[str, Any]:

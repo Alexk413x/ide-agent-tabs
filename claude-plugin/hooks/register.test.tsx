@@ -230,7 +230,7 @@ function world(on: On, options: WorldOptions = {}) {
   const envSet: { name: string; value?: string }[] = []
   on('env.set', (_$, e) => {
     envSet.push({ name: e.name, ...(e.value === undefined ? {} : { value: e.value }) })
-    return { value: undefined }
+    return { value: undefined } as never
   })
   mock.env(on, {
     ...(options.tab === undefined ? {} : { IDE_AGENT_TABS_ID: options.tab }),
@@ -1519,7 +1519,7 @@ describe('a new conversation and a reload', () => {
 
 describe('opening the pane from a message', () => {
   const CARD_MESSAGE = { id: 'm-0123456789abcdef', at: AT(3), direction: 'received', route: 'agent-tabs', from: { id: 'codex-1a2b', agent: 'codex', path: 'C:\\w' }, to: { id: 'tab-c' }, peer: { id: 'codex-1a2b' }, text: 'Please review x.ts', status: 'read' }
-  const BAND = { hasSurvey: false, isWorking: true, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} }
+  const BAND = { hasSurvey: false, isCollapsed: false, isWorking: true, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} }
   const FROM = { '1-m-0000000000000001.json': 'codex-1a2b', '2-m-0000000000000002.json': 'a2a2a2a2-6666', '3-m-0000000000000003.json': 'tab-d', '4-m-0000000000000004.json': '9e9e0000-7777' }
 
   function engineBand(on: On) {

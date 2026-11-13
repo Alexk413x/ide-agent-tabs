@@ -11,9 +11,14 @@ import java.util.HexFormat
 // Pure module: no IDE or Netty types, so the shared helpers test without a running IDE.
 
 const val HOME_PROPERTY = "ide.agent.tabs.home"
+const val HOME_ENV = "IDE_AGENT_TABS_HOME"
 
-fun ideAgentTabsHome(): Path =
-    System.getProperty(HOME_PROPERTY)?.let { Path.of(it) } ?: Path.of(System.getProperty("user.home"), ".ide-agent-tabs")
+// The system property (tests and the sandbox IDE) wins over the environment variable that VS Code and the MCP
+// server read; a blank value counts as unset.
+fun homeOverride(property: String? = System.getProperty(HOME_PROPERTY), env: String? = System.getenv(HOME_ENV)): Path? =
+    listOf(property, env).firstOrNull { !it.isNullOrBlank() }?.let { Path.of(it) }
+
+fun ideAgentTabsHome(override: Path? = homeOverride()): Path = override ?: Path.of(System.getProperty("user.home"), ".ide-agent-tabs")
 
 fun newToken(): String = ByteArray(32).also { SecureRandom().nextBytes(it) }.let { HexFormat.of().formatHex(it) }
 

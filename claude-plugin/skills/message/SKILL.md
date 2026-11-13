@@ -31,7 +31,8 @@ Arguments: `$ARGUMENTS`
 5. Check the answer before you act on it. The other session can be wrong.
 
 `send_message` returns `delivery`. `woken` means the other session was idle and got a notice line
-typed into its tab. `queued` means it reads the message at its next prompt, tool call or turn end.
+typed into its tab. `queued` means it reads the message at its next prompt, tool call or turn end. A session in a terminal
+that can't take typed input, such as Windows Terminal, stays `queued` until then.
 A Pi or OpenCode session reports no state and has no hooks, so a message to it stays `queued` until that
 session calls `read_messages` or `wait_for_message`. Ask it to do so in the first prompt.
 

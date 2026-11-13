@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -19,13 +18,10 @@ from ide_agent_tabs.shared.start_hook import run as run_hook
 from ide_agent_tabs.shared.state import ServerState, read_state, read_token, state_path, write_state
 from shared_support import McpHttp, free_port, pid_headers, reset_store_mode, serve
 from store_host import StoreHost
-from support import MCP, NODE_080, ROOT, TESTS, require_node, temp_home
+from support import ROOT, temp_home
 
 PLUGIN = os.path.join(ROOT, "claude-plugin")
 LAUNCHER = launcher_path(PLUGIN)
-AS_BUILD = os.path.join(TESTS, "shared_server_as.py")
-NODE_SERVER = os.path.join(NODE_080, "shared-server.mjs")
-NODE_HELPER = os.path.join(NODE_080, "headers.mjs")
 START_WAIT_MS = 20_000
 
 
@@ -197,97 +193,6 @@ class HandoverTest(unittest.TestCase):
         self.addCleanup(newer.stop, "test over")
         self.assertEqual(newer.token, old.token)
         self.assertEqual(McpHttp(port, newer.token, {**pid_headers(os.getpid(), 42), "x-agent-tabs-client": "same-client"}).self_id(), me)
-
-
-class NodeHandoverTest(unittest.TestCase):
-    def setUp(self) -> None:
-        require_node(self)
-        self.node = shutil.which("node") or "node"
-
-    def env(self, home: str) -> dict[str, str]:
-        env = {**os.environ, "IDE_AGENT_TABS_HOME": home}
-        for name in ("IDE_AGENT_TABS_ID", "IDE_AGENT_TABS_AGENT", "IDE_AGENT_TABS_MOD", "CLAUDE_PLUGIN_OPTION_SERVER_PORT"):
-            env.pop(name, None)
-        return env
-
-    def node_server(self, home: str, port: int) -> subprocess.Popen[bytes]:
-        child = subprocess.Popen(
-            [self.node, NODE_SERVER, "--port", str(port)],
-            cwd=MCP,
-            env=self.env(home),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        self.addCleanup(lambda: child.kill() if child.poll() is None else None)
-        return child
-
-    def python_server(self, home: str, port: int, version: str) -> subprocess.Popen[bytes]:
-        child = subprocess.Popen(
-            [sys.executable, "-I", "-S", AS_BUILD, version, "--port", str(port)],
-            env=self.env(home),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        self.addCleanup(lambda: child.kill() if child.poll() is None else None)
-        return child
-
-    def serving(self, port: int, version: str, pid: int) -> bool:
-        found = probe(port)
-        return found.health is not None and found.health.get("version") == version and found.health.get("pid") == pid
-
-    def test_a_python_build_newer_than_node_0_8_0_takes_the_port_through_the_verified_handover(self) -> None:
-        home = temp_home(self, "iat-handover-")
-        port = free_port()
-        stop_after(self, home, port)
-        node = self.node_server(home, port)
-        self.assertTrue(wait_until(lambda: self.serving(port, "0.8.0", node.pid) and read_state(home, port) is not None, 60))
-        node_token = read_token(home)
-        python = self.python_server(home, port, "0.9.0")
-        self.assertTrue(wait_until(lambda: self.serving(port, "0.9.0", python.pid), 30))
-        self.assertEqual(node.wait(10), 0)
-        state = read_state(home, port)
-        self.assertEqual((state.pid, state.version) if state else None, (python.pid, "0.9.0"))
-        self.assertEqual(read_token(home), node_token, "the per-user token outlives the handover")
-        self.assertEqual(McpHttp(port, node_token or "").rpc("server/discover").status, 200)
-
-    def test_node_0_8_0_leaves_a_newer_python_server_and_its_helper_verifies_the_python_state_file(self) -> None:
-        home = temp_home(self, "iat-handover-")
-        port = free_port()
-        stop_after(self, home, port)
-        python = self.python_server(home, port, "0.9.0")
-        self.assertTrue(wait_until(lambda: self.serving(port, "0.9.0", python.pid), 30))
-        node = self.node_server(home, port)
-        self.assertEqual(node.wait(60), 0)
-        self.assertTrue(self.serving(port, "0.9.0", python.pid))
-        env = {**self.env(home), "CLAUDE_CODE_MCP_SERVER_URL": f"http://127.0.0.1:{port}/mcp"}
-        out = subprocess.run([self.node, NODE_HELPER], env=env, capture_output=True, timeout=60, check=True)
-        self.assertEqual(json.loads(out.stdout)["Authorization"], f"Bearer {read_token(home)}")
-
-    def test_the_helper_of_a_newer_build_starts_it_over_node_0_8_0_and_gets_the_token(self) -> None:
-        home = temp_home(self, "iat-handover-")
-        port = free_port()
-        stop_after(self, home, port)
-        node = self.node_server(home, port)
-        self.assertTrue(wait_until(lambda: self.serving(port, "0.8.0", node.pid) and read_state(home, port) is not None, 60))
-        command = [sys.executable, "-I", "-S", AS_BUILD, "0.9.0", "--port", str(port)]
-        ensured = ensure_server(command, port, home, "0.9.0", START_WAIT_MS, self.env(home))
-        self.assertIsNone(ensured.problem)
-        self.assertTrue(ensured.started)
-        self.assertEqual(ensured.health["version"] if ensured.health else None, "0.9.0")
-        self.assertEqual(ensured.token, read_token(home))
-        self.assertEqual(node.wait(10), 0)
-
-    def test_a_python_build_of_the_same_version_leaves_node_alone(self) -> None:
-        home = temp_home(self, "iat-handover-")
-        port = free_port()
-        stop_after(self, home, port)
-        node = self.node_server(home, port)
-        self.assertTrue(wait_until(lambda: self.serving(port, "0.8.0", node.pid) and read_state(home, port) is not None, 60))
-        python = self.python_server(home, port, "0.8.0")
-        self.assertEqual(python.wait(30), 0)
-        self.assertTrue(self.serving(port, "0.8.0", node.pid))
 
 
 class StartHookTest(unittest.TestCase):

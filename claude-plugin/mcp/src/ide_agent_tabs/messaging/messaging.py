@@ -16,6 +16,7 @@ from ..jsjson import trim, utf16_len, utf16_slice
 from ..liveness import pid_alive
 from ..parallel import Task
 from ..profiles import AGENT_ENV, BUILTIN_PROFILES, TAB_ID_ENV, canonical_agent
+from ..retention import prune_old_files
 from ..scheduler import Job, Scheduler
 from .codex_config import read_codex_config
 from .db import MailError
@@ -53,10 +54,10 @@ from .store import (
     clean_store,
     has_unread,
     log_native,
-    put_back,
     send_message,
     set_delivery,
     settle_claim,
+    settle_read_claims,
     take_batch,
     unread_summary,
     wait_for_message,
@@ -227,6 +228,8 @@ class Messaging:
         self._scheduler = deps.scheduler
         self._logged: dict[str, float] = {}
         self._log_lock = threading.Lock()
+        self._read_claims: list[tuple[str, str]] = []
+        self._claims_lock = threading.Lock()
 
     @property
     def id(self) -> str:
@@ -528,6 +531,7 @@ class Messaging:
         self._stopped = True
         self.stop_heartbeat()
         self.stop_follow_ups()
+        self._settle_reads("release")
         file = presence_path(self.deps.home, self._session_id)
         try:
             if (parse_presence(read_text_if_exists(file)) or {}).get("pid") == self.deps.pid:
@@ -543,6 +547,7 @@ class Messaging:
         # Not joined: a tool call that joined this background scan could miss a session registered after it began.
         live = live_sessions(self.deps.home, self._alive, now, self._ended, self._log)
         clean_store(self.deps.home, {s["id"] for s in live}, now)
+        prune_old_files(self.deps.home, now, any(s.get("agent") == "claude" for s in live))
 
     def list_sessions(self) -> dict[str, Any]:
         now = self._now()
@@ -955,11 +960,34 @@ class Messaging:
             return {"claim": claim, "read": moved}
         return {"claim": claim, "released": moved}
 
+    def _hold(self, claim: str | None) -> None:
+        if claim is not None:
+            with self._claims_lock:
+                self._read_claims.append((self._session_id, claim))
+
+    # A tool call that arrives proves the result of the previous read reached the agent, so a call settles the claims
+    # taken before it started; the claim of a read still running is taken when that read ends and is not touched.
+    def settle_reads(self) -> None:
+        self._settle_reads("ack")
+
+    def _settle_reads(self, op: str) -> None:
+        with self._claims_lock:
+            held, self._read_claims = self._read_claims, []
+        by_session: dict[str, list[str]] = {}
+        for session_id, claim in held:
+            by_session.setdefault(session_id, []).append(claim)
+        for session_id, claims in by_session.items():
+            try:
+                settle_read_claims(self.deps.home, session_id, claims, op, self._now())
+            except Exception as e:  # noqa: BLE001
+                self._failed(f"settling the messages read by {session_id}", e)
+
     def read(self, cancel: threading.Event | None = None) -> dict[str, Any]:
         batch = take_batch(self.deps.home, self._session_id, None, chars=MAX_READ_CHARS, now=self._now())
         if cancel is not None and cancel.is_set():
-            put_back(self.deps.home, self._session_id, batch["ids"], self._now())
+            settle_read_claims(self.deps.home, self._session_id, [batch["claim"]] if batch["claim"] else [], "release", self._now())
             raise MailError("read_messages was cancelled; the messages stay unread")
+        self._hold(batch["claim"])
         self._reset_nudges()
         self.scheduler.soon(self._clean)
         messages = batch["messages"]
@@ -1006,7 +1034,7 @@ class Messaging:
 
             retry = self.scheduler.every(self._rewake_s, rewake)
         try:
-            message = wait_for_message(self.deps.home, self._session_id, flt, seconds * 1000, cancel, self._now)
+            message = wait_for_message(self.deps.home, self._session_id, flt, seconds * 1000, cancel, self._now, self._hold)
         finally:
             if retry is not None:
                 retry.cancel()

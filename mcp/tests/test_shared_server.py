@@ -126,6 +126,19 @@ class FrontTest(unittest.TestCase):
         body = {"jsonrpc": "2.0", "id": 0, "method": method, "params": params or {}}
         return request(self.port, "/mcp", headers=headers, body=json.dumps(body))
 
+    def test_a_client_that_sends_no_version_header_is_served_as_protocol_2025_03_26(self) -> None:
+        init = {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "codex-mcp-client", "version": "1"}}
+        opened = self.classic("initialize", init)
+        self.assertEqual(opened.status, 200)
+        self.assertEqual(opened.json["result"]["protocolVersion"], "2025-03-26")
+        headers = {"Authorization": f"Bearer {self.server.token}", "Accept": "application/json"}
+        notified = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        self.assertEqual(request(self.port, "/mcp", headers=headers, body=notified).status, 202)
+        listed = self.classic("tools/list")
+        self.assertEqual(listed.status, 200)
+        self.assertIn("send_message", [t["name"] for t in listed.json["result"]["tools"]])
+        self.assertEqual(self.classic("tools/list", version="2024-01-01").json["error"]["code"], -32022)
+
     def test_a_classic_client_initializes_lists_tools_and_calls_one_without_a_roots_request(self) -> None:
         init = {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "codex-mcp-client", "version": "1"}}
         opened = self.classic("initialize", init)

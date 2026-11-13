@@ -25,7 +25,8 @@ import only the standard library.
 - It accepts requests only from `127.0.0.1` with this user's token from
   `~/.ide-agent-tabs/server/token`.
 - `claude-plugin/mcp/launch/agent-tabs server status` shows the running server; `server stop` stops it.
-  Both take `--port <port>`.
+  Both take `--port <port>`. In PowerShell, run `claude-plugin/mcp/launch/agent-tabs.ps1` instead; it takes the same
+  arguments, and needs no Git Bash.
 - `~/.ide-agent-tabs/server/server-47828.log` holds its log.
 
 See [Shared server](../docs/design.md#shared-server) for the protocol, session identity and build
@@ -41,8 +42,8 @@ handover.
 | `close_tab` | `id` (optional) | The closed tab. With no `id`, it closes the caller's own tab through `IDE_AGENT_TABS_ID`. |
 | `list_sessions` | none | Live agent sessions in a fixed agent order: `name` and `shortName` (what Claude Code's `SendMessage` takes, in its native style: a Claude session's native name, else `<folder>-<id hex>`, such as `the-index-34`), `legacyName` (the older form, such as `codex-f99f`, which `send_message` still takes), `id`, `session` (the first 8 characters of `id`), `agent`, `harness` (the agent CLI, with ` via OpenRouter` for an Ori launch), `model` and `effort` (`null` when unknown), `route` (`native` or `agent-tabs`), `state`, `tab`, `where` (the IDE product or terminal app, from the live endpoint or the label stored when the tab opened; `null` when neither is known, never a raw host id), `host` (IDE and project, or terminal), `ide` (the host's id), `path` and `folder`, `nativeName` for a Claude session that has one, `via` when known and `startedAt`, with `handedOffTo` for a session that handed its work to another, and `self` for the caller |
 | `send_message` | `to` (an `id`, `name` or `legacyName`), `text`, and optional `replyTo` | The message `id`, and `delivery`: `woken` or `queued`, with a `note` when the recipient's Claude Code mod delivers it |
-| `read_messages` | none | The caller's unread messages, marked read, under a `notice` that they come from other agents |
-| `wait_for_message` | optional `timeout` (seconds, default 60, at most 600, or 170 in an Antigravity CLI session), `from`, `replyTo` | The first matching message, marked read, or `message: null` on timeout |
+| `read_messages` | none | The caller's unread messages under a `notice` that they come from other agents. They stay claimed until the session's next Agent Tabs tool call (or a `PostToolUse` hook for this tool) confirms them read, and return to unread after 10 minutes without it |
+| `wait_for_message` | optional `timeout` (seconds, default 60, at most 600, or 170 in an Antigravity CLI session), `from`, `replyTo` | The first matching message, claimed like `read_messages`, or `message: null` on timeout |
 | `handoff` | `path`, and `brief` or `goal`, `done`, `next`, `files`, `openQuestions`, and optional `agent`, `model`, `via`, `ide`, `focus` | The handoff `id`, the `brief` path, the `newTab` id, and `next`: the steps the caller follows to wait for the takeover and stop |
 | `closed_sessions` | none | The sessions that ended in the last 7 days, newest first: `listing`, grouped by folder with one aligned line each (NAME, AGENT, ENDED, SIZE, MODEL, WHERE, ID), and `sessions` with the full `id`, `folder`, `tokens`, `size`, `model`, `where`, `preview` and `resumable` |
 | `resume_tab` | `id`, and optional `ide`, `model`, `focus`, `confirm` | `resumed: true` with the new `tab`, `ide`, `product`, `size`, `age` and `cost`, or `resumed: false` and `needsConfirm: true` with `size`, `age`, `reasons` and a `message`. See [Resume](#resume). |
@@ -519,14 +520,13 @@ All files live in `~/.ide-agent-tabs/`. Set `IDE_AGENT_TABS_HOME` to use another
 | `agents.json` | Your own agent profiles. The rules match the JetBrains plugin exactly. |
 | `config.json` | `defaultAgent`, `jev` (the Jev settings), `launchVia`, `showOriAgents`, `showLmStudioAgents`, `showOllamaAgents`, `closeAfterHandoff`, `allowResume` and the tab settings below. The JetBrains plugin and the VS Code extension edit the same keys. |
 | `detected.json` | The terminals, on Windows the PowerShell installs, and `ori` (`path`, `version`, and the `agents` Ori lists as installed; `null` without Ori) that this machine has, for the IDE settings. The server writes it at start, `list-ides` when it is more than an hour old, and the Claude Code session start hook; don't edit it. |
-| `handoffs/` | The brief (`<id>.md`) and the record (`<id>.json`) of each handoff. |
+| `handoffs/` | The brief (`<id>.md`) and the record (`<id>.json`) of each handoff. The server deletes both 30 days after the old tab was confirmed stopped, or 30 days after the handoff when its old tab stays open; a handoff whose old tab was never confirmed stopped stays. |
 | `history/` | One record per ended session, named by the agent's session id, kept 7 days. See [Resume](#resume). |
 | `terminal-windows.json` | The windows kept for Agent Tabs with `"terminalWindow": "dedicated"`. The server writes it; don't edit it. |
-| `jev/ledger.jsonl` | One line per Jev call: time, tool, agent, tab, model, question count, input tokens and result. |
+| `jev/ledger.jsonl` | One line per Jev call: time, tool, agent, tab, model, question count, input tokens and result. The server drops lines older than 30 days. |
 | `terminal-tabs.json` | The terminal tabs this server opened. The server writes it; don't edit it. |
 | `sessions/*.json` | One presence file per running server: session id, agent, folder, process id, host and state. |
 | `messages.db` | Every session's messages, with `messages.db-wal` and `messages.db-shm` beside it. See [Message store](#message-store). |
-| `wake/` | One small file per session that a send rewrites, so a waiting session wakes. |
 | `launch/` | Short-lived launch files. Each is deleted as soon as its tab starts. |
 | `mcp/` | A copy of the server for other agent CLIs and Codex tabs, and `python.json`, the interpreter they run it with. See [Other agents](#other-agents). |
 
@@ -604,18 +604,17 @@ it runs `py -3` on Windows, and `python3` elsewhere when the interpreter path ha
   start hook refreshes the copy if `~/.ide-agent-tabs/mcp/` exists. It keeps the previous build and
   deletes older ones. An older plugin never replaces a newer build. When the interpreter changes, the
   hook rewrites `python.json`.
-- When a registration or a hook entry runs an older command, such as `node …/mcp-server.mjs` from a
-  plugin before 0.9.0, or an interpreter that changed, the session start hook rewrites it to the current
-  command. For Hermes it also moves the approvals in `shell-hooks-allowlist.json`. An agent registered
-  with another server, or not at all, stays as it is. Once no registration it found runs the Node copy,
-  the hook deletes that copy's files from `~/.ide-agent-tabs/mcp/`: `mcp-server.mjs`, `agent-hook.mjs`,
-  `THIRD_PARTY_NOTICES.txt` and `launch/`. It rewrites `version.json` with the current version, so a
-  0.8.0 plugin still installed elsewhere doesn't copy its server back.
+- When a registration or a hook entry runs the copy with an interpreter that changed, the session start
+  hook rewrites it to the current command. For Hermes it also moves the approvals in
+  `shell-hooks-allowlist.json`. An agent registered with another server, or not at all, stays as it is.
 - The script writes each file to a temporary name and renames it, so a running server never reads a
   half-written file. If a file is in use, the hook logs the error to `sync.log` and tries again at the
   next session.
 - The script runs the agent CLIs from `~/.ide-agent-tabs`, so a project config in the current folder
   doesn't apply. It checks each registration by reading it back, not by the exit code.
+- Before the script changes another agent's config file, it saves the file as it was to
+  `<name>.agent-tabs.bak` beside it (for example `settings.json.agent-tabs.bak`), replacing the backup of
+  an earlier run. It makes no backup of a file it creates, and doesn't touch a file it has nothing to change in.
 - The script keeps the other keys in a Copilot CLI, Antigravity CLI, Pi, Qwen Code or OpenCode config file,
   and its indentation. It doesn't change a file that isn't plain JSON, such as a file with comments or an
   `opencode.jsonc` with comments. It reports an error instead, and you add the entry by hand:
@@ -928,13 +927,8 @@ commit. See [Checks](../README.md#checks).
   answers `tools/list` from it.
 - `mcp/tests/fixtures/` holds JSON fixtures that the tests compare against. They are frozen data; edit
   them by hand when a behavior changes on purpose.
-- `mcp/tests/node080/` holds the 0.8.0 Node build as a test fixture. It doesn't ship. The interop tests
-  run it against the Python server: handover from a running 0.8.0 shared server, a message store shared
-  with 0.8.0 servers, and the hooks. They need Node.js on `PATH`, and skip without it unless
-  `IDE_AGENT_TABS_INTEROP=1` is set. The CI interop job sets it.
 - The launcher tests run the real launch scripts with `pwsh`, Windows PowerShell and bash when they're
   installed, and skip the rest.
-- `mcp/bench/shared_server.py` measures the shared server's start and the headers helper, against the
-  0.8.0 build unless you pass `--no-node`. `mcp/bench/bench.py` measures the stdio server's start-up,
-  memory and messaging latency, and CLI timing. `mcp/bench/hook_startup.py` measures hook start-up, and
+- `mcp/bench/shared_server.py` measures the shared server's start and the headers helper.
+  `mcp/bench/bench.py` measures the stdio server's start-up, memory and messaging latency, and CLI timing.
   `mcp/bench/claude_tab_hooks.py` measures the Claude Code tab hooks.

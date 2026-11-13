@@ -18,7 +18,7 @@ from .sessions import (
     update_presence,
     with_state,
 )
-from .store import peek_unread
+from .store import peek_unread, settle_read_claims
 
 MAX_NUDGES = 3
 
@@ -89,6 +89,8 @@ HOOK_EVENTS: dict[str, dict[str, Action]] = {
     "goose": {"UserPromptSubmit": {"state": "busy", "prompt": True}, "PostToolUse": _BUSY, "Stop": _STOP},
 }
 
+_POST_TOOL_EVENTS = ("PostToolUse", "postToolUse", "post_tool_call")
+_READ_TOOLS = ("read_messages", "wait_for_message")
 # Claude Code and Grok Build send idle_prompt once the input has sat unused after a turn end.
 _INPUT_IDLE_CLIS = ("claude", "grok")
 _SESSION_FIELDS = ("session_id", "sessionId", "conversationId")
@@ -177,6 +179,20 @@ def _hook_state(action: Action, data: Mapping[str, Any]) -> str | None:
     if action.get("failure"):
         return "idle" if data.get("is_interrupt") is True else "busy"
     return action.get("state")
+
+
+# A successful read tool's PostToolUse proves its result reached the agent; a prompt or a turn end does not, since a
+# result the client dropped is followed by those too.
+def _delivered_read(event: str, data: Mapping[str, Any]) -> bool:
+    name = next((v for v in (data.get("tool_name"), data.get("toolName")) if isinstance(v, str)), "")
+    return event in _POST_TOOL_EVENTS and name.endswith(_READ_TOOLS)
+
+
+def _settle_delivered(home: str, session_id: str, at: float) -> None:
+    try:
+        settle_read_claims(home, session_id, None, "ack", at, HOOK_DEADLINE_MS)
+    except (MailError, sqlite3.Error, OSError):
+        return
 
 
 def _unread_for(action: Action, home: str, session_id: str, at: float) -> list[dict[str, Any]]:
@@ -297,6 +313,8 @@ def run_hook(
     before = read_presence(home, session_id)
     if before is not None and is_mod_driven(before, at):
         return None
+    if _delivered_read(event, data):
+        _settle_delivered(home, session_id, at)
     change = _PresenceChange(cli, session_id, action, data, at, agent_process, _unread_for(action, home, session_id, at))
     update_presence(home, session_id, change)
     return change.output(event)

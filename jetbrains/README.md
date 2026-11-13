@@ -160,7 +160,9 @@ Choose one of these values:
 | Always | Every time a project opens. |
 | Never | Never. |
 
-Each IDE keeps its own **Open on startup** value. It isn't shared through `config.json`.
+Each IDE keeps its own **Open on startup** value. It isn't shared through `config.json`. A project can't change
+it or the default agent. A project that isn't trusted (the IDE opened it in Safe Mode, or you haven't confirmed
+the trust prompt) never opens an agent on its own; the tab opens once you trust the project.
 
 ## Open a tab from another program
 
@@ -324,7 +326,8 @@ claudeCodePluginPath=C:/Users/<you>/AppData/Roaming/Google/AndroidStudio2026.2/p
 
 The sandbox uses `build/sandbox-home` in place of `~/.ide-agent-tabs`, so its registry file and
 settings never mix with your real IDE's. The Java system property `ide.agent.tabs.home` sets this
-folder.
+folder. The IDE also reads the `IDE_AGENT_TABS_HOME` environment variable, as VS Code and the MCP server
+do, and the property wins over it.
 
 ## License
 

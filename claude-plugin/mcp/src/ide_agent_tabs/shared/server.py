@@ -208,14 +208,11 @@ class SharedServer:
             self.stopped.wait(HANDOVER_MS / 1000)
 
 
-# One process writes for every Claude Code session, so a busy store returns at once and retries off the lock,
-# and a send to a session waiting in this process wakes it directly instead of through a wake file.
+# One process writes for every Claude Code session, so a busy store returns at once and retries off the lock.
 def shared_store_mode() -> None:
     from ..messaging.db import SHARED_BUSY_TIMEOUT_MS, set_busy_timeout
-    from ..messaging.wake import skip_wake_files_for_local_waiters
 
     set_busy_timeout(SHARED_BUSY_TIMEOUT_MS)
-    skip_wake_files_for_local_waiters(True)
 
 
 def tab_owner(home: str, tab: str) -> tuple[int, int | None] | None:

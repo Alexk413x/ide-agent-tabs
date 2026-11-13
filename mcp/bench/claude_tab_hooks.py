@@ -14,14 +14,12 @@ from typing import Any
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PLUGIN = os.path.join(ROOT, "claude-plugin")
-NODE_HOOK = os.path.join(ROOT, "mcp", "tests", "node080", "agent-hook.mjs")
 RUNS = int(os.environ.get("RUNS", "10"))
 TAB = "tab-bench-0001"
 PROMPT = "Run the shell command `echo hi` with the Bash tool once, then reply with the single word ok."
-FORMS = ("tab, node 0.8.0", "tab, 0.9.0", "no tab, node 0.8.0", "no tab, 0.9.0")
+FORMS = ("tab", "no tab")
 sys.path.insert(0, os.path.join(PLUGIN, "mcp", "src"))
 
-from ide_agent_tabs.agent_config import HookTarget, claude_tab_settings  # noqa: E402
 from ide_agent_tabs.messaging import db, store  # noqa: E402
 from ide_agent_tabs.register import RegisterContext, refresh_copy, tab_settings_file  # noqa: E402
 from ide_agent_tabs.server_copy import Source, base_interpreter  # noqa: E402
@@ -54,11 +52,6 @@ def setup(work: str) -> dict[str, Any]:
             ]
         )
     }
-    node = (shutil.which("node") or "node").replace("\\", "/")
-    tab_hooks = claude_tab_settings(HookTarget(node, NODE_HOOK, sys.platform))["hooks"]
-    for groups in tab_hooks.values():
-        for g in groups:
-            g["hooks"][0]["args"] = g["hooks"][0]["args"][2:]
     home = os.path.join(work, "home")
     project = os.path.join(work, "project")
     os.makedirs(project)
@@ -69,7 +62,7 @@ def setup(work: str) -> dict[str, Any]:
     return {
         "home": home,
         "project": project,
-        "roots": {"node": plugin_root(work, "node", tab_hooks), "current": plugin_root(work, "current", current)},
+        "root": plugin_root(work, "current", current),
         "settings": tab_settings_file(ctx),
         "work": work,
     }
@@ -82,7 +75,7 @@ def run_once(form: str, s: dict[str, Any]) -> dict[str, Any]:
         )
     db.close_db(s["home"])
     debug = os.path.join(s["work"], f"debug-{time.time_ns()}.log")
-    root = s["roots"]["node" if "node" in form else "current"]
+    root = s["root"]
     # --setting-sources local, --strict-mcp-config and --no-session-persistence keep the user's settings, plugins,
     # MCP servers and transcripts out of the run.
     command = [
@@ -102,8 +95,7 @@ def run_once(form: str, s: dict[str, Any]) -> dict[str, Any]:
     env["IDE_AGENT_TABS_HOME"] = s["home"]
     if form.startswith("tab"):
         env["IDE_AGENT_TABS_ID"] = TAB
-        if "node" not in form:
-            command += ["--settings", s["settings"]]
+        command += ["--settings", s["settings"]]
     p = subprocess.Popen(
         command,
         cwd=s["project"],

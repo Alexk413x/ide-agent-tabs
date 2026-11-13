@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 
 const PROTOCOL_VERSION = 1;
-const HOME_ENV = 'IDE_AGENT_TABS_HOME';
+export const HOME_ENV = 'IDE_AGENT_TABS_HOME';
 export const ENDPOINT_BASE = '/ide-agent-tabs';
 export const ENDPOINT_BEAT_MS = 60_000;
 

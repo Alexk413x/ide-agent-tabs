@@ -124,6 +124,54 @@ class LauncherTest(unittest.TestCase):
     def test_the_power_shell_launcher_passes_the_prompt_and_args_intact_in_windows_power_shell(self) -> None:
         self.run_power_shell("powershell.exe")
 
+    def run_batch_agent(self, shell: str) -> None:
+        exe = on_path(shell) if WINDOWS else None
+        if exe is None:
+            self.skipTest(f"{shell} not found")
+        batch = os.path.join(self.work, "fake agent.cmd")
+        with open(batch, "w", encoding="utf-8") as f:
+            f.write(f'@echo off\r\n"{sys.executable}" -I -S "{self.probe}" %*\r\n')
+        profile = AgentProfile("probe", "Probe", batch, (), "--prompt")
+        # A line break cannot cross cmd.exe, so the launcher turns it into a space.
+        prompt = 'he said "hi & echo x>canary-prompt & rem \nsecond line'
+        args = [
+            "a&echo x>canary-amp",
+            "x|y",
+            '"quoted & amp"',
+            "100%PATH%",
+            "%",
+            "^caret",
+            "a<b>c",
+            "trailing\\",
+            "",
+            'q\\"uote & echo x>canary-quote',
+            "!x!",
+            "(a),b;c=d",
+        ]
+        out = os.path.join(self.work, f"batch-{shell}.json")
+        spec_file = os.path.join(self.work, f"batch-{shell}.spec.json")
+        pid_file = os.path.join(self.work, f"batch-{shell}.pid")
+        with open(spec_file, "w", encoding="utf-8") as f:
+            f.write(power_shell_spec(launch_spec("tab-1", self.work, launch_of(profile, prompt, args, {"PROBE_OUT": out}), pid_file)))
+        launcher = os.path.join(LAUNCH_DIR, "agent-launch.ps1")
+        result = subprocess.run(
+            [exe, "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", launcher, spec_file],
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([name for name in os.listdir(self.work) if name.startswith("canary")], [], "no argument ran as a command")
+        self.assertEqual(self.read_probe(out)["args"], [*args, "--prompt", prompt.replace("\n", " ")])
+
+    def test_a_batch_agent_gets_hostile_args_intact_and_runs_nothing_else_in_pwsh(self) -> None:
+        self.run_batch_agent("pwsh.exe")
+
+    def test_a_batch_agent_gets_hostile_args_intact_and_runs_nothing_else_in_windows_power_shell(self) -> None:
+        self.run_batch_agent("powershell.exe")
+
     def test_the_posix_launcher_passes_the_prompt_and_args_intact(self) -> None:
         bash = find_bash()
         if bash is None:

@@ -12,8 +12,8 @@ from .editor_clis import find_editor_clis, resolve_editor_cli
 from .files import ensure_private_dir, mtime_ms, read_text_if_exists, remove_file, write_atomically, write_new_private_file
 from .jsjson import parse, stringify
 from .parallel import run_all
-from .register import RegisterContext, migrate_registrations, refresh_copy, tab_settings_file, tab_settings_text
-from .server_copy import bundled_build, old_copy_exists, read_python, remove_old_copy
+from .register import RegisterContext, refresh_copy, refresh_registrations, tab_settings_file, tab_settings_text
+from .server_copy import bundled_build, read_python
 from .version import compare_versions
 
 EXTENSION_ID = "alexk413x.ide-agent-tabs"
@@ -230,7 +230,7 @@ def _sync_editors(ctx: RegisterContext, bundle: Bundle, errors: list[str]) -> tu
 
 def _copy_needs(ctx: RegisterContext, previous: dict[str, Any] | None) -> tuple[str | None, bool]:
     build = bundled_build(ctx.source)
-    server = None if previous is not None and previous.get("server") == build and not old_copy_exists(ctx.home) else build
+    server = None if previous is not None and previous.get("server") == build else build
     python_changed = (
         (previous or {}).get("python") != ctx.python
         or read_python(ctx.home) != ctx.python
@@ -259,10 +259,8 @@ def sync_hook(ctx: RegisterContext, bundle_dir: str, now: int | None = None) -> 
                 refresh_copy(ctx)
                 synced["server"] = bundled_build(ctx.source)
                 synced["python"] = ctx.python
-                _, failures = migrate_registrations(ctx)
-                errors.extend(f"migration: {f}" for f in failures)
-                if not failures and old_copy_exists(ctx.home):
-                    remove_old_copy(ctx.home, ctx.source.version)
+                _, failures = refresh_registrations(ctx)
+                errors.extend(f"registration: {f}" for f in failures)
             except (OSError, ValueError, TimeoutError) as e:
                 errors.append(f"server copy: {e}")
         ide_errors: list[str] = []

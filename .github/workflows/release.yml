@@ -1,7 +1,9 @@
 name: Release branch
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -13,9 +15,14 @@ concurrency:
 
 jobs:
   release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    env:
+      TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - name: Tag the plugin version
         run: |
           version=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' claude-plugin/.claude-plugin/plugin.json | head -n 1)
@@ -26,7 +33,7 @@ jobs:
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag -a "$tag" -m "ide-agent-tabs $version" "$GITHUB_SHA"
+            git tag -a "$tag" -m "ide-agent-tabs $version" "$TESTED_SHA"
             git push origin "refs/tags/$tag"
           fi
       - name: Build the release branch from the plugin folder
@@ -36,5 +43,5 @@ jobs:
           sh scripts/release-tree.sh
           git checkout -B release
           git add -A
-          git commit -q -m "Release build of ${GITHUB_SHA::7}"
+          git commit -q -m "Release build of ${TESTED_SHA::7}"
           git push -f origin release

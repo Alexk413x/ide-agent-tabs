@@ -7,6 +7,7 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ApplicationNamesInfo
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.wm.IdeFocusManager
@@ -25,6 +26,7 @@ import org.jetbrains.ide.HttpRequestHandler
 import java.net.InetSocketAddress
 import java.nio.file.Path
 import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -50,7 +52,7 @@ class AgentTabHttpHandler : HttpRequestHandler() {
         val body = request.content().toString(Charsets.UTF_8)
         try {
             when (route(urlDecoder.path())) {
-                "open" -> AppExecutorUtil.getAppExecutorService().execute {
+                "open" -> background(context) {
                     val id = UUID.randomUUID().toString()
                     val (open, profile, launch) = try {
                         val open = OpenRequest.parse(body)
@@ -60,38 +62,38 @@ class AgentTabHttpHandler : HttpRequestHandler() {
                         Triple(open, profile, Agents.launchFor(profile, open, tabId = id, copilot = Agents.copilotFor(profile)))
                     } catch (e: IllegalArgumentException) {
                         respond(context, badRequest(e))
-                        return@execute
+                        return@background
                     } catch (e: Exception) {
                         respond(context, internalError(e))
-                        return@execute
+                        return@background
                     }
                     val shell = try {
                         AgentTabLauncher.prepare(launch, id)
                     } catch (e: Exception) {
                         respond(context, internalError(e))
-                        return@execute
+                        return@background
                     }
                     onEdt(context) { open(open, profile, launch, shell, id) }
                 }
                 "close" -> parseCloseId(body).let { onEdt(context) { close(it) } }
                 "input" -> parseInput(body).let { onEdt(context) { input(it) } }
                 "reveal" -> parseRevealPath(body).let { path ->
-                    AppExecutorUtil.getAppExecutorService().execute {
+                    background(context) {
                         val real = try {
                             checkRevealTarget(path, knownFolders())
                         } catch (e: IllegalArgumentException) {
                             respond(context, badRequest(e))
-                            return@execute
+                            return@background
                         } catch (e: Exception) {
                             respond(context, internalError(e))
-                            return@execute
+                            return@background
                         }
                         onEdt(context) { reveal(real) }
                     }
                 }
                 "agents" -> {
                     parseEmpty(body)
-                    AppExecutorUtil.getAppExecutorService().execute { respond(context, attempt(::agents)) }
+                    background(context) { respond(context, attempt(::agents)) }
                 }
                 "info" -> {
                     parseEmpty(body)
@@ -119,21 +121,48 @@ class AgentTabHttpHandler : HttpRequestHandler() {
         ApplicationManager.getApplication().invokeLater {
             if (!claimed.compareAndSet(false, true)) return@invokeLater
             timeout.cancel(false)
-            respond(context, attempt(work))
+            var reply: Reply? = null
+            try {
+                reply = attempt(work)
+            } finally {
+                // A cancellation passes through attempt, and the request is still answered.
+                respond(context, reply ?: Reply(503, error("the IDE cancelled the request")))
+            }
         }
     }
 
+    // Runs on the pool. Anything that escapes the route's own handling is answered as an error, so a request is
+    // never left open; only a LinkageError (a platform change under the plugin) is swallowed after that.
+    private fun background(context: ChannelHandlerContext, work: () -> Unit) {
+        AppExecutorUtil.getAppExecutorService().execute {
+            try {
+                work()
+            } catch (e: Throwable) {
+                val control = e is ProcessCanceledException || e is CancellationException
+                respond(context, if (control) Reply(503, error("the IDE cancelled the request")) else internalError(e))
+                if (control || (e is Error && e !is LinkageError)) throw e
+            }
+        }
+    }
+
+    // ProcessCanceledException and CancellationException must reach the platform, so they are not turned into a reply here.
     private fun attempt(work: () -> Reply): Reply = try {
         work()
+    } catch (e: ProcessCanceledException) {
+        throw e
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
+        internalError(e)
+    } catch (e: LinkageError) {
         internalError(e)
     }
 
     private fun badRequest(e: IllegalArgumentException) = Reply(400, error(e.message ?: "bad request"))
 
-    private fun internalError(e: Exception): Reply {
+    private fun internalError(e: Throwable): Reply {
         LOG.warn("Agent tab request failed", e)
-        return Reply(500, error("internal error"))
+        return Reply(500, error(if (e is LinkageError) "this IDE version does not match the Agent Tabs plugin; update the plugin" else "internal error"))
     }
 
     private fun open(request: OpenRequest, profile: AgentProfile, launch: AgentLaunch, shell: ShellLaunch, tabId: String): Reply {

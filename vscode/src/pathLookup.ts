@@ -48,3 +48,31 @@ export function isInstalled(command: string, searchPath: string, isWindows: bool
   if (command.includes('/') || command.includes(path.sep)) return false;
   return names.some(name => findOnPath(searchPath, name) !== undefined);
 }
+
+// The status bar refreshes on every window focus, and each refresh asks about every profile. Answers are kept
+// for ttlMs and dropped as soon as PATH changes, so a new install shows up within a short while.
+export class InstallScan {
+  private searchPath = '';
+  private since = Number.NEGATIVE_INFINITY;
+  private readonly answers = new Map<string, boolean>();
+
+  constructor(
+    private readonly ttlMs: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  isInstalled(command: string, searchPath: string, isWindows: boolean): boolean {
+    const now = this.now();
+    if (searchPath !== this.searchPath || now - this.since >= this.ttlMs) {
+      this.answers.clear();
+      this.searchPath = searchPath;
+      this.since = now;
+    }
+    let answer = this.answers.get(command);
+    if (answer === undefined) {
+      answer = isInstalled(command, searchPath, isWindows);
+      this.answers.set(command, answer);
+    }
+    return answer;
+  }
+}

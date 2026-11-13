@@ -37,6 +37,8 @@ terminals with their ids, run:
 "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" list-ides
 ```
 
+In PowerShell, which Claude Code uses on Windows without Git Bash, run `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1" list-ides` instead.
+
 It prints JSON: `ides` (id, product and open projects), `installed`, `terminals` and `shells`. Pass `args` or `env`
 only when the user asks for extra agent flags or variables.
 

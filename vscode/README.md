@@ -82,8 +82,11 @@ Opening an agent from a menu or a link doesn't change the default agent. To chan
 
 Two more sections hold the settings that the MCP server and JetBrains IDEs share. They stay in sync with
 `~/.ide-agent-tabs/config.json`. A tab request that names an IDE, a terminal or an agent overrides them.
-The settings are user-level only: a workspace's `.vscode/settings.json` can't set them, and untrusted
-workspaces can't change the terminal or the shell.
+The settings in these two sections are user-level only: a workspace's `.vscode/settings.json` can't set them.
+`ideAgentTabs.defaultAgent` and `ideAgentTabs.openOnStartup` can be set per workspace. In an untrusted workspace
+VS Code ignores their workspace values, and the extension never opens an agent on startup, even when the folder
+has a `.claude` folder. It opens the default agent once you trust the workspace, if the settings say to. A
+workspace's default agent is never written to `~/.ide-agent-tabs/config.json`; only the user-level value is.
 
 **Agent Tabs: IDE tabs**
 

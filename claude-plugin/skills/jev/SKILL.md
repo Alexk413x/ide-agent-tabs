@@ -80,6 +80,9 @@ JSON request on stdin, in the same form as the tool's input. Each prints the rep
 "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs" jev choose < request.json
 ```
 
+In PowerShell, which Claude Code uses on Windows without Git Bash, run `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1" jev status` and
+`Get-Content -Raw -Encoding UTF8 request.json | & "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1" jev choose` instead.
+
 Write the request to a file with the Write tool. Never put request text on the command line. The
 command exits with code 1 and prints `{"error": ...}` on stderr when it fails, or with code 127 when it
 finds no Python 3.9 or later.

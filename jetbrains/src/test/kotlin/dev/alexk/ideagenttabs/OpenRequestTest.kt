@@ -170,6 +170,8 @@ class OpenRequestTest {
         assertThrows(IllegalArgumentException::class.java) { OpenRequest.of(dir.toString(), null, List(MAX_ENTRIES + 1) { "x" }) }
         assertThrows(IllegalArgumentException::class.java) { OpenRequest.of(dir.toString(), null, listOf("x".repeat(MAX_PROMPT_CHARS + 1))) }
         assertThrows(IllegalArgumentException::class.java) { OpenRequest.of(dir.toString(), null, env = mapOf("A" to "x\u0000y")) }
+        assertEquals("an arg holds a NUL", assertThrows(IllegalArgumentException::class.java) { OpenRequest.of(dir.toString(), null, listOf("a\u0000b")) }.message)
+        assertEquals("prompt holds a NUL", assertThrows(IllegalArgumentException::class.java) { OpenRequest.of(dir.toString(), "a\u0000b") }.message)
     }
 
     @Test

@@ -154,6 +154,9 @@ class Tools:
             if name == HOOK_TOOL:
                 return self._hook(deps, args, call)
             deps.messaging.note_thread(call.meta.get("threadId"))
+            # The mod polls this server on a timer, so its calls say nothing about what the agent received.
+            if name != MOD_TOOL:
+                deps.messaging.settle_reads()
             return text_result(stringify(self._run(deps, name, args, call)))
         except Exception as e:  # noqa: BLE001
             return text_result(error_message(e), error=True)

@@ -23,10 +23,6 @@ SRC = os.path.join(ROOT, "claude-plugin", "mcp", "src")
 PACKAGE = os.path.join(SRC, "ide_agent_tabs")
 FIXTURES = os.path.join(TESTS, "fixtures")
 PY_WORKER = os.path.join(TESTS, "py_worker.py")
-# The released 0.8.0 Node build, kept to test against servers and hooks of 0.8.0 that still run during an update.
-NODE_080 = os.path.join(TESTS, "node080")
-NODE_WORKERS = {"interop": os.path.join(NODE_080, "interop-worker.mjs"), "stress": os.path.join(NODE_080, "stress-worker.mjs")}
-INTEROP_ENV = "IDE_AGENT_TABS_INTEROP"
 WORKER_TIMEOUT_S = 180.0
 
 
@@ -143,31 +139,6 @@ def js_fixtures() -> dict[str, Any]:
         return json.load(f)
 
 
-NODE_080_MINIMUM = (22, 13)
-_node_version: list[tuple[int, ...]] = []
-
-
-def node_missing() -> str | None:
-    node = shutil.which("node")
-    if node is None:
-        return "node is not on PATH"
-    if not _node_version:
-        done = subprocess.run([node, "--version"], capture_output=True, encoding="utf-8", timeout=30, check=False)
-        _node_version.append(tuple(int(p) for p in done.stdout.strip().lstrip("v").split(".")[:2] if p.isdigit()))
-    if _node_version[0] < NODE_080_MINIMUM:
-        return f"the 0.8.0 build needs Node {'.'.join(map(str, NODE_080_MINIMUM))} or later"
-    return None
-
-
-def require_node(test: unittest.TestCase) -> None:
-    reason = node_missing()
-    if reason is None:
-        return
-    if os.environ.get(INTEROP_ENV) == "1":
-        test.fail(f"{INTEROP_ENV}=1 but {reason}")
-    test.skipTest(reason)
-
-
 class Worker:
     def __init__(self, command: Sequence[str], label: str) -> None:
         self.label = label
@@ -228,14 +199,6 @@ class Worker:
                     stream.close()
                 except OSError:
                     pass
-
-
-def node_worker(test: unittest.TestCase, mode: str, args: dict[str, Any], script: str = "interop") -> Worker:
-    node = shutil.which("node")
-    assert node is not None
-    w = Worker([node, NODE_WORKERS[script], mode, json.dumps(args)], f"node {mode}")
-    test.addCleanup(w.close)
-    return w
 
 
 def py_worker(test: unittest.TestCase, mode: str, args: dict[str, Any]) -> Worker:
