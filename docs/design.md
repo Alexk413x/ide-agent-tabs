@@ -2480,14 +2480,16 @@ These hold for every install, because every user gets this code:
 
 - **Off by default.** Nothing runs until the user starts a hub or a gateway and pairs a machine. An
   install that never pairs behaves as before.
-- **No new network surface.** No new listening port, no bind beyond `127.0.0.1`, no mDNS, broadcast,
-  UPnP, LAN scan or relay of our own. The only path between machines is Claude Code's Remote Control
-  (RC), which connects outbound to Anthropic and is bound to one claude.ai account.
+- **The smallest network surface.** No mDNS, broadcast, UPnP, LAN scan or relay of our own. The only
+  listener is the LAN carrier's (see [Carriers](#carriers)), which runs only after the user turns it
+  on, binds to one private address the user picks, and answers only paired machines. RC adds no
+  listener: it connects outbound to Anthropic and is bound to one claude.ai account.
 - **No discovery.** No registry, directory, beacon or telemetry lists hosts. Host ids are random and
   live only in each paired machine's private files. A gateway sends nothing, not even an error, in
   answer to a message from a host it hasn't paired with.
-- **Two locks.** A sender must be on the same claude.ai account (RC's binding) and hold a pair key that
-  the user approved on both machines by comparing a code (see [Pairing](#pairing)).
+- **Pair key on every message.** A sender must hold a pair key that the user approved on both machines
+  by comparing a code (see [Pairing](#pairing)). Over RC, the sender must also be on the same claude.ai
+  account. Over the LAN, the sender must also be on the paired machine's recorded private address.
 - **The receiver decides.** The machine that does the work checks every request against its own policy.
   Nothing in a request widens it.
 - **Kill switch and audit.** `agent-tabs net off` and `agent-tabs net revoke <host>` take effect at once.
@@ -2553,7 +2555,27 @@ drops an incomplete set after 60 s.
 ### Carriers
 
 A protocol message is signed with the pair key, so its security doesn't depend on what carries it. A
-carrier only moves lines between two gateways. Claude Code's RC is the first and only carrier for now.
+carrier only moves lines between two gateways.
+
+The first carrier is a direct link between two machines on one local network, because it needs no
+account and no outside service. RC comes second.
+
+#### LAN carrier
+
+- Off until the user runs `agent-tabs net lan on --bind <address>`. The address must be a private
+  IPv4 address of this machine (`10/8`, `172.16/12`, `192.168/16`) or an IPv6 unique local address.
+  The carrier never binds `0.0.0.0`, `::` or a public address. The default port is 47829.
+- The user gives the other machine's address at pairing. Nothing discovers machines.
+- The listener drops a connection whose source address isn't a paired machine's recorded address,
+  without a reply, before it reads any data.
+- Every message carries the pair-key MAC, a timestamp and a nonce, as on any carrier. A replayed or
+  altered message is dropped.
+- Every message is also encrypted, because anyone on the same network can read unencrypted traffic.
+  The cipher is an open question (see below): the server imports only the standard library, which has
+  no symmetric cipher.
+- On Windows, the firewall rule allows the port on the Private profile only. `lan on` refuses a
+  network that Windows marks Public.
+- `agent-tabs net lan off` closes the listener at once.
 
 The other CLIs were checked against their docs on 2026-11-13. Each has a vendor-relayed bridge that
 lets a person on a phone or a browser steer a local session: Codex `codex remote-control` and the
@@ -2565,13 +2587,14 @@ and account-bound and outbound-only.
 
 ### Pairing
 
-Pairing uses RC to show that both machines are on the user's claude.ai account, and a code compared on
-both screens to show that the user has both machines in front of them. An attacker who controls the
-account alone can't pair.
+Pairing runs over the carrier the two machines will use, and ends with a code compared on both screens
+to show that the user has both machines in front of them. Over RC it also shows that both machines are
+on the user's claude.ai account. Someone on the same network, or in control of the account, can't
+pair without both screens.
 
-- The user runs `agent-tabs net pair` on machine A and `agent-tabs net accept` on machine B within 5
+- The user runs `agent-tabs net pair <address of B>` on machine A and `agent-tabs net accept` on machine B within 5
   minutes. Neither machine takes pairing messages at any other time.
-- A's gateway sends `pair-offer` to B's gateway over RC: A's host id and an ephemeral Diffie-Hellman
+- A's gateway sends `pair-offer` to B's gateway over the carrier: A's host id and an ephemeral Diffie-Hellman
   public value in the RFC 7919 `ffdhe3072` group. B answers `pair-answer` with its own. The group needs
   only Python's `pow`, so the server keeps its no-dependency rule.
 - Each side derives the shared secret, then the pair key with HKDF-SHA256 over the secret and the
@@ -2641,6 +2664,12 @@ machines hold three keys and four hold six:
 - A protocol line that reaches any session other than the gateway is plain text and does nothing.
 
 ### Open questions (Phase 0)
+
+0. **LAN encryption.** Python's standard library has TLS but can't make a certificate, and has no
+   symmetric cipher. Options: TLS with a certificate made by the `openssl` command at pairing and pinned
+   by both sides; an optional `cryptography` dependency for LAN mode only; or TLS-PSK keyed by the pair
+   key, which needs Python 3.13. Decide before any LAN code. A cipher written for this project is not
+   an option.
 
 1. Does a session that `claude remote-control --spawn same-dir` starts load user plugins and run the
    mod? Does `--settings` after `remote-control` reach it?
