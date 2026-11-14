@@ -20,6 +20,7 @@ This document is the contract every part builds against. Change it before you ch
 | Handoff to a new tab: the `handoff` tool and skill | Built | `claude-plugin/mcp/src/ide_agent_tabs/handoff.py`, `claude-plugin/skills/handoff/` |
 | Shared HTTP server for Claude Code sessions, its headers helper and start hook | Built | `claude-plugin/mcp/src/ide_agent_tabs/shared/`, `claude-plugin/mcp/launch/` |
 | Jev judgment tools in the MCP server, and the `jev` skill (optional) | Built | `claude-plugin/mcp/src/ide_agent_tabs/jev/`, `claude-plugin/skills/jev/`; later steps in [jev-integration.md](jev-integration.md) |
+| Network across one user's machines: hub, gateway, pairing and policy | Planned; see [Network (planned)](#network-planned) | — |
 
 Claude Code sessions message each other with Claude Code's own `ListAgents` and `SendMessage`. Sessions
 of different agent CLIs message each other through the MCP server. See [Messaging](#messaging).
@@ -2449,6 +2450,206 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
 - `delegate`: with the Jev tools listed and no agent named, the skill asks `jev_route` which tier takes
   the task. On `sure`, it uses the answer and says so. Otherwise it shows the top two and asks.
 - `setup`: asks whether to turn Jev on, and checks that a key is found with `jev status`.
+
+## Network (planned)
+
+Not built. This section is the contract for working across machines. Phase 0 spikes must confirm the
+open questions below before any code depends on them.
+
+### Goals and limits
+
+- From the Claude app, start a session on another machine you own and open agent tabs there.
+- From one machine, open a tab of any agent in a listed folder on another machine.
+- Let every agent session on every paired machine message every other one.
+- Only one person's machines, on one claude.ai account. Other people's machines are out of scope.
+
+Each later stage needs its own design and security review, and starts only after the stage before it
+passes its review:
+
+1. **One person's machines.** This section.
+2. **A team.** Two people pair two machines on purpose: they talk to each other and compare the
+   pairing code, as one person does across two screens. RC binds one account, so this stage needs a
+   carrier that crosses accounts and still opens no port. Each person keeps a receiving policy for
+   their own machine, and either side can revoke.
+3. **Public.** Machines of people who don't know each other. Not planned: discovery, spam, abuse and
+   impersonation each need their own controls, and the rules above forbid discovery.
+
+### Security rules
+
+These hold for every install, because every user gets this code:
+
+- **Off by default.** Nothing runs until the user starts a hub or a gateway and pairs a machine. An
+  install that never pairs behaves as before.
+- **No new network surface.** No new listening port, no bind beyond `127.0.0.1`, no mDNS, broadcast,
+  UPnP, LAN scan or relay of our own. The only path between machines is Claude Code's Remote Control
+  (RC), which connects outbound to Anthropic and is bound to one claude.ai account.
+- **No discovery.** No registry, directory, beacon or telemetry lists hosts. Host ids are random and
+  live only in each paired machine's private files. A gateway sends nothing, not even an error, in
+  answer to a message from a host it hasn't paired with.
+- **Two locks.** A sender must be on the same claude.ai account (RC's binding) and hold a pair key that
+  the user approved on both machines by comparing a code (see [Pairing](#pairing)).
+- **The receiver decides.** The machine that does the work checks every request against its own policy.
+  Nothing in a request widens it.
+- **Kill switch and audit.** `agent-tabs net off` and `agent-tabs net revoke <host>` take effect at once.
+  Every accepted and refused request goes to a local audit log.
+
+### Roles
+
+Each machine runs up to two Claude Code roles. Neither opens a port.
+
+| Role | Command | Folder | Does |
+|---|---|---|---|
+| Hub | `agent-tabs hub start`, which runs `claude remote-control --spawn same-dir --name "Agent Tabs hub (<host>)"` | `~/.ide-agent-tabs/hub/` | Takes sessions the user starts from the Claude app. Each session opens tabs in listed folders with `open_tab`. |
+| Gateway | `agent-tabs gateway start`, which opens one `claude --remote-control --name agent-tabs-gw-<hostId>` session | `~/.ide-agent-tabs/gateway/` | Carries protocol messages between machines. Its mod consumes them, so its model never reads them. |
+
+#### Hub at login
+
+The hub lets the user start work from the Claude app on a machine where no agent session runs. Something
+must still run to hear the app, and that is the hub's RC server: one process that connects outbound and
+runs no model until a session starts.
+
+- `agent-tabs hub install` registers the hub to start when the user logs in: a Scheduled Task on
+  Windows, a LaunchAgent on macOS, a systemd user unit on Linux. `agent-tabs hub uninstall` removes it.
+  Nothing installs it by default. The task restarts the server when it exits, because server mode
+  exits after about 10 minutes without a network connection. Claude Code documents no service or
+  login option of its own for server mode (checked 2026-11-13).
+- The hub folder must be trusted before the first login start, because the task has no terminal to
+  answer the trust prompt. `hub install` runs the trust step in a terminal first.
+- The user starts a session from the Claude app or claude.ai/code and picks the hub by name. The session
+  starts in the hub folder, reads the folder aliases from the hub's `CLAUDE.md`, and opens tabs with
+  `open_tab`.
+- A hub session is a remote request: the server applies the receiving policy to its `open_tab` calls as
+  it does to a peer's `open`, so it opens tabs only in listed folders, with listed agents and no
+  `args`. The server knows a hub session by `IDE_AGENT_TABS_HUB=1`, which `hub start` sets.
+- The policy limits `open_tab` only. A hub session is a full Claude Code session: it can run commands
+  and edit files as its permission mode allows, so the hub starts with the default mode, and its
+  permission prompts go to the Claude app. A permission mode that skips prompts would let a hub session
+  step around the policy.
+- A machine that is off, asleep or logged out can't start a hub. Waking a machine is out of scope.
+- The hub's RC server is reachable by anyone signed in to the user's claude.ai account. Turn on RC's
+  Trusted Devices, so only enrolled devices with a recent sign-in can reach it.
+
+The Python server makes every check. The mod passes protocol lines as opaque strings. Pair keys never
+reach the mod or a model.
+
+### Protocol messages
+
+A protocol message is one line: `agent-tabs-net/1 <base64url JSON>`. The JSON holds `v`, `op`, `from`
+and `to` (host ids), `id`, `ts` (epoch milliseconds), `nonce` (16 random bytes, hex), `body`, and `mac`:
+HMAC-SHA256, with the pair key, over the key-sorted JSON of every other field.
+
+| `op` | `body` | Reply `op` |
+|---|---|---|
+| `pair-offer`, `pair-answer` | host id, Diffie-Hellman public value, `protocol`; unsigned, accepted only during pairing | `pair-answer` |
+| `hello` | `name`, `protocol` | `hello` |
+| `inventory` | none | `inventory`: folder aliases, installed agents, free capacity, live sessions |
+| `open` | `agent`, `folder` (an alias), optional `prompt`, `model`, and the requesting session | `opened` with the session's name and id, or `refused` with a reason |
+| `send` | `to`, `text`, optional `replyTo`, and the sending session | `delivered` or `refused` |
+| `close` | `id` of a session this peer opened | `closed` or `refused` |
+
+A message longer than the RC message limit splits into numbered parts that share one `id`. A receiver
+drops an incomplete set after 60 s.
+
+### Carriers
+
+A protocol message is signed with the pair key, so its security doesn't depend on what carries it. A
+carrier only moves lines between two gateways. Claude Code's RC is the first and only carrier for now.
+
+The other CLIs were checked against their docs on 2026-11-13. Each has a vendor-relayed bridge that
+lets a person on a phone or a browser steer a local session: Codex `codex remote-control` and the
+ChatGPT app's remote connections, Antigravity `agy remote-control`, and Copilot CLI `--remote`. None
+documents messages from one session to another across machines, so none can carry protocol messages
+today. Codex's `app-server --listen` is excluded: it opens a listening port, and a non-loopback
+listener is unauthenticated by default. A later carrier must keep the rules above: no listening port,
+and account-bound and outbound-only.
+
+### Pairing
+
+Pairing uses RC to show that both machines are on the user's claude.ai account, and a code compared on
+both screens to show that the user has both machines in front of them. An attacker who controls the
+account alone can't pair.
+
+- The user runs `agent-tabs net pair` on machine A and `agent-tabs net accept` on machine B within 5
+  minutes. Neither machine takes pairing messages at any other time.
+- A's gateway sends `pair-offer` to B's gateway over RC: A's host id and an ephemeral Diffie-Hellman
+  public value in the RFC 7919 `ffdhe3072` group. B answers `pair-answer` with its own. The group needs
+  only Python's `pow`, so the server keeps its no-dependency rule.
+- Each side derives the shared secret, then the pair key with HKDF-SHA256 over the secret and the
+  transcript (both host ids and both public values).
+- Both machines print a 6-digit code from the same derivation. The user checks that the codes match
+  and types `y` on both. A mismatch, a timeout or a `n` on either side discards everything.
+- Both machines store the pair key in `~/.ide-agent-tabs/net/peers.json` (mode 0600). The ephemeral
+  values are discarded.
+
+Any number of machines can join. Every two machines that talk share their own pair key, so three
+machines hold three keys and four hold six:
+
+- Each new machine pairs with every machine it should reach, one pairing and one code check each.
+  Pairing with one machine grants nothing on any other: no machine introduces or vouches for another.
+- A message goes straight from the sending gateway to the receiving one. No machine relays for another,
+  so a machine sees only the messages addressed to it.
+- `agent-tabs net revoke <host>` on one machine ends that pair only. Removing a machine from all of
+  them means revoking it on each.
+- Each machine keeps its own receiving policy, and may give each peer different folders and agents.
+- `agent-tabs net peers` lists paired hosts. `revoke` deletes a key. `off` and `on` turn inbound
+  handling off and on.
+
+### Receiving policy
+
+`~/.ide-agent-tabs/net/policy.json` lives on the machine that does the work, and only the user or the
+`setup` skill on that machine writes it:
+
+```json
+{
+  "folders": { "news": "C:\\Projects\\News-Android" },
+  "agents": ["claude", "codex"],
+  "maxRemoteTabs": 4,
+  "allowArgs": false,
+  "permissionMode": null,
+  "remoteControlTabs": true,
+  "peers": { "<hostId>": { "folders": ["news"], "agents": ["codex"] } }
+}
+```
+
+- `peers` narrows the policy for one paired host: its `folders` and `agents` lists pick from the
+  top-level ones and can't add to them. A host not under `peers` gets the top-level policy.
+- A request names a folder alias, never a path. The server refuses an unknown alias, and a folder whose
+  real path (every link resolved) differs from the alias's real path.
+- With `allowArgs` false, a request carries no `args` and no `env`, so it can't pass a flag that skips
+  permission prompts.
+- `permissionMode` sets Claude Code's `--permission-mode` for remote tabs. `null` keeps the user's
+  settings, so a remote tab stops at a permission prompt.
+- `remoteControlTabs` starts each remote Claude Code tab with `--remote-control`, so the user can answer
+  its prompts from the Claude app.
+- A remote tab's first prompt starts with a fixed line: `Task from <session> on <host>, sent through
+  Agent Tabs. Apply your user's rules.`
+
+### Message flow
+
+- **Inbound.** The gateway's `session.receive` hook takes a line that starts `agent-tabs-net/1`,
+  returns `consumed`, and passes the line to the `agent_tabs_mod` op `net_in`. The server checks the
+  peer, the MAC, a `ts` within 5 minutes and an unused `nonce` (kept 10 minutes in `messages.db`), then
+  the policy and the rate limit. `open` runs the `open_tab` code and records `remote: {host, requester}`
+  in the new session's presence file. `send` stores a mailbox row from `<session>@<host>`. The reply
+  goes to an outbox table, and the request to `~/.ide-agent-tabs/net/audit.jsonl`.
+- **Outbound.** `send_message` and the mod's `send` take `<session>@<host>`; `open_tab` and `close_tab`
+  take `host`. The server signs the message and queues it in the outbox. The gateway's mod takes queued
+  lines every 2 s with `net_take`, sends each with native `SendMessage` to `agent-tabs-gw-<hostId>`,
+  then calls `net_ack`, or `net_release` when the send fails.
+- **Listing.** `list_sessions` and the `ListAgents` rewrite add each peer's sessions from its last
+  `inventory`, in a `<host> (remote)` group that shows the inventory's age.
+- A protocol line that reaches any session other than the gateway is plain text and does nothing.
+
+### Open questions (Phase 0)
+
+1. Does a session that `claude remote-control --spawn same-dir` starts load user plugins and run the
+   mod? Does `--settings` after `remote-control` reach it?
+2. Can a `session.receive` hook return `consumed` for a message from another machine? If not, the
+   gateway's model sees the line and passes it unchanged to a `net_in` tool; the MAC still blocks
+   forgery.
+3. What text reaches the receiver for a message from another machine, and how long can it be?
+4. Does an RC session keep its name across restarts?
+5. Can a `--bg` session use `--remote-control`, so the gateway needs no terminal tab?
 
 ## Security
 
