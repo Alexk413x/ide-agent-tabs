@@ -18,3 +18,9 @@ claude-plugin/tsconfig.json
 .venv/
 __pycache__/
 .ruff_cache/
+
+# Claude Code worktrees and per-developer plugin settings
+.claude/worktrees/
+.claude/*.local.md
+.claude/settings.local.json
+.kg-export.json
