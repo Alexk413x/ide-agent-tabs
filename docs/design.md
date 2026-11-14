@@ -20,7 +20,7 @@ This document is the contract every part builds against. Change it before you ch
 | Handoff to a new tab: the `handoff` tool and skill | Built | `claude-plugin/mcp/src/ide_agent_tabs/handoff.py`, `claude-plugin/skills/handoff/` |
 | Shared HTTP server for Claude Code sessions, its headers helper and start hook | Built | `claude-plugin/mcp/src/ide_agent_tabs/shared/`, `claude-plugin/mcp/launch/` |
 | Jev judgment tools in the MCP server, and the `jev` skill (optional) | Built | `claude-plugin/mcp/src/ide_agent_tabs/jev/`, `claude-plugin/skills/jev/`; later steps in [jev-integration.md](jev-integration.md) |
-| Network across one user's machines: hub, gateway, pairing and policy | Planned; see [Network (planned)](#network-planned) | — |
+| Network across one person's machines on a LAN: certificates, mutual TLS, grants | Planned; see [Network (planned)](#network-planned) | — |
 
 Claude Code sessions message each other with Claude Code's own `ListAgents` and `SendMessage`. Sessions
 of different agent CLIs message each other through the MCP server. See [Messaging](#messaging).
@@ -2453,232 +2453,231 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
 
 ## Network (planned)
 
-Not built. This section is the contract for working across machines. Phase 0 spikes must confirm the
-open questions below before any code depends on them.
+Not built. This section is the contract for working across one person's machines on a local network.
+Four reviewers (Claude Opus, Gemini through Antigravity CLI, Codex gpt-6.1-sol and the coordinating
+Claude session) agreed to it on 2026-11-14 after three rounds. The Phase 0 gates at the end must pass
+before any code depends on it. Accepting the design doesn't certify an implementation.
 
-### Goals and limits
+### Scope
 
-- From the Claude app, start a session on another machine you own and open agent tabs there.
-- From one machine, open a tab of any agent in a listed folder on another machine.
-- Let every agent session on every paired machine message every other one.
-- Only one person's machines, on one claude.ai account. Other people's machines are out of scope.
-
-Each later stage needs its own design and security review, and starts only after the stage before it
-passes its review:
-
-1. **One person's machines.** This section.
-2. **A team.** Two people pair two machines on purpose: they talk to each other and compare the
-   pairing code, as one person does across two screens. RC binds one account, so this stage needs a
-   carrier that crosses accounts and still opens no port. Each person keeps a receiving policy for
-   their own machine, and either side can revoke.
-3. **Public.** Machines of people who don't know each other. Not planned: discovery, spam, abuse and
-   impersonation each need their own controls, and the rules above forbid discovery.
+- Version 1: two or more machines of one person, on one local network. From one machine, open a Claude
+  Code or Codex tab in a granted folder on another, and let sessions on paired machines message each
+  other.
+- Later, each with its own design and review: a hub that starts sessions from the Claude app
+  (`claude remote-control` server mode), a Remote Control carrier, a short-code pairing helper, a team
+  stage where two people pair on purpose, and a separate OS user for containment. Public use isn't
+  planned.
+- Threats in scope: anyone on the LAN, a compromised paired machine, and a prompt injected into any
+  agent. Accepted and stated: malware running as the same OS user owns that machine and its keys.
 
 ### Security rules
 
 These hold for every install, because every user gets this code:
 
-- **Off by default.** Nothing runs until the user starts a hub or a gateway and pairs a machine. An
-  install that never pairs behaves as before.
-- **The smallest network surface.** No mDNS, broadcast, UPnP, LAN scan or relay of our own. The only
-  listener is the LAN carrier's (see [Carriers](#carriers)), which runs only after the user turns it
-  on, binds to one private address the user picks, and answers only paired machines. RC adds no
-  listener: it connects outbound to Anthropic and is bound to one claude.ai account.
-- **No discovery.** No registry, directory, beacon or telemetry lists hosts. Host ids are random and
-  live only in each paired machine's private files. A gateway sends nothing, not even an error, in
-  answer to a message from a host it hasn't paired with.
-- **Pair key on every message.** A sender must hold a pair key that the user approved on both machines
-  by comparing a code (see [Pairing](#pairing)). Over RC, the sender must also be on the same claude.ai
-  account. Over the LAN, the sender must also be on the paired machine's recorded private address.
-- **The receiver decides.** The machine that does the work checks every request against its own policy.
-  Nothing in a request widens it.
-- **Kill switch and audit.** `agent-tabs net off` and `agent-tabs net revoke <host>` take effect at once.
-  Every accepted and refused request goes to a local audit log.
+- **Off by default.** Nothing listens or dials until the user runs `net lan setup`, `net lan on` and
+  `net trust`. An install that never does so behaves as before. An update never turns it on.
+- **One listener, one private address.** No mDNS, broadcast, UPnP, LAN scan or relay. The only listener
+  binds one private address of a local interface, never `0.0.0.0`, `::` or a public address.
+- **No discovery.** Nothing lists or announces machines. The user gives each peer's address.
+- **Identity from certificates, checked by the user.** A peer is trusted only after the user imports
+  its certificate and confirms its full id from that machine's own screen.
+- **Pairing grants nothing.** Every capability is a local, per-peer grant.
+- **The receiver decides.** The machine that does the work checks every request against its own grants
+  and limits. Nothing in a request widens them.
 
-### Roles
+### Identity and pairing
 
-Each machine runs up to two Claude Code roles. Neither opens a port.
+- Each machine has one self-signed certificate with an ECDSA P-256 key, chosen for compatibility. Its
+  **device id** is the full SHA-256 of the DER certificate, written in base32 with check characters, as
+  Syncthing device ids are. The encoding is specified exactly, with test vectors. Check characters
+  catch typos only.
+- `agent-tabs net id` prints the full id and writes the public certificate to a file. The user copies
+  the file to the other machine by any channel and runs `agent-tabs net trust <cert file> --id <full id
+  read from the other machine's screen> --address <IP> --label <name>` there. It refuses unless the
+  file's DER hash equals the id. Prefixes and short forms are refused. No private key leaves its
+  machine, and no listener ever accepts an unknown certificate.
+- Labels are typed by the local user; nothing a peer sends becomes a label.
+- `net trust` for a known id with a new address changes only the address and says so. It prints the
+  peer's effective grants: none for a new peer.
+- A renewed certificate is a new id and needs `net trust` again. Grants never move automatically.
 
-| Role | Command | Folder | Does |
-|---|---|---|---|
-| Hub | `agent-tabs hub start`, which runs `claude remote-control --spawn same-dir --name "Agent Tabs hub (<host>)"` | `~/.ide-agent-tabs/hub/` | Takes sessions the user starts from the Claude app. Each session opens tabs in listed folders with `open_tab`. |
-| Gateway | `agent-tabs gateway start`, which opens one `claude --remote-control --name agent-tabs-gw-<hostId>` session | `~/.ide-agent-tabs/gateway/` | Carries protocol messages between machines. Its mod consumes them, so its model never reads them. |
+### Certificates and keys
 
-#### Hub at login
+- `agent-tabs net lan setup` creates the certificate once with `openssl` at an absolute path the user
+  confirms. It runs with an argument list and no shell, in a private working folder, with a timeout and
+  an environment without `OPENSSL_CONF`, `OPENSSL_MODULES` or other provider variables, using an
+  explicit configuration where one is needed. On Windows the environment keeps `SYSTEMROOT` and
+  `SYSTEMDRIVE`. Without a usable `openssl`, LAN mode stays off with instructions. The `cryptography`
+  package and a Windows-native generator are later options with their own review.
+- The key is generated encrypted with a random passphrase read from stdin: `openssl genpkey` with
+  `-aes-256-cbc -pass stdin`, then `openssl req -x509 -key … -passin stdin`. The server computes the
+  device id from the DER bytes and checks the result by loading it with `load_cert_chain`.
+- Certificate profile: SHA-256 signature, random serial, `basicConstraints=critical,CA:FALSE`,
+  `keyUsage=critical,digitalSignature`, `extendedKeyUsage=serverAuth,clientAuth`,
+  `subjectKeyIdentifier`, `notBefore` one day back, `notAfter` 30 years.
+- The passphrase is protected with user-scoped DPAPI on Windows and kept in a 0600 file elsewhere. It
+  reaches `load_cert_chain` through the password callback. No plaintext key file, and no passphrase on
+  a command line.
+- Windows follows Win32-OpenSSH's rule for private files: `net/` and its files allow only the user,
+  SYSTEM and Administrators, with no inheritance, set with `%SystemRoot%\System32\icacls.exe` by
+  absolute path and verified with `GetNamedSecurityInfoW`. Ownership is checked too. Files with any
+  other access are refused. macOS and Linux use a 0700 folder and 0600 files, with the owner checked
+  and symlinks refused. This covers keys, certificates, `policy.json`, `peers.json`, `net.db` and its
+  sidecars, temporary files and the audit log.
+- A `net/` folder inside a known sync folder (OneDrive, Dropbox, iCloud, Google Drive) gets a warning.
 
-The hub lets the user start work from the Claude app on a machine where no agent session runs. Something
-must still run to hear the app, and that is the hub's RC server: one process that connects outbound and
-runs no model until a session starts.
+### Transport
 
-- `agent-tabs hub install` registers the hub to start when the user logs in: a Scheduled Task on
-  Windows, a LaunchAgent on macOS, a systemd user unit on Linux. `agent-tabs hub uninstall` removes it.
-  Nothing installs it by default. The task restarts the server when it exits, because server mode
-  exits after about 10 minutes without a network connection. Claude Code documents no service or
-  login option of its own for server mode (checked 2026-11-13).
-- The hub folder must be trusted before the first login start, because the task has no terminal to
-  answer the trust prompt. `hub install` runs the trust step in a terminal first.
-- The user starts a session from the Claude app or claude.ai/code and picks the hub by name. The session
-  starts in the hub folder, reads the folder aliases from the hub's `CLAUDE.md`, and opens tabs with
-  `open_tab`.
-- A hub session is a remote request: the server applies the receiving policy to its `open_tab` calls as
-  it does to a peer's `open`, so it opens tabs only in listed folders, with listed agents and no
-  `args`. The server knows a hub session by `IDE_AGENT_TABS_HUB=1`, which `hub start` sets.
-- The policy limits `open_tab` only. A hub session is a full Claude Code session: it can run commands
-  and edit files as its permission mode allows, so the hub starts with the default mode, and its
-  permission prompts go to the Claude app. A permission mode that skips prompts would let a hub session
-  step around the policy.
-- A machine that is off, asleep or logged out can't start a hub. Waking a machine is out of scope.
-- The hub's RC server is reachable by anyone signed in to the user's claude.ai account. Turn on RC's
-  Trusted Devices, so only enrolled devices with a recent sign-in can reach it.
+- **Who dials.** Every machine with LAN on runs a listener. A machine with something to send opens a
+  TLS connection to the peer's listener, sends one request, reads one reply on the same connection and
+  closes it. A reply to an earlier message is a new request in the other direction.
+- **TLS context, built by hand** (never `create_default_context`): TLS 1.3 minimum;
+  `verify_mode = CERT_REQUIRED` on client and server; the trusted peer certificates are the only trust
+  anchors, with no system CAs; `check_hostname = False`, because a peer is named by its pinned
+  certificate rather than a DNS name, while certificate verification stays on; server contexts set
+  `num_tickets = 0`, since `OP_NO_TICKET` alone doesn't stop TLS 1.3 tickets; clients never supply a
+  reusable session; either side refuses `session_reused` before any request; no early data.
+- Never fall back to `CERT_NONE`, which would also stop the server asking for a client certificate. If
+  `VERIFY_X509_PARTIAL_CHAIN` is ever needed, that profile and context change gets its own review.
+- After the handshake, each side hashes the peer's DER certificate, looks the peer up by it, and
+  attaches that identity to every request. No request field names the sender. The first frame carries a
+  protocol version; an unknown version is refused.
+- With TLS, version 1 has no separate MAC layer, nonce store or clock window.
 
-The Python server makes every check. The mod passes protocol lines as opaque strings. Pair keys never
-reach the mod or a model.
+### Listener
 
-### Protocol messages
+- `agent-tabs net lan on --bind <private address>` starts the listener as its own process, separate from
+  the loopback MCP server. On Windows it sets `SO_EXCLUSIVEADDRUSE` before `bind`.
+- It hands each verified request, with the TLS-derived peer id, to the local server over loopback, with
+  a credential that authorizes network ingress only. Admission limits apply at that boundary as well.
+  Separate processes reduce shared-resource exhaustion; they don't remove it.
+- Limits: 8 connections, 2 per source, 5 s handshake, 30 s idle, 64 KiB requests. No fragmentation.
+- On Windows, the listener refuses to start on a network marked Public. Each accept checks a cached
+  network state, refreshed every 30 s and when the local address set changes. This reacts promptly, not
+  instantly; pinned mutual TLS carries the guarantee.
+- The Windows firewall rule is scoped to the port, the local address, the Private profile and the
+  trusted peers' addresses. Each change needs elevation.
 
-A protocol message is one line: `agent-tabs-net/1 <base64url JSON>`. The JSON holds `v`, `op`, `from`
-and `to` (host ids), `id`, `ts` (epoch milliseconds), `nonce` (16 random bytes, hex), `body`, and `mac`:
-HMAC-SHA256, with the pair key, over the key-sorted JSON of every other field.
+### Requests
 
-| `op` | `body` | Reply `op` |
-|---|---|---|
-| `pair-offer`, `pair-answer` | host id, Diffie-Hellman public value, `protocol`; unsigned, accepted only during pairing | `pair-answer` |
-| `hello` | `name`, `protocol` | `hello` |
-| `inventory` | none | `inventory`: folder aliases, installed agents, free capacity, live sessions |
-| `open` | `agent`, `folder` (an alias), optional `prompt`, `model`, and the requesting session | `opened` with the session's name and id, or `refused` with a reason |
-| `send` | `to`, `text`, optional `replyTo`, and the sending session | `delivered` or `refused` |
-| `close` | `id` of a session this peer opened | `closed` or `refused` |
+- Each request is one JSON object, parsed once: duplicate keys rejected at every depth, `NaN` and
+  `Infinity` rejected by a `parse_constant` callback that raises, unknown fields rejected, integers with
+  stated bounds, no booleans as integers, size and depth caps.
+- Every request has a request id; every reply names the request it answers.
+- `open` and `close` start or stop processes, so they use a durable record in `net.db`
+  (`synchronous=FULL`): peer, request id, request digest, state (`pending`, `dispatched`, `completed`,
+  `refused`), assigned tab id and policy generation. The `dispatched` state is written before the
+  launch is handed off. A repeated id returns the stored state and never runs again; the same id with a
+  different digest fails. After a crash, a `dispatched` record is reconciled against live tabs and never
+  relaunched. Records live 7 days, and a peer must not retry an older request.
+- `send` and `inventory` use a bounded in-memory map of the last 256 request ids per peer, so a
+  duplicate is possible after a restart; the mailbox's one-minute duplicate check and the per-peer
+  limits still apply.
+- The peer gets one generic `refused`; the reason goes to the local audit log.
 
-A message longer than the RC message limit splits into numbered parts that share one `id`. A receiver
-drops an incomplete set after 60 s.
+### Grants
 
-### Carriers
+`~/.ide-agent-tabs/net/policy.json` holds a grant per trusted peer, keyed by its device id. A new peer
+has none.
 
-A protocol message is signed with the pair key, so its security doesn't depend on what carries it. A
-carrier only moves lines between two gateways.
+- `folders`: aliases it may open tabs in. Each alias is pinned to the real path and file identity
+  (`st_dev`, `st_ino`; Windows fills them from the volume serial and file index) recorded when the user
+  adds it, and rechecked before dispatch. A path component that is a symlink or reparse point changed
+  since the grant is refused, as are UNC paths and network drives. A granted folder never auto-trusts a
+  project's hooks or MCP config for a remote tab.
+- `agents`: `claude` and `codex` only in version 1.
+- `models`: the models a remote open may name.
+- `send`: local sessions it may message. Default: sessions it opened.
+- Replies: an outbound message creates a reply grant for the tuple (local session generation, peer id,
+  addressed remote session id, outbound message id), for 24 hours. A send using it must name a `replyTo`
+  from that conversation and the same local recipient. It allows message delivery only, never open,
+  close, inventory or forwarding, and normal limits apply. A new local session doesn't inherit an
+  expired session's grant. The remote session id is still the peer machine's claim.
+- `inventory`: shows only what that peer may use, with no absolute paths.
+- Limits: `maxTabs`, `opensPerHour` and `messagesPerMinute`, counted by peer from server-owned launch
+  records, with reservations taken before launch, plus a global tab cap.
+- `close`: only tabs that peer opened.
+- `approveEachOpen`: optional; the local user approves each remote launch before it starts. This
+  approves the launch, not each command.
 
-The first carrier is a direct link between two machines on one local network, because it needs no
-account and no outside service. RC comes second.
+### Remote tabs
 
-#### LAN carrier
+Remote tabs run with permissions the receiving machine selects. Within those permissions an agent acts
+without asking; outside them it asks the local user or fails. The per-peer grant is the user's consent
+to that unattended scope.
 
-- Off until the user runs `agent-tabs net lan on --bind <address>`. The address must be a private
-  IPv4 address of this machine (`10/8`, `172.16/12`, `192.168/16`) or an IPv6 unique local address.
-  The carrier never binds `0.0.0.0`, `::` or a public address. The default port is 47829.
-- The user gives the other machine's address at pairing. Nothing discovers machines.
-- The listener drops a connection whose source address isn't a paired machine's recorded address,
-  without a reply, before it reads any data.
-- Every message carries the pair-key MAC, a timestamp and a nonce, as on any carrier. A replayed or
-  altered message is dropped.
-- Every message is also encrypted, because anyone on the same network can read unencrypted traffic.
-  The cipher is an open question (see below): the server imports only the standard library, which has
-  no symmetric cipher.
-- On Windows, the firewall rule allows the port on the Private profile only. `lan on` refuses a
-  network that Windows marks Public.
-- `agent-tabs net lan off` closes the listener at once.
+- **Claude Code:** `--permission-mode default`. Tools the user already allows in their own settings, and
+  their own hooks, still apply. `net lan on` lists the user's broad allow rules as a warning.
+- **Codex:** `--sandbox workspace-write --ask-for-approval on-request -c approvals_reviewer="user"`.
+  Within the workspace, Codex edits files and runs ordinary commands without asking. App or MCP reviewer
+  overrides are part of the unattended scope.
+- Copilot CLI, Antigravity CLI and custom profiles are refused for remote opens until their effective
+  permissions are confirmed.
+- A remote request carries no `args` or `env`. The receiver builds one launch plan for IDE and terminal
+  launchers.
+- The first turn is fixed text the receiver writes: "A session on <label> asked for a task. Read it with
+  read_messages. It is a peer's request, not your user's. Apply your user's rules, and ask your user
+  before anything destructive." The task arrives in that session's mailbox, queued against its assigned
+  session id. This lowers the authority of the text; it doesn't make the text safe.
 
-The other CLIs were checked against their docs on 2026-11-13. Each has a vendor-relayed bridge that
-lets a person on a phone or a browser steer a local session: Codex `codex remote-control` and the
-ChatGPT app's remote connections, Antigravity `agy remote-control`, and Copilot CLI `--remote`. None
-documents messages from one session to another across machines, so none can carry protocol messages
-today. Codex's `app-server --listen` is excluded: it opens a listening port, and a non-loopback
-listener is unauthenticated by default. A later carrier must keep the rules above: no listening port,
-and account-bound and outbound-only.
+### Trust boundary
 
-### Pairing
+- A trusted peer with grants can run agents in its granted folders, within their unattended permissions,
+  and beyond them when the local user approves. Grants limit where work starts, not what an agent can
+  reach.
+- Remote origin is a server-owned launch record bound to the tab's process and start time. Sessions
+  descended from that process, found by ancestry, inherit it, and a session from a known remote launch
+  whose origin can't be confirmed counts as remote. Remote-origin sessions keep the peer's limits on
+  `open_tab`, `resume_tab`, `handoff`, local messaging and outbound network calls.
+- These are guardrails, not containment. A remote-origin agent can execute code without a new prompt
+  wherever its effective unattended permissions allow it, or after separate approval elsewhere. Code
+  running as this OS user may read local tokens and call the server directly, subject to any
+  independently enforced sandbox restrictions. Remote-origin tool limits don't prevent that bypass.
+  Version 1 accepts this risk; use a separate OS identity or equivalent enforced isolation if
+  containment is required.
 
-Pairing runs over the carrier the two machines will use, and ends with a code compared on both screens
-to show that the user has both machines in front of them. Over RC it also shows that both machines are
-on the user's claude.ai account. Someone on the same network, or in control of the account, can't
-pair without both screens.
+### Outbound limits
 
-- The user runs `agent-tabs net pair <address of B>` on machine A and `agent-tabs net accept` on machine B within 5
-  minutes. Neither machine takes pairing messages at any other time.
-- A's gateway sends `pair-offer` to B's gateway over the carrier: A's host id and an ephemeral Diffie-Hellman
-  public value in the RFC 7919 `ffdhe3072` group. B answers `pair-answer` with its own. The group needs
-  only Python's `pow`, so the server keeps its no-dependency rule.
-- Each side derives the shared secret, then the pair key with HKDF-SHA256 over the secret and the
-  transcript (both host ids and both public values).
-- Both machines print a 6-digit code from the same derivation. The user checks that the codes match
-  and types `y` on both. A mismatch, a timeout or a `n` on either side discards everything.
-- Both machines store the pair key in `~/.ide-agent-tabs/net/peers.json` (mode 0600). The ephemeral
-  values are discarded.
+A local folder list decides which sessions the plugin lets send to peers, and each session may send at
+most 10 requests a minute. Both guard against a prompt-injected session using the tools. Code running as
+the user can bypass them; the receiving machine's grants and limits are the enforced boundary.
 
-Any number of machines can join. Every two machines that talk share their own pair key, so three
-machines hold three keys and four hold six:
+### Revoke and off
 
-- Each new machine pairs with every machine it should reach, one pairing and one code check each.
-  Pairing with one machine grants nothing on any other: no machine introduces or vouches for another.
-- A message goes straight from the sending gateway to the receiving one. No machine relays for another,
-  so a machine sees only the messages addressed to it.
-- `agent-tabs net revoke <host>` on one machine ends that pair only. Removing a machine from all of
-  them means revoking it on each.
-- Each machine keeps its own receiving policy, and may give each peer different folders and agents.
-- `agent-tabs net peers` lists paired hosts. `revoke` deletes a key. `off` and `on` turn inbound
-  handling off and on.
+- The local server is the single admission and dispatch authority. A reservation doesn't authorize a
+  later dispatch: the dispatcher takes the same lock as `net revoke` and `net off`, rechecks the current
+  policy and generation, durably records the dispatch intent, and hands the action off before it
+  releases the lock. The lock covers the handoff, never a running agent.
+- `net revoke <id>` and `net off` take that lock, raise the generation and cancel reservations not yet
+  handed off. An action already handed off is in flight; it may finish after the command returns and is
+  reported, not claimed as cancelled. A crash between the recorded intent and a confirmed handoff leaves
+  an uncertain action for reconciliation, never an automatic replay. Every process that can dispatch
+  uses this authority.
+- The listener rebuilds its trust context and closes connections from a revoked peer.
+- `net off` stops inbound and outbound LAN work and the listener. Existing tabs stay unless `--close` is
+  given. `revoke --close` closes the tabs that peer opened. Revoking on one machine doesn't remove trust
+  on another.
 
-### Receiving policy
+### Audit
 
-`~/.ide-agent-tabs/net/policy.json` lives on the machine that does the work, and only the user or the
-`setup` skill on that machine writes it:
+`net/audit.jsonl` holds structured lines: peer id, request id, operation, admission decision,
+completion outcome, reason code, policy generation, tab id and time. It holds no prompt or message text.
+It keeps two files of 5 MB. Handshake failures are logged at most once per source per minute, and that
+map is bounded. If the audit can't be written, remote requests are refused.
 
-```json
-{
-  "folders": { "news": "C:\\Projects\\News-Android" },
-  "agents": ["claude", "codex"],
-  "maxRemoteTabs": 4,
-  "allowArgs": false,
-  "permissionMode": null,
-  "remoteControlTabs": true,
-  "peers": { "<hostId>": { "folders": ["news"], "agents": ["codex"] } }
-}
-```
+### Phase 0 gates
 
-- `peers` narrows the policy for one paired host: its `folders` and `agents` lists pick from the
-  top-level ones and can't add to them. A host not under `peers` gets the top-level policy.
-- A request names a folder alias, never a path. The server refuses an unknown alias, and a folder whose
-  real path (every link resolved) differs from the alias's real path.
-- With `allowArgs` false, a request carries no `args` and no `env`, so it can't pass a flag that skips
-  permission prompts.
-- `permissionMode` sets Claude Code's `--permission-mode` for remote tabs. `null` keeps the user's
-  settings, so a remote tab stops at a permission prompt.
-- `remoteControlTabs` starts each remote Claude Code tab with `--remote-control`, so the user can answer
-  its prompts from the Claude app.
-- A remote tab's first prompt starts with a fixed line: `Task from <session> on <host>, sent through
-  Agent Tabs. Apply your user's rules.`
+All four pass before code depends on this section:
 
-### Message flow
-
-- **Inbound.** The gateway's `session.receive` hook takes a line that starts `agent-tabs-net/1`,
-  returns `consumed`, and passes the line to the `agent_tabs_mod` op `net_in`. The server checks the
-  peer, the MAC, a `ts` within 5 minutes and an unused `nonce` (kept 10 minutes in `messages.db`), then
-  the policy and the rate limit. `open` runs the `open_tab` code and records `remote: {host, requester}`
-  in the new session's presence file. `send` stores a mailbox row from `<session>@<host>`. The reply
-  goes to an outbox table, and the request to `~/.ide-agent-tabs/net/audit.jsonl`.
-- **Outbound.** `send_message` and the mod's `send` take `<session>@<host>`; `open_tab` and `close_tab`
-  take `host`. The server signs the message and queues it in the outbox. The gateway's mod takes queued
-  lines every 2 s with `net_take`, sends each with native `SendMessage` to `agent-tabs-gw-<hostId>`,
-  then calls `net_ack`, or `net_release` when the send fails.
-- **Listing.** `list_sessions` and the `ListAgents` rewrite add each peer's sessions from its last
-  `inventory`, in a `<host> (remote)` group that shows the inventory's age.
-- A protocol line that reaches any session other than the gateway is plain text and does nothing.
-
-### Open questions (Phase 0)
-
-0. **LAN encryption.** Python's standard library has TLS but can't make a certificate, and has no
-   symmetric cipher. Options: TLS with a certificate made by the `openssl` command at pairing and pinned
-   by both sides; an optional `cryptography` dependency for LAN mode only; or TLS-PSK keyed by the pair
-   key, which needs Python 3.13. Decide before any LAN code. A cipher written for this project is not
-   an option.
-
-1. Does a session that `claude remote-control --spawn same-dir` starts load user plugins and run the
-   mod? Does `--settings` after `remote-control` reach it?
-2. Can a `session.receive` hook return `consumed` for a message from another machine? If not, the
-   gateway's model sees the line and passes it unchanged to a `net_in` tool; the MAC still blocks
-   forgery.
-3. What text reaches the receiver for a message from another machine, and how long can it be?
-4. Does an RC session keep its name across restarts?
-5. Can a `--bg` session use `--remote-control`, so the gateway needs no terminal tab?
+1. TLS: the supported Python builds with their linked OpenSSL, certificates from each supported
+   generator, `CERT_REQUIRED` both ways, exact pins, and negative tests for missing, unknown and wrong
+   certificates and for session reuse. A combination that fails leaves LAN mode off; no compatibility
+   workarounds just to fill the matrix.
+2. Key generation: the `genpkey` and `req` commands above, with `-addext`, EC keys and stdin
+   passphrases, on each supported OS's `openssl` or LibreSSL.
+3. Permissions: the Claude Code and Codex settings above, tested for what they do against the installed
+   versions, including whether `approvals_reviewer` exists.
+4. Folder identity: `st_dev` and `st_ino` stability and symlink and reparse-point detection on Windows.
 
 ## Security
 

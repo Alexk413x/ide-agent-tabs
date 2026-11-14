@@ -24,3 +24,4 @@ __pycache__/
 .claude/*.local.md
 .claude/settings.local.json
 .kg-export.json
+.claude/scratch/
