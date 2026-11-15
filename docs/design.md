@@ -2463,7 +2463,10 @@ before any code depends on it. Accepting the design doesn't certify an implement
 - Version 1: two or more machines of one person, on one local network. From one machine, open a Claude
   Code or Codex tab in a granted folder on another, and let sessions on paired machines message each
   other.
-- LAN mode is the default and needs no outside tool.
+- One setting, `network` in `config.json`, picks the mode: `off` (the default: today's single-machine
+  tooling, nothing beyond `127.0.0.1`), `lan` or `tailscale`. Team mode is an addition to `lan` or
+  `tailscale`, not a separate value. Only the `net` commands change the setting; an update never does.
+- LAN mode is the first networked mode and needs no outside tool.
 - Next, with its own review: **Tailscale mode**, a supported option for reaching home machines from
   another network. The listener binds the machine's Tailscale address instead of a LAN address, so
   paired machines reach each other with no open port. The design recommends Tailnet Lock and a
