@@ -2488,8 +2488,9 @@ before any code depends on it. Accepting the design doesn't certify an implement
     and to that peer but keeps its certificate and grants, and `net resume <peer>` restores them.
     `net trust … --for <duration>` makes a pairing expire on its own. `net revoke` stays the permanent
     removal. Pause and expiry go through the same lock as revoke.
-- A separate project, not part of this section: letting people contribute machines and resources to a
-  public shared project. It is public-facing and needs its own design, threat model and review.
+- A separate project, not part of this section: a lighter plugin, or a separate build, that connects to
+  one specific public project and contributes AI compute to it. It is public-facing and needs its own
+  design, threat model and review.
 - Later, each with its own design and review: a hub that starts sessions from the Claude app
   (`claude remote-control` server mode), a Remote Control carrier, a short-code pairing helper, a team
   stage where two people pair on purpose, and a separate OS user for containment. Public use isn't
