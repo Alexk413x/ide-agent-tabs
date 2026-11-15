@@ -2589,6 +2589,12 @@ These hold for every install, because every user gets this code:
 
 - `agent-tabs net lan on --bind <private address>` starts the listener as its own process, separate from
   the loopback MCP server. On Windows it sets `SO_EXCLUSIVEADDRUSE` before `bind`.
+- The listener needs no agent session on its machine. When a verified request arrives and no local
+  server runs, it starts the shared server the way the headers helper does, so a remote `open` works on
+  a machine where nothing else runs.
+- `net lan on --at-login` also registers a login task for the listener (a Scheduled Task on Windows, a
+  LaunchAgent on macOS, a systemd user unit on Linux). It is a widening command. `net off` removes the
+  task. The machine must be on and logged in; waking a sleeping machine is out of scope.
 - It hands each verified request, with the TLS-derived peer id, to the local server over loopback, with
   a credential that authorizes network ingress only. Admission limits apply at that boundary as well.
   Separate processes reduce shared-resource exhaustion; they don't remove it.
