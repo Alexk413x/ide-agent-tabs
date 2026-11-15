@@ -2516,13 +2516,20 @@ design doesn't certify the implementation.
 
 These hold for every install, because every user gets this code:
 
-- **Off by default.** Nothing listens or dials until the user runs `net lan setup`, `net lan on` and
-  `net trust`. An install that never does so behaves as before. An update never turns it on.
-- **One listener, one private address.** No mDNS, broadcast, UPnP, LAN scan or relay. The only listener
-  binds one private address of a local interface, never `0.0.0.0`, `::` or a public address.
-- **No discovery.** Nothing lists or announces machines. The user gives each peer's address.
-- **Identity from certificates, checked by the user.** A peer is trusted only after the user imports
-  its certificate and confirms its full id from that machine's own screen.
+- **Off by default.** Nothing listens, dials or answers discovery until the user runs `net pair` (or
+  the manual `net lan setup`, `net trust` and `net lan on`). An install that never does so behaves as
+  before. An update never turns it on.
+- **Private addresses only.** Every socket binds a private address of a local interface, never
+  `0.0.0.0`, `::` or a public address. No UPnP, relay or port mapping. Discovery is link-local UDP on
+  the bound interface's subnet only.
+- **Discovery shows, never trusts.** A machine answers discovery only while its pairing window is open,
+  or always when the user sets `discoverable: always`. An answer lists a device name and address; it
+  never trusts, grants or connects anything.
+- **Private networks by default.** Pairing, discovery and the listener run only on networks the OS marks
+  Private, unless the user sets `allowPublicNetworks`. Pinned mutual TLS is the guarantee on either.
+- **Identity from certificates, checked by a person on both machines.** A peer is trusted only after a
+  person confirms a matching code on both machines' screens (pairing), or imports its certificate and
+  types its full id from that machine's screen (manual trust).
 - **Pairing grants nothing.** Every capability is a local, per-peer grant.
 - **The receiver decides.** The machine that does the work checks every request against its own grants
   and limits. Nothing in a request widens them.
@@ -2542,6 +2549,85 @@ These hold for every install, because every user gets this code:
 - `net trust` for a known id with a new address changes only the address and says so. It prints the
   peer's effective grants: none for a new peer.
 - A renewed certificate is a new id and needs `net trust` again. Grants never move automatically.
+- `net trust` is the manual fallback. `net pair` (below) is the normal path.
+
+### Pairing
+
+`agent-tabs net pair` replaces the four manual commands with one, run on both machines. It follows
+Bluetooth Secure Simple Pairing's numeric comparison: each machine shows the same six digits, and a
+person confirms them on both. The digits come from a commit-then-reveal exchange, so an attacker in the
+middle gets one guess at a 1-in-a-million match per pairing attempt (Vaudenay, "Secure Communications
+over Insecure Channels Based on Short Authenticated Strings", 2005; the same bound as Bluetooth and ZRTP).
+It needs only SHA-256, so the server keeps its standard-library rule; a PAKE would need elliptic-curve
+code the standard library doesn't have.
+
+1. **Prepare.** `net pair` creates the identity if there is none, as `lan setup` does. It finds
+   `openssl` itself (Git for Windows' copy on Windows, then the PATH elsewhere) and shows the path in the
+   confirmation. It checks the network: on a Public network without `allowPublicNetworks` it stops and
+   says how to mark the network Private. It picks the private address of the interface with the default
+   route, or the one given with `--bind`.
+2. **Open the window.** It listens on the pairing port (`47830`, TCP) and answers discovery on the same
+   UDP port, for 5 minutes, on that address only. The window closes after one pairing attempt, whether
+   it succeeds or not, and at the timeout.
+3. **Find the other machine.** It sends a discovery query and lists the machines that answer, each as
+   `<device name>  <IP>  <first id group>`, refreshing every 2 seconds. The person picks the other
+   machine on one side (or types its IP with `--peer`). That side dials the other's pairing port. The
+   other side shows "<device name> <IP> wants to pair" and continues only when the person there agrees.
+4. **Exchange.** Over the pairing connection (TCP, the existing frame format):
+   - the dialer sends its certificate and `C = SHA-256("atp1 commit" ‖ nonce_d ‖ cert_d)`, with a
+     32-byte random nonce;
+   - the listener sends its certificate and its own 32-byte nonce;
+   - the dialer sends `nonce_d`; the listener checks it against `C`.
+   - Both compute `SHA-256("atp1 sas" ‖ cert_d ‖ cert_l ‖ nonce_d ‖ nonce_l)` and show its first 20
+     bits as six decimal digits, with the other machine's name, IP and full device id.
+5. **Confirm on both screens.** Each person checks that both screens show the same digits and types
+   `yes`. A side writes the trust entry only after its own `yes` and the other side's `confirmed`
+   frame. Any `no`, a mismatch, a timeout or a dropped connection ends the window on both sides with
+   nothing written.
+6. **Grant and turn on.** The same command then offers grants for that peer, defaulting to none: one
+   folder and one agent, picked from a numbered list, or skip. If the folder isn't trusted in that
+   agent yet, it offers to trust it there. Then it turns the listener on (`net lan on`, with the Windows
+   firewall rule and UAC), and offers `--at-login`. Each step is its own `yes`.
+
+Rules:
+
+- The digits, the nonces and the commitment never leave the two terminals. The command's output to a
+  caller that isn't the interactive terminal holds none of them, and no MCP tool or mod line carries
+  them. An agent can't fill them in.
+- `net pair` is a widening command. Without an interactive terminal (an agent, or Claude Code's `!`
+  prompt) it opens a new terminal window running itself and returns "confirm in the window that
+  opened"; the person confirms there.
+- The address each side records for the other is the address of the pairing connection.
+- Device names are the host name by default (`deviceName` sets another), are at most 32 characters,
+  and render as escaped data. A name never becomes a label without the local person's choice; the
+  default label is the name lowercased to `a-z0-9-`.
+- A machine with an open window accepts one connection; a second dialer is refused. Discovery answers
+  are rate-limited to 4 per second per source.
+
+### Discovery
+
+- Query: a UDP datagram to the subnet broadcast address of the bound interface, port `47830`:
+  `{"v": 1, "q": "pair", "n": <16-byte random hex>}`. Answer, unicast to the sender:
+  `{"v": 1, "n": <same>, "name": …, "id": <first id group>, "port": 47830, "open": true|false}`.
+- A machine answers only queries from a private source address on its own subnet, and only while its
+  window is open, or with `discoverable: always` (then `open: false` outside a window). Off by default.
+- Broadcast over mDNS (RFC 6762): one query and one answer need no multicast group membership, no
+  responder library and no name conflicts, and both are equally link-local.
+- **Locating a moved peer.** When a connection to a peer's recorded address fails, the client sends
+  `{"v": 1, "q": "where", "n": …, "h": SHA-256(<peer's device id> ‖ n)}`. Only that peer can recognise
+  the hash, and it answers with its address while `network` is `lan`. The client then connects with
+  pinned mutual TLS; only a successful handshake updates the recorded address. The machine's own bind
+  follows its interface: with `bind: auto`, the listener rebinds when that interface's address changes.
+- The Windows firewall rule allows the Private profile (and Public with `allowPublicNetworks`) from
+  `LocalSubnet` to the listener's port and program, so an address change needs no new rule and no UAC
+  prompt. Pinned mutual TLS decides who gets in.
+
+### Running the command
+
+- `net pair`, `net status` and the other commands work as `agent-tabs …` in PowerShell, cmd and POSIX
+  shells: the session-start hook writes a small `agent-tabs` shim (`.cmd`, `.ps1` and `sh`) into
+  `~/.ide-agent-tabs/bin`, pointing at the current install, and `net pair` offers to add that folder to
+  the user's PATH.
 
 ### Certificates and keys
 
@@ -2636,11 +2722,12 @@ These hold for every install, because every user gets this code:
   a credential that authorizes network ingress only. Admission limits apply at that boundary as well.
   Separate processes reduce shared-resource exhaustion; they don't remove it.
 - Limits: 8 connections, 2 per source, 5 s handshake, 30 s idle, 64 KiB requests. No fragmentation.
-- On Windows, the listener refuses to start on a network marked Public. Each accept checks a cached
-  network state, refreshed every 30 s and when the local address set changes. This reacts promptly, not
-  instantly; pinned mutual TLS carries the guarantee.
-- The Windows firewall rule is scoped to the port, the local address, the Private profile and the
-  trusted peers' addresses. Each change needs elevation.
+- On Windows, the listener refuses to start on a network marked Public, unless `allowPublicNetworks` is
+  set. Each accept checks a cached network state, refreshed every 30 s and when the local address set
+  changes. This reacts promptly, not instantly; pinned mutual TLS carries the guarantee.
+- The Windows firewall rule is scoped to the port, the listener's program, the Private profile (and
+  Public with `allowPublicNetworks`) and `LocalSubnet` (see Discovery). Creating or changing it needs
+  elevation.
 
 ### Requests
 
@@ -2829,7 +2916,10 @@ Per machine, in the `network` section of `config.json`:
 | Key | Default | Meaning |
 |---|---|---|
 | `network` | `off` | `off` or `lan`; `tailscale` in a later stage |
-| `bind` | none | The listener's private address; in `tailscale` mode (later stage), the machine's tailnet address |
+| `bind` | none | The listener's private address, or `auto` to follow the default-route interface; in `tailscale` mode (later stage), the machine's tailnet address |
+| `deviceName` | host name | The name other machines see in discovery and pairing |
+| `discoverable` | `pairing` | `pairing` answers discovery only while a pairing window is open; `always` answers whenever `network` is `lan` |
+| `allowPublicNetworks` | `false` | Lets pairing, discovery and the listener run on networks the OS marks Public |
 | `port` | `47829` | The listener's port |
 | `openssl` | none | The confirmed absolute path used by `net lan setup` |
 | `outboundFolders` | empty | Local folders whose sessions may send to peers |
