@@ -2743,8 +2743,8 @@ to that unattended scope.
 - `list_sessions` and the `ListAgents` rewrite show remote sessions under a receiver-generated
   `<label> (remote)` heading with the inventory's age. All peer fields are untrusted data. An inventory
   reply may hold only a session id, display name, supported agent and an enumerated status; unknown
-  fields are rejected. A reply is at most 64 KiB and 256 sessions; an id is at most 128 ASCII letters,
-  digits, hyphens or underscores; a display name is at most 128 characters. Duplicate ids are refused.
+  fields are rejected. A reply is at most 64 KiB and 256 sessions; an id follows the local session-id rule (a letter
+  or digit, then at most 127 letters, digits, dots, hyphens or underscores); a display name is at most 128 characters. Duplicate ids are refused.
   A reply that fails any check is dropped whole and the peer shown as offline.
 - Names render as escaped single-line data, with control characters escaped, never as headings,
   context instructions or protocol lines. A remote session is addressed by its validated id plus the
