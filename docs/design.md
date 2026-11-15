@@ -2463,6 +2463,12 @@ before any code depends on it. Accepting the design doesn't certify an implement
 - Version 1: two or more machines of one person, on one local network. From one machine, open a Claude
   Code or Codex tab in a granted folder on another, and let sessions on paired machines message each
   other.
+- Next, with its own review: an overlay network mode, where the listener binds the machine's address on
+  a private overlay network instead of a LAN address, so paired machines reach each other from any
+  network with no open port. Agent Tabs doesn't integrate with any one overlay. Candidates are
+  Tailscale (with Tailnet Lock), Headscale, NetBird, Nebula, ZeroTier and plain WireGuard. Everything
+  else in this section stays the same: the overlay is an extra layer, not a replacement for pinned TLS
+  and grants.
 - Later, each with its own design and review: a hub that starts sessions from the Claude app
   (`claude remote-control` server mode), a Remote Control carrier, a short-code pairing helper, a team
   stage where two people pair on purpose, and a separate OS user for containment. Public use isn't
