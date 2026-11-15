@@ -2477,7 +2477,7 @@ before any code depends on it. Accepting the design doesn't certify an implement
   - Trust is per person as well as per machine. Both people agree to each pairing, and either can
     revoke it.
   - A teammate's machine starts with no grants, like any peer. Grants name the person, and the local
-  user sees which person and machine a request came from.
+    user sees which person and machine a request came from.
   - Each person's agents run under that person's own accounts and subscriptions on their own machines.
     Machines share work and messages, never credentials.
   - A teammate's agent is a peer whose prompts can be injected, so their messages and tasks get the same
