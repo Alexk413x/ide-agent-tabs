@@ -27,7 +27,7 @@ _ALIAS = ALIAS
 _DEVICE_ID = re.compile(r"[A-Za-z0-9-]{1,96}")
 _SESSION_ID = SESSION_ID
 _MAX_MODEL_CHARS = 128
-_CONFIG_KEYS = frozenset({"network", "bind", "port", "openssl", "outboundFolders", "maxRemoteTabs"})
+_CONFIG_KEYS = frozenset({"network", "bind", "port", "openssl", "outboundFolders", "maxRemoteTabs", "deviceName"})
 _PEER_KEYS = frozenset(
     {"label", "address", "folders", "agents", "models", "send", "maxTabs", "opensPerHour", "messagesPerMinute", "approveEachOpen"}
 )

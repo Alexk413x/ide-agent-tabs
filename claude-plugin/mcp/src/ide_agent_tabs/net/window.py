@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import ntpath
 import os
 import posixpath
@@ -21,8 +22,11 @@ MAX_CALLER_CHARS = 40
 FALLBACK_CALLER = "an unknown program"
 
 _INVITATION = re.compile(r"atp1-invite:[A-Za-z0-9_-]+")
+_ADDRESS = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
+_MANUAL_TOKEN = re.compile(r"[A-Z2-7]{6}")
 _CALLER_UNSAFE = re.compile(r"[^A-Za-z0-9 ._-]+")
 _JOIN = ("net", "pair", "--join")
+_PEER = ("net", "pair", "--peer")
 _ALLOWED = (
     ("net", "pair"),
     ("net", "pair", "--invite"),
@@ -70,8 +74,25 @@ def validate_invitation(invitation: str) -> str:
     return invitation
 
 
+def validate_peer(address: str, token: str) -> tuple[str, str]:
+    try:
+        if not isinstance(address, str) or _ADDRESS.fullmatch(address) is None:  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise ValueError
+        ipaddress.IPv4Address(address)
+    except ValueError as error:
+        raise WindowError("--peer must be a numeric IPv4 address") from error
+    if not isinstance(token, str) or _MANUAL_TOKEN.fullmatch(token) is None:  # pyright: ignore[reportUnnecessaryIsInstance]
+        raise WindowError("--token must be 6 letters and digits 2 to 7")
+    return address, token
+
+
 def _arguments(subcommand: Sequence[str], invitation: str | None) -> list[str]:
     key = tuple(subcommand)
+    if len(key) == 6 and key[:3] == _PEER and key[4] == "--token":
+        if invitation is not None:
+            raise WindowError("agent-tabs net pair --peer takes no invitation")
+        address, token = validate_peer(key[3], key[5])
+        return [*_PEER, address, "--token", token]
     if key not in _ALLOWED:
         raise WindowError(f"agent-tabs {' '.join(subcommand)} is not a command that opens in its own window")
     if key == _JOIN:
@@ -88,7 +109,7 @@ def _caller(text: str) -> str:
     return cleaned[:MAX_CALLER_CHARS].strip() or FALLBACK_CALLER
 
 
-def _console_interpreter(interpreter: str) -> str:
+def console_interpreter(interpreter: str) -> str:
     if os.path.basename(interpreter).lower() == "pythonw.exe":
         sibling = os.path.join(os.path.dirname(interpreter), "python.exe")
         if os.path.isfile(sibling):
@@ -176,7 +197,7 @@ def open_command_window(
     cwd = env.user_home
     try:
         if env.platform == "win32":
-            command = [_console_interpreter(interpreter), "-I", "-S", "-c", _WINDOWS_HOLD, launch_script, *arguments]
+            command = [console_interpreter(interpreter), "-I", "-S", "-c", _WINDOWS_HOLD, launch_script, *arguments]
             _spawn_windows(command, variables, cwd, start)
         else:
             command = _terminal_command(env, arguments, variables, which)

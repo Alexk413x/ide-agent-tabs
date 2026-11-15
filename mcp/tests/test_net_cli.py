@@ -9,7 +9,6 @@ import sys
 import tempfile
 import threading
 import unittest
-from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -20,8 +19,10 @@ from ide_agent_tabs.net.cli import Services
 from ide_agent_tabs.net.client import peer_cert_path
 from ide_agent_tabs.net.firewall import FirewallError
 from ide_agent_tabs.net.identity import format_digest, parse_device_id
+from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
 from ide_agent_tabs.net.listener import listener_file, log_file, read_listener, stop_file, write_atomically
 from ide_agent_tabs.net.login_task import LoginTaskError
+from ide_agent_tabs.net.pairing import Limits
 from ide_agent_tabs.net.policy import PeerGrant, Policy, load_policy, policy_path, save_policy
 from ide_agent_tabs.net.private_files import check_private
 from ide_agent_tabs.net.store import NetStore, db_path
@@ -40,7 +41,12 @@ class Harness:
         self.spawned: list[tuple[str, int]] = []
         self.events: list[str] = []
         self.logins: list[str] = []
-        self.firewall: list[tuple[str, int, tuple[str, ...]]] = []
+        self.firewall: list[tuple[str, str, str]] = []
+        self.interface_error: Exception | None = None
+        self.stale_rule = ""
+        self.stale_error: Exception | None = None
+        self.stale_checks = 0
+        self.unsupported: str | None = None
         self.login_error: Exception | None = None
         self.firewall_error: Exception | None = None
         self.firewall_removals = 0
@@ -58,6 +64,9 @@ class Harness:
             "login_status": lambda _home: "none",
             "apply_firewall": self._apply_firewall,
             "remove_firewall": self._remove_firewall,
+            "remove_stale_pairing_rule": self._remove_stale,
+            "interface_for": self._interface_for,
+            "unsupported_reason": lambda: self.unsupported,
             "user_home": self.user_home,
             "env": {},
             "start_wait_s": 2.0,
@@ -89,12 +98,23 @@ class Harness:
             raise self.login_error
         return "Removed the login task."
 
-    def _apply_firewall(self, bind: str, port: int, peers: Sequence[str]) -> str:
+    def _interface_for(self, address: str) -> InterfaceInfo:
+        if self.interface_error is not None:
+            raise self.interface_error
+        return InterfaceInfo("Ethernet", address, 24, ".".join(address.split(".")[:3]) + ".0/24", "Private", True)
+
+    def _apply_firewall(self, bind: str, subnet: str, alias: str) -> str:
         self.events.append("firewall")
         if self.firewall_error is not None:
             raise self.firewall_error
-        self.firewall.append((bind, port, tuple(peers)))
+        self.firewall.append((bind, subnet, alias))
         return "Created the firewall rule."
+
+    def _remove_stale(self) -> str:
+        self.stale_checks += 1
+        if self.stale_error is not None:
+            raise self.stale_error
+        return self.stale_rule
 
     def _remove_firewall(self) -> str:
         self.events.append("remove-firewall")
@@ -517,7 +537,7 @@ class LanTest(CliTestCase):
         self.assertEqual(self.h.logins, [self.a])
         self.assertIn("Registered the login task.", self.h.text)
         self.assertIn("At login", os.linesep.join(self.h.confirmed[0]))
-        self.assertEqual(self.h.firewall, [("10.0.0.5", 47829, ())])
+        self.assertEqual(self.h.firewall, [("10.0.0.5", "10.0.0.0/24", "Ethernet")])
         self.assertIn("The listener runs", self.h.text)
         self.assertEqual(self.h.notices, ["LAN network turned on at 10.0.0.5"])
         self.assertIn("lan-on", Path(log_file(self.a, "cli.log")).read_text())
@@ -542,26 +562,31 @@ class LanTest(CliTestCase):
         self.assertIn("Peers can connect only when the firewall allows them", self.h.errors)
         self.assertEqual(len(self.h.spawned), 1)
 
-    def test_on_gives_the_firewall_the_trusted_peer_addresses(self) -> None:
+    def test_on_scopes_the_rule_to_the_interface_subnet_not_to_peer_addresses(self) -> None:
         self.trust_b("192.168.1.20", "laptop")
         self.assertEqual(self.h.run("lan", "on", "--bind", "10.0.0.5"), 0, self.h.errors)
-        self.assertEqual(self.h.firewall, [("10.0.0.5", 47829, ("192.168.1.20",))])
+        self.assertEqual(self.h.firewall, [("10.0.0.5", "10.0.0.0/24", "Ethernet")])
 
-    def test_trust_and_revoke_recreate_the_rule_only_while_the_network_is_on(self) -> None:
+    def test_trust_and_revoke_leave_the_firewall_alone(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5"}}))
         self.trust_b("192.168.1.20", "laptop")
-        self.assertEqual(self.h.firewall, [])
-        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5"}}))
         self.assertEqual(self.h.run(*trust_args(cert_of(self.b), self.b_id, "192.168.1.21", "laptop")), 0, self.h.errors)
-        self.assertEqual(self.h.firewall, [("10.0.0.5", 47829, ("192.168.1.21",))])
         self.assertEqual(self.h.run("revoke", "laptop"), 0, self.h.errors)
-        self.assertEqual(self.h.firewall[-1], ("10.0.0.5", 47829, ()))
+        self.assertEqual(self.h.firewall, [])
+        self.assertEqual(self.h.firewall_removals, 0)
 
-    def test_a_declined_prompt_on_trust_keeps_the_trust(self) -> None:
-        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5"}}))
-        self.h.firewall_error = FirewallError("the Windows prompt for administrator rights was declined")
-        self.assertEqual(self.h.run(*trust_args(cert_of(self.b), self.b_id)), 0, self.h.errors)
-        self.assertEqual(len(load_policy(self.a).peers), 1)
-        self.assertIn("declined", self.h.errors)
+    def test_on_keeps_going_when_the_interface_cannot_be_described(self) -> None:
+        self.h.interface_error = InterfaceError("Windows has no network interface with the address 10.0.0.5")
+        self.assertEqual(self.h.run("lan", "on", "--bind", "10.0.0.5"), 0, self.h.errors)
+        self.assertIn("no network interface", self.h.errors)
+        self.assertEqual(self.h.firewall, [])
+        self.assertEqual(len(self.h.spawned), 1)
+
+    def test_on_creates_no_rule_for_a_custom_port(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"port": 5000}}))
+        self.assertEqual(self.h.run("lan", "on", "--bind", "10.0.0.5"), 0, self.h.errors)
+        self.assertIn("not the listener port", self.h.errors)
+        self.assertEqual(self.h.firewall, [])
 
     def test_on_without_a_terminal_changes_nothing(self) -> None:
         harness = Harness(self, self.a, confirm=confirm.confirm)
@@ -625,7 +650,53 @@ class StatusAndDispatchTest(CliTestCase):
         self.assertIn(f"identity: {device_of(self.a)}", self.h.text)
         self.assertIn("listener: not running", self.h.text)
         self.assertIn("login task: none", self.h.text)
+        self.assertIn("pairing: available", self.h.text)
+        self.assertNotIn("unsupported", self.h.text)
+        self.assertFalse(os.path.exists(os.path.join(self.a, "net", "pairing.json")))
+        self.assertFalse(os.path.exists(os.path.join(self.a, "net", "pairing.json.lock")))
         self.assertFalse(os.path.exists(policy_path(self.a)))
+
+    def test_status_shows_why_the_network_feature_is_unsupported(self) -> None:
+        self.h.unsupported = "User Account Control is off on this computer."
+        self.assertEqual(self.h.run("status"), 0)
+        self.assertIn("unsupported: User Account Control is off on this computer.", self.h.text)
+
+    def test_status_shows_the_pairing_lockout(self) -> None:
+        limits = Limits(self.a)
+        for _ in range(3):
+            limits.record_failure()
+        self.assertEqual(self.h.run("status"), 0)
+        self.assertRegex(self.h.text, r"pairing: pairing is locked for \d+ more minutes")
+        self.assertIn("net trust", self.h.text)
+
+    def test_status_removes_a_stale_pairing_rule_and_says_so(self) -> None:
+        self.h.stale_rule = 'Removed the Windows firewall rule "Agent Tabs pairing".'
+        self.assertEqual(self.h.run("status"), 0)
+        self.assertEqual(self.h.stale_checks, 1)
+        self.assertIn("Removed the Windows firewall rule", self.h.text)
+        self.h.out.clear()
+        self.h.stale_rule = "No firewall rule is present."
+        self.assertEqual(self.h.run("status"), 0)
+        self.assertNotIn("No firewall rule", self.h.text)
+
+    def test_status_leaves_the_rule_of_an_open_pairing_window(self) -> None:
+        limits = Limits(self.a)
+        limits.open_window()
+        self.addCleanup(limits.close_window)
+        self.assertEqual(self.h.run("status"), 0)
+        self.assertEqual(self.h.stale_checks, 0)
+        self.assertIn("pairing busy", self.h.text)
+
+    def test_status_reports_a_stale_rule_that_stays(self) -> None:
+        self.h.stale_error = FirewallError("the Windows prompt for administrator rights was declined")
+        self.assertEqual(self.h.run("status"), 0)
+        self.assertIn("declined", self.h.errors)
+        self.assertIn("Agent Tabs pairing", self.h.errors)
+
+    def test_status_does_not_warn_about_the_device_name(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"deviceName": "Desk"}}))
+        self.assertEqual(self.h.run("status"), 0)
+        self.assertNotIn("deviceName", self.h.text)
 
     def test_status_shows_the_listener_and_the_configuration(self) -> None:
         Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5", "port": 5000}}))
@@ -655,7 +726,7 @@ class StatusAndDispatchTest(CliTestCase):
 
     def test_net_is_registered_in_the_agent_tabs_command(self) -> None:
         self.assertEqual(top_cli.COMMANDS["net"], "ide_agent_tabs.net.cli")
-        self.assertIn("net <id|status|off|trust|grant|revoke|lan>", top_cli.usage())
+        self.assertIn("net <id|status|off|trust|grant|revoke|pair|lan>", top_cli.usage())
         captured = io.StringIO()
         with mock.patch.dict(os.environ, {"IDE_AGENT_TABS_HOME": self.a}), contextlib.redirect_stdout(captured):
             self.assertEqual(top_cli.main(["net", "status"]), 0)
