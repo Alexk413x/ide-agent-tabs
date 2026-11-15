@@ -2484,6 +2484,10 @@ before any code depends on it. Accepting the design doesn't certify an implement
     peer framing and receiver-side limits as any other peer.
   - Over Tailscale, a teammate joins through the user's tailnet or through Tailscale's node sharing;
     the design picks one during that review.
+  - Disconnecting and reconnecting is cheap: `agent-tabs net pause <peer>` refuses all traffic from
+    and to that peer but keeps its certificate and grants, and `net resume <peer>` restores them.
+    `net trust … --for <duration>` makes a pairing expire on its own. `net revoke` stays the permanent
+    removal. Pause and expiry go through the same lock as revoke.
 - A separate project, not part of this section: letting people contribute machines and resources to a
   public shared project. It is public-facing and needs its own design, threat model and review.
 - Later, each with its own design and review: a hub that starts sessions from the Claude app
