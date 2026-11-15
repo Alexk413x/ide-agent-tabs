@@ -2689,6 +2689,30 @@ to that unattended scope.
   Version 1 accepts this risk; use a separate OS identity or equivalent enforced isolation if
   containment is required.
 
+### Sessions across machines
+
+- While the listener runs, the local server asks each trusted, unpaused peer for its `inventory` at
+  start and every 60 s, and right after that peer sends a request. A peer that doesn't answer is shown
+  as offline, with the age of its last inventory.
+- `list_sessions` and the `ListAgents` rewrite show each peer's sessions under `<label> (remote)`, with
+  that age. A remote session is addressed as `<session name>@<label>`. These are the sessions the peer's
+  grants let this machine see, not all of them.
+
+### After a restart
+
+What persists: the certificate and key, `peers.json`, `policy.json` with every grant, pause and expiry,
+the `network` choice, and the login task. With `--at-login`, the listener starts at login and peers
+reconnect on their next request or inventory, with nothing for the user to run.
+
+What doesn't: open tabs and their sessions end with the machine, as they do today (`resume_tab`
+reopens a closed session); reply grants are tied to a session generation, so a new session starts a new
+conversation; an action in flight follows D6 reconciliation.
+
+Addresses: a peer is reached at its recorded IP literal, and the listener binds its recorded address.
+If DHCP gives a machine a new address, its listener refuses to start and peers can't reach it until the
+user runs `net lan on --bind` and `net trust --address` again. A DHCP reservation on the router, or
+Tailscale mode later, avoids this.
+
 ### Outbound limits
 
 A local folder list decides which sessions the plugin lets send to peers, and each session may send at
