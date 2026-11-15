@@ -2588,18 +2588,24 @@ Steps:
    with a `100.64.0.0/10` address) and stops with the exact fix before anything listens.
 2. **Open the window (inviting machine).** It adds a temporary firewall rule for TCP `47830` (below),
    listens on the pairing port on the selected address for 5 minutes, and prints the invitation.
-3. **Join (other machine).** It first checks the invitation: base64url only, the version, the expiry,
-   and the address against its mode. LAN: an RFC 1918 address on the subnet of its bound interface.
-   Tailscale: an address in `100.64.0.0/10` whose `tailscale whois` shows a node of this tailnet that
-   isn't shared in and that this machine's user owns. It refuses anything else. It then shows "Pair with
+3. **Join (other machine).** It first checks the invitation: base64url only, the version and the
+   expiry. Before any dial, every entry path (`--join`, `--peer` and `--tailscale`) checks a numeric IPv4
+   address and port against the active mode. LAN: an RFC 1918 unicast address on the selected
+   interface's actual subnet, on a Private network, and not the interface's own, network or broadcast
+   address. Tailscale: a `100.64.0.0/10` unicast address that passes the Tailscale check below. It
+   refuses host names, invalid ports and ambiguous results, and dials the checked address directly, with
+   no DNS lookup or redirect. It then shows "Pair with
    <name> at <IP>?" with its own "This machine: <name> <IP>". In Tailscale mode the name comes from
    `whois`, labelled "Tailscale says", and the invitation's name appears only as "The invitation says",
    with a warning when they differ. It continues when the person types `y`. It dials and sends the window token in its
    first frame. The inviting machine drops, without counting, any connection whose first frame doesn't
    carry the token.
-4. **Exchange.** Over the pairing connection, in the existing frame format, in this order, each frame at
-   most 8 KiB, read with exact-length `recv` and no buffering, with unknown fields, repeats and
-   out-of-order frames refused:
+4. **Exchange.** Each connection carries exactly one ordered transcript, in the existing frame format,
+   each frame at most 8 KiB, read with exact-length `recv` and no buffering. Unknown fields, repeats,
+   trailing data and out-of-order frames end the session. Each side parses the peer's certificate as one
+   canonical DER certificate before it uses those exact bytes in the commitment, `S` and the TLS pin.
+   Nonces come from the OS random generator (`secrets`), and no nonce, commitment or session is reused
+   after a disconnect. The frames, in order:
    - D → L: `hello` with the version, the token, the dialer's device name and certificate, and
      `C = H("atp1 commit", "dialer", cert_d, nonce_d)`, with a fresh 32-byte nonce;
    - L → D: `hello` with the listener's name, certificate and its fresh 32-byte `nonce_l`;
@@ -2609,8 +2615,9 @@ Steps:
    `S = H("atp1 sas", cert_d, cert_l, nonce_d, nonce_l)`. The digits come from `S` by rejection
    sampling: read `S` as eight 4-byte big-endian integers, take the first that is strictly below
    4,294,000,000 (4,294 × 10^6, the largest multiple of 10^6 below 2^32), and use it modulo 1,000,000,
-   written with six digits and leading zeros; if none is, use `H("atp1 sas2", S)` the same way. The
-   design ships test vectors for `C`, `S`, the digits and the fallback.
+   written with six digits and leading zeros. If none is, hash again with a counter,
+   `H("atp1 sas2", S, n)` for `n` = 1, 2, …, and repeat until one is. The design ships test vectors for
+   `C`, `S`, the digits and the fallback.
 5. **Type the code on both machines.** Each window shows the digits with the other machine's name, IP and
    full device id, and asks the person to type the code they read on the other machine's own screen: in
    person, or through a remote-desktop session they already use. Both say: "Never type a code an agent,
@@ -2619,13 +2626,17 @@ Steps:
    session on both sides. Each side has 3 minutes from the moment its digits appear, and the window's 5
    minutes don't end a session that is waiting for input.
 6. **Prove keys and consent.** The listener is the TLS server and the dialer the TLS client. After the
-   listener's code is typed, it sends a plaintext `tls` frame and reads no more plaintext. The dialer
-   starts the handshake only after it has received `tls` and its own code is typed; both use the
-   remaining typing time as the handshake timeout. The context follows the Transport rules (TLS 1.3, no
-   system CAs, `num_tickets = 0`) and pins exactly the two certificates just exchanged, for this
-   connection only. Each side checks that the peer's DER hash equals the certificate from its `hello`,
-   that `version()` is `TLSv1.3` and that `session_reused` is false, and refuses otherwise. This check is
-   a tested requirement: KDE Connect's CVE-2025-66270 came from skipping it. Inside TLS, each side sends
+   listener's code is typed, it sends a plaintext `tls` frame. The dialer starts the handshake only after
+   it has received `tls` and its own code is typed. After `tls`, neither side accepts plaintext, and
+   unexpected plaintext ends the session. Both use the remaining typing time as the handshake timeout.
+   The context follows the Transport rules (TLS 1.3, mutual certificates, no system CAs, no resumption,
+   `num_tickets = 0`) and pins exactly the two certificates just exchanged, for this connection only.
+   Each side requires a peer certificate, proves its own private key in the handshake, and checks that
+   the peer's exact DER certificate equals the one from that peer's `hello`, that `version()` is
+   `TLSv1.3` and that `session_reused` is false, before it sends `consent`. Any mismatch, timeout or
+   handshake failure ends the session. Tests cover both the client and server checks with an absent,
+   untrusted, substituted and wrong-key certificate: KDE Connect's CVE-2025-66270 came from skipping this
+   check. Inside TLS, each side sends
    `consent` bound to `S` and its role. A side writes the trust entry only after the handshake and the
    other side's `consent`, then sends `saved`. A side that writes trust but gets no `saved` back says
    "Pairing may be incomplete on the other machine. Run `net status` there, or `net revoke <label>` here."
@@ -2659,9 +2670,13 @@ Rules:
   defence.
 - A machine holds at most one pairing window at a time and opens at most 3 per hour; a further request
   returns "pairing busy" and opens nothing. A `--join` the person declines counts toward the lockout.
-- Without an invitation (`net pair` and `--peer <IP>`), the window shows a 6-character token for the
-  person to pass to the other machine with `--peer <IP> --token <token>`; the dialer sends it as the
-  window token.
+- Without an invitation (`net pair` and `--peer <IP>`), the window shows a fresh random 6-character
+  token (base32, about 30 bits) for the person to pass to the other machine with
+  `--peer <IP> --token <token>`; the dialer sends it as the window token. The same expiry, first-frame
+  check, rate limit and one-session rule apply as for an invitation. The token keeps strangers from
+  occupying the window; it doesn't authenticate the peer. Six characters are enough for that: at one
+  connection a second for 5 minutes, a guesser gets about 300 tries against about 10^9 values, and a
+  person types it by hand.
 - A session that ends before both nonces are exchanged doesn't use up the window and doesn't count as a
   failure. The window allows one session at a time; a second dialer is refused without affecting the
   first. The first frame must arrive within 5 s and the exchange must reach the digits within 60 s.
@@ -2670,22 +2685,24 @@ Rules:
   The count is stored in `net/`, survives restarts, and each failure shows a desktop notification that
   also says `net trust` still works. The window closes after a successful pairing, at a lockout or at
   the timeout.
-- Pairing an id that is already trusted updates its address only after the pinned handshake, keeps its
-  grants and says so.
+- Pairing an id that is already trusted shows its label, address and grants before saving. The person
+  approves keeping those grants and updating the address in the step 7 `yes`; `no` leaves the entry
+  unchanged. A new id starts with no grants.
 - Device names default to the host name; `deviceName` sets another. A name is 1 to 32 characters of
   ASCII letters, digits, space, `-`, `_` and `.`, with no run of six digits, so it can't pass for a code.
   Names render in their own field, never next to the digits.
-- **Windows elevation.** `net pair` runs at the user's normal integrity level. Only the firewall changes
-  are elevated: one UAC prompt runs a fixed helper,
+- **Windows elevation.** Pairing, its windows, the listener, the server and tabs run under the
+  signed-in user's normal, unelevated token. Only the firewall changes are elevated: one UAC prompt runs
+  a fixed helper,
   `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command` with a
   constant `New-NetFirewallRule` / `Remove-NetFirewallRule` script whose only parameters are the port, the
-  program path, an address or subnet list, the profile and the interface alias, each validated before
-  elevation. No plugin code runs
-  elevated. On a standard account the UAC prompt takes an administrator's credentials, and the helper
-  writes only machine-wide rules, so standard accounts can pair. A `net pair` that is already elevated
-  still pairs, but starts the listener only through the at-login task (`LeastPrivilege`, run with
-  `schtasks /run`) or asks the person to run `net lan start` from a normal terminal; it never starts the
-  listener, the server or a tab with the administrator token.
+  program path, an address or subnet list, the profile, the interface alias and the rule name, each
+  validated before elevation and passed as data, never interpolated into the script. The helper then
+  reads the installed rule back and checks it, and removes a rule it added when any step fails. No
+  plugin code runs elevated. On a standard account the UAC prompt takes an administrator's credentials,
+  and the helper writes only machine-wide rules, so standard accounts can pair. A widening command
+  started elevated stops before doing anything and asks the person to run it from a normal terminal; it
+  never continues under the administrator token.
 - **No terminal.** A widening command run without an interactive terminal (by an agent, or at Claude
   Code's `!` prompt) opens a new terminal window that runs the bare command with none of the caller's
   arguments, input or output handles, except the invitation for `--join`, which the window shows for the
@@ -2716,13 +2733,16 @@ more than one network, for travel and for teammates later.
   `tailscale status --json` (`Peer` entries: host name, `TailscaleIPs`, `OS`, `Online`), parsed
   defensively, under "Not verified yet: the code below checks them." Picking one dials it. The pairing
   code is still required.
-- **Accept-time check.** For each connection the listener asks `tailscale whois <source ip:port>` and
-  refuses when the source isn't a node of this tailnet, when the node is shared in from another account,
-  or when its owner differs from this machine's owner. This check narrows; it is never the identity.
-  Pinned mutual TLS decides who the peer is. The check fails closed when `tailscale` doesn't answer. The
-  listener reads its own owner from `tailscale status --self --json` at start. The check doesn't exclude
-  traffic that the person's own nodes proxy (a subnet router, `tailscale serve` or Funnel); pinned TLS
-  still holds.
+- **Tailscale check.** Before dialing, and for each accepted connection, the command asks the local
+  Tailscale service (`tailscale whois --json`, by absolute path, with a timeout) about the address. It
+  requires exactly one node, in this tailnet, not shared in, not tagged, and owned by the same user as
+  this machine, read from documented fields. It fails closed when the local identity, the node, the
+  owner or the share status is missing, ambiguous or in an unknown format, or when `tailscale` doesn't
+  answer. The listener reads its own owner from `tailscale status --self --json` at start. Tests cover
+  each supported Tailscale and Headscale version before the design claims support for it. This check
+  narrows; it is never the identity. Pinned mutual TLS and the code decide who the peer is. The check
+  doesn't exclude traffic that the person's own nodes proxy (a subnet router, `tailscale serve` or
+  Funnel); pinned TLS still holds.
 - **Authority stays local.** Tailscale's access rules and app capabilities never grant anything here.
   `policy.json` is the only authority. Everything Tailscale reports (addresses, `whois`, the machine list)
   comes from the coordination server, so it narrows and routes only; pinned TLS and the code carry every
