@@ -2882,9 +2882,11 @@ Code 2.1.325; Codex 0.167.2):
   `approvals_reviewer: user`, `on-request` and `workspace-write` in its session log; it wrote inside the
   workspace without asking; the outside write was blocked by the sandbox; Codex then raised an
   escalation request, which waited for the user with no automatic reviewer approving it, and nothing was
-  written when the session ended unanswered. An explicit deny keystroke and the Claude Code interactive
-  prompt are still to test: the Claude tab stopped before its first turn, most likely at the workspace
-  trust prompt of a folder it hadn't seen.
+  written when the session ended unanswered. A Claude Code tab opened with `--permission-mode default` in a
+  trusted folder, despite the user's `defaultMode: bypassPermissions`, recorded `permissionMode:
+  default`, issued the shell write and stopped at the permission prompt; the file wasn't written and the
+  session ended unanswered. A first attempt in an untrusted folder stopped before its first turn, at the
+  workspace trust prompt. An explicit deny keystroke in each agent is still to test.
 - Gate 4, Windows, partial: the checks cover junctions and 8.3 short names, including matching file
   identity and the need to inspect every path component. Symlink detection is untested because this
   run couldn't create symlinks. Complete the symlink checks where creation is permitted before Gate 4
