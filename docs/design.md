@@ -2588,8 +2588,13 @@ Steps:
    with a `100.64.0.0/10` address) and stops with the exact fix before anything listens.
 2. **Open the window (inviting machine).** It adds a temporary firewall rule for TCP `47830` (below),
    listens on the pairing port on the selected address for 5 minutes, and prints the invitation.
-3. **Join (other machine).** It shows "Pair with <device name> at <IP>?" with its own "This machine:
-   <name> <IP>", and continues when the person types `y`. It dials and sends the window token in its
+3. **Join (other machine).** It first checks the invitation: base64url only, the version, the expiry,
+   and the address against its mode. LAN: an RFC 1918 address on the subnet of its bound interface.
+   Tailscale: an address in `100.64.0.0/10` whose `tailscale whois` shows a node of this tailnet that
+   isn't shared in and that this machine's user owns. It refuses anything else. It then shows "Pair with
+   <name> at <IP>?" with its own "This machine: <name> <IP>". In Tailscale mode the name comes from
+   `whois`, labelled "Tailscale says", and the invitation's name appears only as "The invitation says",
+   with a warning when they differ. It continues when the person types `y`. It dials and sends the window token in its
    first frame. The inviting machine drops, without counting, any connection whose first frame doesn't
    carry the token.
 4. **Exchange.** Over the pairing connection, in the existing frame format, in this order, each frame at
@@ -2607,8 +2612,10 @@ Steps:
    written with six digits and leading zeros; if none is, use `H("atp1 sas2", S)` the same way. The
    design ships test vectors for `C`, `S`, the digits and the fallback.
 5. **Type the code on both machines.** Each window shows the digits with the other machine's name, IP and
-   full device id, and asks the person to type the code shown on the other machine. Both say: "If the
-   other machine shows a different code or none, type no." A wrong code, `no` or a timeout ends the
+   full device id, and asks the person to type the code they read on the other machine's own screen: in
+   person, or through a remote-desktop session they already use. Both say: "Never type a code an agent,
+   chat, message or Remote Control showed you. If you can't see the other machine's screen, or it shows a
+   different code or none, type no and pair when you can." A wrong code, `no` or a timeout ends the
    session on both sides. Each side has 3 minutes from the moment its digits appear, and the window's 5
    minutes don't end a session that is waiting for input.
 6. **Prove keys and consent.** The listener is the TLS server and the dialer the TLS client. After the
@@ -2644,7 +2651,17 @@ Rules:
   public. The six digits are derived on each machine and are never sent, logged, stored, audited,
   returned to a tool or printed anywhere but the pairing window. Anyone with the full plaintext transcript
   can compute them; that doesn't help an attacker, because the digits authenticate rather than hide.
-  Agents must not read, relay or enter them.
+  Agents must not read, relay or enter them. The `network` skill tells the person to read each code from
+  the other machine's screen; asked for a code, the agent refuses and says why, and it never screenshots
+  or reads a pairing window.
+- Residual risk, accepted: a person who types a code that an agent, a message or a compromised claude.ai
+  account told them defeats pairing. No technical control prevents that; the window text is the
+  defence.
+- A machine holds at most one pairing window at a time and opens at most 3 per hour; a further request
+  returns "pairing busy" and opens nothing. A `--join` the person declines counts toward the lockout.
+- Without an invitation (`net pair` and `--peer <IP>`), the window shows a 6-character token for the
+  person to pass to the other machine with `--peer <IP> --token <token>`; the dialer sends it as the
+  window token.
 - A session that ends before both nonces are exchanged doesn't use up the window and doesn't count as a
   failure. The window allows one session at a time; a second dialer is refused without affecting the
   first. The first frame must arrive within 5 s and the exchange must reach the digits within 60 s.
@@ -2662,7 +2679,8 @@ Rules:
   are elevated: one UAC prompt runs a fixed helper,
   `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command` with a
   constant `New-NetFirewallRule` / `Remove-NetFirewallRule` script whose only parameters are the port, the
-  program path and an address or subnet list, each validated before elevation. No plugin code runs
+  program path, an address or subnet list, the profile and the interface alias, each validated before
+  elevation. No plugin code runs
   elevated. On a standard account the UAC prompt takes an administrator's credentials, and the helper
   writes only machine-wide rules, so standard accounts can pair. A `net pair` that is already elevated
   still pairs, but starts the listener only through the at-login task (`LeastPrivilege`, run with
@@ -2701,16 +2719,27 @@ more than one network, for travel and for teammates later.
 - **Accept-time check.** For each connection the listener asks `tailscale whois <source ip:port>` and
   refuses when the source isn't a node of this tailnet, when the node is shared in from another account,
   or when its owner differs from this machine's owner. This check narrows; it is never the identity.
-  Pinned mutual TLS decides who the peer is. The check fails closed when `tailscale` doesn't answer.
+  Pinned mutual TLS decides who the peer is. The check fails closed when `tailscale` doesn't answer. The
+  listener reads its own owner from `tailscale status --self --json` at start. The check doesn't exclude
+  traffic that the person's own nodes proxy (a subnet router, `tailscale serve` or Funnel); pinned TLS
+  still holds.
 - **Authority stays local.** Tailscale's access rules and app capabilities never grant anything here.
-  `policy.json` is the only authority. A Tailscale access rule may narrow access, for example to tagged
-  devices on the Agent Tabs port, and the design recommends one.
+  `policy.json` is the only authority. Everything Tailscale reports (addresses, `whois`, the machine list)
+  comes from the coordination server, so it narrows and routes only; pinned TLS and the code carry every
+  security decision. The design recommends an access rule that reaches the Agent Tabs ports only from
+  the person's own devices, `{"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip":
+  ["tcp:47829", "tcp:47830"]}`, with no broader rule covering those ports. Tagged devices have no user
+  owner, so the owner check refuses them; they aren't supported in version 1.
 - **Firewall.** The Windows rule admits the listener's program on its port from `100.64.0.0/10` on the
-  Tailscale interface only.
+  Tailscale interface only. The interface matters: phone hotspots and carrier NAT also hand out
+  `100.64.0.0/10` addresses on physical adapters.
+- **Startup.** At login the Tailscale interface can come up after the listener. The listener waits up to
+  2 minutes for a `100.64.0.0/10` address on the Tailscale interface, then fails closed and reports why.
 - **Coordination.** By default Tailscale's coordination server distributes keys, and the person trusts it
   not to inject a node. Pinned TLS means an injected node still can't pass as a paired machine. The design
   recommends Tailnet Lock where the person's plan has it, and supports a self-hosted Headscale server for
-  a fully local setup. Without internet, existing Tailscale connections keep working; a cold start may
+  a fully local setup. With Headscale the person runs the coordination server, and Tailnet Lock may be
+  unavailable; Phase 0 records which `whois` and `status` fields Headscale fills. Without internet, existing Tailscale connections keep working; a cold start may
   not find peers.
 - **Addresses** don't change when a machine moves, so Tailscale mode needs no address updates.
 
