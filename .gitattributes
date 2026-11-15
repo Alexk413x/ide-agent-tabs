@@ -3,3 +3,5 @@
 *.jar binary
 *.zip binary
 *.vsix binary
+*.db binary diff=codegraph
+code_graph.db binary diff=codegraph

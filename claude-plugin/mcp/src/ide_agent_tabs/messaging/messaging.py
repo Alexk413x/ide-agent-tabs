@@ -14,6 +14,8 @@ from ..closed import TranscriptDirs, locale_key, record_ended, transcript_dirs
 from ..files import read_text_if_exists, remove_file
 from ..jsjson import trim, utf16_len, utf16_slice
 from ..liveness import pid_alive
+from ..net.origin import Caller
+from ..net.policy import load_network_config
 from ..parallel import Task
 from ..profiles import AGENT_ENV, BUILTIN_PROFILES, TAB_ID_ENV, canonical_agent
 from ..retention import prune_old_files
@@ -605,7 +607,28 @@ class Messaging:
         rows.sort(key=lambda r: locale_key(r["startedAt"]))
         rows.sort(key=lambda r: locale_key(r["agent"]))
         rows.sort(key=lambda r: _agent_rank(r["agent"]))
-        return {"sessions": rows, **self._warnings()}
+        return {"sessions": rows + self._remote_rows(), **self._warnings()}
+
+    def caller(self) -> Caller:
+        own = read_presence(self.deps.home, self._session_id) or {}
+        return Caller(
+            self._session_id,
+            own.get("path") or self.deps.cwd,
+            self.deps.env.get(TAB_ID_ENV) or None,
+            self.deps.pid,
+            self.deps.pid_start,
+        )
+
+    def _remote_rows(self) -> list[dict[str, Any]]:
+        try:
+            if load_network_config(self.deps.home)[0].network != "lan":
+                return []
+            from ..net.outbound import remote_session_rows
+
+            return remote_session_rows(self.deps.home, self.caller(), int(self._now()))
+        except Exception as e:  # noqa: BLE001 - a failure in the network layer must not hide the local sessions
+            self._failed("listing the sessions on other machines", e)
+            return []
 
     def send(self, given: Mapping[str, Any]) -> dict[str, Any]:
         to = given["to"]

@@ -122,6 +122,7 @@ class ToolDeps(NamedTuple):
     messaging: Any
     handoffs: Any
     resumes: Any
+    net: Any = None
 
 
 class Tools:
@@ -188,16 +189,17 @@ class Tools:
         runs: dict[str, Callable[[], Any]] = {
             "list_agents": lambda: service.list_agents(),
             "list_tabs": lambda: service.list_tabs(args.get("ide")),
-            "open_tab": lambda: service.open_tab(args, wait="background", on_progress=self._progress(call)),
+            "open_tab": lambda: self._open_tab(deps, args, call),
             "close_tab": lambda: self._close_tab(deps, args.get("id")),
             MOD_TOOL: lambda: self._mod(deps, args),
             "list_sessions": lambda: messaging.list_sessions(),
-            "send_message": lambda: messaging.send(args),
+            "send_message": lambda: self._send(deps, args),
             "read_messages": lambda: messaging.read(call.cancel),
             "wait_for_message": lambda: messaging.wait(args, call.cancel),
-            "handoff": lambda: deps.handoffs.start(args),
+            "handoff": lambda: self._local_only(deps, lambda: deps.handoffs.start(args)),
             "closed_sessions": lambda: deps.resumes.list(),
-            "resume_tab": lambda: deps.resumes.resume(args),
+            "resume_tab": lambda: self._local_only(deps, lambda: deps.resumes.resume(args)),
+            "start_lan_listener": lambda: self._start_lan_listener(deps),
         }
         run = runs.get(name)
         if run is not None:
@@ -207,6 +209,32 @@ class Tools:
 
             return RUNNERS[name](deps.jev, args)
         raise McpError(INVALID_PARAMS, f"Tool {name} not found")
+
+    def _local_only(self, deps: ToolDeps, run: Callable[[], Any]) -> Any:
+        if deps.net is not None:
+            deps.net.refuse_remote_origin()
+        return run()
+
+    def _open_tab(self, deps: ToolDeps, args: dict[str, Any], call: Call) -> Any:
+        if args.get("host") is not None:
+            if deps.net is None:
+                raise ValueError("host needs the network, which this server does not offer")
+            return deps.net.open(args)
+        return self._local_only(deps, lambda: deps.service.open_tab(args, wait="background", on_progress=self._progress(call)))
+
+    def _send(self, deps: ToolDeps, given: Mapping[str, Any]) -> Any:
+        to = given.get("to")
+        if deps.net is not None and isinstance(to, str) and "@" in to:
+            from .net.outbound import parse_remote_target
+
+            if parse_remote_target(to) is not None:
+                return deps.net.send(given)
+        return deps.messaging.send(given)
+
+    def _start_lan_listener(self, deps: ToolDeps) -> Any:
+        if deps.net is None:
+            raise ValueError("start_lan_listener needs the network, which this server does not offer")
+        return deps.net.start_listener()
 
     def _close_tab(self, deps: ToolDeps, tab_id: str | None) -> Any:
         deps.handoffs.check_close(tab_id, deps.messaging.id)
@@ -218,7 +246,7 @@ class Tools:
         ops: dict[str, Callable[[], Any]] = {
             "presence": lambda: messaging.mod_presence(_presence_fields(given)),
             "unread": lambda: messaging.mod_unread(),
-            "send": lambda: messaging.send(_sent(op, given)),
+            "send": lambda: self._send(deps, _sent(op, given)),
             "take": lambda: messaging.mod_take(),
             "ack": lambda: messaging.mod_settle(need(op, given.get("claim"), "claim"), op),
             "release": lambda: messaging.mod_settle(need(op, given.get("claim"), "claim"), op),

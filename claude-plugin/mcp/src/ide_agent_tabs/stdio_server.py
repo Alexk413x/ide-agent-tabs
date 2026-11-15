@@ -246,6 +246,7 @@ class Boot:
         from .jev.service import start_jev
         from .list_ides_cli import system_service
         from .messaging.messaging import Messaging, MessagingDeps
+        from .net.outbound import SessionNet, outbound_for
         from .resume import ResumeDeps, Resumes
 
         env = os.environ
@@ -273,7 +274,7 @@ class Boot:
                 live=messaging.live,
             )
         )
-        return ToolDeps(service, jev, messaging, handoffs, resumes)
+        return ToolDeps(service, jev, messaging, handoffs, resumes, SessionNet(outbound_for(self.home), messaging.caller))
 
     def deps(self) -> ToolDeps:
         self.start()

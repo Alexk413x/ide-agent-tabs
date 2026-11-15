@@ -100,6 +100,16 @@ Ollama. Grok Build, Pi, Hermes, OpenCode, Qwen Code, Goose and the two local Cod
 CLI's documentation and haven't had a live test. Crush and Prime Agent aren't included. See [Agent support](mcp/README.md#agent-support) for
 what each agent gets and why.
 
+## Your other machines
+
+LAN mode, off by default, lets an agent open Claude Code and Codex tabs on your other machines on the
+same local network, and message the sessions there. Each machine pairs with each other machine by
+importing its certificate and checking its full device id, and the machines connect over mutual TLS
+pinned to those certificates. Pairing grants nothing: on each machine, you list the folders, agents and
+models each peer may use. Ask an agent to use the `network` skill to walk you through setup, or see
+[Network](docs/design.md#network). Version 1 needs Python with TLS 1.3 and `openssl`, and has been
+tested on Windows only.
+
 ## Design
 
 [docs/design.md](docs/design.md) describes the registry, the HTTP API, agent profiles, distribution
@@ -156,6 +166,10 @@ the VS Code extension and the JetBrains plugin makes these network requests, and
   directly runs the agent CLI as you would, and that CLI talks to its own provider.
 - **Update.** The `update` skill reads `plugin.json` from `raw.githubusercontent.com` on this repository's
   `release` branch when you run it.
+- **LAN mode.** Only after you run `agent-tabs net lan setup` and `net lan on`, a listener on the
+  private address you give accepts mutual TLS connections from the machines you paired, and the server
+  connects to those machines' listeners. Nothing announces or searches for machines, and nothing leaves
+  your local network.
 
 Everything else stays on your machine. The MCP server and the IDE endpoints listen on `127.0.0.1`
 only, and the message store, handoff briefs, Jev ledger and settings are files under `~/.ide-agent-tabs`.
