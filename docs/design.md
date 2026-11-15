@@ -20,7 +20,7 @@ This document is the contract every part builds against. Change it before you ch
 | Handoff to a new tab: the `handoff` tool and skill | Built | `claude-plugin/mcp/src/ide_agent_tabs/handoff.py`, `claude-plugin/skills/handoff/` |
 | Shared HTTP server for Claude Code sessions, its headers helper and start hook | Built | `claude-plugin/mcp/src/ide_agent_tabs/shared/`, `claude-plugin/mcp/launch/` |
 | Jev judgment tools in the MCP server, and the `jev` skill (optional) | Built | `claude-plugin/mcp/src/ide_agent_tabs/jev/`, `claude-plugin/skills/jev/`; later steps in [jev-integration.md](jev-integration.md) |
-| Network across one person's machines on a LAN: certificates, mutual TLS, grants | Planned; see [Network (planned)](#network-planned) | — |
+| Network across one person's machines on a LAN: certificates, mutual TLS, grants | Built; not yet tested between two machines. See [Network](#network) | `claude-plugin/mcp/src/ide_agent_tabs/net/`, `claude-plugin/mcp/launch/net_listener.py`, `claude-plugin/skills/network/` |
 
 Claude Code sessions message each other with Claude Code's own `ListAgents` and `SendMessage`. Sessions
 of different agent CLIs message each other through the MCP server. See [Messaging](#messaging).
@@ -2451,12 +2451,13 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
   the task. On `sure`, it uses the answer and says so. Otherwise it shows the top two and asks.
 - `setup`: asks whether to turn Jev on, and checks that a key is found with `jev status`.
 
-## Network (planned)
+## Network
 
-Not built. This section is the contract for working across one person's machines on a local network.
-Four reviewers (Claude Opus, Gemini through Antigravity CLI, Codex gpt-6.1-sol and the coordinating
-Claude session) agreed to it on 2026-11-14 after three rounds. The Phase 0 gates at the end must pass
-before any code depends on it. Accepting the design doesn't certify an implementation.
+This section is the contract for working across one person's machines on a local network. Four
+reviewers (Claude Opus, Gemini through Antigravity CLI, Codex gpt-6.1-sol and the coordinating Claude
+session) agreed to it on 2026-11-14. Version 1 shipped in 0.11.0. Its tests run on one Windows machine;
+a run between two machines, the firewall step and the at-login task are still to test. Accepting the
+design doesn't certify the implementation.
 
 ### Scope
 

@@ -3,6 +3,43 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.11.0
+
+Plugin and MCP server 0.11.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Added
+
+- LAN mode, off by default: open Claude Code and Codex tabs on your other machines on the same local
+  network, and message sessions there. Each machine pairs with each other machine by importing its
+  certificate and checking its full device id. Machines connect over mutual TLS 1.3 pinned to those
+  certificates. Pairing grants nothing: each machine lists the folders, agents and models each peer
+  may use. See [Network](docs/design.md#network) and the `network` skill.
+- `agent-tabs net` commands: `lan setup`, `lan on`, `lan start`, `lan stop`, `id`, `trust`, `grant`,
+  `revoke`, `off` and `status`. Commands that widen access need typed confirmation in a terminal and
+  show a desktop notification.
+- `open_tab` takes `host`, a peer's label, with a folder alias from that peer's grant.
+  `send_message` takes `<session>@<label>`. `list_sessions` and Claude Code's `ListAgents` show peers'
+  sessions under `<label> (remote)`.
+- The `start_lan_listener` tool starts the listener after you have turned LAN mode on with
+  `net lan on`.
+- On Windows, `net lan on` adds a firewall rule for the Private profile and the trusted peers'
+  addresses, with a UAC prompt. `--at-login` starts the listener at login.
+
+### Security
+
+- A tab a peer opens runs with permissions the receiving machine picks: Claude Code in `manual` (or
+  `default`) permission mode, Codex with `workspace-write` and `on-request` approval in the granted
+  folder. The task arrives as a peer message, not as your instruction.
+- A session a peer started can't open tabs, resume, hand off or send to other machines.
+- Every request and refusal is written to `~/.ide-agent-tabs/net/audit.jsonl`. `net revoke` and
+  `net off` take effect at once.
+
+### Not yet tested
+
+- Two machines connected to each other, the Windows firewall step, and the at-login task. Every test
+  so far ran on one Windows machine.
+- macOS and Linux.
+
 ## 0.10.1
 
 Plugin and MCP server 0.10.1. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
