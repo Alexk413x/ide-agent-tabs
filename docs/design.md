@@ -2693,7 +2693,21 @@ the user can bypass them; the receiving machine's grants and limits are the enfo
 
 Network settings are user-level only. The `net` commands write them; a project's `.claude/settings.json`,
 a workspace's `.vscode/settings.json` or a JetBrains project setting can't turn networking on or grant a
-peer. The VS Code and JetBrains settings pages show network status read-only.
+peer.
+
+Interfaces:
+
+- **The `agent-tabs net` commands** are the only writer. Commands that widen access (`lan setup`,
+  `lan on`, `trust`, `grant`, `resume`) ask for typed confirmation and refuse to run without an
+  interactive terminal, so an agent's shell tool can't run them. The user runs them in a terminal, or
+  with the `!` prefix in Claude Code. Commands that only narrow access (`pause`, `revoke`, `off`,
+  `status`) need no confirmation.
+- **No MCP tool** turns networking on, trusts a peer or adds a grant.
+- **A setup skill** walks the user through setup: it explains each step, shows the exact command to
+  run and checks the result, but doesn't run widening commands itself.
+- **The Agents pane** shows each peer, its state and its grants, with Pause and Resume buttons. Resume
+  from the pane asks for confirmation in the pane.
+- **The VS Code and JetBrains settings pages** show network status read-only.
 
 Per machine, in the `network` section of `config.json`:
 
