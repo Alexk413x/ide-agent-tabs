@@ -2668,7 +2668,9 @@ has none.
   adds it, and rechecked before dispatch. The recheck walks every path component, not only the last:
   a junction in a parent folder doesn't mark the leaf as a reparse point. A component that is a symlink
   or reparse point changed since the grant is refused, as are UNC paths and network drives. A granted folder never auto-trusts a
-  project's hooks or MCP config for a remote tab.
+  project's hooks or MCP config for a remote tab. Claude Code and Codex ask to trust a folder the first
+  time a session starts there, and a remote tab can't answer; `net grant` therefore refuses a folder the
+  user hasn't already trusted in each granted agent, and says how to trust it.
 - `agents`: `claude` and `codex` only in version 1.
 - `models`: the models a remote open may name.
 - `send`: local sessions it may message. Default: sessions it opened.
@@ -2876,6 +2878,13 @@ Code 2.1.325; Codex 0.167.2):
   unverified. Before Gate 3 passes, test the exact receiver-built interactive launch plan, including
   Codex `-C <granted folder>`, workspace writes, outside-workspace approval routing and local-user
   denial, and confirm that approval reaches the local user rather than an automatic reviewer.
+  Interactive run, 2026-11-15: a Codex tab with the receiver-built flags and `-C` recorded
+  `approvals_reviewer: user`, `on-request` and `workspace-write` in its session log; it wrote inside the
+  workspace without asking; the outside write was blocked by the sandbox; Codex then raised an
+  escalation request, which waited for the user with no automatic reviewer approving it, and nothing was
+  written when the session ended unanswered. An explicit deny keystroke and the Claude Code interactive
+  prompt are still to test: the Claude tab stopped before its first turn, most likely at the workspace
+  trust prompt of a folder it hadn't seen.
 - Gate 4, Windows, partial: the checks cover junctions and 8.3 short names, including matching file
   identity and the need to inspect every path component. Symlink detection is untested because this
   run couldn't create symlinks. Complete the symlink checks where creation is permitted before Gate 4
