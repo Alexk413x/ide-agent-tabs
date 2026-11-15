@@ -2592,6 +2592,12 @@ These hold for every install, because every user gets this code:
 - The listener needs no agent session on its machine. When a verified request arrives and no local
   server runs, it starts the shared server the way the headers helper does, so a remote `open` works on
   a machine where nothing else runs.
+- `net lan on` records the user's standing choice, `network: lan`, and starts the listener.
+  `agent-tabs net lan start` only starts the listener: it runs without confirmation, from an agent or
+  an MCP tool, and refuses unless the standing choice is already `lan` and a `bind` address is already
+  configured. It adds no peer, grant or address, so it narrows nothing and widens nothing the user
+  hasn't chosen. `net lan stop` stops the listener and leaves the choice alone; `net off` sets the
+  choice to `off`, after which `start` refuses.
 - `net lan on --at-login` also registers a login task for the listener (a Scheduled Task on Windows, a
   LaunchAgent on macOS, a systemd user unit on Linux). It is a widening command. `net off` removes the
   task. The machine must be on and logged in; waking a sleeping machine is out of scope.
