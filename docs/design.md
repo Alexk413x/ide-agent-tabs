@@ -2593,12 +2593,12 @@ Steps:
    address and port against the active mode. LAN: an RFC 1918 unicast address on the selected
    interface's actual subnet, on a Private network, and not the interface's own, network or broadcast
    address. Tailscale: a `100.64.0.0/10` unicast address that passes the Tailscale check below. It
-   refuses host names, invalid ports and ambiguous results, and dials the checked address directly, with
-   no DNS lookup or redirect. It then shows "Pair with
-   <name> at <IP>?" with its own "This machine: <name> <IP>". In Tailscale mode the name comes from
-   `whois`, labelled "Tailscale says", and the invitation's name appears only as "The invitation says",
-   with a warning when they differ. It continues when the person types `y`. It dials and sends the window token in its
-   first frame. The inviting machine drops, without counting, any connection whose first frame doesn't
+   refuses host names, invalid ports and ambiguous results, and keeps the checked address for the dial,
+   with no DNS lookup or redirect. It then shows "Pair with <name> at <IP>?" with its own "This machine:
+   <name> <IP>". In Tailscale mode the name comes from `whois`, labelled "Tailscale says", and the
+   invitation's name appears only as "The invitation says", with a warning when they differ. It continues
+   when the person types `y`. After that approval it dials the checked address and sends the window token
+   in its first frame. The inviting machine drops, without counting, any connection whose first frame doesn't
    carry the token.
 4. **Exchange.** Each connection carries exactly one ordered transcript, in the existing frame format,
    each frame at most 8 KiB, read with exact-length `recv` and no buffering. Unknown fields, repeats,
@@ -2617,7 +2617,8 @@ Steps:
    4,294,000,000 (4,294 × 10^6, the largest multiple of 10^6 below 2^32), and use it modulo 1,000,000,
    written with six digits and leading zeros. If none is, hash again with a counter,
    `H("atp1 sas2", S, n)` for `n` = 1, 2, …, and repeat until one is. The design ships test vectors for
-   `C`, `S`, the digits and the fallback.
+   `C`, `S`, the digits and the fallback; the fallback's vector passes a constructed `S` to the digit
+   function, because a real `S` reaches it with probability about 10^-29.
 5. **Type the code on both machines.** Each window shows the digits with the other machine's name, IP and
    full device id, and asks the person to type the code they read on the other machine's own screen: in
    person, or through a remote-desktop session they already use. Both say: "Never type a code an agent,
@@ -2636,12 +2637,13 @@ Steps:
    `TLSv1.3` and that `session_reused` is false, before it sends `consent`. Any mismatch, timeout or
    handshake failure ends the session. Tests cover both the client and server checks with an absent,
    untrusted, substituted and wrong-key certificate: KDE Connect's CVE-2025-66270 came from skipping this
-   check. Inside TLS, each side sends
-   `consent` bound to `S` and its role. A side writes the trust entry only after the handshake and the
-   other side's `consent`, then sends `saved`. A side that writes trust but gets no `saved` back says
+   check. Inside TLS, each side sends `consent` bound to `S` and its role. After valid consent from the
+   other side, each side goes to step 7 without changing trust.
+7. **Review once and turn on (both machines).** Each window then shows one summary and asks one `yes`,
+   with 3 minutes to answer while the TLS connection stays open. After the `yes`, the side saves the
+   approved trust entry and sends `saved` over TLS. A side that saves trust but gets no `saved` back says
    "Pairing may be incomplete on the other machine. Run `net status` there, or `net revoke <label>` here."
-   Grants stay empty either way.
-7. **Review once and turn on (both machines).** Each window then shows one summary and asks one `yes`:
+   A `no` or a timeout leaves any existing entry unchanged and ends the session. The summary:
    - the label for the peer (default: its device name lowercased to `a-z0-9-`);
    - grants, defaulting to none: one folder and the agents for it, chosen from a numbered list, or none;
    - turn the listener on, with its firewall rule;
@@ -2685,9 +2687,9 @@ Rules:
   The count is stored in `net/`, survives restarts, and each failure shows a desktop notification that
   also says `net trust` still works. The window closes after a successful pairing, at a lockout or at
   the timeout.
-- Pairing an id that is already trusted shows its label, address and grants before saving. The person
-  approves keeping those grants and updating the address in the step 7 `yes`; `no` leaves the entry
-  unchanged. A new id starts with no grants.
+- Pairing an id that is already trusted writes nothing in step 6. Step 7 shows its label, address and
+  grants; the `yes` updates the address and keeps those grants, and `no` leaves the entry exactly as it
+  was. A new id starts with no grants.
 - Device names default to the host name; `deviceName` sets another. A name is 1 to 32 characters of
   ASCII letters, digits, space, `-`, `_` and `.`, with no run of six digits, so it can't pass for a code.
   Names render in their own field, never next to the digits.
@@ -2697,12 +2699,18 @@ Rules:
   `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command` with a
   constant `New-NetFirewallRule` / `Remove-NetFirewallRule` script whose only parameters are the port, the
   program path, an address or subnet list, the profile, the interface alias and the rule name, each
-  validated before elevation and passed as data, never interpolated into the script. The helper then
+  passed as data, never interpolated into the script. The elevated helper validates them again itself
+  and accepts only the plugin's Python executable, the pairing or listener port, the selected interface
+  and profile, an address range allowed in the mode and the fixed rule names; it refuses any other
+  value. The helper then
   reads the installed rule back and checks it, and removes a rule it added when any step fails. No
   plugin code runs elevated. On a standard account the UAC prompt takes an administrator's credentials,
   and the helper writes only machine-wide rules, so standard accounts can pair. A widening command
   started elevated stops before doing anything and asks the person to run it from a normal terminal; it
-  never continues under the administrator token.
+  never continues under the administrator token. An administrator account with UAC on works, because its
+  normal terminal is unelevated. Where Windows can't give an unelevated token (UAC off, or the built-in
+  Administrator account), version 1 doesn't support the network feature, and `net status` and the
+  window say why.
 - **No terminal.** A widening command run without an interactive terminal (by an agent, or at Claude
   Code's `!` prompt) opens a new terminal window that runs the bare command with none of the caller's
   arguments, input or output handles, except the invitation for `--join`, which the window shows for the
