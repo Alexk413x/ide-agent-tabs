@@ -2689,6 +2689,32 @@ the user can bypass them; the receiving machine's grants and limits are the enfo
   given. `revoke --close` closes the tabs that peer opened. Revoking on one machine doesn't remove trust
   on another.
 
+### Settings
+
+Network settings are user-level only. The `net` commands write them; a project's `.claude/settings.json`,
+a workspace's `.vscode/settings.json` or a JetBrains project setting can't turn networking on or grant a
+peer. The VS Code and JetBrains settings pages show network status read-only.
+
+Per machine, in the `network` section of `config.json`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `network` | `off` | `off`, `lan` or `tailscale` |
+| `bind` | none | The listener's private address; in `tailscale` mode, the machine's tailnet address |
+| `port` | `47829` | The listener's port |
+| `openssl` | none | The confirmed absolute path used by `net lan setup` |
+| `outboundFolders` | empty | Local folders whose sessions may send to peers |
+| `maxRemoteTabs` | `4` | Remote tabs on this machine across all peers |
+| `remoteControlTabs` | `false` | Start remote Claude Code tabs with `--remote-control`, so their prompts reach the user's phone |
+
+Per peer, in `policy.json`, empty for a new peer: `label`, `address`, `person` (team mode), `folders`,
+`agents`, `models`, `send`, `maxTabs`, `opensPerHour`, `messagesPerMinute`, `approveEachOpen`, and
+`expires` and `paused`, which `net trust --for`, `net pause` and `net resume` set.
+
+These are fixed, not settings: TLS 1.3 with mutual certificates and no unverified fallback, no wildcard
+or public bind, no `args` or `env` from a peer, the supported agents and their permission flags, the
+listener limits, and the audit format.
+
 ### Audit
 
 `net/audit.jsonl` holds structured lines: peer id, request id, operation, admission decision,
