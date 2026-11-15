@@ -2455,9 +2455,10 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
 
 This section is the contract for working across one person's machines on a local network. Four
 reviewers (Claude Opus, Gemini through Antigravity CLI, Codex gpt-6.1-sol and the coordinating Claude
-session) agreed to it on 2026-11-14. Version 1 shipped in 0.11.0. Its tests run on one Windows machine;
-a run between two machines, the firewall step and the at-login task are still to test. Accepting the
-design doesn't certify the implementation.
+session) agreed to it on 2026-11-14. Version 1 shipped in 0.11.0. The same reviewers agreed to the
+pairing design on 2026-11-15, and `net pair` shipped in 0.12.0. Its tests run on one Windows machine; a
+run between two machines, the elevated firewall helper and the at-login task are still to test.
+Accepting the design doesn't certify the implementation.
 
 ### Scope
 
@@ -2466,7 +2467,7 @@ design doesn't certify the implementation.
   other.
 - One setting, `network` in `config.json`, picks the mode: `off` (the default: today's single-machine
   tooling, nothing beyond `127.0.0.1`), `lan` or `tailscale`. Team mode is an addition to
-  `lan` or `tailscale`, not a separate value. 0.11.0 refuses `tailscale` and the team-mode keys
+  `lan` or `tailscale`, not a separate value. 0.12.0 refuses `tailscale` and the team-mode keys
   until their reviews pass. The `net` commands are the supported writer; an update never changes it.
 - LAN mode is the first networked mode and needs no outside tool.
 - **Tailscale mode** (see Tailscale mode below), a supported option for reaching home machines from

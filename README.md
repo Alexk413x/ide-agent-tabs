@@ -103,12 +103,14 @@ what each agent gets and why.
 ## Your other machines
 
 LAN mode, off by default, lets an agent open Claude Code and Codex tabs on your other machines on the
-same local network, and message the sessions there. Each machine pairs with each other machine by
-importing its certificate and checking its full device id, and the machines connect over mutual TLS
-pinned to those certificates. Pairing grants nothing: on each machine, you list the folders, agents and
-models each peer may use. Ask an agent to use the `network` skill to walk you through setup, or see
-[Network](docs/design.md#network). Version 1 needs Python with TLS 1.3 and `openssl`, and has been
-tested on Windows only.
+same local network, and message the sessions there. Tell an agent which two machines to connect: it runs
+`agent-tabs net pair --invite` on one and carries the invitation to a session on the other, and each
+machine opens a window. You type the six-digit code shown on each machine's screen into the other
+machine's window, then approve one summary. The machines then connect over mutual TLS pinned to each
+other's certificates. Pairing grants nothing by default: on each machine, you choose the folders and
+agents the peer may use. LAN mode works on Private networks only and finds no machines by itself. See
+the `network` skill or [Network](docs/design.md#network). Version 1 needs Python with TLS 1.3 and
+`openssl`, and has been tested on Windows only.
 
 ## Design
 
