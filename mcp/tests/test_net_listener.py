@@ -107,7 +107,7 @@ class ListenerTest(unittest.TestCase):
         self.pair()
         running = self.start()
         listener.request_stop(self.a)
-        self.assertTrue(wait_until(lambda: read_listener(self.a) is None, 8))
+        self.assertTrue(wait_until(lambda: read_listener(self.a) is None and running.code is not None, 8))
         self.assertFalse(os.path.exists(listener.stop_file(self.a)))
         self.assertEqual(running.code, 0)
 
@@ -291,7 +291,7 @@ class ListenerTest(unittest.TestCase):
             running = self.start(network_check=lambda _bind: states[0])
             self.assertTrue(self.send(running)["ok"])
             states[0] = True
-            self.assertTrue(wait_until(lambda: read_listener(self.a) is None, 8))
+            self.assertTrue(wait_until(lambda: read_listener(self.a) is None and running.code is not None, 8))
         self.assertEqual(running.code, 0)
 
 
@@ -349,7 +349,7 @@ class NetworkWatchTest(unittest.TestCase):
             self.assertTrue(watch.allowed())
 
 
-@unittest.skipUnless(HAS_OPENSSL, "needs an openssl")
+@unittest.skipUnless(HAS_OPENSSL and tls.runtime_problem() is None, "needs an openssl and a TLS 1.3 Python")
 class IngressForwarderTest(unittest.TestCase):
     home: str
 

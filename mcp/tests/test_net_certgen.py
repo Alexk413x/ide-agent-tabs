@@ -127,6 +127,7 @@ class GenerateIdentityTest(unittest.TestCase):
             self.assertGreater(serial, 0)
             self.assertLess(serial, 2**159)
 
+    @unittest.skipUnless(ssl.HAS_TLSv1_3, "needs a TLS 1.3 Python")
     def test_the_identity_works_for_mutual_tls_with_strict_verification(self) -> None:
         identity = self.generate()
 

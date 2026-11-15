@@ -277,7 +277,8 @@ class HelperTest(unittest.TestCase):
         self.assertNotIn("\n", reason)
 
     def test_runtime_problem_with_old_openssl(self) -> None:
-        with mock.patch.object(ssl, "OPENSSL_VERSION_INFO", (1, 0, 2, 0, 0)), mock.patch.object(ssl, "OPENSSL_VERSION", "OpenSSL 1.0.2u"):
+        old = mock.patch.object(ssl, "OPENSSL_VERSION_INFO", (1, 0, 2, 0, 0))
+        with mock.patch.object(ssl, "HAS_TLSv1_3", True), old, mock.patch.object(ssl, "OPENSSL_VERSION", "OpenSSL 1.0.2u"):
             reason = tls.runtime_problem()
         assert reason is not None
         self.assertIn("OpenSSL 1.0.2u", reason)
