@@ -2555,7 +2555,11 @@ These hold for every install, because every user gets this code:
   device id from the DER bytes and checks the result by loading it with `load_cert_chain`.
 - Certificate profile: SHA-256 signature, random serial, `basicConstraints=critical,CA:FALSE`,
   `keyUsage=critical,digitalSignature`, `extendedKeyUsage=serverAuth,clientAuth`,
-  `subjectKeyIdentifier`, `notBefore` one day back, `notAfter` 30 years.
+  `subjectKeyIdentifier` (OpenSSL also adds a matching `authorityKeyIdentifier`), `notBefore` one day
+  back and `notAfter` 30 years later, set with `-not_before` and `-not_after` where the generator
+  supports them. Elsewhere `-days 10958` sets `notBefore` to the creation time; a peer whose clock runs
+  behind refuses the certificate until its clock passes that time. Gate 2 records which generators
+  support the flags.
 - The passphrase is protected with user-scoped DPAPI on Windows and kept in a 0600 file elsewhere. It
   reaches `load_cert_chain` through the password callback. No plaintext key file, and no passphrase on
   a command line.
@@ -2578,6 +2582,9 @@ These hold for every install, because every user gets this code:
   certificate rather than a DNS name, while certificate verification stays on; server contexts set
   `num_tickets = 0`, since `OP_NO_TICKET` alone doesn't stop TLS 1.3 tickets; clients never supply a
   reusable session; either side refuses `session_reused` before any request; no early data.
+- In TLS 1.3 the client's handshake completes before the server checks the client certificate, so a
+  rejected client learns it only on its first read. The client treats a connection as unauthenticated
+  until it has read the peer's reply. The server refuses before it reads any request.
 - Never fall back to `CERT_NONE`, which would also stop the server asking for a client certificate. If
   `VERIFY_X509_PARTIAL_CHAIN` is ever needed, that profile and context change gets its own review.
 - After the handshake, each side hashes the peer's DER certificate, looks the peer up by it, and
@@ -2590,17 +2597,34 @@ These hold for every install, because every user gets this code:
 - `agent-tabs net lan on --bind <private address>` starts the listener as its own process, separate from
   the loopback MCP server. On Windows it sets `SO_EXCLUSIVEADDRUSE` before `bind`.
 - The listener needs no agent session on its machine. When a verified request arrives and no local
-  server runs, it starts the shared server the way the headers helper does, so a remote `open` works on
-  a machine where nothing else runs.
+  server runs, it starts the shared server, so a remote `open` works on a machine where nothing else
+  runs. It uses the server port and home recorded in the `network` section, starts the server from its
+  own install by absolute interpreter and script path with `-I -S`, at most once per 10 s, and sends a
+  request and the ingress credential only to a server whose pid and port match that home's state file,
+  as the headers helper does. If another program holds the port, it refuses the request and writes an
+  audit line. Peer fields never select the home, port, token or launcher.
 - `net lan on` records the user's standing choice, `network: lan`, and starts the listener.
   `agent-tabs net lan start` only starts the listener: it runs without confirmation, from an agent or
   an MCP tool, and refuses unless the standing choice is already `lan` and a `bind` address is already
-  configured. It adds no peer, grant or address, so it narrows nothing and widens nothing the user
-  hasn't chosen. `net lan stop` stops the listener and leaves the choice alone; `net off` sets the
-  choice to `off`, after which `start` refuses.
-- `net lan on --at-login` also registers a login task for the listener (a Scheduled Task on Windows, a
-  LaunchAgent on macOS, a systemd user unit on Linux). It is a widening command. `net off` removes the
-  task. The machine must be on and logged in; waking a sleeping machine is out of scope.
+  configured. It adds no peer, grant or address. It runs every D5 startup check, writes an audit line and
+  shows the desktop notification, as a widening command does, and it is refused to remote-origin
+  sessions. `net lan stop` stops the listener only until any agent runs `start`; to keep the listener
+  off against agents, use `net off` (which sets the choice to `off`, after which `start` refuses) or
+  `net pause`. On a network that reuses the home LAN's addresses, pinned mutual TLS remains the
+  guarantee, as D5 says.
+- `net lan on --at-login` registers a Scheduled Task, LaunchAgent or systemd user unit for the listener.
+  This is a widening command. The task runs as the logged-in user without elevation, never SYSTEM or
+  root, only when the user is logged on, with no stored password. It uses absolute interpreter and
+  launcher paths with `-I -S`, scheduler-native argument encoding, no shell and no PATH lookup. The
+  launcher is a file in the D11-protected `net/` folder that names the current install; each plugin
+  update rewrites it. Registration verifies that the task definition, interpreter, launcher and their
+  parent folders can't be changed by other unprivileged users, and refuses otherwise. The task uses a
+  fixed private working folder and a receiver-built environment.
+- The task invokes `net lan start`, which rechecks current policy and the D5 startup checks; it never
+  invokes `on` or rewrites policy. `net off` first commits `off` under D12, then stops the listener and
+  removes the task. A racing or leftover task refuses to listen while the choice is `off`; a failed
+  removal is reported. `net status` shows the task and its target. The machine must be on and logged
+  in; waking a sleeping machine is out of scope.
 - It hands each verified request, with the TLS-derived peer id, to the local server over loopback, with
   a credential that authorizes network ingress only. Admission limits apply at that boundary as well.
   Separate processes reduce shared-resource exhaustion; they don't remove it.
@@ -2635,8 +2659,9 @@ has none.
 
 - `folders`: aliases it may open tabs in. Each alias is pinned to the real path and file identity
   (`st_dev`, `st_ino`; Windows fills them from the volume serial and file index) recorded when the user
-  adds it, and rechecked before dispatch. A path component that is a symlink or reparse point changed
-  since the grant is refused, as are UNC paths and network drives. A granted folder never auto-trusts a
+  adds it, and rechecked before dispatch. The recheck walks every path component, not only the last:
+  a junction in a parent folder doesn't mark the leaf as a reparse point. A component that is a symlink
+  or reparse point changed since the grant is refused, as are UNC paths and network drives. A granted folder never auto-trusts a
   project's hooks or MCP config for a remote tab.
 - `agents`: `claude` and `codex` only in version 1.
 - `models`: the models a remote open may name.
@@ -2659,11 +2684,15 @@ Remote tabs run with permissions the receiving machine selects. Within those per
 without asking; outside them it asks the local user or fails. The per-peer grant is the user's consent
 to that unattended scope.
 
-- **Claude Code:** `--permission-mode default`. Tools the user already allows in their own settings, and
+- **Claude Code:** `--permission-mode default`. Claude Code 2.1.325 still accepts `default` but no
+  longer lists it; `manual` behaves the same in Phase 0 and is the listed name. The launch plan uses
+  whichever the installed version lists. If it lists neither `manual` nor `default`, remote Claude Code
+  opens are refused until Gate 3 runs again on that version. Tools the user already allows in their own settings, and
   their own hooks, still apply. `net lan on` lists the user's broad allow rules as a warning.
 - **Codex:** `--sandbox workspace-write --ask-for-approval on-request -c approvals_reviewer="user"`.
-  Within the workspace, Codex edits files and runs ordinary commands without asking. App or MCP reviewer
-  overrides are part of the unattended scope.
+  The launch plan always passes the granted folder with `-C`, because a Codex shell can resolve a
+  relative path outside it. Within the workspace, Codex edits files and runs ordinary commands without
+  asking. App or MCP reviewer overrides are part of the unattended scope.
 - Copilot CLI, Antigravity CLI and custom profiles are refused for remote opens until their effective
   permissions are confirmed.
 - A remote request carries no `args` or `env`. The receiver builds one launch plan for IDE and terminal
@@ -2691,12 +2720,27 @@ to that unattended scope.
 
 ### Sessions across machines
 
-- While the listener runs, the local server asks each trusted, unpaused peer for its `inventory` at
-  start and every 60 s, and right after that peer sends a request. A peer that doesn't answer is shown
-  as offline, with the age of its last inventory.
-- `list_sessions` and the `ListAgents` rewrite show each peer's sessions under `<label> (remote)`, with
-  that age. A remote session is addressed as `<session name>@<label>`. These are the sessions the peer's
-  grants let this machine see, not all of them.
+- While the listener runs, the local server requests inventory at start and every 60 s from each
+  currently trusted, unpaused, unexpired peer. Only an accepted non-inventory request may schedule an
+  earlier refresh. Inventory requests, replies and refusals never trigger refreshes. Triggers coalesce:
+  one outstanding inventory request and at most one attempt per peer per 60 s, with no retry queue,
+  a global concurrency cap of 8 and a 30 s total deadline. Inventory requests use the same outbound
+  policy and dispatch authority as other LAN work. A peer that doesn't answer is shown as offline with
+  the age of its last inventory.
+- `list_sessions` and the `ListAgents` rewrite show remote sessions under a receiver-generated
+  `<label> (remote)` heading with the inventory's age. All peer fields are untrusted data. An inventory
+  reply may hold only a session id, display name, supported agent and an enumerated status; unknown
+  fields are rejected. A reply is at most 64 KiB and 256 sessions; an id is at most 128 ASCII letters,
+  digits, hyphens or underscores; a display name is at most 128 characters. Duplicate ids are refused.
+  A reply that fails any check is dropped whole and the peer shown as offline.
+- Names render as escaped single-line data, with control characters escaped, never as headings,
+  context instructions or protocol lines. A remote session is addressed by its validated id plus the
+  receiver-owned peer label, which resolves to the authenticated peer id. Remote rows are never merged
+  with local sessions, and another host's rows are never forwarded.
+- A remote-origin session sees no remote groups. The caller's outbound and remote-origin limits are
+  rechecked before cached rows are shown and before anything is sent. The peer's grants limit what it
+  returns; a listed row grants no operation. Peer metadata can still hold prompt injection; the framing
+  doesn't make it safe.
 
 ### After a restart
 
@@ -2756,8 +2800,9 @@ Interfaces:
   execution. Each widening command also shows a desktop notification on that machine and
   writes an audit line in the audit fields below, with no free text. Narrowing commands (`pause`, `revoke`, `off`) need no confirmation, and `status`
   is read-only. Phase 0 checks whether Claude Code's `!` prefix gives a command an interactive terminal.
-- **No MCP tool and no mod protocol line** turns networking on, trusts a peer, adds a grant or resumes a
-  peer.
+- **No MCP tool and no mod protocol line** sets `network` to `lan`, trusts a peer, adds a grant or
+  resumes a peer. The one exception is `net lan start`, which starts the listener only within the
+  standing choice (see Listener).
 - **A setup skill** walks the user through setup: it explains each step, shows the exact command to
   run and checks the result. It never runs a widening command itself.
 - **The Agents pane** shows peer status and grants and offers Pause. For Resume it shows the
@@ -2808,6 +2853,27 @@ All four pass before code depends on this section:
 3. Permissions: the Claude Code and Codex settings above, tested for what they do against the installed
    versions, including whether `approvals_reviewer` exists.
 4. Folder identity: `st_dev` and `st_ino` stability and symlink and reparse-point detection on Windows.
+
+Results on Windows 11, 2026-11-14 (Python 3.12.10 with OpenSSL 3.0.16; Git's openssl 3.5.9; Claude
+Code 2.1.325; Codex 0.167.2):
+
+- Gate 1, partial: every test passes on this one combination, including mutual pins, missing, unknown
+  and wrong certificates, a TLS 1.2 client, a wrong passphrase and `VERIFY_X509_STRICT`. A self-signed
+  `CA:FALSE` leaf works as the only trust anchor without `VERIFY_X509_PARTIAL_CHAIN`. With
+  `OP_NO_TICKET` alone a ticket is issued and the session is reused; `num_tickets = 0` stops both.
+  Python 3.9 and 3.13, macOS and Linux are still to test.
+- Gate 2, Windows: pass. The key is PBES2-encrypted PKCS#8 and no passphrase reaches a command line.
+  macOS LibreSSL and Linux are still to test.
+- Gate 3, partial: the headless tests show that Claude Code `default` and `manual` refuse an unapproved
+  shell write despite the user's `defaultMode: bypassPermissions`. The Codex test permits a workspace
+  write and refuses an outside write. `approvals_reviewer` exists, but its human-review behavior is
+  unverified. Before Gate 3 passes, test the exact receiver-built interactive launch plan, including
+  Codex `-C <granted folder>`, workspace writes, outside-workspace approval routing and local-user
+  denial, and confirm that approval reaches the local user rather than an automatic reviewer.
+- Gate 4, Windows, partial: the checks cover junctions and 8.3 short names, including matching file
+  identity and the need to inspect every path component. Symlink detection is untested because this
+  run couldn't create symlinks. Complete the symlink checks where creation is permitted before Gate 4
+  passes.
 
 ## Security
 
