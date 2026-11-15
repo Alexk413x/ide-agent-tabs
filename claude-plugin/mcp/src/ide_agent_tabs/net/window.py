@@ -110,8 +110,8 @@ def _caller(text: str) -> str:
 
 
 def console_interpreter(interpreter: str) -> str:
-    if os.path.basename(interpreter).lower() == "pythonw.exe":
-        sibling = os.path.join(os.path.dirname(interpreter), "python.exe")
+    if ntpath.basename(interpreter).lower() == "pythonw.exe":
+        sibling = ntpath.join(ntpath.dirname(interpreter), "python.exe")
         if os.path.isfile(sibling):
             return sibling
     return interpreter
