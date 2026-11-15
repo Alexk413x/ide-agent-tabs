@@ -16,7 +16,7 @@ from ..messaging.db import is_busy, run_tx
 T = TypeVar("T")
 
 DB_FILE = "net.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BUSY_TIMEOUT_MS = 200
 DEADLINE_MS = 5_000
 REQUEST_TTL_MS = 7 * 24 * 3600 * 1000
@@ -62,6 +62,13 @@ MIGRATIONS = (
     peer          TEXT PRIMARY KEY,
     sessions_json TEXT    NOT NULL,
     fetched_ms    INTEGER NOT NULL
+  )""",
+    ),
+    (
+        """CREATE TABLE remote_tabs (
+    tab_id     TEXT    PRIMARY KEY,
+    peer       TEXT    NOT NULL,
+    created_ms INTEGER NOT NULL
   )""",
     ),
 )
@@ -448,3 +455,26 @@ class NetStore:
             )
         )
         return None if row is None else str(row["peer"])
+
+    def record_remote_tab(self, tab_id: str, peer: str, now_ms: int) -> None:
+        self._tx(lambda: self._run("INSERT OR REPLACE INTO remote_tabs (tab_id, peer, created_ms) VALUES (?, ?, ?)", tab_id, peer, now_ms))
+
+    def remote_tab_peer(self, tab_id: str) -> str | None:
+        row = self._read(lambda: self._one("SELECT peer FROM remote_tabs WHERE tab_id = ?", tab_id))
+        return None if row is None else str(row["peer"])
+
+    def find_reply_grant(self, peer: str, local_session: str, local_generation: str, reply_to: str, now_ms: int) -> str | None:
+        def work() -> str | None:
+            row = self._one(
+                "SELECT remote_session, created_ms FROM reply_grants WHERE local_session = ? AND local_generation = ? AND peer = ?"
+                " AND message_id = ? ORDER BY created_ms DESC LIMIT 1",
+                local_session,
+                local_generation,
+                peer,
+                reply_to,
+            )
+            if row is None or not 0 <= now_ms - row["created_ms"] < REPLY_GRANT_TTL_MS:
+                return None
+            return str(row["remote_session"])
+
+        return self._read(work)

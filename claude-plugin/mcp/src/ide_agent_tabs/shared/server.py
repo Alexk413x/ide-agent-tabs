@@ -126,6 +126,8 @@ class SharedServer:
             end=self.hub.end_pid,
             on_request=self.touch,
             on_shutdown=lambda: self.stop_soon("asked to stop"),
+            net_ingress=getattr(self.host, "net_ingress", None),
+            ingress_token=lambda: ingress_token(self.home),
         )
 
     def claim(self, wait_ms: float = HANDOVER_MS) -> bool:
@@ -229,6 +231,15 @@ def tab_owner(home: str, tab: str) -> tuple[int, int | None] | None:
     from ..messaging.sessions import tab_owner as owner
 
     return owner(home, tab)
+
+
+def ingress_token(home: str) -> str | None:
+    from ..net.ingress import IngressTokenError, read_ingress_token
+
+    try:
+        return read_ingress_token(home)
+    except IngressTokenError:
+        return None
 
 
 def load_host(home: str, log: Callable[[str], None]) -> ToolHost:

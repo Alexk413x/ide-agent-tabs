@@ -118,6 +118,8 @@ class Engine:
         self.log = log
         self.env = {k: v for k, v in (os.environ if env is None else env).items() if k.upper() not in _SESSION_ENV}
         self.scheduler = Scheduler("agent-tabs-shared-scheduler", log=log)
+        self._net: Any = None
+        self._net_lock = threading.Lock()
         if detect:
             threading.Thread(target=self._detect, name="agent-tabs-detect", daemon=True).start()
 
@@ -139,6 +141,18 @@ class Engine:
             presence=SessionPresence(),
         )
         return Service(deps)
+
+    def net_dispatcher(self) -> Any:
+        from ..clock import now_ms
+        from ..net.dispatch import NetDispatcher
+
+        with self._net_lock:
+            if self._net is None:
+                self._net = NetDispatcher(self.home, lambda: self.service(self.env), now_ms, self.log)
+            return self._net
+
+    def net_ingress(self, peer: str, request: object) -> dict[str, Any]:
+        return self.net_dispatcher().handle(peer, request)
 
     def _detect(self) -> None:
         with contextlib.suppress(Exception):

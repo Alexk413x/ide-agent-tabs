@@ -37,6 +37,7 @@ STATUS = {
     METHOD_NOT_FOUND: 404,
 }
 MAX_BODY_BYTES = 8 * 1024 * 1024
+MAX_INGRESS_BYTES = 64 * 1024
 KEEPALIVE_TIMEOUT_S = 60.0
 LISTED = {"ttlMs": 0, "cacheScope": "private"}
 EMPTY_LISTS = {"prompts/list": "prompts", "resources/list": "resources", "resources/templates/list": "resourceTemplates"}
@@ -81,6 +82,8 @@ class FrontDeps(NamedTuple):
     end: Callable[[int], int]
     on_request: Callable[[], None]
     on_shutdown: Callable[[], None]
+    net_ingress: Callable[[str, object], dict[str, Any]] | None = None
+    ingress_token: Callable[[], str | None] | None = None
 
 
 def positive_int(value: str | None, minimum: int) -> int | None:
@@ -330,6 +333,9 @@ class Handler(socketserver.StreamRequestHandler):
         if path == "/shutdown":
             self._shutdown()
             return
+        if path == "/net/ingress":
+            self._ingress()
+            return
         # A 401 starts Claude Code's OAuth flow, which this server doesn't offer, so a bad token gets 403.
         if not _bearer(self.header("authorization"), deps.token):
             self.refuse(403, "missing or wrong bearer token")
@@ -362,6 +368,41 @@ class Handler(socketserver.StreamRequestHandler):
         self.send(200, {"ok": True}, close=True)
         deps.on_shutdown()
 
+    def _ingress(self) -> None:
+        from ..net.dispatch import fallback_request_id
+        from ..net.ingress import ingress_allowed
+        from ..net.wire import refused_reply
+
+        deps = self.front.deps
+        token = (deps.ingress_token() if deps.ingress_token is not None else None) or None
+        if not ingress_allowed(self.header("authorization"), token):
+            self.refuse(403, "missing or wrong bearer token")
+            return
+        if self.command != "POST":
+            self.refuse(405, "use POST")
+            return
+        if (self.header("content-type") or "").split(";", 1)[0].strip().lower() != "application/json":
+            self.refuse(400, "send application/json")
+            return
+        try:
+            envelope = parse(self.body(MAX_INGRESS_BYTES).decode("utf-8"))
+        except BodyError as e:
+            self.refuse(e.status, "unreadable body")
+            return
+        except (ValueError, RecursionError):
+            self.refuse(400, "not JSON")
+            return
+        peer = envelope.get("peer") if isinstance(envelope, dict) else None
+        if not isinstance(envelope, dict) or set(envelope) != {"peer", "request"} or not isinstance(peer, str):
+            self.refuse(400, "send {peer, request}")
+            return
+        request = envelope["request"]
+        reply = refused_reply(fallback_request_id(request))
+        if deps.net_ingress is not None:
+            with contextlib.suppress(Exception):
+                reply = deps.net_ingress(peer, request)
+        self.send(200, reply)
+
     def _mcp_post(self) -> None:
         if self.command != "POST":
             self.send(405, close=True, headers={"Allow": "POST"})
@@ -383,28 +424,28 @@ class Handler(socketserver.StreamRequestHandler):
             return
         self.message(message)
 
-    def body(self) -> bytes:
+    def body(self, limit: int = MAX_BODY_BYTES) -> bytes:
         self.body_read = True
         chunked = "chunked" in (self.headers.get("transfer-encoding") or "").lower()
         length = self.headers.get("content-length")
         if chunked and length is not None:
             raise BodyError(400)
         if chunked:
-            return self.chunks()
+            return self.chunks(limit)
         try:
             size = int(length or 0)
         except ValueError:
             raise BodyError(400) from None
         if size < 0:
             raise BodyError(400)
-        if size > MAX_BODY_BYTES:
+        if size > limit:
             raise BodyError(413)
         data = self.rfile.read(size)
         if len(data) != size:
             raise BodyError(400)
         return data
 
-    def chunks(self) -> bytes:
+    def chunks(self, limit: int) -> bytes:
         out = bytearray()
         while True:
             line = self.rfile.readline(1024)
@@ -418,7 +459,7 @@ class Handler(socketserver.StreamRequestHandler):
                 while self.rfile.readline(1024).strip():
                     pass
                 return bytes(out)
-            if len(out) + size > MAX_BODY_BYTES:
+            if len(out) + size > limit:
                 raise BodyError(413)
             chunk = self.rfile.read(size)
             if len(chunk) != size or self.rfile.readline(3).strip():
