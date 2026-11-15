@@ -71,6 +71,7 @@ def _api() -> Any:
 
 
 def _sid_string(sid: int) -> str:
+    assert sys.platform == "win32"
     import ctypes
 
     kernel32, advapi32 = _api()
@@ -86,6 +87,7 @@ def _sid_string(sid: int) -> str:
 
 @functools.cache
 def _user_sid() -> str:
+    assert sys.platform == "win32"
     import ctypes
     from ctypes import wintypes
 
@@ -109,6 +111,7 @@ def _user_sid() -> str:
 
 
 def _windows_security(path: str) -> tuple[str, int, list[tuple[int, int, str]] | None]:
+    assert sys.platform == "win32"
     import ctypes
     from ctypes import wintypes
 

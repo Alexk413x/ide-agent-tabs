@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import unittest
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from typing import Any
 
 from ide_agent_tabs.messaging.db import MailError
@@ -14,9 +14,10 @@ from ide_agent_tabs.messaging.store import mail_to
 from ide_agent_tabs.net import dispatch, policy, wire
 from ide_agent_tabs.net.audit import audit_path
 from ide_agent_tabs.net.dispatch import NetDispatcher, folder_problem, session_generation
+from ide_agent_tabs.net.origin import Caller, OriginChecker
 from ide_agent_tabs.net.policy import FolderGrant, PeerGrant, Policy
 from ide_agent_tabs.net.remote_launch import FIRST_TURN
-from ide_agent_tabs.net.store import NetStore, Reservation
+from ide_agent_tabs.net.store import Launch, NetStore, Reservation
 from support import temp_home
 
 NOW = 1_800_000_000_000
@@ -40,8 +41,11 @@ class FakeService:
         self.fail_close: Exception | None = None
         self.fail_list: Exception | None = None
         self.reply_id = True
+        self.on_open: Callable[[], None] | None = None
 
     def open_tab(self, given: Mapping[str, Any]) -> dict[str, Any]:
+        if self.on_open is not None:
+            self.on_open()
         if self.fail_open is not None:
             raise self.fail_open
         self.opened.append(dict(given))
@@ -266,6 +270,49 @@ class OpenTest(DispatchCase):
         tab = self.open_ok()
         self.assertEqual(self.dispatcher.is_remote_origin(tab), PEER)
         self.assertIsNone(self.dispatcher.is_remote_origin("someone-else"))
+
+    def watch_launches(self) -> list[tuple[list[Launch], bool]]:
+        seen: list[tuple[list[Launch], bool]] = []
+        observer = NetStore(self.home)
+        self.addCleanup(observer.close)
+        checker = OriginChecker(self.home, self.clock)
+        self.addCleanup(checker.close)
+        session = Caller("s-0123456789ab", os.path.join(self.folder, "sub"))
+
+        def look() -> None:
+            seen.append((observer.inflight_launches(NOW), checker.is_remote(session)))
+
+        self.service.on_open = look
+        return seen
+
+    def test_the_launch_is_recorded_while_the_tab_opens_and_cleared_after_the_tab_is_recorded(self) -> None:
+        seen = self.watch_launches()
+        tab = self.open_ok()
+        self.assertEqual(seen, [([Launch(PEER, "r1", os.path.realpath(self.folder), NOW)], True)])
+        store = NetStore(self.home)
+        self.addCleanup(store.close)
+        self.assertEqual(store.inflight_launches(NOW), [])
+        self.assertEqual(store.remote_tab_peer(tab), PEER)
+        checker = OriginChecker(self.home, self.clock)
+        self.addCleanup(checker.close)
+        self.assertTrue(checker.is_remote(Caller(tab, self.folder)))
+        self.assertFalse(checker.is_remote(Caller("s-0123456789ab", self.folder)))
+
+    def test_the_launch_is_cleared_when_the_tab_fails_to_open(self) -> None:
+        seen = self.watch_launches()
+        self.service.fail_open = RuntimeError("terminal exploded")
+        self.assertRefused(self.handle(self.open_request()), "r1", "launch-failed")
+        self.assertEqual([[x.request_id for x in launches] for launches, _ in seen], [["r1"]])
+        store = NetStore(self.home)
+        self.addCleanup(store.close)
+        self.assertEqual(store.inflight_launches(NOW), [])
+
+    def test_the_launch_is_cleared_when_the_launcher_returns_no_tab_id(self) -> None:
+        self.service.reply_id = False
+        self.assertRefused(self.handle(self.open_request()), "r1", "launch-failed")
+        store = NetStore(self.home)
+        self.addCleanup(store.close)
+        self.assertEqual(store.inflight_launches(NOW), [])
 
     def test_remote_origin_without_a_database_creates_nothing(self) -> None:
         self.assertIsNone(self.dispatcher.is_remote_origin("tab-1"))

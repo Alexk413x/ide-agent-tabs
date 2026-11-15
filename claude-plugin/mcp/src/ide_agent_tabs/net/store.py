@@ -16,12 +16,13 @@ from ..messaging.db import is_busy, run_tx
 T = TypeVar("T")
 
 DB_FILE = "net.db"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 BUSY_TIMEOUT_MS = 200
 DEADLINE_MS = 5_000
 REQUEST_TTL_MS = 7 * 24 * 3600 * 1000
 REPLY_GRANT_TTL_MS = 24 * 3600 * 1000
 HOUR_MS = 3600 * 1000
+LAUNCH_MAX_AGE_MS = 120_000
 
 PENDING = "pending"
 DISPATCHED = "dispatched"
@@ -71,6 +72,15 @@ MIGRATIONS = (
     created_ms INTEGER NOT NULL
   )""",
     ),
+    (
+        """CREATE TABLE launches (
+    peer       TEXT    NOT NULL,
+    request_id TEXT    NOT NULL,
+    folder     TEXT    NOT NULL,
+    started_ms INTEGER NOT NULL,
+    PRIMARY KEY (peer, request_id)
+  )""",
+    ),
 )
 
 
@@ -98,6 +108,14 @@ class Reservation:
     generation: int
     created_ms: int
     replayed: bool = False
+
+
+@dataclass(frozen=True)
+class Launch:
+    peer: str
+    request_id: str
+    folder: str
+    started_ms: int
 
 
 def db_path(home: str) -> str:
@@ -397,6 +415,7 @@ class NetStore:
     def prune(self, now_ms: int) -> int:
         def work() -> int:
             self._run("DELETE FROM reply_grants WHERE created_ms <= ?", now_ms - REPLY_GRANT_TTL_MS)
+            self._run("DELETE FROM launches WHERE started_ms < ?", now_ms - LAUNCH_MAX_AGE_MS)
             return self._run("DELETE FROM requests WHERE created_ms < ?", now_ms - REQUEST_TTL_MS)
 
         return self._tx(work)
@@ -462,6 +481,26 @@ class NetStore:
     def remote_tab_peer(self, tab_id: str) -> str | None:
         row = self._read(lambda: self._one("SELECT peer FROM remote_tabs WHERE tab_id = ?", tab_id))
         return None if row is None else str(row["peer"])
+
+    def begin_launch(self, peer: str, request_id: str, folder: str, started_ms: int) -> None:
+        self._tx(
+            lambda: self._run(
+                "INSERT OR REPLACE INTO launches (peer, request_id, folder, started_ms) VALUES (?, ?, ?, ?)",
+                peer,
+                request_id,
+                folder,
+                started_ms,
+            )
+        )
+
+    def end_launch(self, peer: str, request_id: str) -> None:
+        self._tx(lambda: self._run("DELETE FROM launches WHERE peer = ? AND request_id = ?", peer, request_id))
+
+    def inflight_launches(self, now_ms: int, max_age_ms: int = LAUNCH_MAX_AGE_MS) -> list[Launch]:
+        rows = self._read(
+            lambda: self._all("SELECT peer, request_id, folder, started_ms FROM launches WHERE ? - started_ms <= ?", now_ms, max_age_ms)
+        )
+        return [Launch(r["peer"], r["request_id"], r["folder"], int(r["started_ms"])) for r in rows]
 
     def find_reply_grant(self, peer: str, local_session: str, local_generation: str, reply_to: str, now_ms: int) -> str | None:
         def work() -> str | None:

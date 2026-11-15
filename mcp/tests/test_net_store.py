@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import threading
 import unittest
 
 from ide_agent_tabs.net import store as net_store
-from ide_agent_tabs.net.store import ConflictError, NetStore, Reservation
+from ide_agent_tabs.net.store import ConflictError, Launch, NetStore, Reservation, db_path
 from support import temp_home
 
 NOW = 1_800_000_000_000
@@ -458,6 +459,56 @@ class PruneAndOwnerTest(StoreCase):
         self.store.reserve("p1", "a", "a", "open", 0, NOW, "t-1")
         self.store.refuse("p1", "a")
         self.assertIsNone(self.store.opened_by("t-1"))
+
+
+class LaunchTest(StoreCase):
+    def test_a_begun_launch_is_listed_until_it_ends(self) -> None:
+        self.store.begin_launch("p1", "r1", "/work/proj", NOW)
+        self.assertEqual(self.store.inflight_launches(NOW), [Launch("p1", "r1", "/work/proj", NOW)])
+        self.store.end_launch("p1", "r1")
+        self.assertEqual(self.store.inflight_launches(NOW), [])
+
+    def test_ending_a_launch_that_is_not_there_is_harmless(self) -> None:
+        self.store.end_launch("p1", "missing")
+
+    def test_a_launch_older_than_the_maximum_age_is_not_listed(self) -> None:
+        self.store.begin_launch("p1", "old", "/a", NOW - 120_001)
+        self.store.begin_launch("p1", "edge", "/b", NOW - 120_000)
+        self.assertEqual([x.request_id for x in self.store.inflight_launches(NOW)], ["edge"])
+        self.assertEqual(sorted(x.request_id for x in self.store.inflight_launches(NOW, max_age_ms=500_000)), ["edge", "old"])
+
+    def test_launches_are_keyed_by_peer_and_request_id(self) -> None:
+        self.store.begin_launch("p1", "r1", "/a", NOW)
+        self.store.begin_launch("p2", "r1", "/b", NOW)
+        self.store.end_launch("p1", "r1")
+        self.assertEqual([x.peer for x in self.store.inflight_launches(NOW)], ["p2"])
+
+    def test_prune_drops_launches_past_the_maximum_age(self) -> None:
+        self.store.begin_launch("p1", "old", "/a", NOW - 200_000)
+        self.store.begin_launch("p1", "new", "/b", NOW)
+        self.store.prune(NOW)
+        self.assertEqual([x.request_id for x in self.store.inflight_launches(NOW, max_age_ms=10**9)], ["new"])
+
+
+class MigrationTest(unittest.TestCase):
+    def test_a_database_from_before_launches_keeps_its_data(self) -> None:
+        home = temp_home(self)
+        os.makedirs(os.path.dirname(db_path(home)))
+        sql = sqlite3.connect(db_path(home), isolation_level=None)
+        for step in net_store.MIGRATIONS[:2]:
+            for statement in step:
+                sql.execute(statement)
+        sql.execute("PRAGMA user_version=2")
+        sql.execute("INSERT INTO remote_tabs (tab_id, peer, created_ms) VALUES ('t-1', 'p1', 5)")
+        sql.close()
+        store = NetStore(home)
+        self.addCleanup(store.close)
+        self.assertEqual(store.remote_tab_peer("t-1"), "p1")
+        store.begin_launch("p1", "r1", "/a", NOW)
+        self.assertEqual(len(store.inflight_launches(NOW)), 1)
+        sql = sqlite3.connect(db_path(home))
+        self.addCleanup(sql.close)
+        self.assertEqual(sql.execute("PRAGMA user_version").fetchone()[0], net_store.SCHEMA_VERSION)
 
 
 if __name__ == "__main__":

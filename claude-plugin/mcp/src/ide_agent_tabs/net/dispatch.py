@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import stat
 import threading
 import unicodedata
@@ -20,7 +21,7 @@ from . import wire
 from .audit import ADMITTED, REFUSED, Audit, AuditError, AuditRecord
 from .policy import FolderGrant, PeerGrant, Policy, PolicyError, folder_grant, grant_for, load_network_config, load_policy
 from .remote_launch import RemoteLaunchError, claude_help_text, plan_remote_open
-from .store import COMPLETED, ConflictError, NetStore, Reservation, db_path
+from .store import COMPLETED, ConflictError, NetStore, NetStoreError, Reservation, db_path
 
 REPARSE_POINT = 0x400
 REMEMBERED_REQUESTS = 256
@@ -297,6 +298,7 @@ class NetDispatcher:
             raise _Refusal("superseded")
         trace.effect = True
         try:
+            store.begin_launch(peer, request_id, os.path.realpath(folder.path), self._now_ms())
             opened = self._tabs().open_tab(plan)
             tab = opened.get("id")
             if not isinstance(tab, str) or not is_session_id(tab):
@@ -304,12 +306,20 @@ class NetDispatcher:
         except Exception as e:  # noqa: BLE001 - the launcher can fail in many ways; the peer gets the generic refusal
             self._log(f"net: opening a tab failed: {type(e).__name__}")
             store.refuse(peer, request_id)
+            self._end_launch(store, peer, request_id)
             raise _Refusal("launch-failed", "failed") from None
         trace.tab = tab
         store.complete(peer, request_id, tab)
         store.record_remote_tab(tab, peer, self._now_ms())
+        self._end_launch(store, peer, request_id)
         self._deliver(f"{grant.label}-remote", tab, body.task, None, "task-not-delivered")
         return {"tab": tab}
+
+    def _end_launch(self, store: NetStore, peer: str, request_id: str) -> None:
+        try:
+            store.end_launch(peer, request_id)
+        except (NetStoreError, sqlite3.Error) as e:
+            self._log(f"net: clearing a launch failed: {type(e).__name__}")
 
     def _replayed(self, trace: _Trace, reservation: Reservation, key: str) -> dict[str, Any]:
         if reservation.state != COMPLETED or reservation.tab_id is None:

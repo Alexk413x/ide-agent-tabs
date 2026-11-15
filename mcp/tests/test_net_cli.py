@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -17,8 +18,10 @@ from ide_agent_tabs import cli as top_cli
 from ide_agent_tabs.net import cli, confirm, notify, tls
 from ide_agent_tabs.net.cli import Services
 from ide_agent_tabs.net.client import peer_cert_path
+from ide_agent_tabs.net.firewall import FirewallError
 from ide_agent_tabs.net.identity import format_digest, parse_device_id
 from ide_agent_tabs.net.listener import listener_file, log_file, read_listener, stop_file, write_atomically
+from ide_agent_tabs.net.login_task import LoginTaskError
 from ide_agent_tabs.net.policy import PeerGrant, Policy, load_policy, policy_path, save_policy
 from ide_agent_tabs.net.private_files import check_private
 from ide_agent_tabs.net.store import NetStore, db_path
@@ -35,6 +38,12 @@ class Harness:
         self.confirmed: list[list[str]] = []
         self.notices: list[str] = []
         self.spawned: list[tuple[str, int]] = []
+        self.events: list[str] = []
+        self.logins: list[str] = []
+        self.firewall: list[tuple[str, int, tuple[str, ...]]] = []
+        self.login_error: Exception | None = None
+        self.firewall_error: Exception | None = None
+        self.firewall_removals = 0
         self.user_home = make_root(test, "iat-net-user-")
         values: dict[str, Any] = {
             "home": home,
@@ -44,6 +53,11 @@ class Harness:
             "notify": self.notices.append,
             "spawn": self._spawn,
             "bind_available": lambda _address: True,
+            "register_login": self._register_login,
+            "remove_login": self._remove_login,
+            "login_status": lambda _home: "none",
+            "apply_firewall": self._apply_firewall,
+            "remove_firewall": self._remove_firewall,
             "user_home": self.user_home,
             "env": {},
             "start_wait_s": 2.0,
@@ -60,6 +74,34 @@ class Harness:
         self.spawned.append((home, server_port))
         write_atomically(str(listener_file(home)), json.dumps({"pid": os.getpid(), "startedMs": 1, "bind": "10.0.0.5", "port": 47829}))
         return os.getpid()
+
+    def _register_login(self, home: str) -> str:
+        self.events.append("register-login")
+        if self.login_error is not None:
+            raise self.login_error
+        self.logins.append(home)
+        return "Registered the login task."
+
+    def _remove_login(self, _home: str) -> str:
+        config = json.loads(Path(self.home, "config.json").read_text())
+        self.events.append(f"remove-login after {config['network']['network']} and listener {'up' if read_listener(self.home) else 'down'}")
+        if self.login_error is not None:
+            raise self.login_error
+        return "Removed the login task."
+
+    def _apply_firewall(self, bind: str, port: int, peers: Sequence[str]) -> str:
+        self.events.append("firewall")
+        if self.firewall_error is not None:
+            raise self.firewall_error
+        self.firewall.append((bind, port, tuple(peers)))
+        return "Created the firewall rule."
+
+    def _remove_firewall(self) -> str:
+        self.events.append("remove-firewall")
+        if self.firewall_error is not None:
+            raise self.firewall_error
+        self.firewall_removals += 1
+        return "Removed the firewall rule."
 
     def run(self, *args: str) -> int:
         return cli.main(list(args), self.services)
@@ -410,6 +452,28 @@ class RevokeAndOffTest(CliTestCase):
         self.assertIsNone(read_listener(self.a))
         self.assertEqual(self.h.confirmed, [])
 
+    def test_off_commits_first_then_stops_the_listener_then_removes_the_task_and_the_rule(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5"}}))
+        self.assertEqual(self.h.run("off"), 0, self.h.errors)
+        self.assertEqual(self.h.events, ["remove-login after off and listener down", "remove-firewall"])
+        self.assertIn("Removed the login task.", self.h.text)
+        self.assertIn("Removed the firewall rule.", self.h.text)
+
+    def test_off_reports_a_login_task_that_stays_and_still_removes_the_rule(self) -> None:
+        self.h.login_error = LoginTaskError("schtasks exited 1 and the task remains")
+        self.assertEqual(self.h.run("off"), 1)
+        self.assertIn("login task was not removed", self.h.errors)
+        self.assertIn("schtasks exited 1", self.h.errors)
+        self.assertIn("refuses while the network is off", self.h.errors)
+        self.assertEqual(self.h.firewall_removals, 1)
+        self.assertEqual(json.loads(Path(self.a, "config.json").read_text())["network"]["network"], "off")
+
+    def test_off_reports_a_firewall_rule_that_stays(self) -> None:
+        self.h.firewall_error = FirewallError("the Windows prompt for administrator rights was declined")
+        self.assertEqual(self.h.run("off"), 1)
+        self.assertIn("declined", self.h.errors)
+        self.assertIn("Agent Tabs LAN", self.h.errors)
+
     def test_off_without_a_config_creates_one(self) -> None:
         self.assertEqual(self.h.run("off"), 0, self.h.errors)
         self.assertEqual(json.loads(Path(self.a, "config.json").read_text()), {"network": {"network": "off"}})
@@ -450,10 +514,54 @@ class LanTest(CliTestCase):
         self.assertEqual(self.config(), {"jev": {"enabled": False}, "network": {"network": "lan", "bind": "10.0.0.5"}})
         self.assertIn("10.0.0.5", "\n".join(self.h.confirmed[0]))
         self.assertEqual(self.h.spawned, [(self.a, 47828)])
-        self.assertIn("not implemented yet", self.h.text)
+        self.assertEqual(self.h.logins, [self.a])
+        self.assertIn("Registered the login task.", self.h.text)
+        self.assertIn("At login", os.linesep.join(self.h.confirmed[0]))
+        self.assertEqual(self.h.firewall, [("10.0.0.5", 47829, ())])
         self.assertIn("The listener runs", self.h.text)
         self.assertEqual(self.h.notices, ["LAN network turned on at 10.0.0.5"])
         self.assertIn("lan-on", Path(log_file(self.a, "cli.log")).read_text())
+
+    def test_on_without_at_login_registers_no_login_task(self) -> None:
+        self.assertEqual(self.h.run("lan", "on", "--bind", "10.0.0.5"), 0, self.h.errors)
+        self.assertEqual(self.h.logins, [])
+        self.assertNotIn("At login", os.linesep.join(self.h.confirmed[0]))
+
+    def test_on_reports_a_login_task_that_is_refused_and_still_starts_the_listener(self) -> None:
+        self.h.login_error = LoginTaskError("refused because other users could change what the task runs")
+        self.assertEqual(self.h.run("lan", "on", "--bind", "10.0.0.5", "--at-login"), 1)
+        self.assertIn("login task was not registered", self.h.errors)
+        self.assertIn("other users could change", self.h.errors)
+        self.assertEqual(len(self.h.spawned), 1)
+        self.assertEqual(self.config()["network"]["network"], "lan")
+
+    def test_on_keeps_going_when_the_firewall_prompt_is_declined(self) -> None:
+        self.h.firewall_error = FirewallError("the Windows prompt for administrator rights was declined")
+        self.assertEqual(self.h.run("lan", "on", "--bind", "10.0.0.5"), 0, self.h.errors)
+        self.assertIn("declined", self.h.errors)
+        self.assertIn("Peers can connect only when the firewall allows them", self.h.errors)
+        self.assertEqual(len(self.h.spawned), 1)
+
+    def test_on_gives_the_firewall_the_trusted_peer_addresses(self) -> None:
+        self.trust_b("192.168.1.20", "laptop")
+        self.assertEqual(self.h.run("lan", "on", "--bind", "10.0.0.5"), 0, self.h.errors)
+        self.assertEqual(self.h.firewall, [("10.0.0.5", 47829, ("192.168.1.20",))])
+
+    def test_trust_and_revoke_recreate_the_rule_only_while_the_network_is_on(self) -> None:
+        self.trust_b("192.168.1.20", "laptop")
+        self.assertEqual(self.h.firewall, [])
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5"}}))
+        self.assertEqual(self.h.run(*trust_args(cert_of(self.b), self.b_id, "192.168.1.21", "laptop")), 0, self.h.errors)
+        self.assertEqual(self.h.firewall, [("10.0.0.5", 47829, ("192.168.1.21",))])
+        self.assertEqual(self.h.run("revoke", "laptop"), 0, self.h.errors)
+        self.assertEqual(self.h.firewall[-1], ("10.0.0.5", 47829, ()))
+
+    def test_a_declined_prompt_on_trust_keeps_the_trust(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5"}}))
+        self.h.firewall_error = FirewallError("the Windows prompt for administrator rights was declined")
+        self.assertEqual(self.h.run(*trust_args(cert_of(self.b), self.b_id)), 0, self.h.errors)
+        self.assertEqual(len(load_policy(self.a).peers), 1)
+        self.assertIn("declined", self.h.errors)
 
     def test_on_without_a_terminal_changes_nothing(self) -> None:
         harness = Harness(self, self.a, confirm=confirm.confirm)
@@ -516,6 +624,7 @@ class StatusAndDispatchTest(CliTestCase):
         self.assertIn("peers: none", self.h.text)
         self.assertIn(f"identity: {device_of(self.a)}", self.h.text)
         self.assertIn("listener: not running", self.h.text)
+        self.assertIn("login task: none", self.h.text)
         self.assertFalse(os.path.exists(policy_path(self.a)))
 
     def test_status_shows_the_listener_and_the_configuration(self) -> None:

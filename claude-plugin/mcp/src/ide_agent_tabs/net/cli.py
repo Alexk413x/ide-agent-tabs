@@ -27,12 +27,14 @@ from ..messaging.sessions import SESSION_ID
 from ..processes import spawn_detached, terminal_environment
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, parse_port
-from . import ingress, tls
+from . import firewall, ingress, login_task, tls
 from .certgen import CertgenError, generate_identity
 from .client import identity_dir, local_device_id, peer_cert_path, peers_dir
 from .confirm import ConfirmError, confirm
+from .firewall import FirewallError
 from .identity import der_from_pem, format_digest, parse_device_id
 from .listener import append_log, live_listener, log_file, read_listener, request_stop
+from .login_task import LoginTaskError
 from .notify import notify
 from .policy import (
     ALIAS,
@@ -126,6 +128,11 @@ class Services:
     notify: Callable[[str], object] = notify
     spawn: Callable[[str, int], int | None] = _spawn_listener
     bind_available: Callable[[str], bool] = _bind_available
+    register_login: Callable[[str], str] = login_task.register
+    remove_login: Callable[[str], str] = login_task.remove
+    login_status: Callable[[str], str] = login_task.status
+    apply_firewall: Callable[[str, int, Sequence[str]], str] = firewall.apply_rule
+    remove_firewall: Callable[[], str] = firewall.remove_rule
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     user_home: str = field(default_factory=lambda: os.path.expanduser("~"))
     server_port: int = SERVER_DEFAULT_PORT
@@ -248,6 +255,45 @@ def _stop_listener(svc: Services) -> bool:
     return True
 
 
+def _apply_firewall(svc: Services, bind: str, port: int) -> None:
+    addresses = [peer.address for peer in load_policy(svc.home).peers]
+    try:
+        text = svc.apply_firewall(bind, port, addresses)
+    except FirewallError as error:
+        svc.err(f"warning: {error}. Peers can connect only when the firewall allows them.")
+        return
+    if text:
+        svc.out(text)
+
+
+def _refresh_firewall(svc: Services) -> None:
+    config, _ = load_network_config(svc.home)
+    if config.network == "lan" and config.bind is not None:
+        _apply_firewall(svc, config.bind, config.port)
+
+
+def _remove_firewall(svc: Services) -> bool:
+    try:
+        text = svc.remove_firewall()
+    except FirewallError as error:
+        svc.err(
+            f"error: {error}. Delete the rule named {firewall.RULE_NAME} in Windows Defender Firewall, or run agent-tabs net off again."
+        )
+        return False
+    if text:
+        svc.out(text)
+    return True
+
+
+def _remove_login(svc: Services) -> bool:
+    try:
+        svc.out(svc.remove_login(svc.home))
+    except LoginTaskError as error:
+        svc.err(f"error: the login task was not removed: {error}. A leftover task runs lan start, which refuses while the network is off.")
+        return False
+    return True
+
+
 def _cmd_id(svc: Services, args: Sequence[str]) -> int:
     _parser("id").parse_args(args)
     identity = local_device_id(svc.home)
@@ -270,6 +316,7 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     svc.out(f"openssl: {config.openssl or 'none'}")
     info = live_listener(svc.home)
     svc.out("listener: " + (f"running (pid {info.pid}, {info.bind} port {info.port})" if info is not None else "not running"))
+    svc.out(f"login task: {svc.login_status(svc.home)}")
     svc.out(f"identity: {local_device_id(svc.home) or 'none'}")
     try:
         policy = load_policy(svc.home)
@@ -325,6 +372,10 @@ def _cmd_setup(svc: Services, args: Sequence[str]) -> int:
     return 0
 
 
+def _on_windows() -> bool:
+    return sys.platform == "win32"
+
+
 def _cmd_on(svc: Services, args: Sequence[str]) -> int:
     parser = _parser("lan on")
     parser.add_argument("--bind", required=True)
@@ -348,14 +399,30 @@ def _cmd_on(svc: Services, args: Sequence[str]) -> int:
             f"  listener address: {bind} port {config.port}",
             f"  config.json network: lan (it is {config.network} now)",
             "  The listener accepts connections only from peers you trust with agent-tabs net trust.",
+            *(
+                ["  Windows firewall: a rule for this port from your trusted peers (the Windows prompt asks for your approval)."]
+                if _on_windows()
+                else []
+            ),
+            *(
+                ["  At login: a task starts the listener when you sign in, as you and without administrator rights."]
+                if options.at_login
+                else []
+            ),
         ],
     )
-    if options.at_login:
-        svc.out("--at-login is not implemented yet; the listener starts now and not at login.")
     _set_network(svc.home, {"network": "lan", "bind": bind})
     svc.record("lan-on", bind=bind, port=config.port)
     svc.notify(f"LAN network turned on at {bind}")
-    return 0 if _start_listener(svc) else 1
+    _apply_firewall(svc, bind, config.port)
+    login_ok = True
+    if options.at_login:
+        try:
+            svc.out(svc.register_login(svc.home))
+        except LoginTaskError as error:
+            svc.err(f"error: the login task was not registered: {error}")
+            login_ok = False
+    return 0 if _start_listener(svc) and login_ok else 1
 
 
 def _cmd_start(svc: Services, args: Sequence[str]) -> int:
@@ -397,7 +464,10 @@ def _cmd_off(svc: Services, args: Sequence[str]) -> int:
         store.close()
     svc.out(f"The network is off; the policy generation is {generation}. Requests already handed off may still finish.")
     svc.record("off", generation=generation)
-    return 0 if _stop_listener(svc) else 1
+    stopped = _stop_listener(svc)
+    login_removed = _remove_login(svc)
+    firewall_removed = _remove_firewall(svc)
+    return 0 if stopped and login_removed and firewall_removed else 1
 
 
 def _read_certificate(path: str) -> tuple[bytes, str]:
@@ -492,6 +562,7 @@ def _cmd_trust(svc: Services, args: Sequence[str]) -> int:
     svc.notify(f"trusted peer {result.label} at {address}" if current is None else f"changed the address of peer {result.label}")
     svc.out(("Trusted " if current is None else "Updated the address of ") + f"{result.label} ({identity}) at {address}.")
     svc.out(f"Effective grants: {_grants_text(result)}.")
+    _refresh_firewall(svc)
     return 0
 
 
@@ -700,6 +771,7 @@ def _cmd_revoke(svc: Services, args: Sequence[str]) -> int:
     svc.record("revoke", device=peer.device_id, generation=generation)
     svc.out(f"Revoked {peer.label} ({peer.device_id}); the policy generation is {generation}.")
     svc.out("Requests already handed off to a local tab may still finish. Revoking here removes no trust on the other machine.")
+    _refresh_firewall(svc)
     return 0
 
 

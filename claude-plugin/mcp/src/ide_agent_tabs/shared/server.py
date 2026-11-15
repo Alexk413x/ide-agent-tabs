@@ -99,6 +99,12 @@ class SharedServer:
         self._stop_started = False
         self._serving = False
         self._timers = threading.Event()
+        self._poller: Any = None
+        self._net_closed = False
+        self._poller_lock = threading.Lock()
+        use_port = getattr(host, "use_port", None)
+        if use_port is not None:
+            use_port(port)
 
     def health(self) -> dict[str, Any]:
         return {
@@ -152,6 +158,27 @@ class SharedServer:
             return True
         return False
 
+    def sync_net(self) -> bool:
+        from ..net.policy import load_network_config
+
+        lan = load_network_config(self.home)[0].network == "lan"
+        with self._poller_lock:
+            if self._net_closed:
+                return False
+            if lan and self._poller is None:
+                from ..net.poller import Poller
+
+                self._poller = Poller(self.home, log=self.log)
+                self._poller.start()
+            elif not lan and self._poller is not None:
+                self._poller.stop()
+                self._poller = None
+        return False
+
+    def check_idle_and_net(self) -> bool:
+        self.sync_net()
+        return self.check_idle()
+
     def check_state(self) -> bool:
         state = read_state(self.home, self.port)
         if state is None or state.pid != self.pid:
@@ -179,7 +206,8 @@ class SharedServer:
 
             threading.Thread(target=loop, name=name, daemon=True).start()
 
-        every(idle_s, self.check_idle, "idle-exit")
+        self._quietly("starting the network poller", self.sync_net)
+        every(idle_s, self.check_idle_and_net, "idle-exit")
         every(state_s, self.check_state, "state-check")
 
     def stop_soon(self, why: str) -> None:
@@ -193,6 +221,11 @@ class SharedServer:
             serving = self._serving
         self.log(f"stopping: {why}")
         self._timers.set()
+        with self._poller_lock:
+            self._net_closed = True
+            poller, self._poller = self._poller, None
+        if poller is not None:
+            self._quietly("stopping the network poller", poller.stop)
         if self.front is not None:
             # socketserver's shutdown() waits for serve_forever() to return, so it would hang before serve() runs.
             if serving:

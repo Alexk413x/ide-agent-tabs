@@ -45,6 +45,7 @@ def _api() -> Any:
 
 
 def _dpapi(data: bytes, protect: bool) -> bytes:
+    assert sys.platform == "win32"
     import ctypes
 
     kernel32, crypt32, data_blob = _api()

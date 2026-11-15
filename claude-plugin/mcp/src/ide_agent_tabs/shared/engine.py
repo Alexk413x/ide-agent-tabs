@@ -24,6 +24,7 @@ class _Session:
         from ..jev.service import start_jev
         from ..mcp_tools import ToolDeps, Tools
         from ..messaging.messaging import Messaging, MessagingDeps
+        from ..net.outbound import SessionNet, outbound_for
         from ..profiles import AGENT_ENV, TAB_ID_ENV
         from ..resume import ResumeDeps, Resumes
 
@@ -69,7 +70,7 @@ class _Session:
                 live=messaging.live,
             )
         )
-        deps = ToolDeps(service, jev, messaging, handoffs, resumes)
+        deps = ToolDeps(service, jev, messaging, handoffs, resumes, SessionNet(outbound_for(home), messaging.caller))
         self.messaging = messaging
         self.host = host
         self.tools = Tools(lambda: deps, host.jev_enabled())
@@ -150,6 +151,11 @@ class Engine:
             if self._net is None:
                 self._net = NetDispatcher(self.home, lambda: self.service(self.env), now_ms, self.log)
             return self._net
+
+    def use_port(self, port: int) -> None:
+        from ..net.outbound import outbound_for
+
+        outbound_for(self.home).server_port = port
 
     def net_ingress(self, peer: str, request: object) -> dict[str, Any]:
         return self.net_dispatcher().handle(peer, request)
