@@ -2471,8 +2471,21 @@ before any code depends on it. Accepting the design doesn't certify an implement
   else in this section stays the same: Tailscale is an extra layer, not a replacement for pinned TLS
   and grants. Other overlays that give a private interface (Headscale, NetBird, Nebula, ZeroTier,
   plain WireGuard) may work the same way but aren't supported until tested.
+- After Tailscale mode, with its own review: **team mode**, where the user adds a teammate's machines
+  so both people's agents coordinate in one trusted space instead of across chat channels. It changes
+  the trust model, because a peer is no longer the same person:
+  - Trust is per person as well as per machine. Both people agree to each pairing, and either can
+    revoke it.
+  - A teammate's machine starts with no grants, like any peer. Grants name the person, and the local
+  user sees which person and machine a request came from.
+  - Each person's agents run under that person's own accounts and subscriptions on their own machines.
+    Machines share work and messages, never credentials.
+  - A teammate's agent is a peer whose prompts can be injected, so their messages and tasks get the same
+    peer framing and receiver-side limits as any other peer.
+  - Over Tailscale, a teammate joins through the user's tailnet or through Tailscale's node sharing;
+    the design picks one during that review.
 - A separate project, not part of this section: letting people contribute machines and resources to a
-  shared project. It is public-facing and needs its own design, threat model and review.
+  public shared project. It is public-facing and needs its own design, threat model and review.
 - Later, each with its own design and review: a hub that starts sessions from the Claude app
   (`claude remote-control` server mode), a Remote Control carrier, a short-code pairing helper, a team
   stage where two people pair on purpose, and a separate OS user for containment. Public use isn't
