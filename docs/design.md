@@ -2463,12 +2463,16 @@ before any code depends on it. Accepting the design doesn't certify an implement
 - Version 1: two or more machines of one person, on one local network. From one machine, open a Claude
   Code or Codex tab in a granted folder on another, and let sessions on paired machines message each
   other.
-- Next, with its own review: an overlay network mode, where the listener binds the machine's address on
-  a private overlay network instead of a LAN address, so paired machines reach each other from any
-  network with no open port. Agent Tabs doesn't integrate with any one overlay. Candidates are
-  Tailscale (with Tailnet Lock), Headscale, NetBird, Nebula, ZeroTier and plain WireGuard. Everything
-  else in this section stays the same: the overlay is an extra layer, not a replacement for pinned TLS
-  and grants.
+- LAN mode is the default and needs no outside tool.
+- Next, with its own review: **Tailscale mode**, a supported option for reaching home machines from
+  another network. The listener binds the machine's Tailscale address instead of a LAN address, so
+  paired machines reach each other with no open port. The design recommends Tailnet Lock and a
+  Tailscale access rule that lets only the user's tagged devices reach the Agent Tabs port. Everything
+  else in this section stays the same: Tailscale is an extra layer, not a replacement for pinned TLS
+  and grants. Other overlays that give a private interface (Headscale, NetBird, Nebula, ZeroTier,
+  plain WireGuard) may work the same way but aren't supported until tested.
+- A separate project, not part of this section: letting people contribute machines and resources to a
+  shared project. It is public-facing and needs its own design, threat model and review.
 - Later, each with its own design and review: a hub that starts sessions from the Claude app
   (`claude remote-control` server mode), a Remote Control carrier, a short-code pairing helper, a team
   stage where two people pair on purpose, and a separate OS user for containment. Public use isn't
