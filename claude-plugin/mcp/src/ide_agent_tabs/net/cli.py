@@ -277,7 +277,7 @@ def _remove_firewall(svc: Services) -> bool:
         text = svc.remove_firewall()
     except FirewallError as error:
         svc.err(
-            f"error: {error}. Delete the rule named {firewall.RULE_NAME} in Windows Defender Firewall, or run agent-tabs net off again."
+            f"error: {error}. Delete the rule named {firewall.LISTENER_RULE} in Windows Defender Firewall, or run agent-tabs net off again."
         )
         return False
     if text:
