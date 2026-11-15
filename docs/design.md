@@ -2464,12 +2464,15 @@ before any code depends on it. Accepting the design doesn't certify an implement
   Code or Codex tab in a granted folder on another, and let sessions on paired machines message each
   other.
 - One setting, `network` in `config.json`, picks the mode: `off` (the default: today's single-machine
-  tooling, nothing beyond `127.0.0.1`), `lan` or `tailscale`. Team mode is an addition to `lan` or
-  `tailscale`, not a separate value. Only the `net` commands change the setting; an update never does.
+  tooling, nothing beyond `127.0.0.1`), `lan` or `tailscale` (later stage). Team mode is an addition to
+  `lan` or `tailscale`, not a separate value. Version 1 refuses `tailscale` and the later-stage keys
+  until their reviews pass. The `net` commands are the supported writer; an update never changes it.
 - LAN mode is the first networked mode and needs no outside tool.
 - Next, with its own review: **Tailscale mode**, a supported option for reaching home machines from
   another network. The listener binds the machine's Tailscale address instead of a LAN address, so
-  paired machines reach each other with no open port. The design recommends Tailnet Lock and a
+  paired machines reach each other without a public inbound port. Tailscale addresses are in
+  `100.64.0.0/10` (RFC 6598 shared space, not RFC 1918), so that review names the range explicitly
+  rather than widening the LAN address check. The design recommends Tailnet Lock and a
   Tailscale access rule that lets only the user's tagged devices reach the Agent Tabs port. Everything
   else in this section stays the same: Tailscale is an extra layer, not a replacement for pinned TLS
   and grants. Other overlays that give a private interface (Headscale, NetBird, Nebula, ZeroTier,
@@ -2490,14 +2493,21 @@ before any code depends on it. Accepting the design doesn't certify an implement
   - Disconnecting and reconnecting is cheap: `agent-tabs net pause <peer>` refuses all traffic from
     and to that peer but keeps its certificate and grants, and `net resume <peer>` restores them.
     `net trust … --for <duration>` makes a pairing expire on its own. `net revoke` stays the permanent
-    removal. Pause and expiry go through the same lock as revoke.
+    removal.
+  - Pause and expiry use D12's dispatch authority and generation checks for inbound and outbound work,
+    including replies. Every dispatch checks paused state and the expiry deadline under that lock.
+    Queues can't bypass these checks. In-flight actions follow D12. Resume clears pause only; it never
+    extends or removes expiry.
+  - Pause is a convenience. Resume restores only the grants the user made before the pause; it never
+    adds one. To cut off a peer you suspect, use `net revoke`.
 - A separate project, not part of this section: a lighter plugin, or a separate build, that connects to
   one specific public project and contributes AI compute to it. It is public-facing and needs its own
   design, threat model and review.
 - Later, each with its own design and review: a hub that starts sessions from the Claude app
-  (`claude remote-control` server mode), a Remote Control carrier, a short-code pairing helper, a team
-  stage where two people pair on purpose, and a separate OS user for containment. Public use isn't
-  planned.
+  (`claude remote-control` server mode), a Remote Control carrier, Remote Control on peer-opened tabs
+  (`--remote-control`, reviewed with the hub, because it lets any device on the claude.ai account answer
+  a remote tab's permission prompts), a short-code pairing helper, and a separate OS user for
+  containment. Public use isn't planned.
 - Threats in scope: anyone on the LAN, a compromised paired machine, and a prompt injected into any
   agent. Accepted and stated: malware running as the same OS user owns that machine and its keys.
 
@@ -2691,39 +2701,52 @@ the user can bypass them; the receiving machine's grants and limits are the enfo
 
 ### Settings
 
-Network settings are user-level only. The `net` commands write them; a project's `.claude/settings.json`,
-a workspace's `.vscode/settings.json` or a JetBrains project setting can't turn networking on or grant a
-peer.
+Network settings are user-level only. A project's `.claude/settings.json`, a workspace's
+`.vscode/settings.json` or a JetBrains project setting can't turn networking on or grant a peer. That
+prevents project overrides, not edits by code running as the user. D11's file protections apply to the
+`network` section of `config.json` as well as to `policy.json`.
 
 Interfaces:
 
-- **The `agent-tabs net` commands** are the only writer. Commands that widen access (`lan setup`,
-  `lan on`, `trust`, `grant`, `resume`) ask for typed confirmation and refuse to run without an
-  interactive terminal, so an agent's shell tool can't run them. The user runs them in a terminal, or
-  with the `!` prefix in Claude Code. Commands that only narrow access (`pause`, `revoke`, `off`,
-  `status`) need no confirmation.
-- **No MCP tool** turns networking on, trusts a peer or adds a grant.
+- **The `agent-tabs net` commands** are the supported writer. Commands that widen access (`lan setup`,
+  `lan on`, `trust`, `grant`, `resume`) require typed confirmation in an interactive terminal. This
+  reduces accidental use. It doesn't prevent an agent following injected instructions from running
+  widening commands through its tools. Programs can create terminals and supply input, and code running as this OS
+  user can edit user-owned policy or call local APIs directly, subject to any independently enforced
+  sandbox. Version 1 accepts this risk under D10; a separate OS user is the containment option. On
+  Windows, `lan on` and any `trust` that changes the firewall rule require administrative rights (D5).
+  With UAC enabled, a non-elevated caller normally needs user consent or credentials on the secure
+  desktop. Already elevated processes need no new prompt. This isn't a universal barrier against agent
+  execution. Each widening command also shows a desktop notification on that machine and
+  writes an audit line in the audit fields below, with no free text. Narrowing commands (`pause`, `revoke`, `off`) need no confirmation, and `status`
+  is read-only. Phase 0 checks whether Claude Code's `!` prefix gives a command an interactive terminal.
+- **No MCP tool and no mod protocol line** turns networking on, trusts a peer, adds a grant or resumes a
+  peer.
 - **A setup skill** walks the user through setup: it explains each step, shows the exact command to
-  run and checks the result, but doesn't run widening commands itself.
-- **The Agents pane** shows each peer, its state and its grants, with Pause and Resume buttons. Resume
-  from the pane asks for confirmation in the pane.
+  run and checks the result. It never runs a widening command itself.
+- **The Agents pane** shows peer status and grants and offers Pause. For Resume it shows the
+  `agent-tabs net resume <peer>` command for the user to run. It doesn't resume a peer or confirm
+  widening operations in the mod.
 - **The VS Code and JetBrains settings pages** show network status read-only.
 
 Per machine, in the `network` section of `config.json`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `network` | `off` | `off`, `lan` or `tailscale` |
-| `bind` | none | The listener's private address; in `tailscale` mode, the machine's tailnet address |
+| `network` | `off` | `off` or `lan`; `tailscale` in a later stage |
+| `bind` | none | The listener's private address; in `tailscale` mode (later stage), the machine's tailnet address |
 | `port` | `47829` | The listener's port |
 | `openssl` | none | The confirmed absolute path used by `net lan setup` |
 | `outboundFolders` | empty | Local folders whose sessions may send to peers |
 | `maxRemoteTabs` | `4` | Remote tabs on this machine across all peers |
-| `remoteControlTabs` | `false` | Start remote Claude Code tabs with `--remote-control`, so their prompts reach the user's phone |
 
-Per peer, in `policy.json`, empty for a new peer: `label`, `address`, `person` (team mode), `folders`,
-`agents`, `models`, `send`, `maxTabs`, `opensPerHour`, `messagesPerMinute`, `approveEachOpen`, and
-`expires` and `paused`, which `net trust --for`, `net pause` and `net resume` set.
+Version 1 adds no option to publish remote tabs through Remote Control. That belongs to the separate
+Remote Control review, which must define account and device access, prompt approval, opt-in scope and
+effective settings.
+
+Per peer, in `policy.json`, empty for a new peer: `label`, `address`, `folders`, `agents`, `models`,
+`send`, `maxTabs`, `opensPerHour`, `messagesPerMinute` and `approveEachOpen`. Team mode (later stage)
+adds `person`, and `expires` and `paused`, which `net trust --for`, `net pause` and `net resume` set.
 
 These are fixed, not settings: TLS 1.3 with mutual certificates and no unverified fallback, no wildcard
 or public bind, no `args` or `env` from a peer, the supported agents and their permission flags, the
