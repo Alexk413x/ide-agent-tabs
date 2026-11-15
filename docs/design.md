@@ -2551,7 +2551,10 @@ These hold for every install, because every user gets this code:
   `SYSTEMDRIVE`. Without a usable `openssl`, LAN mode stays off with instructions. The `cryptography`
   package and a Windows-native generator are later options with their own review.
 - The key is generated encrypted with a random passphrase read from stdin: `openssl genpkey` with
-  `-aes-256-cbc -pass stdin`, then `openssl req -x509 -key … -passin stdin`. The server computes the
+  `-pkeyopt ec_paramgen_curve:prime256v1 -aes-256-cbc -pass stdin`, then `openssl req -x509 -key …
+  -passin stdin`. `prime256v1` is the curve name every OpenSSL and LibreSSL build accepts. If a
+  generator refuses `-pass stdin`, setup falls back to `-pass fd:<n>` on a pipe, never to an argument or
+  a plaintext key. Setup probes `openssl req -help` for `-not_before` before using it. The server computes the
   device id from the DER bytes and checks the result by loading it with `load_cert_chain`.
 - Certificate profile: SHA-256 signature, random serial, `basicConstraints=critical,CA:FALSE`,
   `keyUsage=critical,digitalSignature`, `extendedKeyUsage=serverAuth,clientAuth`,
@@ -2585,6 +2588,9 @@ These hold for every install, because every user gets this code:
 - In TLS 1.3 the client's handshake completes before the server checks the client certificate, so a
   rejected client learns it only on its first read. The client treats a connection as unauthenticated
   until it has read the peer's reply. The server refuses before it reads any request.
+- LAN mode needs a Python whose `ssl` module reports `HAS_TLSv1_3` and links OpenSSL 1.1.1 or later;
+  otherwise it stays off with instructions. `num_tickets` is set only where the context has it. Apple's
+  `/usr/bin/python3` (3.9.6 with LibreSSL 2.8.3) is expected to fail this check.
 - Never fall back to `CERT_NONE`, which would also stop the server asking for a client certificate. If
   `VERIFY_X509_PARTIAL_CHAIN` is ever needed, that profile and context change gets its own review.
 - After the handshake, each side hashes the peer's DER certificate, looks the peer up by it, and
@@ -2874,6 +2880,28 @@ Code 2.1.325; Codex 0.167.2):
   identity and the need to inspect every path component. Symlink detection is untested because this
   run couldn't create symlinks. Complete the symlink checks where creation is permitted before Gate 4
   passes.
+
+Expected on macOS and Linux, from research only and not yet tested (2026-11-15):
+
+- `-not_before` and `-not_after` are in `openssl req` from OpenSSL 3.4. Ubuntu 22.04 and 24.04 and
+  Debian 12 (OpenSSL 3.0) and macOS's LibreSSL 3.3.6 lack them, so those use the `-days` fallback.
+  Fedora 41+ and recent RHEL 9 (OpenSSL 3.5) have them.
+- macOS 13 to 26 ship LibreSSL 3.3.6 as `/usr/bin/openssl`. Its `req` has `-addext` (from LibreSSL
+  3.1.0) and `-set_serial`. Whether its `genpkey` takes `-pass stdin` is unconfirmed; the `fd:`
+  fallback covers it.
+- Python's `ssl`: python.org 3.11 to 3.13, Homebrew and uv builds link OpenSSL 3, with TLS 1.3. Ubuntu
+  and Debian link OpenSSL 3.0, Fedora and recent RHEL 3.5. RHEL's DEFAULT crypto policy allows TLS 1.3
+  and ECDSA P-256 with SHA-256 (inferred). Apple's `/usr/bin/python3` likely has no TLS 1.3, so LAN
+  mode stays off there.
+- `VERIFY_X509_STRICT` is expected to accept the certificate profile: it has a non-empty subject, and
+  neither key identifier is critical.
+- Folder identity: `(st_dev, st_ino)` is stable while a filesystem stays mounted. On Linux `st_dev` can
+  change across a reboot, and btrfs gives each subvolume its own `st_dev`; a changed identity makes the
+  grant refuse, which fails closed but means re-granting the folder. Network filesystems are already
+  refused. On macOS, paths go through `realpath`, because firmlinks give one folder two paths.
+- To test on each OS: `openssl version`; the two generation commands; `openssl req -help` for
+  `-not_before`; `python3 -c "import ssl; print(ssl.OPENSSL_VERSION, ssl.HAS_TLSv1_3)"`; the gate 1
+  and gate 4 scripts.
 
 ## Security
 
