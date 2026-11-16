@@ -441,6 +441,27 @@ class RevokeAndOffTest(CliTestCase):
         self.assertEqual(self.h.run("revoke", "laptop"), 1)
         self.assertEqual(self.generation(), before + 1)
 
+    def test_rename_changes_only_the_label_without_confirmation(self) -> None:
+        self.trust_b()
+        before = load_policy(self.a).peers[0]
+        self.h.confirmed.clear()
+        self.assertEqual(self.h.run("rename", "laptop", "marbles-xps"), 0, self.h.errors)
+        self.assertEqual(self.h.confirmed, [])
+        after = load_policy(self.a).peers[0]
+        self.assertEqual(after.label, "marbles-xps")
+        self.assertEqual(
+            (after.device_id, after.address, after.folders, after.agents), (before.device_id, before.address, before.folders, before.agents)
+        )
+        self.assertTrue(peer_cert_path(self.a, self.b_id).exists())
+        self.assertIn("marbles-xps", self.h.text)
+
+    def test_rename_refuses_a_bad_or_taken_label_and_an_unknown_peer(self) -> None:
+        self.trust_b()
+        for args in (("laptop", "Bad Label"), ("laptop", "x" * 33), ("nobody", "fine")):
+            self.assertEqual(self.h.run("rename", *args), 1, args)
+        self.assertEqual(load_policy(self.a).peers[0].label, "laptop")
+        self.assertEqual(self.h.run("rename", "laptop"), 2)
+
     def test_off_sets_the_choice_keeps_other_keys_raises_the_generation_and_stops_the_listener(self) -> None:
         Path(self.a, "config.json").write_text(json.dumps({"jev": {"enabled": True}, "network": {"network": "lan", "bind": "10.0.0.5"}}))
         self.h._spawn(self.a, 1)
@@ -701,7 +722,7 @@ class StatusAndDispatchTest(CliTestCase):
 
     def test_net_is_registered_in_the_agent_tabs_command(self) -> None:
         self.assertEqual(top_cli.COMMANDS["net"], "ide_agent_tabs.net.cli")
-        self.assertIn("net <id|status|off|trust|grant|revoke|pair|lan>", top_cli.usage())
+        self.assertIn("net <id|status|off|trust|grant|revoke|rename|pair|lan>", top_cli.usage())
         captured = io.StringIO()
         with mock.patch.dict(os.environ, {"IDE_AGENT_TABS_HOME": self.a}), contextlib.redirect_stdout(captured):
             self.assertEqual(top_cli.main(["net", "status"]), 0)

@@ -61,6 +61,18 @@ PowerShell it stands for `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1"`.
 If the command says pairing is busy or locked, tell the user why: one pairing at a time and 3 per hour,
 and three failed attempts lock pairing for an hour. `net trust` still works during a lock.
 
+## Names
+
+Pairing labels each peer from its device name, lowercased to `a-z0-9-`, such as `marbles-xps`. A re-pair
+keeps the label the peer already has.
+
+- When you ask the user to name or rename a machine, suggest labels built from the device names you
+  have: the peer's name in the invitation or in `net status`, and this machine's host name. For example,
+  offer `marbles-xps` and `xps`, not generic choices like `desktop` or `laptop`, unless a device name says
+  so. Always let the user type their own name.
+- To change a label, run `agent-tabs net rename <label> <new label>`. It changes only the label; the
+  peer's sessions then show as `<session>@<new label>`.
+
 ## Fallback: trust a machine by hand
 
 Use this when pairing can't run. Show each command, ask the user to run it, then check with `net status`.

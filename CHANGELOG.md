@@ -20,6 +20,11 @@ Plugin and MCP server 0.13.0. The bundled IDE packages are unchanged (VS Code 0.
   the last pairing result.
 - `--bind <address>` picks the address on a machine with more than one.
 
+### Added
+
+- `agent-tabs net rename <label> <new label>` changes a peer's label.
+- The `network` skill suggests machine names built from the device names, with a free-form answer.
+
 ### Removed
 
 - The pairing windows, the `agent-tabs` command shim in `~/.ide-agent-tabs/bin` and the offer to change

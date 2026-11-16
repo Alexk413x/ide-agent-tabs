@@ -2548,7 +2548,9 @@ These hold for every install, because every user gets this code:
   read from the other machine's screen> --address <IP> --label <name>` there. It refuses unless the
   file's DER hash equals the id. Prefixes and short forms are refused. No private key leaves its
   machine, and no listener ever accepts an unknown certificate.
-- Labels are typed by the local user; nothing a peer sends becomes a label.
+- Pairing derives a new peer's label from its device name, reduced to `a-z0-9-` and made unique; a label
+  never carries other text a peer sends. `net trust` takes a label from the local user, and
+  `net rename <label> <new label>` changes one without changing trust or grants.
 - `net trust` for a known id with a new address changes only the address and says so. It prints the
   peer's effective grants: none for a new peer.
 - A renewed certificate is a new id and needs `net trust` again. Grants never move automatically.
