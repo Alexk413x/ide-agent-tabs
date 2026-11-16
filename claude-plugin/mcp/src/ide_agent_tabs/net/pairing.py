@@ -18,17 +18,18 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypeVar
+from typing import Any, Literal, TypeVar
 
 from ..files import file_lock, read_text_if_exists, write_atomically
 from ..liveness import pid_alive
 from . import tls, wire
 from .client import DeadlineSocket, as_socket
 from .identity import device_id as device_id_of
+from .identity import format_digest, parse_device_id
 from .ingress import net_dir
 from .private_files import check_private, ensure_private_dir, make_private_file
 
-VERSION = 1
+VERSION = 2
 PAIRING_PORT = 47830
 MAX_FRAME = 8192
 INVITE_PREFIX = "atp1-invite:"
@@ -45,14 +46,9 @@ INCOMPLETE_TEXT = "Pairing may be incomplete on the other machine. Run `net stat
 DIALER = "dialer"
 LISTENER = "listener"
 
-_DIGIT_LIMIT = 4_294 * 1_000_000
 _IDLE_S = 3600.0
-_MANUAL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
-_MANUAL_TOKEN = re.compile(r"[A-Z2-7]{6}")
 _BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
 _INVITE_TOKEN = re.compile(r"[A-Za-z0-9_-]{22}")
-_WIRE_TOKEN = re.compile(r"[A-Za-z0-9_-]{1,64}")
-_ID_GROUP = re.compile(r"[A-Z2-7]{7}")
 _NAME = re.compile(r"[A-Za-z0-9 ._-]{1,32}")
 _DIGIT_RUN = re.compile(r"[0-9]{6}")
 _IPV4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
@@ -93,51 +89,39 @@ def H(*fields: bytes) -> bytes:
 
 
 def commitment(cert_d: bytes, nonce_d: bytes) -> bytes:
-    return H(b"atp1 commit", b"dialer", cert_d, nonce_d)
+    return H(b"atp2 commit", b"dialer", cert_d, nonce_d)
 
 
-def sas_secret(cert_d: bytes, cert_l: bytes, nonce_d: bytes, nonce_l: bytes) -> bytes:
-    return H(b"atp1 sas", cert_d, cert_l, nonce_d, nonce_l)
+def session_secret(cert_d: bytes, cert_l: bytes, nonce_d: bytes, nonce_l: bytes) -> bytes:
+    return H(b"atp2 session", cert_d, cert_l, nonce_d, nonce_l)
 
 
-def consent_proof(role: str, secret: bytes) -> bytes:
-    return H(b"atp1 consent", role.encode("ascii"), secret)
+def token_tag(token: str) -> str:
+    return H(b"atp2 token", token.encode("ascii")).hex()
 
 
-def digits(secret: bytes) -> str:
-    current = secret
-    counter = 0
-    while True:
-        for start in range(0, 32, 4):
-            word = int.from_bytes(current[start : start + 4], "big")
-            if word < _DIGIT_LIMIT:
-                return f"{word % 1_000_000:06d}"
-        counter += 1
-        # The design hashes the original S with the counter; chaining from the previous hash gives other digits.
-        current = H(b"atp1 sas2", secret, counter.to_bytes(4, "big"))
+def consent_proof(role: str, secret: bytes, token: str) -> bytes:
+    return H(b"atp2 consent", role.encode("ascii"), secret, token.encode("ascii"))
 
 
 def valid_device_name(name: str) -> bool:
     return _NAME.fullmatch(name) is not None and _DIGIT_RUN.search(name) is None
 
 
-def new_manual_token() -> str:
-    return "".join(secrets.choice(_MANUAL_ALPHABET) for _ in range(6))
-
-
-def parse_manual_token(text: str) -> str:
-    token = text.strip().upper()
-    if _MANUAL_TOKEN.fullmatch(token) is None:
-        raise PairingError("a pairing token is 6 letters and digits 2 to 7")
-    return token
-
-
 def new_invitation_token() -> str:
     return base64.urlsafe_b64encode(secrets.token_bytes(16)).rstrip(b"=").decode("ascii")
 
 
-def tokens_equal(sent: str, expected: str) -> bool:
-    return hmac.compare_digest(sent.encode("utf-8"), expected.encode("utf-8"))
+def full_device_id(value: object) -> str:
+    if not isinstance(value, str):
+        raise PairingError("the invitation's device id is malformed")
+    try:
+        canonical = format_digest(parse_device_id(value))
+    except ValueError as error:
+        raise PairingError("the invitation's device id is malformed") from error
+    if canonical != value:
+        raise PairingError("the invitation's device id is not in canonical form")
+    return value
 
 
 def _ipv4(value: object, what: str) -> ipaddress.IPv4Address:
@@ -201,20 +185,19 @@ def _invitation_token(value: object) -> str:
     return value
 
 
-def _fields(name: object, address: object, port: object, group: object, token: object, expires: object) -> Invitation:
+def _fields(name: object, address: object, port: object, device: object, token: object, expires: object) -> Invitation:
     if not isinstance(name, str) or not valid_device_name(name):
         raise PairingError("the invitation's device name is not allowed")
-    if not isinstance(group, str) or _ID_GROUP.fullmatch(group) is None:
-        raise PairingError("the invitation's device id is malformed")
     if isinstance(expires, bool) or not isinstance(expires, int) or expires < 0:
         raise PairingError("the invitation's expiry is malformed")
-    return Invitation(name, str(_ipv4(address, "the invitation's address")), _port(port), group, _invitation_token(token), expires)
+    return Invitation(
+        name, str(_ipv4(address, "the invitation's address")), _port(port), full_device_id(device), _invitation_token(token), expires
+    )
 
 
 def make_invitation(name: str, address: str, port: int, device_id: str, token: str, expires: int) -> str:
-    group = device_id.split("-")[0]
-    _fields(name, address, port, group, token, expires)
-    body = {"v": VERSION, "name": name, "address": address, "port": port, "id": group, "token": token, "exp": expires}
+    _fields(name, address, port, device_id, token, expires)
+    body = {"v": VERSION, "name": name, "address": address, "port": port, "id": device_id, "token": token, "exp": expires}
     raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
     return INVITE_PREFIX + base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
@@ -287,9 +270,7 @@ class PairResult:
 @dataclass(frozen=True)
 class Timeouts:
     first_frame_s: float = 5.0
-    digits_s: float = 60.0
-    typing_s: float = 180.0
-    review_s: float = 180.0
+    handshake_s: float = 30.0
     consent_s: float = 30.0
     connect_s: float = 5.0
     window_s: float = 300.0
@@ -297,16 +278,6 @@ class Timeouts:
 
 
 DEFAULT_TIMEOUTS = Timeouts()
-
-
-class Prompter(Protocol):
-    def show_code(self, peer: PeerInfo, code: str) -> None: ...
-
-    # Returns None for "no" and for a timeout; the session tells them apart by the time left.
-    def read_code(self, peer: PeerInfo, timeout_s: float) -> str | None: ...
-
-    # True when the person approved the summary; the caller's prompter records the label, grants and listener choices.
-    def review(self, peer: PeerInfo, timeout_s: float) -> bool: ...
 
 
 @dataclass
@@ -532,7 +503,7 @@ class _Session:
         role: str,
         address: str,
         identity: PairIdentity,
-        prompter: Prompter,
+        token: str,
         save: Callable[[PeerInfo], None],
         limits: Limits,
         timeouts: Timeouts,
@@ -541,7 +512,7 @@ class _Session:
         self.role = role
         self.address = address
         self.identity = identity
-        self.prompter = prompter
+        self.token = token
         self.save = save
         self.limits = limits
         self.timeouts = timeouts
@@ -575,17 +546,17 @@ class _Session:
         locked = self.limits.record_failure() if counted else False
         return PairResult(outcome, reason, peer, locked)
 
-    def run_dialer(self, token: str) -> PairResult:
+    def run_dialer(self, peer_id: str) -> PairResult:
         try:
-            return self._dial(token)
+            return self._dial(peer_id)
         except _EXPECTED as error:
             return PairResult("failed", _describe(error))
         finally:
             self.close()
 
-    def run_listener(self, token: str, admit: Callable[[], bool]) -> PairResult | None:
+    def run_listener(self, admit: Callable[[], bool]) -> PairResult | None:
         try:
-            return self._listen(token, admit)
+            return self._listen(admit)
         except _Dropped:
             return None
         except _EXPECTED as error:
@@ -593,16 +564,16 @@ class _Session:
         finally:
             self.close()
 
-    def _dial(self, token: str) -> PairResult:
-        if _WIRE_TOKEN.fullmatch(token) is None:
-            raise PairingError("the pairing token is malformed")
-        deadline = time.monotonic() + self.timeouts.digits_s
+    # The token never crosses the network: the hello carries its hash, and the consent proof inside TLS needs the
+    # token itself, so a machine that only saw the network traffic can't complete the pairing.
+    def _dial(self, peer_id: str) -> PairResult:
+        deadline = time.monotonic() + self.timeouts.handshake_s
         own = self.identity
         nonce_d = secrets.token_bytes(32)
         hello = {
             "t": "hello",
             "v": VERSION,
-            "token": token,
+            "tag": token_tag(self.token),
             "name": own.name,
             "cert": base64.b64encode(own.der).decode("ascii"),
             "commit": commitment(own.der, nonce_d).hex(),
@@ -610,25 +581,28 @@ class _Session:
         self._send(hello, deadline)
         reply = self._recv("hello", ("v", "name", "cert", "nonce"), deadline)
         name, der_l = _check_hello(reply, own.der)
+        if not hmac.compare_digest(device_id_of(der_l).encode("ascii"), peer_id.encode("ascii")):
+            raise PairingError("the machine at that address is not the one that made the invitation")
         nonce_l = _hex32(reply["nonce"], "the listener's nonce")
         self._no_pending()
         self._send({"t": "reveal", "nonce": nonce_d.hex()}, deadline)
         self.committed = True
         peer = PeerInfo(name, self.address, device_id_of(der_l), der_l)
-        return self._finish(peer, sas_secret(own.der, der_l, nonce_d, nonce_l))
+        return self._finish(peer, session_secret(own.der, der_l, nonce_d, nonce_l), deadline)
 
-    def _listen(self, token: str, admit: Callable[[], bool]) -> PairResult:
+    def _listen(self, admit: Callable[[], bool]) -> PairResult:
         start = time.monotonic()
         own = self.identity
         try:
             first = self._recv_raw(start + self.timeouts.first_frame_s)
         except _EXPECTED as error:
             raise _Dropped from error
-        sent = first.get("token") if isinstance(first, dict) else None
-        if not isinstance(sent, str) or not tokens_equal(sent, token) or not admit():
+        sent = first.get("tag") if isinstance(first, dict) else None
+        expected = token_tag(self.token)
+        if not isinstance(sent, str) or not hmac.compare_digest(sent.encode("utf-8"), expected.encode("ascii")) or not admit():
             raise _Dropped
-        deadline = start + self.timeouts.digits_s
-        frame = _expect(first, "hello", ("v", "token", "name", "cert", "commit"))
+        deadline = start + self.timeouts.handshake_s
+        frame = _expect(first, "hello", ("v", "tag", "name", "cert", "commit"))
         name, der_d = _check_hello(frame, own.der)
         commit = _hex32(frame["commit"], "the dialer's commitment")
         self._no_pending()
@@ -646,22 +620,11 @@ class _Session:
             raise PairingError("the dialer's reveal does not match its commitment")
         self.committed = True
         peer = PeerInfo(name, self.address, device_id_of(der_d), der_d)
-        return self._finish(peer, sas_secret(der_d, own.der, nonce_d, nonce_l))
+        return self._finish(peer, session_secret(der_d, own.der, nonce_d, nonce_l), deadline)
 
-    def _finish(self, peer: PeerInfo, secret: bytes) -> PairResult:
-        code = digits(secret)
-        self.prompter.show_code(peer, code)
-        typing_deadline = time.monotonic() + self.timeouts.typing_s
-        typed = self.prompter.read_code(peer, self.timeouts.typing_s)
-        expired = time.monotonic() >= typing_deadline
-        if expired:
-            return PairResult("failed", "timed out waiting for the code", peer)
-        if typed is None:
-            return self._result("declined", "you answered no", peer, counted=True)
-        if not hmac.compare_digest(typed.strip().encode("utf-8"), code.encode("ascii")):
-            return self._result("failed", "the code you typed does not match", peer, counted=True)
-        self._upgrade(peer, typing_deadline)
-        return self._review(peer, secret)
+    def _finish(self, peer: PeerInfo, secret: bytes, deadline: float) -> PairResult:
+        self._upgrade(peer, deadline)
+        return self._consent(peer, secret)
 
     def _upgrade(self, peer: PeerInfo, deadline: float) -> None:
         listening = self.role == LISTENER
@@ -681,27 +644,21 @@ class _Session:
         self.conn = wrapped
         tls.check_session(wrapped, peer.der)
 
-    def _review(self, peer: PeerInfo, secret: bytes) -> PairResult:
+    def _consent(self, peer: PeerInfo, secret: bytes) -> PairResult:
         other = DIALER if self.role == LISTENER else LISTENER
         consent_deadline = time.monotonic() + self.timeouts.consent_s
-        self._send({"t": "consent", "role": self.role, "c": consent_proof(self.role, secret).hex()}, consent_deadline)
+        self._send({"t": "consent", "role": self.role, "c": consent_proof(self.role, secret, self.token).hex()}, consent_deadline)
         consent = self._recv("consent", ("role", "c"), consent_deadline)
         proof = _hex32(consent["c"], "the consent proof")
-        if consent["role"] != other or not hmac.compare_digest(proof, consent_proof(other, secret)):
-            raise PairingError("the other machine's consent is invalid")
-        review_deadline = time.monotonic() + self.timeouts.review_s
-        approved = self.prompter.review(peer, self.timeouts.review_s)
-        if not approved:
-            if time.monotonic() >= review_deadline:
-                return PairResult("failed", "timed out at the review", peer)
-            return self._result("declined", "you answered no at the review", peer, counted=True)
+        if consent["role"] != other or not hmac.compare_digest(proof, consent_proof(other, secret, self.token)):
+            return self._result("failed", "the other machine doesn't hold this invitation's token", peer, counted=True)
         try:
             self.save(peer)
         except Exception as error:  # noqa: BLE001 - the caller's save can fail in any way; nothing may be sent as saved
             return PairResult("failed", f"saving the trust entry failed: {error}", peer)
         try:
             self._send({"t": "saved"}, time.monotonic() + self.timeouts.consent_s)
-            self._recv("saved", (), time.monotonic() + self.timeouts.review_s)
+            self._recv("saved", (), time.monotonic() + self.timeouts.consent_s)
         except _EXPECTED:
             return PairResult("incomplete", INCOMPLETE_TEXT, peer)
         return PairResult("paired", "paired", peer)
@@ -720,7 +677,6 @@ def _serve(
     address: str,
     token: str,
     identity: PairIdentity,
-    prompter: Prompter,
     save: Callable[[PeerInfo], None],
     limits: Limits,
     timeouts: Timeouts,
@@ -732,10 +688,10 @@ def _serve(
         admitted = window.slot.acquire(blocking=False)
         return admitted
 
-    session = _Session(conn, LISTENER, address, identity, prompter, save, limits, timeouts)
+    session = _Session(conn, LISTENER, address, identity, token, save, limits, timeouts)
     try:
-        result = session.run_listener(token, admit)
-    except Exception as error:  # noqa: BLE001 - a prompter bug must not leave the window stuck
+        result = session.run_listener(admit)
+    except Exception as error:  # noqa: BLE001 - a save bug must not leave the window stuck
         result = PairResult("failed", f"the pairing failed ({type(error).__name__})") if session.committed else None
     if result is not None:
         window.result = result
@@ -748,7 +704,6 @@ def listen_once(
     listener: socket.socket,
     token: str,
     identity: PairIdentity,
-    prompter: Prompter,
     save: Callable[[PeerInfo], None],
     limits: Limits,
     clock: Callable[[], float] = time.monotonic,
@@ -756,8 +711,7 @@ def listen_once(
     timeouts: Timeouts = DEFAULT_TIMEOUTS,
     stop: threading.Event | None = None,
 ) -> PairResult:
-    if _WIRE_TOKEN.fullmatch(token) is None:
-        raise PairingError("the pairing token is malformed")
+    _invitation_token(token)
     window = _Window()
     end = clock() + timeouts.window_s
     last = -timeouts.min_interval_s
@@ -777,7 +731,7 @@ def listen_once(
             continue
         last = now
         conn.settimeout(None)
-        args = (window, conn, str(peer_address[0]), token, identity, prompter, save, limits, timeouts)
+        args = (window, conn, str(peer_address[0]), token, identity, save, limits, timeouts)
         threading.Thread(target=_serve, args=args, daemon=True).start()
     if window.result is not None:
         return window.result
@@ -788,8 +742,8 @@ def dial(
     address: str,
     port: int,
     token: str,
+    peer_id: str,
     identity: PairIdentity,
-    prompter: Prompter,
     save: Callable[[PeerInfo], None],
     limits: Limits,
     *,
@@ -797,9 +751,11 @@ def dial(
 ) -> PairResult:
     target = str(_ipv4(address, "the address"))
     _port(port)
+    _invitation_token(token)
+    full_device_id(peer_id)
     limits.check_locked()
     try:
         conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
     except OSError as error:
         return PairResult("failed", f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}")
-    return _Session(conn, DIALER, target, identity, prompter, save, limits, timeouts).run_dialer(token)
+    return _Session(conn, DIALER, target, identity, token, save, limits, timeouts).run_dialer(peer_id)

@@ -54,17 +54,15 @@ from .policy import (
 )
 from .private_files import ensure_private_dir, make_private_file
 from .secrets import SecretsError, new_passphrase, store_passphrase
-from .shim import ShimError
 from .store import NetStore, NetStoreError
-from .window import WindowError
 
 if TYPE_CHECKING:
     from .pair_cli import PairDeps
 
-USAGE = "net <id|status|off|trust|grant|revoke|pair|lan>"
+USAGE = "net <id|status|off|trust|grant|revoke|rename|pair|lan>"
 _GRAMMAR = (
-    "agent-tabs net id | status | off | revoke <label>"
-    " | pair [--invite | --join <invitation> | --peer <IP> --token <token>]"
+    "agent-tabs net id | status | off | revoke <label> | rename <label> <new label>"
+    " | pair --invite [--bind <address>] | pair --join <invitation> [--bind <address>]"
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
     " | grant <label> [--folder <alias>=<absolute path>] [--agent claude|codex] [--model <model>] [--send <session id>]"
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
@@ -343,6 +341,11 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     svc.out(f"login task: {svc.login_status(svc.home)}")
     svc.out(f"identity: {local_device_id(svc.home) or 'none'}")
     svc.out(f"pairing: {_pairing_state(svc)}")
+    from .pair_cli import result_text
+
+    last = result_text(svc.home)
+    if last is not None:
+        svc.out(f"last pairing: {last}")
     try:
         policy = load_policy(svc.home)
     except PolicyError as error:
@@ -826,6 +829,27 @@ def _cmd_revoke(svc: Services, args: Sequence[str]) -> int:
     return 0
 
 
+def _cmd_rename(svc: Services, args: Sequence[str]) -> int:
+    parser = make_parser("rename")
+    parser.add_argument("label")
+    parser.add_argument("new_label")
+    options = parser.parse_args(args)
+    new_label: str = options.new_label
+    if LABEL.fullmatch(new_label) is None:
+        raise CliError("a label is 1 to 32 characters of a-z, 0-9 and -")
+    net_dir_for(svc.home)
+    with file_lock(policy_path(svc.home)):
+        policy = load_policy(svc.home)
+        peer = _peer_by_label(policy, options.label)
+        if new_label != peer.label and any(p.label == new_label for p in policy.peers):
+            raise CliError(f"the label {new_label} belongs to another peer")
+        renamed = replace(peer, label=new_label)
+        save_policy(svc.home, replace(policy, peers=tuple(renamed if p.device_id == peer.device_id else p for p in policy.peers)))
+    svc.record("rename", device=peer.device_id, label=new_label)
+    svc.out(f"Renamed {peer.label} to {new_label} ({peer.device_id}). Its sessions now show as <session>@{new_label}.")
+    return 0
+
+
 def _cmd_lan(svc: Services, args: Sequence[str]) -> int:
     handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
         "setup": _cmd_setup,
@@ -853,6 +877,7 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         "trust": _cmd_trust,
         "grant": _cmd_grant,
         "revoke": _cmd_revoke,
+        "rename": _cmd_rename,
         "pair": _cmd_pair,
         "lan": _cmd_lan,
     }
@@ -875,8 +900,6 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         PairingError,
         InterfaceError,
         FirewallError,
-        ShimError,
-        WindowError,
         OSError,
     ) as error:
         svc.err(f"error: {error}")
