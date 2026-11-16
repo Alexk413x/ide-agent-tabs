@@ -3,6 +3,48 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.12.0
+
+Plugin and MCP server 0.12.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Added
+
+- `agent-tabs net pair` connects two machines in LAN mode from one command. An agent runs
+  `net pair --invite` on one machine and carries the invitation line to a session on the other, which
+  runs `net pair --join <line>`. Without agents, run `net pair` on one machine and
+  `net pair --peer <IP> --token <token>` on the other. Each machine opens a window that shows a
+  six-digit code; you type the code shown on the other machine's own screen, then approve one summary
+  of the label, grants (none by default), listener and login task. See
+  [Pairing](docs/design.md#pairing).
+- `net pair` creates the identity, checks the network and installs an `agent-tabs` command in
+  `~/.ide-agent-tabs/bin`, and offers to add that folder to your PATH.
+- The `network` skill leads with pairing.
+
+### Changed
+
+- The Windows firewall rule `Agent Tabs LAN` admits the listener and pairing ports (47829 and 47830)
+  from the interface's subnet on the Private profile, through a fixed PowerShell helper that checks its
+  values and reads the rule back. Each machine adds it once, with one UAC prompt. Later pairings and
+  listener starts read the rule and show no prompt while it matches.
+- The pairing summary turns the listener on and starts it at login by default, so paired machines stay
+  connected after a restart.
+- The setting `network.deviceName` sets the name a machine shows when pairing.
+
+### Security
+
+- Pairing uses short-authenticated-string numeric comparison (commit, then reveal) followed by mutual
+  TLS 1.3 pinned to the two certificates just exchanged. An invitation only says where to dial; the
+  typed code decides who the peer is. Agents never see the code, and the skill refuses to relay one.
+- One pairing window at a time and 3 per hour; three wrong codes or `no` answers lock pairing for an
+  hour. Pairing runs only on Private networks, to private addresses on the same subnet.
+- A widening `net` command started without a terminal opens a new window for you to answer in, with a
+  desktop notification. Started with administrator rights, it stops and asks for a normal terminal.
+  Windows without UAC, and the built-in Administrator account, aren't supported.
+
+### Not yet tested
+
+- Pairing between two real machines, the elevated firewall helper and the at-login task.
+
 ## 0.11.0
 
 Plugin and MCP server 0.11.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).

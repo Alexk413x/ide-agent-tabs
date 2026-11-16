@@ -296,6 +296,32 @@ class HelperTest(unittest.TestCase):
             with self.assertRaises(ssl.SSLError):
                 tls.peer_digest(sock)
 
+    def test_check_session_accepts_the_announced_certificate_on_tls_1_3(self) -> None:
+        sock = mock.Mock(session_reused=False)
+        sock.getpeercert.return_value = b"der-bytes"
+        sock.version.return_value = "TLSv1.3"
+        tls.check_session(sock, b"der-bytes")
+
+    def test_check_session_refuses_a_missing_or_different_certificate(self) -> None:
+        for presented in (None, b"", b"other-bytes"):
+            sock = mock.Mock(session_reused=False)
+            sock.getpeercert.return_value = presented
+            sock.version.return_value = "TLSv1.3"
+            with self.assertRaises(ssl.SSLError):
+                tls.check_session(sock, b"der-bytes")
+
+    def test_check_session_refuses_an_older_version_and_a_resumed_session(self) -> None:
+        older = mock.Mock(session_reused=False)
+        older.getpeercert.return_value = b"der-bytes"
+        older.version.return_value = "TLSv1.2"
+        with self.assertRaises(ssl.SSLError):
+            tls.check_session(older, b"der-bytes")
+        resumed = mock.Mock(session_reused=True)
+        resumed.getpeercert.return_value = b"der-bytes"
+        resumed.version.return_value = "TLSv1.3"
+        with self.assertRaises(ssl.SSLError):
+            tls.check_session(resumed, b"der-bytes")
+
     def test_check_not_reused(self) -> None:
         tls.check_not_reused(mock.Mock(session_reused=False))
         with self.assertRaises(ssl.SSLError):

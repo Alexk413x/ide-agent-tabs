@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import ssl
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -51,3 +52,14 @@ def peer_digest(sock: ssl.SSLSocket) -> bytes:
 def check_not_reused(sock: ssl.SSLSocket) -> None:
     if sock.session_reused:
         raise ssl.SSLError("the connection resumed an earlier TLS session")
+
+
+def check_session(sock: ssl.SSLSocket, expected_der: bytes) -> None:
+    der = sock.getpeercert(binary_form=True)
+    if not der:
+        raise ssl.SSLError("the peer presented no certificate")
+    if not hmac.compare_digest(der, expected_der):
+        raise ssl.SSLError("the peer's certificate is not the one it announced")
+    if sock.version() != "TLSv1.3":
+        raise ssl.SSLError("the connection is not TLS 1.3")
+    check_not_reused(sock)

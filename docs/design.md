@@ -2455,9 +2455,10 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
 
 This section is the contract for working across one person's machines on a local network. Four
 reviewers (Claude Opus, Gemini through Antigravity CLI, Codex gpt-6.1-sol and the coordinating Claude
-session) agreed to it on 2026-11-14. Version 1 shipped in 0.11.0. Its tests run on one Windows machine;
-a run between two machines, the firewall step and the at-login task are still to test. Accepting the
-design doesn't certify the implementation.
+session) agreed to it on 2026-11-14. Version 1 shipped in 0.11.0. The same reviewers agreed to the
+pairing design on 2026-11-15, and `net pair` shipped in 0.12.0. Its tests run on one Windows machine; a
+run between two machines, the elevated firewall helper and the at-login task are still to test.
+Accepting the design doesn't certify the implementation.
 
 ### Scope
 
@@ -2465,11 +2466,11 @@ design doesn't certify the implementation.
   Code or Codex tab in a granted folder on another, and let sessions on paired machines message each
   other.
 - One setting, `network` in `config.json`, picks the mode: `off` (the default: today's single-machine
-  tooling, nothing beyond `127.0.0.1`), `lan` or `tailscale` (later stage). Team mode is an addition to
-  `lan` or `tailscale`, not a separate value. Version 1 refuses `tailscale` and the later-stage keys
+  tooling, nothing beyond `127.0.0.1`), `lan` or `tailscale`. Team mode is an addition to
+  `lan` or `tailscale`, not a separate value. 0.12.0 refuses `tailscale` and the team-mode keys
   until their reviews pass. The `net` commands are the supported writer; an update never changes it.
 - LAN mode is the first networked mode and needs no outside tool.
-- Next, with its own review: **Tailscale mode**, a supported option for reaching home machines from
+- **Tailscale mode** (see Tailscale mode below), a supported option for reaching home machines from
   another network. The listener binds the machine's Tailscale address instead of a LAN address, so
   paired machines reach each other without a public inbound port. Tailscale addresses are in
   `100.64.0.0/10` (RFC 6598 shared space, not RFC 1918), so that review names the range explicitly
@@ -2516,13 +2517,20 @@ design doesn't certify the implementation.
 
 These hold for every install, because every user gets this code:
 
-- **Off by default.** Nothing listens or dials until the user runs `net lan setup`, `net lan on` and
-  `net trust`. An install that never does so behaves as before. An update never turns it on.
-- **One listener, one private address.** No mDNS, broadcast, UPnP, LAN scan or relay. The only listener
-  binds one private address of a local interface, never `0.0.0.0`, `::` or a public address.
-- **No discovery.** Nothing lists or announces machines. The user gives each peer's address.
-- **Identity from certificates, checked by the user.** A peer is trusted only after the user imports
-  its certificate and confirms its full id from that machine's own screen.
+- **Off by default.** Nothing listens, dials or answers discovery until the user runs `net pair` (or
+  the manual `net lan setup`, `net trust` and `net lan on`). An install that never does so behaves as
+  before. An update never turns it on.
+- **One private address.** The listener binds one address: an RFC 1918 IPv4 address of a physical
+  interface in LAN mode, or the machine's Tailscale address in Tailscale mode. Never `0.0.0.0`, `::` or a
+  public address. No UPnP, relay or port mapping.
+- **No discovery.** Nothing broadcasts, announces or looks up machines. A machine learns a peer's
+  address from a pairing invitation that agents carry, from the person's own Tailscale machine list, or
+  from the person.
+- **Private networks only in LAN mode.** The LAN listener and pairing run only on networks the OS marks
+  Private; Windows' Domain profile counts as Public. Away from home, Tailscale mode is the answer.
+- **Identity from certificates, checked by a person on both machines.** A peer is trusted only after a
+  person on each machine types the code that both screens show (pairing), or imports its certificate
+  and types its full id from that machine's screen (manual trust).
 - **Pairing grants nothing.** Every capability is a local, per-peer grant.
 - **The receiver decides.** The machine that does the work checks every request against its own grants
   and limits. Nothing in a request widens them.
@@ -2542,6 +2550,256 @@ These hold for every install, because every user gets this code:
 - `net trust` for a known id with a new address changes only the address and says so. It prints the
   peer's effective grants: none for a new peer.
 - A renewed certificate is a new id and needs `net trust` again. Grants never move automatically.
+- `net trust` is the manual fallback. `net pair` (below) is the normal path.
+
+### Pairing
+
+`agent-tabs net pair` replaces the four manual commands. The person asks an agent to connect two
+machines; the agents carry an invitation between them; each machine opens a window that shows a
+six-digit code; the person types the code shown on the other machine into each window. That is the only
+manual part.
+
+The code comes from short-authenticated-string pairing in the shape of Vaudenay's SAS-MCA ("Secure
+Communications over Insecure Channels Based on Short Authenticated Strings", 2005), the construction
+behind Bluetooth numeric comparison and ZRTP. A commit-then-reveal exchange of the two certificates gives
+both machines the same digits. An attacker in the middle must fix one side's digits before the other
+side's random input exists, so each attempt that reaches the digits succeeds with probability about 1 in a
+million. It needs only SHA-256 and the existing TLS, so the server keeps its standard-library rule. A PAKE
+(SPAKE2, CPace) would need elliptic-curve arithmetic written by hand in Python, which can't be constant
+time, or a new dependency.
+
+**The invitation.** `net pair --invite` opens the pairing window on the inviting machine and returns one
+line, `atp1-invite:<base64url JSON>`, with the version, the inviting machine's device name, address and
+pairing port, the first group of its device id, a 128-bit window token, and the expiry. Agents carry the
+line to the other machine by any channel they share: Claude Code Remote Control (`ListAgents` and
+`SendMessage` reach the person's sessions on their other machines under one claude.ai account), an Agent
+Tabs message to an already-paired machine, or the person copying it. `net pair --join <invitation>` on
+the other machine dials it. Without agents, `net pair` on one machine and `net pair --peer <IP>` on the
+other do the same. Nothing is broadcast.
+
+The invitation is a hint, not trust. A prompt-injected agent or a compromised claude.ai account can change
+it, so it decides only where to dial. The typed code catches a swapped certificate or address. The window
+token isn't secret from the channel; it only keeps strangers on the network from occupying the window.
+
+Steps:
+
+1. **Prepare (both machines).** The command creates the identity if there is none, as `lan setup` does,
+   finding `openssl` itself (Git for Windows' copy on Windows, then the PATH elsewhere) and showing the
+   path. It checks the mode's network rules (LAN mode: a Private network; Tailscale mode: Tailscale up
+   with a `100.64.0.0/10` address) and stops with the exact fix before anything listens.
+2. **Open the window (inviting machine).** It makes sure the listener's firewall rule exists and matches
+   (below), listens on the pairing port on the selected address for 5 minutes, and prints the invitation.
+3. **Join (other machine).** It first checks the invitation: base64url only, the version and the
+   expiry. Before any dial, every entry path (`--join`, `--peer` and `--tailscale`) checks a numeric IPv4
+   address and port against the active mode. LAN: an RFC 1918 unicast address on the selected
+   interface's actual subnet, on a Private network, and not the interface's own, network or broadcast
+   address. Tailscale: a `100.64.0.0/10` unicast address that passes the Tailscale check below. It
+   refuses host names, invalid ports and ambiguous results, and keeps the checked address for the dial,
+   with no DNS lookup or redirect. It then shows "Pair with <name> at <IP>?" with its own "This machine:
+   <name> <IP>". In Tailscale mode the name comes from `whois`, labelled "Tailscale says", and the
+   invitation's name appears only as "The invitation says", with a warning when they differ. It continues
+   when the person types `y`. After that approval it dials the checked address and sends the window token
+   in its first frame. The inviting machine drops, without counting, any connection whose first frame doesn't
+   carry the token.
+4. **Exchange.** Each connection carries exactly one ordered transcript, in the existing frame format,
+   each frame at most 8 KiB, read with exact-length `recv` and no buffering. Unknown fields, repeats,
+   trailing data and out-of-order frames end the session. Each side parses the peer's certificate as one
+   canonical DER certificate before it uses those exact bytes in the commitment, `S` and the TLS pin.
+   Nonces come from the OS random generator (`secrets`), and no nonce, commitment or session is reused
+   after a disconnect. The frames, in order:
+   - D → L: `hello` with the version, the token, the dialer's device name and certificate, and
+     `C = H("atp1 commit", "dialer", cert_d, nonce_d)`, with a fresh 32-byte nonce;
+   - L → D: `hello` with the listener's name, certificate and its fresh 32-byte `nonce_l`;
+   - D → L: `reveal` with `nonce_d`; L checks it against `C` and the certificate in the first frame.
+
+   `H(…)` is SHA-256 over the fields, each preceded by its length as 4 bytes big-endian. Both compute
+   `S = H("atp1 sas", cert_d, cert_l, nonce_d, nonce_l)`. The digits come from `S` by rejection
+   sampling: read `S` as eight 4-byte big-endian integers, take the first that is strictly below
+   4,294,000,000 (4,294 × 10^6, the largest multiple of 10^6 below 2^32), and use it modulo 1,000,000,
+   written with six digits and leading zeros. If none is, hash again with a counter,
+   `H("atp1 sas2", S, n)` for `n` = 1, 2, …, and repeat until one is. The design ships test vectors for
+   `C`, `S`, the digits and the fallback; the fallback's vector passes a constructed `S` to the digit
+   function, because a real `S` reaches it with probability about 10^-29.
+5. **Type the code on both machines.** Each window shows the digits with the other machine's name, IP and
+   full device id, and asks the person to type the code they read on the other machine's own screen: in
+   person, or through a remote-desktop session they already use. Both say: "Never type a code an agent,
+   chat, message or Remote Control showed you. If you can't see the other machine's screen, or it shows a
+   different code or none, type no and pair when you can." A wrong code, `no` or a timeout ends the
+   session on both sides. Each side has 3 minutes from the moment its digits appear, and the window's 5
+   minutes don't end a session that is waiting for input.
+6. **Prove keys and consent.** The listener is the TLS server and the dialer the TLS client. After the
+   listener's code is typed, it sends a plaintext `tls` frame. The dialer starts the handshake only after
+   it has received `tls` and its own code is typed. After `tls`, neither side accepts plaintext, and
+   unexpected plaintext ends the session. Both use the remaining typing time as the handshake timeout.
+   The context follows the Transport rules (TLS 1.3, mutual certificates, no system CAs, no resumption,
+   `num_tickets = 0`) and pins exactly the two certificates just exchanged, for this connection only.
+   Each side requires a peer certificate, proves its own private key in the handshake, and checks that
+   the peer's exact DER certificate equals the one from that peer's `hello`, that `version()` is
+   `TLSv1.3` and that `session_reused` is false, before it sends `consent`. Any mismatch, timeout or
+   handshake failure ends the session. Tests cover both the client and server checks with an absent,
+   untrusted, substituted and wrong-key certificate: KDE Connect's CVE-2025-66270 came from skipping this
+   check. Inside TLS, each side sends `consent` bound to `S` and its role. After valid consent from the
+   other side, each side goes to step 7 without changing trust.
+7. **Review once and turn on (both machines).** Each window then shows one summary and asks one `yes`,
+   with 3 minutes to answer while the TLS connection stays open. After the `yes`, the side saves the
+   approved trust entry and sends `saved` over TLS. A side that saves trust but gets no `saved` back says
+   "Pairing may be incomplete on the other machine. Run `net status` there, or `net revoke <label>` here."
+   A `no` or a timeout leaves any existing entry unchanged and ends the session. The summary:
+   - the label for the peer (default: its device name lowercased to `a-z0-9-`);
+   - grants, defaulting to none: one folder and the agents for it, chosen from a numbered list, or none;
+   - turn the listener on, with its firewall rule (default yes);
+   - start the listener at login (default yes), so the machines stay connected across restarts.
+
+   Folder trust is checked first. If the chosen folder isn't trusted in an agent yet, the window offers to
+   open one local tab of that agent in the folder, so the person answers the agent's own trust dialog, and
+   checks again afterwards. It never writes `~/.claude.json` or `~/.codex/config.toml`. Before that it
+   shows the folder's absolute path, the agent, and the project files that trust activates and that exist
+   there (`.claude/settings*.json`, `.mcp.json`, `.codex/config.toml`, `AGENTS.md`, `CLAUDE.md`), with
+   "Sessions the peer opens here run these without asking you. Removing the grant doesn't remove the
+   agent's trust." It refuses the home folder, a drive root and a folder that holds other granted
+   folders.
+
+Rules:
+
+- Certificates, commitments, nonces and the invitation travel on the wire or between agents and are
+  public. The six digits are derived on each machine and are never sent, logged, stored, audited,
+  returned to a tool or printed anywhere but the pairing window. Anyone with the full plaintext transcript
+  can compute them; that doesn't help an attacker, because the digits authenticate rather than hide.
+  Agents must not read, relay or enter them. The `network` skill tells the person to read each code from
+  the other machine's screen; asked for a code, the agent refuses and says why, and it never screenshots
+  or reads a pairing window.
+- Residual risk, accepted: a person who types a code that an agent, a message or a compromised claude.ai
+  account told them defeats pairing. No technical control prevents that; the window text is the
+  defence.
+- A machine holds at most one pairing window at a time and opens at most 3 per hour; a further request
+  returns "pairing busy" and opens nothing. A `--join` the person declines counts toward the lockout.
+- Without an invitation (`net pair` and `--peer <IP>`), the window shows a fresh random 6-character
+  token (base32, about 30 bits) for the person to pass to the other machine with
+  `--peer <IP> --token <token>`; the dialer sends it as the window token. The same expiry, first-frame
+  check, rate limit and one-session rule apply as for an invitation. The token keeps strangers from
+  occupying the window; it doesn't authenticate the peer. Six characters are enough for that: at one
+  connection a second for 5 minutes, a guesser gets about 300 tries against about 10^9 values, and a
+  person types it by hand.
+- A session that ends before both nonces are exchanged doesn't use up the window and doesn't count as a
+  failure. The window allows one session at a time; a second dialer is refused without affecting the
+  first. The first frame must arrive within 5 s and the exchange must reach the digits within 60 s.
+  Incoming connections are limited to 1 per second.
+- Lockout: three wrong codes or `no` answers within an hour lock `net pair` on that machine for an hour.
+  The count is stored in `net/`, survives restarts, and each failure shows a desktop notification that
+  also says `net trust` still works. The window closes after a successful pairing, at a lockout or at
+  the timeout.
+- Pairing an id that is already trusted writes nothing in step 6. Step 7 shows its label, address and
+  grants; the `yes` updates the address and keeps those grants, and `no` leaves the entry exactly as it
+  was. A new id starts with no grants.
+- Device names default to the host name; `deviceName` sets another. A name is 1 to 32 characters of
+  ASCII letters, digits, space, `-`, `_` and `.`, with no run of six digits, so it can't pass for a code.
+  Names render in their own field, never next to the digits.
+- **Windows elevation.** Pairing, its windows, the listener, the server and tabs run under the
+  signed-in user's normal, unelevated token. Only the firewall changes are elevated: one UAC prompt runs
+  a fixed helper,
+  `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command` with a
+  constant `New-NetFirewallRule` / `Remove-NetFirewallRule` script whose only parameters are the ports, the
+  program path, an address or subnet list, the profile, the interface alias and the rule name, each
+  passed as data, never interpolated into the script. The elevated helper validates them again itself
+  and accepts only the plugin's Python executable, the listener and pairing ports, the selected interface
+  and profile, an address range allowed in the mode and the fixed rule name; it refuses any other
+  value. Before it asks for elevation, the command reads the existing rule unelevated, and it skips the
+  prompt when the rule already matches every value. The helper then
+  reads the installed rule back and checks it, and removes a rule it added when any step fails. No
+  plugin code runs elevated. On a standard account the UAC prompt takes an administrator's credentials,
+  and the helper writes only machine-wide rules, so standard accounts can pair. A widening command
+  started elevated stops before doing anything and asks the person to run it from a normal terminal; it
+  never continues under the administrator token. An administrator account with UAC on works, because its
+  normal terminal is unelevated. Where Windows can't give an unelevated token (UAC off, or the built-in
+  Administrator account), version 1 doesn't support the network feature, and `net status` and the
+  window say why.
+- **No terminal.** A widening command run without an interactive terminal (by an agent, or at Claude
+  Code's `!` prompt) opens a new terminal window that runs the bare command with none of the caller's
+  arguments, input or output handles, except the invitation for `--join`, which the window shows for the
+  person to accept. It shows a desktop notification naming the program that asked, and returns "Continue
+  in the window that opened." For `--invite` it also returns the invitation line once the window has
+  opened. This is a convenience, not a barrier: under D10, code running as the user can still drive a
+  window it can see.
+- **Firewall for pairing.** One rule, `Agent Tabs LAN`, admits TCP `47829` (the listener) and `47830`
+  (pairing) to the plugin's Python from the mode's range (LAN: the selected interface's subnet;
+  Tailscale: the Tailscale interface and `100.64.0.0/10`). Each machine adds it once, at its first
+  `net pair` window or at the listener's first start, and keeps it until `net off`. Later pairings
+  show no UAC prompt. Nothing listens on `47830` outside an open pairing window, so the rule admits
+  traffic there only while a person has a window open, and the window's token, code and limits still
+  apply. A joining machine only dials, so it adds the rule only when it turns its listener on.
+
+### Tailscale mode
+
+`network: tailscale` runs the same listener, pairing, grants and pinned mutual TLS over the Tailscale
+interface instead of a LAN address. Tailscale gives each machine a fixed `100.x` address on any network,
+reaches machines away from home, and encrypts everything with WireGuard. It is the recommended mode for
+more than one network, for travel and for teammates later.
+
+- **Requirements.** Tailscale installed, running and logged in on both machines. Tailscale's client runs
+  while the person is logged in unless they chose `tailscale up --unattended`. Phase 0 records whether
+  installing it needs administrator rights on Windows.
+- **Address.** `bind` is the machine's Tailscale IPv4 address, read from `tailscale ip -4` (the binary by
+  absolute path, with a timeout). The listener refuses an address outside `100.64.0.0/10` or not on the
+  Tailscale interface.
+- **Picking the peer.** Besides an invitation, `net pair --tailscale` lists the person's machines from
+  `tailscale status --json` (`Peer` entries: host name, `TailscaleIPs`, `OS`, `Online`), parsed
+  defensively, under "Not verified yet: the code below checks them." Picking one dials it. The pairing
+  code is still required.
+- **Tailscale check.** Before dialing, and for each accepted connection, the command asks the local
+  Tailscale service (`tailscale whois --json`, by absolute path, with a timeout) about the address. It
+  requires exactly one node, in this tailnet, not shared in, not tagged, and owned by the same user as
+  this machine, read from documented fields. It fails closed when the local identity, the node, the
+  owner or the share status is missing, ambiguous or in an unknown format, or when `tailscale` doesn't
+  answer. The listener reads its own owner from `tailscale status --self --json` at start. Tests cover
+  each supported Tailscale and Headscale version before the design claims support for it. This check
+  narrows; it is never the identity. Pinned mutual TLS and the code decide who the peer is. The check
+  doesn't exclude traffic that the person's own nodes proxy (a subnet router, `tailscale serve` or
+  Funnel); pinned TLS still holds.
+- **Authority stays local.** Tailscale's access rules and app capabilities never grant anything here.
+  `policy.json` is the only authority. Everything Tailscale reports (addresses, `whois`, the machine list)
+  comes from the coordination server, so it narrows and routes only; pinned TLS and the code carry every
+  security decision. The design recommends an access rule that reaches the Agent Tabs ports only from
+  the person's own devices, `{"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip":
+  ["tcp:47829", "tcp:47830"]}`, with no broader rule covering those ports. Tagged devices have no user
+  owner, so the owner check refuses them; they aren't supported in version 1.
+- **Firewall.** The Windows rule admits the listener's program on its port from `100.64.0.0/10` on the
+  Tailscale interface only. The interface matters: phone hotspots and carrier NAT also hand out
+  `100.64.0.0/10` addresses on physical adapters.
+- **Startup.** At login the Tailscale interface can come up after the listener. The listener waits up to
+  2 minutes for a `100.64.0.0/10` address on the Tailscale interface, then fails closed and reports why.
+- **Coordination.** By default Tailscale's coordination server distributes keys, and the person trusts it
+  not to inject a node. Pinned TLS means an injected node still can't pass as a paired machine. The design
+  recommends Tailnet Lock where the person's plan has it, and supports a self-hosted Headscale server for
+  a fully local setup. With Headscale the person runs the coordination server, and Tailnet Lock may be
+  unavailable; Phase 0 records which `whois` and `status` fields Headscale fills. Without internet, existing Tailscale connections keep working; a cold start may
+  not find peers.
+- **Addresses** don't change when a machine moves, so Tailscale mode needs no address updates.
+
+### LAN mode limits
+
+LAN mode stays the minimal option for one home or office network, with nothing else to install:
+
+- Private networks only. Windows' Domain and Public profiles refuse. Away from home, use Tailscale mode.
+- No broadcast, discovery, beacon or lookup of any kind. Machines find each other by invitation or by
+  `--peer <IP>`.
+- `bind` is one fixed RFC 1918 IPv4 address of a physical interface; VPN, Hyper-V, WSL and Docker adapters
+  only when named. The listener's firewall rule admits that interface's subnet (for example
+  `192.168.1.0/24`) on the Private profile.
+- When a machine's address changes, its listener refuses to start and `net status` says why. The fix is
+  `net pair` again, or `net lan on --bind` and `net trust --address`. A DHCP reservation on the router
+  avoids it.
+
+### Running the command
+
+- The session-start hook writes an `agent-tabs` shim (`.cmd`, `.ps1` and a POSIX `sh` script) into
+  `~/.ide-agent-tabs/bin`, which follows D11's private-file rule and holds nothing else. Each shim runs
+  the current install's interpreter by absolute path with `-I -S`; the `.cmd` passes its arguments only
+  through `%*` to that fixed command line. `net pair` offers to append the folder to the user's PATH,
+  never to prepend it.
+- The `network` skill leads with pairing: the person names the machines to connect, and the agent runs
+  `net pair --invite` on one, carries the invitation to the session on the other machine, and asks that
+  session to run `net pair --join`. Each person then works in the windows that open. The skill keeps the
+  manual `net trust` path as a fallback.
 
 ### Certificates and keys
 
@@ -2636,11 +2894,12 @@ These hold for every install, because every user gets this code:
   a credential that authorizes network ingress only. Admission limits apply at that boundary as well.
   Separate processes reduce shared-resource exhaustion; they don't remove it.
 - Limits: 8 connections, 2 per source, 5 s handshake, 30 s idle, 64 KiB requests. No fragmentation.
-- On Windows, the listener refuses to start on a network marked Public. Each accept checks a cached
-  network state, refreshed every 30 s and when the local address set changes. This reacts promptly, not
-  instantly; pinned mutual TLS carries the guarantee.
-- The Windows firewall rule is scoped to the port, the local address, the Private profile and the
-  trusted peers' addresses. Each change needs elevation.
+- On Windows, the LAN listener refuses to start on a network marked Public or Domain. Each accept checks a cached network state, refreshed every 30 s and when the local address set
+  changes. This reacts promptly, not instantly; pinned mutual TLS carries the guarantee.
+- The Windows firewall rule is scoped to the listener and pairing ports and the listener's program, and to the bound
+  interface's subnet on the Private profile (LAN mode) or `100.64.0.0/10` on the Tailscale interface
+  (Tailscale mode). Creating or changing it needs elevation, through the fixed helper described under
+  Pairing.
 
 ### Requests
 
@@ -2766,10 +3025,9 @@ What doesn't: open tabs and their sessions end with the machine, as they do toda
 reopens a closed session); reply grants are tied to a session generation, so a new session starts a new
 conversation; an action in flight follows D6 reconciliation.
 
-Addresses: a peer is reached at its recorded IP literal, and the listener binds its recorded address.
-If DHCP gives a machine a new address, its listener refuses to start and peers can't reach it until the
-user runs `net lan on --bind` and `net trust --address` again. A DHCP reservation on the router, or
-Tailscale mode later, avoids this.
+Addresses: a peer is reached at its recorded IP literal. In Tailscale mode addresses don't change. In LAN
+mode a new DHCP address stops that machine's listener until the person pairs again or runs `net lan on
+--bind` and `net trust --address`; a DHCP reservation on the router avoids it.
 
 ### Outbound limits
 
@@ -2828,8 +3086,9 @@ Per machine, in the `network` section of `config.json`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `network` | `off` | `off` or `lan`; `tailscale` in a later stage |
-| `bind` | none | The listener's private address; in `tailscale` mode (later stage), the machine's tailnet address |
+| `network` | `off` | `off`, `lan` or `tailscale` |
+| `bind` | none | The listener's address: a private LAN address, or in `tailscale` mode the machine's Tailscale address |
+| `deviceName` | host name | The name other machines see in invitations and pairing |
 | `port` | `47829` | The listener's port |
 | `openssl` | none | The confirmed absolute path used by `net lan setup` |
 | `outboundFolders` | empty | Local folders whose sessions may send to peers |

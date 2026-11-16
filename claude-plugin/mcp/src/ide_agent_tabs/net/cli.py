@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from ..files import file_lock, read_text_if_exists, remove_file, write_atomically
 from ..home import agent_tabs_home
@@ -27,15 +27,17 @@ from ..messaging.sessions import SESSION_ID
 from ..processes import spawn_detached, terminal_environment
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, parse_port
-from . import firewall, ingress, login_task, tls
-from .certgen import CertgenError, generate_identity
+from . import elevation, firewall, ingress, login_task, tls
+from .certgen import CertgenError, Identity, generate_identity
 from .client import identity_dir, local_device_id, peer_cert_path, peers_dir
 from .confirm import ConfirmError, confirm
 from .firewall import FirewallError
 from .identity import der_from_pem, format_digest, parse_device_id
+from .interfaces import InterfaceError, InterfaceInfo, interface_for
 from .listener import append_log, live_listener, log_file, read_listener, request_stop
 from .login_task import LoginTaskError
 from .notify import notify
+from .pairing import PAIRING_FILE, Busy, Limits, Locked, PairingError
 from .policy import (
     ALIAS,
     SUPPORTED_AGENTS,
@@ -52,16 +54,22 @@ from .policy import (
 )
 from .private_files import ensure_private_dir, make_private_file
 from .secrets import SecretsError, new_passphrase, store_passphrase
+from .shim import ShimError
 from .store import NetStore, NetStoreError
+from .window import WindowError
 
-USAGE = "net <id|status|off|trust|grant|revoke|lan>"
+if TYPE_CHECKING:
+    from .pair_cli import PairDeps
+
+USAGE = "net <id|status|off|trust|grant|revoke|pair|lan>"
 _GRAMMAR = (
     "agent-tabs net id | status | off | revoke <label>"
+    " | pair [--invite | --join <invitation> | --peer <IP> --token <token>]"
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
     " | grant <label> [--folder <alias>=<absolute path>] [--agent claude|codex] [--model <model>] [--send <session id>]"
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
 )
-_LABEL = re.compile(r"[a-z0-9-]{1,32}")
+LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MAX_CERT_BYTES = 65536
 _MAX_MODEL_CHARS = 128
 _DRIVE_REMOTE = 4
@@ -131,8 +139,11 @@ class Services:
     register_login: Callable[[str], str] = login_task.register
     remove_login: Callable[[str], str] = login_task.remove
     login_status: Callable[[str], str] = login_task.status
-    apply_firewall: Callable[[str, int, Sequence[str]], str] = firewall.apply_rule
-    remove_firewall: Callable[[], str] = firewall.remove_rule
+    apply_firewall: Callable[[str, str, str], str] = firewall.apply_listener_rule
+    remove_firewall: Callable[[], str] = firewall.remove_listener_rule
+    interface_for: Callable[[str], InterfaceInfo] = interface_for
+    unsupported_reason: Callable[[], str | None] = elevation.unsupported_reason
+    pair: PairDeps | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     user_home: str = field(default_factory=lambda: os.path.expanduser("~"))
     server_port: int = SERVER_DEFAULT_PORT
@@ -149,17 +160,17 @@ def default_services() -> Services:
     return Services(home=agent_tabs_home(env), env=env, server_port=parse_port(env.get(PORT_OPTION_ENV)) or SERVER_DEFAULT_PORT)
 
 
-def _parser(name: str) -> _Parser:
+def make_parser(name: str) -> _Parser:
     return _Parser(prog=f"agent-tabs net {name}", add_help=False)
 
 
-def _net_dir(home: str) -> Path:
+def net_dir_for(home: str) -> Path:
     path = ingress.net_dir(home)
     ensure_private_dir(path)
     return path
 
 
-def _read_config(home: str) -> dict[str, Any]:
+def read_config(home: str) -> dict[str, Any]:
     path = os.path.join(home, CONFIG_FILE)
     text = read_text_if_exists(path)
     if text is None or not text.strip():
@@ -173,8 +184,8 @@ def _read_config(home: str) -> dict[str, Any]:
     return config  # pyright: ignore[reportUnknownVariableType]
 
 
-def _set_network(home: str, updates: Mapping[str, Any]) -> None:
-    config = _read_config(home)
+def set_network(home: str, updates: Mapping[str, Any]) -> None:
+    config = read_config(home)
     section = config.get("network")
     if section is None:
         section = {}
@@ -197,7 +208,7 @@ def _peer_by_label(policy: Policy, label: str) -> PeerGrant:
     return peer
 
 
-def _grants_text(peer: PeerGrant) -> str:
+def grants_text(peer: PeerGrant) -> str:
     parts: list[str] = []
     if peer.folders:
         parts.append("folders " + ", ".join(f"{f.alias}={f.path}" for f in peer.folders))
@@ -220,7 +231,7 @@ def _wait_for(condition: Callable[[], bool], seconds: float) -> bool:
         time.sleep(0.05)
 
 
-def _start_listener(svc: Services) -> bool:
+def start_listener(svc: Services) -> bool:
     info = live_listener(svc.home)
     if info is not None:
         svc.out(f"The listener already runs (pid {info.pid}).")
@@ -255,21 +266,17 @@ def _stop_listener(svc: Services) -> bool:
     return True
 
 
-def _apply_firewall(svc: Services, bind: str, port: int) -> None:
-    addresses = [peer.address for peer in load_policy(svc.home).peers]
+def apply_firewall(svc: Services, bind: str, port: int) -> None:
     try:
-        text = svc.apply_firewall(bind, port, addresses)
-    except FirewallError as error:
+        if port != firewall.LISTENER_PORT:
+            raise FirewallError(f"{port!r} is not the listener port {firewall.LISTENER_PORT}, so no firewall rule is created")
+        info = svc.interface_for(bind)
+        text = svc.apply_firewall(bind, info.subnet, info.alias)
+    except (FirewallError, InterfaceError) as error:
         svc.err(f"warning: {error}. Peers can connect only when the firewall allows them.")
         return
     if text:
         svc.out(text)
-
-
-def _refresh_firewall(svc: Services) -> None:
-    config, _ = load_network_config(svc.home)
-    if config.network == "lan" and config.bind is not None:
-        _apply_firewall(svc, config.bind, config.port)
 
 
 def _remove_firewall(svc: Services) -> bool:
@@ -277,7 +284,7 @@ def _remove_firewall(svc: Services) -> bool:
         text = svc.remove_firewall()
     except FirewallError as error:
         svc.err(
-            f"error: {error}. Delete the rule named {firewall.RULE_NAME} in Windows Defender Firewall, or run agent-tabs net off again."
+            f"error: {error}. Delete the rule named {firewall.LISTENER_RULE} in Windows Defender Firewall, or run agent-tabs net off again."
         )
         return False
     if text:
@@ -295,7 +302,7 @@ def _remove_login(svc: Services) -> bool:
 
 
 def _cmd_id(svc: Services, args: Sequence[str]) -> int:
-    _parser("id").parse_args(args)
+    make_parser("id").parse_args(args)
     identity = local_device_id(svc.home)
     if identity is None:
         svc.err("error: this machine has no identity yet; run agent-tabs net lan setup --openssl <absolute path of openssl>")
@@ -305,8 +312,25 @@ def _cmd_id(svc: Services, args: Sequence[str]) -> int:
     return 0
 
 
+def _pairing_state(svc: Services) -> str:
+    state = "available"
+    if (ingress.net_dir(svc.home) / PAIRING_FILE).exists():
+        try:
+            Limits(svc.home).check()
+        except Busy as error:
+            return str(error)
+        except Locked as error:
+            state = str(error)
+        except PairingError as error:
+            return f"unreadable ({error})"
+    return state
+
+
 def _cmd_status(svc: Services, args: Sequence[str]) -> int:
-    _parser("status").parse_args(args)
+    make_parser("status").parse_args(args)
+    unsupported = svc.unsupported_reason()
+    if unsupported is not None:
+        svc.out(f"unsupported: {unsupported}")
     config, warnings = load_network_config(svc.home)
     for warning in warnings:
         svc.out(f"warning: {warning}")
@@ -318,6 +342,7 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     svc.out("listener: " + (f"running (pid {info.pid}, {info.bind} port {info.port})" if info is not None else "not running"))
     svc.out(f"login task: {svc.login_status(svc.home)}")
     svc.out(f"identity: {local_device_id(svc.home) or 'none'}")
+    svc.out(f"pairing: {_pairing_state(svc)}")
     try:
         policy = load_policy(svc.home)
     except PolicyError as error:
@@ -328,12 +353,26 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
         return 0
     svc.out("peers:")
     for peer in policy.peers:
-        svc.out(f"  {peer.label}  {peer.device_id[:15]}  {peer.address}  grants: {_grants_text(peer)}")
+        svc.out(f"  {peer.label}  {peer.device_id[:15]}  {peer.address}  grants: {grants_text(peer)}")
     return 0
 
 
+def create_identity(svc: Services, openssl: str) -> Identity:
+    folder = identity_dir(svc.home)
+    net_dir_for(svc.home)
+    ingress.ensure_ingress_token(svc.home)
+    ensure_private_dir(folder)
+    passphrase = new_passphrase()
+    store_passphrase(folder, passphrase)
+    identity = generate_identity(Path(openssl), folder, passphrase, now=datetime.now(timezone.utc))
+    set_network(svc.home, {"openssl": openssl})
+    svc.record("lan-setup", device=identity.device_id)
+    svc.notify("network identity created")
+    return identity
+
+
 def _cmd_setup(svc: Services, args: Sequence[str]) -> int:
-    parser = _parser("lan setup")
+    parser = make_parser("lan setup")
     parser.add_argument("--openssl", required=True)
     options = parser.parse_args(args)
     openssl: str = options.openssl
@@ -358,15 +397,7 @@ def _cmd_setup(svc: Services, args: Sequence[str]) -> int:
             "  The identity changes nothing else; no peer is trusted and nothing listens.",
         ],
     )
-    _net_dir(svc.home)
-    ingress.ensure_ingress_token(svc.home)
-    ensure_private_dir(folder)
-    passphrase = new_passphrase()
-    store_passphrase(folder, passphrase)
-    identity = generate_identity(Path(openssl), folder, passphrase, now=datetime.now(timezone.utc))
-    _set_network(svc.home, {"openssl": openssl})
-    svc.record("lan-setup", device=identity.device_id)
-    svc.notify("network identity created")
+    identity = create_identity(svc, openssl)
     svc.out(f"device id: {identity.device_id}")
     svc.out(f"certificate: {identity.cert_path}")
     return 0
@@ -376,8 +407,23 @@ def _on_windows() -> bool:
     return sys.platform == "win32"
 
 
+def enable_lan(svc: Services, bind: str, port: int, at_login: bool) -> bool:
+    set_network(svc.home, {"network": "lan", "bind": bind})
+    svc.record("lan-on", bind=bind, port=port)
+    svc.notify(f"LAN network turned on at {bind}")
+    apply_firewall(svc, bind, port)
+    login_ok = True
+    if at_login:
+        try:
+            svc.out(svc.register_login(svc.home))
+        except LoginTaskError as error:
+            svc.err(f"error: the login task was not registered: {error}")
+            login_ok = False
+    return start_listener(svc) and login_ok
+
+
 def _cmd_on(svc: Services, args: Sequence[str]) -> int:
-    parser = _parser("lan on")
+    parser = make_parser("lan on")
     parser.add_argument("--bind", required=True)
     parser.add_argument("--at-login", action="store_true")
     options = parser.parse_args(args)
@@ -400,7 +446,10 @@ def _cmd_on(svc: Services, args: Sequence[str]) -> int:
             f"  config.json network: lan (it is {config.network} now)",
             "  The listener accepts connections only from peers you trust with agent-tabs net trust.",
             *(
-                ["  Windows firewall: a rule for this port from your trusted peers (the Windows prompt asks for your approval)."]
+                [
+                    "  Windows firewall: one rule for ports 47829 and 47830 from this network's subnet on Private networks.",
+                    "  When the rule isn't there yet, the Windows prompt asks for your approval once.",
+                ]
                 if _on_windows()
                 else []
             ),
@@ -411,22 +460,11 @@ def _cmd_on(svc: Services, args: Sequence[str]) -> int:
             ),
         ],
     )
-    _set_network(svc.home, {"network": "lan", "bind": bind})
-    svc.record("lan-on", bind=bind, port=config.port)
-    svc.notify(f"LAN network turned on at {bind}")
-    _apply_firewall(svc, bind, config.port)
-    login_ok = True
-    if options.at_login:
-        try:
-            svc.out(svc.register_login(svc.home))
-        except LoginTaskError as error:
-            svc.err(f"error: the login task was not registered: {error}")
-            login_ok = False
-    return 0 if _start_listener(svc) and login_ok else 1
+    return 0 if enable_lan(svc, bind, config.port, options.at_login) else 1
 
 
 def _cmd_start(svc: Services, args: Sequence[str]) -> int:
-    _parser("lan start").parse_args(args)
+    make_parser("lan start").parse_args(args)
     config, warnings = load_network_config(svc.home)
     for warning in warnings:
         svc.err(f"warning: {warning}")
@@ -437,24 +475,24 @@ def _cmd_start(svc: Services, args: Sequence[str]) -> int:
         raise CliError(problem)
     if local_device_id(svc.home) is None:
         raise CliError("this machine has no identity; run agent-tabs net lan setup")
-    started = _start_listener(svc)
+    started = start_listener(svc)
     svc.record("lan-start", bind=config.bind, ok=int(started))
     svc.notify(f"LAN listener started at {config.bind}" if started else "LAN listener start failed")
     return 0 if started else 1
 
 
 def _cmd_stop(svc: Services, args: Sequence[str]) -> int:
-    _parser("lan stop").parse_args(args)
+    make_parser("lan stop").parse_args(args)
     stopped = _stop_listener(svc)
     svc.record("lan-stop", ok=int(stopped))
     return 0 if stopped else 1
 
 
 def _cmd_off(svc: Services, args: Sequence[str]) -> int:
-    _parser("off").parse_args(args)
-    _net_dir(svc.home)
+    make_parser("off").parse_args(args)
+    net_dir_for(svc.home)
     try:
-        _set_network(svc.home, {"network": "off"})
+        set_network(svc.home, {"network": "off"})
     except CliError as error:
         svc.err(f"warning: {error}; the network counts as off until config.json is fixed")
     store = NetStore(svc.home)
@@ -498,8 +536,37 @@ def _address(text: str) -> str:
     return str(ip)
 
 
+def store_peer(
+    svc: Services,
+    identity: str,
+    pem: str,
+    address: str,
+    label: str,
+    folders: Sequence[FolderGrant] = (),
+    agents: Sequence[str] = (),
+) -> tuple[PeerGrant, bool]:
+    net_dir_for(svc.home)
+    with file_lock(policy_path(svc.home)):
+        policy = load_policy(svc.home)
+        current = grant_for(policy, identity)
+        if current is None and any(p.label == label for p in policy.peers):
+            raise CliError(f"the label {label} belongs to another peer")
+        ensure_private_dir(peers_dir(svc.home))
+        target = peer_cert_path(svc.home, identity)
+        write_atomically(str(target), pem)
+        make_private_file(target)
+        if current is None:
+            result = PeerGrant(device_id=identity, label=label, address=address, folders=tuple(folders), agents=tuple(agents))
+            peers = (*policy.peers, result)
+        else:
+            result = replace(current, address=address)
+            peers = tuple(result if p.device_id == identity else p for p in policy.peers)
+        save_policy(svc.home, replace(policy, peers=peers))
+    return result, current is None
+
+
 def _cmd_trust(svc: Services, args: Sequence[str]) -> int:
-    parser = _parser("trust")
+    parser = make_parser("trust")
     parser.add_argument("cert")
     parser.add_argument("--id", required=True)
     parser.add_argument("--address", required=True)
@@ -517,14 +584,14 @@ def _cmd_trust(svc: Services, args: Sequence[str]) -> int:
         raise CliError("that is this machine's own device id")
     address = _address(options.address)
     label: str = options.label
-    if _LABEL.fullmatch(label) is None:
+    if LABEL.fullmatch(label) is None:
         raise CliError("--label is 1 to 32 characters of a-z, 0-9 and -")
     policy = load_policy(svc.home)
     known = grant_for(policy, identity)
     if known is None and any(p.label == label for p in policy.peers):
         raise CliError(f"the label {label} belongs to another peer")
     if known is not None and known.address == address and peer_cert_path(svc.home, identity).is_file():
-        svc.out(f"{known.label} is already trusted at {address}. Grants: {_grants_text(known)}.")
+        svc.out(f"{known.label} is already trusted at {address}. Grants: {grants_text(known)}.")
         return 0
     if known is None:
         lines = [
@@ -540,29 +607,14 @@ def _cmd_trust(svc: Services, args: Sequence[str]) -> int:
             f"  label: {known.label}",
             f"  device id: {identity}",
             f"  address: {known.address} -> {address}",
-            f"  grants: {_grants_text(known)}",
+            f"  grants: {grants_text(known)}",
         ]
     _require_confirmed(svc, lines)
-    _net_dir(svc.home)
-    ensure_private_dir(peers_dir(svc.home))
-    target = peer_cert_path(svc.home, identity)
-    write_atomically(str(target), pem)
-    make_private_file(target)
-    with file_lock(policy_path(svc.home)):
-        policy = load_policy(svc.home)
-        current = grant_for(policy, identity)
-        if current is None:
-            peers = (*policy.peers, PeerGrant(device_id=identity, label=label, address=address))
-            result = PeerGrant(device_id=identity, label=label, address=address)
-        else:
-            result = replace(current, address=address)
-            peers = tuple(result if p.device_id == identity else p for p in policy.peers)
-        save_policy(svc.home, replace(policy, peers=peers))
-    svc.record("trust", device=identity, label=result.label, address=address, new=int(current is None))
-    svc.notify(f"trusted peer {result.label} at {address}" if current is None else f"changed the address of peer {result.label}")
-    svc.out(("Trusted " if current is None else "Updated the address of ") + f"{result.label} ({identity}) at {address}.")
-    svc.out(f"Effective grants: {_grants_text(result)}.")
-    _refresh_firewall(svc)
+    result, is_new = store_peer(svc, identity, pem, address, label)
+    svc.record("trust", device=identity, label=result.label, address=address, new=int(is_new))
+    svc.notify(f"trusted peer {result.label} at {address}" if is_new else f"changed the address of peer {result.label}")
+    svc.out(("Trusted " if is_new else "Updated the address of ") + f"{result.label} ({identity}) at {address}.")
+    svc.out(f"Effective grants: {grants_text(result)}.")
     return 0
 
 
@@ -600,7 +652,7 @@ def _has_link_component(path: str) -> bool:
     return False
 
 
-def _folder_grant(spec: str) -> FolderGrant:
+def folder_grant(spec: str) -> FolderGrant:
     alias, separator, raw = spec.partition("=")
     if not separator or ALIAS.fullmatch(alias) is None:
         raise CliError("--folder needs <alias>=<absolute path>; an alias is 1 to 32 characters of a-z, 0-9 and -")
@@ -702,7 +754,7 @@ def _merged(old: Sequence[str], new: Sequence[str]) -> tuple[str, ...]:
 
 
 def _cmd_grant(svc: Services, args: Sequence[str]) -> int:
-    parser = _parser("grant")
+    parser = make_parser("grant")
     parser.add_argument("label")
     parser.add_argument("--folder", action="append", default=[])
     parser.add_argument("--agent", action="append", default=[], choices=sorted(SUPPORTED_AGENTS))
@@ -711,7 +763,7 @@ def _cmd_grant(svc: Services, args: Sequence[str]) -> int:
     options = parser.parse_args(args)
     if not (options.folder or options.agent or options.model or options.send):
         raise UsageError("agent-tabs net grant: name at least one of --folder, --agent, --model or --send")
-    new_folders = [_folder_grant(spec) for spec in options.folder]
+    new_folders = [folder_grant(spec) for spec in options.folder]
     if len({f.alias for f in new_folders}) != len(new_folders):
         raise CliError("--folder repeats an alias")
     models, sessions = _checked_models(options.model), _checked_sessions(options.send)
@@ -749,15 +801,15 @@ def _cmd_grant(svc: Services, args: Sequence[str]) -> int:
         send=len(sessions),
     )
     svc.notify(f"changed the grants of peer {peer.label}")
-    svc.out(f"Effective grants of {peer.label}: {_grants_text(updated)}.")
+    svc.out(f"Effective grants of {peer.label}: {grants_text(updated)}.")
     return 0
 
 
 def _cmd_revoke(svc: Services, args: Sequence[str]) -> int:
-    parser = _parser("revoke")
+    parser = make_parser("revoke")
     parser.add_argument("label")
     options = parser.parse_args(args)
-    _net_dir(svc.home)
+    net_dir_for(svc.home)
     with file_lock(policy_path(svc.home)):
         policy = load_policy(svc.home)
         peer = _peer_by_label(policy, options.label)
@@ -771,7 +823,6 @@ def _cmd_revoke(svc: Services, args: Sequence[str]) -> int:
     svc.record("revoke", device=peer.device_id, generation=generation)
     svc.out(f"Revoked {peer.label} ({peer.device_id}); the policy generation is {generation}.")
     svc.out("Requests already handed off to a local tab may still finish. Revoking here removes no trust on the other machine.")
-    _refresh_firewall(svc)
     return 0
 
 
@@ -787,6 +838,12 @@ def _cmd_lan(svc: Services, args: Sequence[str]) -> int:
     return handlers[args[0]](svc, args[1:])
 
 
+def _cmd_pair(svc: Services, args: Sequence[str]) -> int:
+    from . import pair_cli
+
+    return pair_cli.run(svc, svc.pair or pair_cli.default_deps(), args)
+
+
 def main(argv: Sequence[str], services: Services | None = None) -> int:
     svc = services or default_services()
     handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
@@ -796,6 +853,7 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         "trust": _cmd_trust,
         "grant": _cmd_grant,
         "revoke": _cmd_revoke,
+        "pair": _cmd_pair,
         "lan": _cmd_lan,
     }
     try:
@@ -805,6 +863,21 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
     except UsageError as error:
         svc.err(f"{error}\nUsage: {_GRAMMAR}")
         return 2
-    except (CliError, ConfirmError, PolicyError, NetStoreError, CertgenError, SecretsError, ingress.IngressTokenError, OSError) as error:
+    except (
+        CliError,
+        ConfirmError,
+        PolicyError,
+        NetStoreError,
+        CertgenError,
+        SecretsError,
+        ingress.IngressTokenError,
+        elevation.ElevationError,
+        PairingError,
+        InterfaceError,
+        FirewallError,
+        ShimError,
+        WindowError,
+        OSError,
+    ) as error:
         svc.err(f"error: {error}")
         return 1
