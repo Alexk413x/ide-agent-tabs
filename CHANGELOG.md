@@ -3,6 +3,28 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.13.0
+
+Plugin and MCP server 0.13.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Changed
+
+- Agents run pairing end to end. `net pair --invite` starts a background listener and prints an
+  invitation; the agent sends it to the session on the other machine, which runs
+  `net pair --join <invitation>`. No windows open and you type nothing. See
+  [Pairing](docs/design.md#pairing).
+- The invitation pins the inviting machine's full device id and carries a secret token that never
+  crosses the network. The six-digit code, `net pair` without `--invite`, and `--peer` are gone.
+  Pairing protocol version 2 doesn't pair with 0.12.0.
+- Pairing turns the listener on and registers it to start at login on both machines. `net status` shows
+  the last pairing result.
+- `--bind <address>` picks the address on a machine with more than one.
+
+### Removed
+
+- The pairing windows, the `agent-tabs` command shim in `~/.ide-agent-tabs/bin` and the offer to change
+  the PATH.
+
 ## 0.12.0
 
 Plugin and MCP server 0.12.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).

@@ -54,9 +54,7 @@ from .policy import (
 )
 from .private_files import ensure_private_dir, make_private_file
 from .secrets import SecretsError, new_passphrase, store_passphrase
-from .shim import ShimError
 from .store import NetStore, NetStoreError
-from .window import WindowError
 
 if TYPE_CHECKING:
     from .pair_cli import PairDeps
@@ -64,7 +62,7 @@ if TYPE_CHECKING:
 USAGE = "net <id|status|off|trust|grant|revoke|pair|lan>"
 _GRAMMAR = (
     "agent-tabs net id | status | off | revoke <label>"
-    " | pair [--invite | --join <invitation> | --peer <IP> --token <token>]"
+    " | pair --invite [--bind <address>] | pair --join <invitation> [--bind <address>]"
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
     " | grant <label> [--folder <alias>=<absolute path>] [--agent claude|codex] [--model <model>] [--send <session id>]"
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
@@ -343,6 +341,11 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     svc.out(f"login task: {svc.login_status(svc.home)}")
     svc.out(f"identity: {local_device_id(svc.home) or 'none'}")
     svc.out(f"pairing: {_pairing_state(svc)}")
+    from .pair_cli import result_text
+
+    last = result_text(svc.home)
+    if last is not None:
+        svc.out(f"last pairing: {last}")
     try:
         policy = load_policy(svc.home)
     except PolicyError as error:
@@ -875,8 +878,6 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         PairingError,
         InterfaceError,
         FirewallError,
-        ShimError,
-        WindowError,
         OSError,
     ) as error:
         svc.err(f"error: {error}")
