@@ -249,8 +249,7 @@ class PairDeps:
     local_addresses: Callable[[], list[str]] = local_addresses
     require_lan_ready: Callable[[str, bool], InterfaceInfo] = _require_lan_ready
     find_openssl: Callable[[str | None, Mapping[str, str]], str | None] = find_openssl
-    open_rule: Callable[[str, str, str], str] = firewall.open_pairing_rule
-    close_rule: Callable[[], str] = firewall.close_pairing_rule
+    ensure_rule: Callable[[str, str, str], str] = firewall.apply_listener_rule
     bind_socket: Callable[[str, int], socket.socket] = bind_pairing_socket
     check_destination: Callable[[str, int, str, int], str] = pairing.check_lan_destination
     listen: Callable[..., PairResult] = pairing.listen_once
@@ -470,7 +469,7 @@ class ConsolePrompter:
             "Turn the listener on, with its firewall rule, so the other machine can reach this one?", deadline, True
         )
         if choices.listener:
-            choices.login = self._yes("Start the listener each time you sign in?", deadline, False)
+            choices.login = self._yes("Start the listener each time you sign in?", deadline, True)
         if self.shim_folder is not None and not self.deps.path_contains(self.shim_folder):
             choices.path = self._yes(f"Append {self.shim_folder} to your user PATH so agent-tabs works in any terminal?", deadline, False)
         return choices
@@ -667,19 +666,14 @@ def _notify_lock(svc: Services, result: PairResult) -> None:
 def _listen(svc: Services, deps: PairDeps, prepared: Prepared, prompter: ConsolePrompter, mode: Mode, limits: pairing.Limits) -> PairResult:
     limits.check()
     try:
-        removed = svc.remove_stale_pairing_rule()
-        if removed.startswith("Removed"):
-            svc.out(removed)
+        text = deps.ensure_rule(prepared.bind, prepared.iface.subnet, prepared.iface.alias)
     except firewall.FirewallError as error:
-        svc.err(f"warning: {error}. A leftover rule named {firewall.PAIRING_RULE} may stay in Windows Defender Firewall.")
+        raise CliError(f"{error}. The other machine can reach this one only through the firewall rule {firewall.LISTENER_RULE}") from error
+    if text:
+        svc.out(text)
     limits.open_window()
     sock: socket.socket | None = None
-    rule_open = False
     try:
-        text = deps.open_rule(prepared.bind, prepared.iface.subnet, prepared.iface.alias)
-        rule_open = True
-        if text:
-            svc.out(text)
         sock = deps.bind_socket(prepared.bind, PAIRING_PORT)
         port = int(sock.getsockname()[1])
         if mode.kind == "invite":
@@ -700,16 +694,8 @@ def _listen(svc: Services, deps: PairDeps, prepared: Prepared, prompter: Console
         if sock is not None:
             with contextlib.suppress(OSError):
                 sock.close()
-        try:
-            if rule_open:
-                closed = deps.close_rule()
-                if closed:
-                    svc.out(closed)
-        except firewall.FirewallError as error:
-            svc.err(f"warning: {error}. net pair or net status removes the rule named {firewall.PAIRING_RULE} later.")
-        finally:
-            limits.close_window()
-            _remove_invitation(svc.home)
+        limits.close_window()
+        _remove_invitation(svc.home)
 
 
 def _dial(

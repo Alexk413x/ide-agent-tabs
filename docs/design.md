@@ -2587,8 +2587,8 @@ Steps:
    finding `openssl` itself (Git for Windows' copy on Windows, then the PATH elsewhere) and showing the
    path. It checks the mode's network rules (LAN mode: a Private network; Tailscale mode: Tailscale up
    with a `100.64.0.0/10` address) and stops with the exact fix before anything listens.
-2. **Open the window (inviting machine).** It adds a temporary firewall rule for TCP `47830` (below),
-   listens on the pairing port on the selected address for 5 minutes, and prints the invitation.
+2. **Open the window (inviting machine).** It makes sure the listener's firewall rule exists and matches
+   (below), listens on the pairing port on the selected address for 5 minutes, and prints the invitation.
 3. **Join (other machine).** It first checks the invitation: base64url only, the version and the
    expiry. Before any dial, every entry path (`--join`, `--peer` and `--tailscale`) checks a numeric IPv4
    address and port against the active mode. LAN: an RFC 1918 unicast address on the selected
@@ -2647,8 +2647,8 @@ Steps:
    A `no` or a timeout leaves any existing entry unchanged and ends the session. The summary:
    - the label for the peer (default: its device name lowercased to `a-z0-9-`);
    - grants, defaulting to none: one folder and the agents for it, chosen from a numbered list, or none;
-   - turn the listener on, with its firewall rule;
-   - start the listener at login (yes or no).
+   - turn the listener on, with its firewall rule (default yes);
+   - start the listener at login (default yes), so the machines stay connected across restarts.
 
    Folder trust is checked first. If the chosen folder isn't trusted in an agent yet, the window offers to
    open one local tab of that agent in the folder, so the person answers the agent's own trust dialog, and
@@ -2698,12 +2698,13 @@ Rules:
   signed-in user's normal, unelevated token. Only the firewall changes are elevated: one UAC prompt runs
   a fixed helper,
   `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command` with a
-  constant `New-NetFirewallRule` / `Remove-NetFirewallRule` script whose only parameters are the port, the
+  constant `New-NetFirewallRule` / `Remove-NetFirewallRule` script whose only parameters are the ports, the
   program path, an address or subnet list, the profile, the interface alias and the rule name, each
   passed as data, never interpolated into the script. The elevated helper validates them again itself
-  and accepts only the plugin's Python executable, the pairing or listener port, the selected interface
-  and profile, an address range allowed in the mode and the fixed rule names; it refuses any other
-  value. The helper then
+  and accepts only the plugin's Python executable, the listener and pairing ports, the selected interface
+  and profile, an address range allowed in the mode and the fixed rule name; it refuses any other
+  value. Before it asks for elevation, the command reads the existing rule unelevated, and it skips the
+  prompt when the rule already matches every value. The helper then
   reads the installed rule back and checks it, and removes a rule it added when any step fails. No
   plugin code runs elevated. On a standard account the UAC prompt takes an administrator's credentials,
   and the helper writes only machine-wide rules, so standard accounts can pair. A widening command
@@ -2719,11 +2720,13 @@ Rules:
   in the window that opened." For `--invite` it also returns the invitation line once the window has
   opened. This is a convenience, not a barrier: under D10, code running as the user can still drive a
   window it can see.
-- **Firewall for pairing.** The inviting machine's temporary rule admits TCP `47830` to the pairing
-  program from the address in the mode's range (LAN: the selected interface's subnet; Tailscale: the
-  Tailscale interface and `100.64.0.0/10`). It is removed when the window closes, and a leftover rule is
-  removed at the next `net pair` or `net status` after a crash. The joining machine only dials and needs
-  no inbound rule.
+- **Firewall for pairing.** One rule, `Agent Tabs LAN`, admits TCP `47829` (the listener) and `47830`
+  (pairing) to the plugin's Python from the mode's range (LAN: the selected interface's subnet;
+  Tailscale: the Tailscale interface and `100.64.0.0/10`). Each machine adds it once, at its first
+  `net pair` window or at the listener's first start, and keeps it until `net off`. Later pairings
+  show no UAC prompt. Nothing listens on `47830` outside an open pairing window, so the rule admits
+  traffic there only while a person has a window open, and the window's token, code and limits still
+  apply. A joining machine only dials, so it adds the rule only when it turns its listener on.
 
 ### Tailscale mode
 
@@ -2893,7 +2896,7 @@ LAN mode stays the minimal option for one home or office network, with nothing e
 - Limits: 8 connections, 2 per source, 5 s handshake, 30 s idle, 64 KiB requests. No fragmentation.
 - On Windows, the LAN listener refuses to start on a network marked Public or Domain. Each accept checks a cached network state, refreshed every 30 s and when the local address set
   changes. This reacts promptly, not instantly; pinned mutual TLS carries the guarantee.
-- The Windows firewall rule is scoped to the port and the listener's program, and to the bound
+- The Windows firewall rule is scoped to the listener and pairing ports and the listener's program, and to the bound
   interface's subnet on the Private profile (LAN mode) or `100.64.0.0/10` on the Tailscale interface
   (Tailscale mode). Creating or changing it needs elevation, through the fixed helper described under
   Pairing.

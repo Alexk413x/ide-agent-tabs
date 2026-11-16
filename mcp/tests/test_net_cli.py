@@ -43,9 +43,6 @@ class Harness:
         self.logins: list[str] = []
         self.firewall: list[tuple[str, str, str]] = []
         self.interface_error: Exception | None = None
-        self.stale_rule = ""
-        self.stale_error: Exception | None = None
-        self.stale_checks = 0
         self.unsupported: str | None = None
         self.login_error: Exception | None = None
         self.firewall_error: Exception | None = None
@@ -64,7 +61,6 @@ class Harness:
             "login_status": lambda _home: "none",
             "apply_firewall": self._apply_firewall,
             "remove_firewall": self._remove_firewall,
-            "remove_stale_pairing_rule": self._remove_stale,
             "interface_for": self._interface_for,
             "unsupported_reason": lambda: self.unsupported,
             "user_home": self.user_home,
@@ -109,12 +105,6 @@ class Harness:
             raise self.firewall_error
         self.firewall.append((bind, subnet, alias))
         return "Created the firewall rule."
-
-    def _remove_stale(self) -> str:
-        self.stale_checks += 1
-        if self.stale_error is not None:
-            raise self.stale_error
-        return self.stale_rule
 
     def _remove_firewall(self) -> str:
         self.events.append("remove-firewall")
@@ -669,29 +659,14 @@ class StatusAndDispatchTest(CliTestCase):
         self.assertRegex(self.h.text, r"pairing: pairing is locked for \d+ more minutes")
         self.assertIn("net trust", self.h.text)
 
-    def test_status_removes_a_stale_pairing_rule_and_says_so(self) -> None:
-        self.h.stale_rule = 'Removed the Windows firewall rule "Agent Tabs pairing".'
-        self.assertEqual(self.h.run("status"), 0)
-        self.assertEqual(self.h.stale_checks, 1)
-        self.assertIn("Removed the Windows firewall rule", self.h.text)
-        self.h.out.clear()
-        self.h.stale_rule = "No firewall rule is present."
-        self.assertEqual(self.h.run("status"), 0)
-        self.assertNotIn("No firewall rule", self.h.text)
-
-    def test_status_leaves_the_rule_of_an_open_pairing_window(self) -> None:
+    def test_status_shows_an_open_pairing_window_and_changes_no_firewall_rule(self) -> None:
         limits = Limits(self.a)
         limits.open_window()
         self.addCleanup(limits.close_window)
         self.assertEqual(self.h.run("status"), 0)
-        self.assertEqual(self.h.stale_checks, 0)
         self.assertIn("pairing busy", self.h.text)
-
-    def test_status_reports_a_stale_rule_that_stays(self) -> None:
-        self.h.stale_error = FirewallError("the Windows prompt for administrator rights was declined")
-        self.assertEqual(self.h.run("status"), 0)
-        self.assertIn("declined", self.h.errors)
-        self.assertIn("Agent Tabs pairing", self.h.errors)
+        self.assertNotIn("firewall", self.h.events)
+        self.assertEqual(self.h.firewall_removals, 0)
 
     def test_status_does_not_warn_about_the_device_name(self) -> None:
         Path(self.a, "config.json").write_text(json.dumps({"network": {"deviceName": "Desk"}}))

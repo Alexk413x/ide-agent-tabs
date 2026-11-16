@@ -12,7 +12,6 @@ from .interfaces import InterfaceError, interface_for, is_safe_alias
 from .login_task import Environment, LoginTaskError
 
 LISTENER_RULE = "Agent Tabs LAN"
-PAIRING_RULE = "Agent Tabs pairing"
 LISTENER_PORT = 47829
 PAIRING_PORT = 47830
 PROFILE_PRIVATE = "Private"
@@ -32,7 +31,8 @@ _HELPER_ENV = "AGENT_TABS_HELPER"
 _PARAMS_ENV = "AGENT_TABS_PARAMS"
 _RULE_ENV = "AGENT_TABS_RULE"
 
-_RULE_PORTS = {LISTENER_RULE: LISTENER_PORT, PAIRING_RULE: PAIRING_PORT}
+LISTENER_PORTS = (LISTENER_PORT, PAIRING_PORT)
+_MATCH_ENV = "AGENT_TABS_MATCH"
 _PROGRAM = re.compile(r"[A-Za-z]:\\(?:[^\\/:*?<>|\x00-\x1f\"]+\\)*python(?:w)?\.exe", re.IGNORECASE)
 _DOTS = re.compile(r"(?:^|\\)\.\.?(?:\\|$)")
 _PRIVATE_RANGES = tuple(ipaddress.IPv4Network(text) for text in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
@@ -54,8 +54,8 @@ _OUTER_SCRIPT = (
 )
 
 # The elevated helper. It is one line without double quotes, because it travels on a command line. It validates
-# every value again, creates or removes one of the two fixed rules, reads a created rule back, and removes the
-# rule when any step fails.
+# every value again, creates or removes the one fixed rule, reads a created rule back, and removes the rule when
+# any step fails.
 _HELPER_LINES = (
     "& { param([string]$Data)",
     "$ErrorActionPreference = 'Stop';",
@@ -71,15 +71,15 @@ _HELPER_LINES = (
     "if ($Data -notmatch '^[A-Za-z0-9+/=]{1,4096}$') { throw 'data' };",
     "$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Data)) | ConvertFrom-Json;",
     "$rule = [string]$p.rule;",
-    "if ($rule -cne 'Agent Tabs LAN' -and $rule -cne 'Agent Tabs pairing') { throw 'rule' };",
-    "$port = if ($rule -ceq 'Agent Tabs LAN') { 47829 } else { 47830 };",
+    "if ($rule -cne 'Agent Tabs LAN') { throw 'rule' };",
     "if ($p.action -ceq 'remove') {",
     "$e = 5;",
     "if (@(Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue).Count -gt 0) { Remove-NetFirewallRule -DisplayName $rule -ErrorAction Stop };",
     "if (@(Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue).Count -gt 0) { throw 'left' };",
     "exit 0 };",
     "if ($p.action -cne 'add') { throw 'action' };",
-    "if ([int]$p.port -ne $port) { throw 'port' };",
+    "$ports = @('47829', '47830');",
+    "if ((@($p.ports | ForEach-Object { [string][int]$_ }) -join ',') -cne ($ports -join ',')) { throw 'port' };",
     "$prof = [string]$p.profile;",
     "if ($prof -cne 'Private' -and $prof -cne 'Any') { throw 'profile' };",
     (
@@ -102,7 +102,7 @@ _HELPER_LINES = (
     "$e = 3;",
     "if (@(Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue).Count -gt 0) { Remove-NetFirewallRule -DisplayName $rule -ErrorAction Stop };",
     (
-        "New-NetFirewallRule -DisplayName $rule -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port"
+        "New-NetFirewallRule -DisplayName $rule -Direction Inbound -Action Allow -Protocol TCP -LocalPort $ports"
         " -LocalAddress $p.local -RemoteAddress $p.remote -Program $program -Profile $prof -InterfaceAlias $alias -Enabled True -ErrorAction Stop | Out-Null;"
     ),
     "$created = $true;",
@@ -115,7 +115,10 @@ _HELPER_LINES = (
         " { throw 'rule' };"
     ),
     "$pf = $r | Get-NetFirewallPortFilter;",
-    "if ([string]$pf.Protocol -ne 'TCP' -or (@($pf.LocalPort) -join ',') -ne [string]$port -or (@($pf.RemotePort) -join ',') -ne 'Any') { throw 'port filter' };",
+    (
+        "if ([string]$pf.Protocol -ne 'TCP' -or (@($pf.LocalPort | Sort-Object) -join ',') -ne ($ports -join ',')"
+        " -or (@($pf.RemotePort) -join ',') -ne 'Any') { throw 'port filter' };"
+    ),
     "$af = $r | Get-NetFirewallAddressFilter;",
     "$remote = @($af.RemoteAddress) -join ',';",
     "$wide = (Dotted $net) + '/' + (Dotted (Mask $len));",
@@ -141,6 +144,31 @@ _PROBE_SCRIPT = (
     + " -ErrorAction SilentlyContinue).Count -gt 0) { exit 0 } else { exit 1 } } catch { exit 3 }"
 )
 
+# Runs unelevated and only reads. It exits 0 when the one listener rule matches every value it was given.
+_MATCH_SCRIPT = " ".join(
+    (
+        "try {",
+        f"$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:{_MATCH_ENV})) | ConvertFrom-Json;",
+        "$r = @(Get-NetFirewallRule -DisplayName ([string]$p.rule) -ErrorAction SilentlyContinue);",
+        "if ($r.Count -ne 1) { exit 1 }; $r = $r[0];",
+        (
+            "if ([string]$r.Enabled -ne 'True' -or [string]$r.Direction -ne 'Inbound' -or [string]$r.Action -ne 'Allow'"
+            " -or [string]$r.Profile -ne [string]$p.profile) { exit 1 };"
+        ),
+        "$pf = $r | Get-NetFirewallPortFilter;",
+        (
+            "if ([string]$pf.Protocol -ne 'TCP' -or (@($pf.LocalPort | Sort-Object) -join ',') -ne (@($p.ports | ForEach-Object { [string]$_ }) -join ',')"
+            " -or (@($pf.RemotePort) -join ',') -ne 'Any') { exit 1 };"
+        ),
+        "$af = $r | Get-NetFirewallAddressFilter;",
+        "if (@($af.LocalAddress).Count -ne 1 -or [string]$af.LocalAddress -ne [string]$p.local) { exit 1 };",
+        "if (@($p.remotes) -notcontains (@($af.RemoteAddress) -join ',')) { exit 1 };",
+        "if ([string]($r | Get-NetFirewallApplicationFilter).Program -ne [string]$p.program) { exit 1 };",
+        "if ((@(($r | Get-NetFirewallInterfaceFilter).InterfaceAlias) -join ',') -ne [string]$p.alias) { exit 1 };",
+        "exit 0 } catch { exit 3 }",
+    )
+)
+
 _EXIT_TEXT = {
     EXIT_REFUSED: "the helper refused a value it was given",
     EXIT_NOT_CREATED: "Windows could not create the rule",
@@ -156,7 +184,7 @@ class FirewallError(Exception):
 @dataclass(frozen=True)
 class RuleSpec:
     rule: str
-    port: int
+    ports: tuple[int, ...]
     program: str
     profile: str
     alias: str
@@ -198,14 +226,14 @@ def _local(text: str, network: ipaddress.IPv4Network) -> str:
 
 
 def rule_spec(rule: str, bind: str, subnet: str, interface_alias: str, program: str, profile: str = PROFILE_PRIVATE) -> RuleSpec:
-    if rule not in _RULE_PORTS:
-        raise FirewallError(f"{rule!r} is not one of the rules Agent Tabs manages")
+    if rule != LISTENER_RULE:
+        raise FirewallError(f"{rule!r} is not the rule Agent Tabs creates")
     if profile not in _ALLOWED_RANGES:
         raise FirewallError(f"{profile!r} is not a profile Agent Tabs uses")
     if not isinstance(interface_alias, str) or not is_safe_alias(interface_alias):  # pyright: ignore[reportUnnecessaryIsInstance]
         raise FirewallError(f"{interface_alias!r} is not a network interface name Agent Tabs accepts")
     network = _subnet(subnet, profile)
-    return RuleSpec(rule, _RULE_PORTS[rule], _program(program), profile, interface_alias, str(network), _local(bind, network))
+    return RuleSpec(rule, LISTENER_PORTS, _program(program), profile, interface_alias, str(network), _local(bind, network))
 
 
 def _document(action: str, rule: str, spec: RuleSpec | None) -> dict[str, object]:
@@ -214,7 +242,7 @@ def _document(action: str, rule: str, spec: RuleSpec | None) -> dict[str, object
     return {
         "action": action,
         "rule": spec.rule,
-        "port": spec.port,
+        "ports": list(spec.ports),
         "program": spec.program,
         "profile": spec.profile,
         "alias": spec.alias,
@@ -254,7 +282,7 @@ def _elevate(env: Environment, parameters: str) -> None:
 
 def rule_exists(rule: str, env: Environment | None = None) -> bool | None:
     env = env or Environment()
-    if rule not in _RULE_PORTS:
+    if rule != LISTENER_RULE:
         raise FirewallError(f"{rule!r} is not one of the rules Agent Tabs manages")
     try:
         result = env.run(
@@ -270,34 +298,62 @@ def rule_exists(rule: str, env: Environment | None = None) -> bool | None:
     return False if result.code == 1 else None
 
 
-def manual_rule_text(bind: str, port: int, remote: str) -> str:
+def _ports_text(ports: Sequence[int]) -> str:
+    return " and ".join(str(port) for port in ports)
+
+
+def manual_rule_text(bind: str, ports: Sequence[int], remote: str) -> str:
     return (
-        f"This system changes no firewall rule. If a firewall runs here, allow inbound TCP port {port} on {bind} "
+        f"This system changes no firewall rule. If a firewall runs here, allow inbound TCP ports {_ports_text(ports)} on {bind} "
         f"from {remote} for the Python that runs Agent Tabs, and nothing wider."
     )
 
 
-def _install(
-    rule: str,
-    bind: str,
-    subnet: str,
-    interface_alias: str,
-    env: Environment | None,
-    profile: str,
-    what: str,
+def _match_document(spec: RuleSpec) -> str:
+    network = ipaddress.IPv4Network(spec.remote)
+    document = {
+        "rule": spec.rule,
+        "ports": [str(port) for port in sorted(spec.ports)],
+        "profile": spec.profile,
+        "local": spec.local,
+        "remotes": [spec.remote, network.with_netmask],
+        "program": spec.program,
+        "alias": spec.alias,
+    }
+    return base64.b64encode(json.dumps(document, ensure_ascii=True, separators=(",", ":")).encode("utf-8")).decode("ascii")
+
+
+def rule_matches(spec: RuleSpec, env: Environment) -> bool:
+    try:
+        result = env.run(
+            _powershell(env),
+            ["-NoProfile", "-NonInteractive", "-Command", _MATCH_SCRIPT],
+            env={**os.environ, _MATCH_ENV: _match_document(spec)},
+            timeout=PROBE_TIMEOUT_S,
+        )
+    except (OSError, TimeoutError, LoginTaskError):
+        return False
+    return result.code == 0
+
+
+def apply_listener_rule(
+    bind: str, subnet: str, interface_alias: str, env: Environment | None = None, profile: str = PROFILE_PRIVATE
 ) -> str:
     env = env or Environment()
     if env.platform != "win32":
-        return manual_rule_text(bind, _RULE_PORTS.get(rule, 0), subnet)
+        return manual_rule_text(bind, LISTENER_PORTS, subnet)
     try:
-        spec = rule_spec(rule, bind, subnet, interface_alias, env.interpreter, profile)
+        spec = rule_spec(LISTENER_RULE, bind, subnet, interface_alias, env.interpreter, profile)
         if not os.path.isfile(env.interpreter):
             raise FirewallError(f"the interpreter {env.interpreter} is not a file")
-        _elevate(env, encode_parameters("add", rule, spec))
+        where = f"on {interface_alias}" if profile == PROFILE_ANY else f"on the {profile} profile of {interface_alias}"
+        what = f"ports {_ports_text(spec.ports)} on {bind} from {spec.remote} {where}"
+        if rule_matches(spec, env):
+            return f'The Windows firewall rule "{LISTENER_RULE}" already admits {what}.'
+        _elevate(env, encode_parameters("add", LISTENER_RULE, spec))
     except LoginTaskError as error:
         raise FirewallError(str(error)) from error
-    where = f"on {interface_alias}" if profile == PROFILE_ANY else f"on the {profile} profile of {interface_alias}"
-    return f'Created the Windows firewall rule "{rule}" for {what} port {spec.port} on {bind} from {spec.remote} {where}.'
+    return f'Created the Windows firewall rule "{LISTENER_RULE}" for {what}.'
 
 
 def _remove(rule: str, env: Environment | None, only_if_present: bool, prefix: str = "") -> str:
@@ -313,33 +369,15 @@ def _remove(rule: str, env: Environment | None, only_if_present: bool, prefix: s
     return f'{prefix} Removed the Windows firewall rule "{rule}".'.strip()
 
 
-def apply_listener_rule(
-    bind: str, subnet: str, interface_alias: str, env: Environment | None = None, profile: str = PROFILE_PRIVATE
-) -> str:
-    return _install(LISTENER_RULE, bind, subnet, interface_alias, env, profile, "the listener's")
-
-
-def open_pairing_rule(bind: str, subnet: str, interface_alias: str, env: Environment | None = None, profile: str = PROFILE_PRIVATE) -> str:
-    return _install(PAIRING_RULE, bind, subnet, interface_alias, env, profile, "pairing's")
-
-
-def close_pairing_rule(env: Environment | None = None) -> str:
-    return _remove(PAIRING_RULE, env, only_if_present=False)
-
-
 def remove_listener_rule(env: Environment | None = None) -> str:
     return _remove(LISTENER_RULE, env, only_if_present=True)
-
-
-def remove_stale_pairing_rule(env: Environment | None = None) -> str:
-    return _remove(PAIRING_RULE, env, only_if_present=True)
 
 
 def apply_rule(bind: str, port: int, peers: Sequence[str], env: Environment | None = None) -> str:
     del peers
     env = env or Environment()
     if env.platform != "win32":
-        return manual_rule_text(bind, port, "your local network")
+        return manual_rule_text(bind, LISTENER_PORTS, "your local network")
     if port != LISTENER_PORT:
         raise FirewallError(f"{port!r} is not the listener port {LISTENER_PORT}, so no firewall rule is created")
     try:

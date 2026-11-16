@@ -22,8 +22,12 @@ Plugin and MCP server 0.12.0. The bundled IDE packages are unchanged (VS Code 0.
 
 ### Changed
 
-- The listener's Windows firewall rule admits the listener's port from the interface's subnet on the
-  Private profile, through a fixed PowerShell helper that checks its values and reads the rule back.
+- The Windows firewall rule `Agent Tabs LAN` admits the listener and pairing ports (47829 and 47830)
+  from the interface's subnet on the Private profile, through a fixed PowerShell helper that checks its
+  values and reads the rule back. Each machine adds it once, with one UAC prompt. Later pairings and
+  listener starts read the rule and show no prompt while it matches.
+- The pairing summary turns the listener on and starts it at login by default, so paired machines stay
+  connected after a restart.
 - The setting `network.deviceName` sets the name a machine shows when pairing.
 
 ### Security

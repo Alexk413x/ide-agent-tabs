@@ -40,7 +40,8 @@ the user, write the full path.
 - On Windows, the network must be marked Private, not Public or Domain. `net pair` stops with the exact fix
   when it isn't.
 - On Windows, the command refuses to run from a terminal with administrator rights. The user runs it from a
-  normal terminal. One Windows prompt asks for approval to add a temporary firewall rule.
+  normal terminal. The first time on each machine, one Windows prompt asks for approval to add the
+  firewall rule `Agent Tabs LAN`. Later pairings don't ask again.
 - `net pair` creates the machine's identity when none exists. It finds `openssl` itself: Git for Windows'
   copy on Windows, the PATH elsewhere.
 
@@ -72,7 +73,8 @@ listener, the login task, the pairing state and the trusted peers.
    remote-desktop session the user already uses, and types it into this window. If the user can't see the
    other screen, the user types `no` and pairs later.
 5. **The user reviews once.** Each window then shows one summary: the peer's label, grants (none by
-   default), the listener with its firewall rule, and the login choice. The user types `yes`. Offer to
+   default), the listener with its firewall rule, and the login choice. The listener and the start at
+   login default to yes, so the machines stay connected after a restart. The user types `yes`. Offer to
    grant less first. A folder grant lets the peer start agents in that folder, and they run the folder's
    project settings without asking the user. If the agent hasn't trusted the folder, the window offers to open the agent there so the user
    answers the agent's own trust dialog.
@@ -129,8 +131,8 @@ the prompt, or runs it in their own terminal.
    ```
 
    `--at-login` starts the listener each time the user signs in. On Windows, a prompt asks for approval to
-   add a firewall rule that admits only the listener's port from this interface's subnet on Private
-   networks.
+   add a firewall rule that admits only the listener and pairing ports from this interface's subnet on
+   Private networks. When the rule already matches, no prompt appears.
 7. **Check.** Run `agent-tabs net status` on each machine.
 
 When a machine's address changes, its listener refuses to start and `net status` says why. The user runs
@@ -148,7 +150,7 @@ These need no confirmation:
 
 If `net off` reports that the login task or the firewall rule stays, show the message to the user. A
 leftover login task only runs `lan start`, which refuses while the network is off. The user deletes a
-leftover firewall rule named `Agent Tabs LAN` or `Agent Tabs pairing` in Windows Defender Firewall.
+leftover firewall rule named `Agent Tabs LAN` in Windows Defender Firewall.
 
 ## What this does not do
 

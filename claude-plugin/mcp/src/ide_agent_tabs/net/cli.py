@@ -141,7 +141,6 @@ class Services:
     login_status: Callable[[str], str] = login_task.status
     apply_firewall: Callable[[str, str, str], str] = firewall.apply_listener_rule
     remove_firewall: Callable[[], str] = firewall.remove_listener_rule
-    remove_stale_pairing_rule: Callable[[], str] = firewall.remove_stale_pairing_rule
     interface_for: Callable[[str], InterfaceInfo] = interface_for
     unsupported_reason: Callable[[], str | None] = elevation.unsupported_reason
     pair: PairDeps | None = None
@@ -324,13 +323,6 @@ def _pairing_state(svc: Services) -> str:
             state = str(error)
         except PairingError as error:
             return f"unreadable ({error})"
-    try:
-        removed = svc.remove_stale_pairing_rule()
-    except FirewallError as error:
-        svc.err(f"warning: {error}. Delete the rule named {firewall.PAIRING_RULE} in Windows Defender Firewall.")
-    else:
-        if removed.startswith("Removed"):
-            svc.out(removed)
     return state
 
 
@@ -454,7 +446,10 @@ def _cmd_on(svc: Services, args: Sequence[str]) -> int:
             f"  config.json network: lan (it is {config.network} now)",
             "  The listener accepts connections only from peers you trust with agent-tabs net trust.",
             *(
-                ["  Windows firewall: a rule for this port from your trusted peers (the Windows prompt asks for your approval)."]
+                [
+                    "  Windows firewall: one rule for ports 47829 and 47830 from this network's subnet on Private networks.",
+                    "  When the rule isn't there yet, the Windows prompt asks for your approval once.",
+                ]
                 if _on_windows()
                 else []
             ),

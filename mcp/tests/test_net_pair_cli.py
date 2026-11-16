@@ -127,7 +127,6 @@ class Machine:
         self.elevation_error: Exception | None = None
         self.lan_error: Exception | None = None
         self.rule_error: Exception | None = None
-        self.close_error: Exception | None = None
         self.bind_error: Exception | None = None
         self.openssl: str | None = str(OPENSSL) if HAS_OPENSSL else None
         self.lan_calls: list[tuple[str, bool]] = []
@@ -146,8 +145,7 @@ class Machine:
             local_addresses=lambda: [self.bind],
             require_lan_ready=self._lan_ready,
             find_openssl=lambda _configured, _env: self.openssl,
-            open_rule=self._open_rule,
-            close_rule=self._close_rule,
+            ensure_rule=self._ensure_rule,
             bind_socket=self._bind_socket,
             check_destination=self._destination,
             listen=self._listen,
@@ -189,18 +187,12 @@ class Machine:
         prefix = ".".join(address.split(".")[:3])
         return InterfaceInfo("Ethernet", address, 24, f"{prefix}.0/24", "Private", True)
 
-    def _open_rule(self, bind: str, subnet: str, alias: str) -> str:
-        self.events.append("open-rule")
+    def _ensure_rule(self, bind: str, subnet: str, alias: str) -> str:
+        self.events.append("ensure-rule")
         if self.rule_error is not None:
             raise self.rule_error
         self.rules_opened.append((bind, subnet, alias))
-        return "Created the pairing rule."
-
-    def _close_rule(self) -> str:
-        self.events.append("close-rule")
-        if self.close_error is not None:
-            raise self.close_error
-        return "Removed the pairing rule."
+        return "Created the listener rule."
 
     def _bind_socket(self, address: str, port: int) -> socket.socket:
         self.events.append("bind-socket")
@@ -672,8 +664,8 @@ class ListenerTest(PairTestCase):
         session = Session(during=during)
         machine.listen_impl = session.listen
         self.assertEqual(machine.run("--invite"), 1)
-        order = [event for event in machine.events if event in ("open-rule", "bind-socket", "listen", "close-rule")]
-        self.assertEqual(order, ["open-rule", "bind-socket", "listen", "close-rule"])
+        order = [event for event in machine.events if event in ("ensure-rule", "bind-socket", "listen")]
+        self.assertEqual(order, ["ensure-rule", "bind-socket", "listen"])
         self.assertEqual(machine.rules_opened, [(BIND, SUBNET, "Ethernet")])
         self.assertEqual(machine.bound, [(BIND, 47830)])
         self.assertTrue(seen["open"])
@@ -715,12 +707,11 @@ class ListenerTest(PairTestCase):
         self.assertFalse(pair_cli.invitation_path(self.a).exists())
         self.assertNotIn("atp1-invite:", machine.out)
 
-    def test_an_error_while_listening_still_closes_the_rule_the_window_and_the_file(self) -> None:
+    def test_an_error_while_listening_still_closes_the_window_and_the_file(self) -> None:
         machine = self.machine()
         machine.listen_impl = Session(error=RuntimeError("boom")).listen
         with self.assertRaises(RuntimeError):
             machine.run("--invite")
-        self.assertEqual(machine.events[-1], "close-rule")
         self.assertFalse(machine.window_is_open())
         self.assertFalse(pair_cli.invitation_path(self.a).exists())
         with self.assertRaises(OSError):
@@ -731,55 +722,48 @@ class ListenerTest(PairTestCase):
         machine.listen_impl = Session(error=KeyboardInterrupt()).listen
         self.assertEqual(machine.run("--invite"), 1)
         self.assertIn("Pairing stopped", machine.errors)
-        self.assertEqual(machine.events[-1], "close-rule")
         self.assertFalse(machine.window_is_open())
 
-    def test_a_failed_socket_closes_the_rule_and_the_window(self) -> None:
+    def test_a_failed_socket_closes_the_window(self) -> None:
         machine = self.machine()
         machine.bind_error = OSError("address in use")
         self.assertEqual(machine.run("--invite"), 1)
         self.assertIn("address in use", machine.errors)
-        self.assertEqual(machine.events[-1], "close-rule")
         self.assertFalse(machine.window_is_open())
 
-    def test_a_declined_firewall_prompt_opens_nothing_and_does_not_prompt_again(self) -> None:
+    def test_a_declined_firewall_prompt_opens_nothing_and_uses_up_no_window(self) -> None:
         machine = self.machine()
         machine.rule_error = FirewallError("the Windows prompt for administrator rights was declined")
         self.assertEqual(machine.run("--invite"), 1)
         self.assertIn("declined", machine.errors)
-        self.assertNotIn("close-rule", machine.events)
+        self.assertIn("Agent Tabs LAN", machine.errors)
         self.assertNotIn("bind-socket", machine.events)
         self.assertFalse(machine.window_is_open())
         self.assertFalse(pair_cli.invitation_path(self.a).exists())
+        opened: list[int] = []
+        for _ in range(3):
+            following = self.machine()
+            following.listen_impl = Session().listen
+            following.run("--invite")
+            opened.append(following.events.count("bind-socket"))
+        self.assertEqual(opened, [1, 1, 1])
 
-    def test_a_rule_that_cannot_be_removed_is_reported_and_the_window_still_closes(self) -> None:
+    def test_the_listener_rule_stays_after_the_window_closes(self) -> None:
         machine = self.machine()
         machine.listen_impl = Session().listen
-        machine.close_error = FirewallError("Windows could not remove the rule")
         machine.run("--invite")
-        self.assertIn("could not remove the rule", machine.errors)
-        self.assertIn("Agent Tabs pairing", machine.errors)
+        self.assertEqual(machine.events.count("ensure-rule"), 1)
+        self.assertEqual(machine.harness.firewall_removals, 0)
         self.assertFalse(machine.window_is_open())
 
     def test_a_second_window_is_busy_and_touches_nothing(self) -> None:
         first = pairing.Limits(self.a)
         first.open_window()
         self.addCleanup(first.close_window)
-        stale: list[str] = []
         machine = self.machine()
-        machine.harness.services.remove_stale_pairing_rule = lambda: stale.append("x") or ""
         self.assertEqual(machine.run("--invite"), 1)
         self.assertIn("pairing busy", machine.errors)
-        self.assertEqual(stale, [])
-        self.assertNotIn("open-rule", machine.events)
-
-    def test_a_stale_rule_is_removed_before_the_window_opens(self) -> None:
-        machine = self.machine()
-        machine.listen_impl = Session().listen
-        machine.harness.stale_rule = 'Removed the Windows firewall rule "Agent Tabs pairing".'
-        machine.run("--invite")
-        self.assertEqual(machine.harness.stale_checks, 1)
-        self.assertIn("Removed the Windows firewall rule", machine.out)
+        self.assertNotIn("ensure-rule", machine.events)
 
     def test_a_locked_machine_opens_nothing(self) -> None:
         limits = pairing.Limits(self.a)
@@ -1164,13 +1148,13 @@ class PromptTest(PairTestCase):
         self.assertEqual((prompter.choices.listener, prompter.choices.login, prompter.choices.path), (False, False, False))
         self.assertNotIn("Start the listener each time", "".join(machine.screen.prompts))
 
-    def test_defaults_are_listener_on_login_off_path_off(self) -> None:
+    def test_defaults_are_listener_on_login_on_path_off(self) -> None:
         machine = self.machine(rules=[("Turn the listener on", ""), ("Start the listener each time", ""), ("Append", ""), *review_rules()])
         machine.on_path = False
         prompter = self.prompter(machine, Path(self.a) / "bin")
         prompter.review(peer_of(self.b), 5.0)
         assert prompter.choices is not None
-        self.assertEqual((prompter.choices.listener, prompter.choices.login, prompter.choices.path), (True, False, False))
+        self.assertEqual((prompter.choices.listener, prompter.choices.login, prompter.choices.path), (True, True, False))
 
     def test_a_save_failure_surfaces_to_the_session(self) -> None:
         save_policy(self.a, Policy((PeerGrant(self.c_id, "bravo", "192.168.50.30"),)))
@@ -1456,7 +1440,7 @@ class LoopbackTest(unittest.TestCase):
             peer_cert_path(self.b, device_of(self.a)).read_text(encoding="ascii").strip(),
             cert_of(self.a).read_text(encoding="ascii").strip(),
         )
-        self.assertEqual(a.events[-1], "close-rule")
+        self.assertEqual(a.events.count("ensure-rule"), 1)
         self.assertFalse(a.window_is_open())
         self.assertFalse(pair_cli.invitation_path(self.a).exists())
         self.assertEqual((a.failures(), b.failures()), (0, 0))
@@ -1474,7 +1458,7 @@ class LoopbackTest(unittest.TestCase):
         self.assertEqual(a.failures(), 1)
         self.assertIn("does not match", a.errors)
         self.assertFalse(a.window_is_open())
-        self.assertEqual(a.events[-1], "close-rule")
+        self.assertEqual(a.events.count("ensure-rule"), 1)
 
     def test_no_at_the_summary_on_one_side_saves_nothing_on_that_side(self) -> None:
         a, b = self.machines(review_rules(("Type yes", "no")), review_rules(("Pair with", "y")))

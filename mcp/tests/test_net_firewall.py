@@ -62,15 +62,15 @@ class RuleSpecTest(unittest.TestCase):
         }
         return firewall.rule_spec(**values)
 
-    def test_the_listener_rule_uses_the_listener_port(self) -> None:
+    def test_the_listener_rule_admits_the_listener_and_pairing_ports(self) -> None:
         self.assertEqual(
             self.spec(),
-            firewall.RuleSpec("Agent Tabs LAN", 47829, PYTHON, "Private", ALIAS, SUBNET, BIND),
+            firewall.RuleSpec("Agent Tabs LAN", (47829, 47830), PYTHON, "Private", ALIAS, SUBNET, BIND),
         )
 
-    def test_the_pairing_rule_uses_the_pairing_port(self) -> None:
-        spec = self.spec(rule=firewall.PAIRING_RULE)
-        self.assertEqual((spec.rule, spec.port), ("Agent Tabs pairing", 47830))
+    def test_only_the_listener_rule_is_created(self) -> None:
+        with self.assertRaises(FirewallError):
+            self.spec(rule="Agent Tabs pairing")
 
     def test_tailscale_uses_any_profile_with_the_tailscale_range(self) -> None:
         spec = self.spec(bind=TAILSCALE_BIND, subnet=TAILSCALE_SUBNET, interface_alias="Tailscale", profile=firewall.PROFILE_ANY)
@@ -165,15 +165,15 @@ class RuleSpecTest(unittest.TestCase):
 
 class ParametersTest(unittest.TestCase):
     def test_a_rule_travels_as_base64_json(self) -> None:
-        spec = firewall.rule_spec(firewall.PAIRING_RULE, BIND, SUBNET, ALIAS, PYTHON)
+        spec = firewall.rule_spec(firewall.LISTENER_RULE, BIND, SUBNET, ALIAS, PYTHON)
         blob = firewall.encode_parameters("add", spec.rule, spec)
         self.assertRegex(blob, r"^[A-Za-z0-9+/=]+$")
         self.assertEqual(
             json.loads(base64.b64decode(blob)),
             {
                 "action": "add",
-                "rule": "Agent Tabs pairing",
-                "port": 47830,
+                "rule": "Agent Tabs LAN",
+                "ports": [47829, 47830],
                 "program": PYTHON,
                 "profile": "Private",
                 "alias": ALIAS,
@@ -200,7 +200,6 @@ class HelperScriptTest(unittest.TestCase):
         script = firewall.HELPER_SCRIPT
         for part in (
             "'Agent Tabs LAN'",
-            "'Agent Tabs pairing'",
             "47829",
             "47830",
             "1681915904",
@@ -216,6 +215,14 @@ class HelperScriptTest(unittest.TestCase):
             self.assertIn(part, script)
         self.assertNotIn("Invoke-Expression", script)
         self.assertNotIn("iex ", script)
+        self.assertNotIn("Agent Tabs pairing", script)
+
+    def test_the_match_probe_only_reads_and_holds_no_value(self) -> None:
+        script = firewall._MATCH_SCRIPT  # pyright: ignore[reportPrivateUsage]
+        for value in (PYTHON, BIND, SUBNET, ALIAS, "47829", "Agent Tabs LAN"):
+            self.assertNotIn(value, script)
+        for verb in ("New-NetFirewallRule", "Remove-NetFirewallRule", "Set-NetFirewallRule", "RunAs", "Invoke-Expression"):
+            self.assertNotIn(verb, script)
 
     def test_the_outer_script_holds_no_value_from_the_inputs(self) -> None:
         for text in (PYTHON, BIND, "47829", "Agent Tabs LAN"):
@@ -224,23 +231,41 @@ class HelperScriptTest(unittest.TestCase):
         self.assertIn("-Wait", firewall._OUTER_SCRIPT)  # pyright: ignore[reportPrivateUsage]
 
 
+MISMATCH = RunResult(1, "", "")
+
+
 class InstallTest(unittest.TestCase):
-    def test_one_elevation_runs_the_fixed_helper_with_the_parameters_as_data(self) -> None:
-        run = FakeRun()
+    def test_a_missing_rule_is_probed_then_created_with_one_elevation(self) -> None:
+        run = FakeRun(MISMATCH)
         with interpreter_exists():
             message = firewall.apply_listener_rule(BIND, SUBNET, ALIAS, environment(run))
-        self.assertEqual(len(run.calls), 1)
-        command, args, env = run.calls[0]
+        self.assertEqual(len(run.calls), 2)
+        probe_command, probe_args, probe_env = run.calls[0]
+        self.assertEqual(probe_command, POWERSHELL)
+        self.assertEqual(probe_args, ["-NoProfile", "-NonInteractive", "-Command", firewall._MATCH_SCRIPT])  # pyright: ignore[reportPrivateUsage]
+        self.assertEqual(
+            json.loads(base64.b64decode(probe_env[firewall._MATCH_ENV])),  # pyright: ignore[reportPrivateUsage]
+            {
+                "rule": "Agent Tabs LAN",
+                "ports": ["47829", "47830"],
+                "profile": "Private",
+                "local": BIND,
+                "remotes": [SUBNET, "192.168.1.0/255.255.255.0"],
+                "program": PYTHON,
+                "alias": ALIAS,
+            },
+        )
+        command, args, env = run.calls[1]
         self.assertEqual(command, POWERSHELL)
         self.assertEqual(args, ["-NoProfile", "-NonInteractive", "-Command", firewall._OUTER_SCRIPT])  # pyright: ignore[reportPrivateUsage]
         self.assertEqual(env[firewall._POWERSHELL_ENV], POWERSHELL)  # pyright: ignore[reportPrivateUsage]
         self.assertEqual(env[firewall._HELPER_ENV], firewall.HELPER_SCRIPT)  # pyright: ignore[reportPrivateUsage]
         self.assertEqual(
-            parameters_of(run.calls[0]),
+            parameters_of(run.calls[1]),
             {
                 "action": "add",
                 "rule": "Agent Tabs LAN",
-                "port": 47829,
+                "ports": [47829, 47830],
                 "program": PYTHON,
                 "profile": "Private",
                 "alias": ALIAS,
@@ -248,22 +273,42 @@ class InstallTest(unittest.TestCase):
                 "local": BIND,
             },
         )
-        for part in ("Agent Tabs LAN", "47829", BIND, SUBNET, "Private", ALIAS):
+        self.assertTrue(message.startswith("Created"))
+        for part in ("Agent Tabs LAN", "47829 and 47830", BIND, SUBNET, "Private", ALIAS):
             self.assertIn(part, message)
 
-    def test_the_pairing_rule_uses_its_own_name_and_port(self) -> None:
-        run = FakeRun()
+    def test_a_matching_rule_needs_no_elevation(self) -> None:
+        run = FakeRun(RunResult(0, "", ""))
         with interpreter_exists():
-            message = firewall.open_pairing_rule(BIND, SUBNET, ALIAS, environment(run))
-        params = parameters_of(run.calls[0])
-        self.assertEqual((params["rule"], params["port"]), ("Agent Tabs pairing", 47830))
-        self.assertIn("47830", message)
+            message = firewall.apply_listener_rule(BIND, SUBNET, ALIAS, environment(run))
+        self.assertEqual(len(run.calls), 1)
+        self.assertNotIn(firewall._PARAMS_ENV, run.calls[0][2])  # pyright: ignore[reportPrivateUsage]
+        self.assertIn("already admits", message)
+        self.assertIn("47829 and 47830", message)
+
+    def test_a_probe_that_cannot_tell_or_cannot_run_leads_to_one_elevation(self) -> None:
+        run = FakeRun(RunResult(3, "", ""))
+        with interpreter_exists():
+            firewall.apply_listener_rule(BIND, SUBNET, ALIAS, environment(run))
+        self.assertEqual(parameters_of(run.calls[1])["action"], "add")
+        calls: list[str] = []
+
+        def broken_probe(_command: str, args: Sequence[str] = (), **_options: Any) -> RunResult:
+            calls.append(args[-1])
+            if args[-1] == firewall._MATCH_SCRIPT:  # pyright: ignore[reportPrivateUsage]
+                raise OSError("no powershell")
+            return RunResult(0, "", "")
+
+        env = Environment(platform="win32", interpreter=PYTHON, run=broken_probe, windows_directory=lambda: WINDOWS)
+        with interpreter_exists():
+            self.assertTrue(firewall.apply_listener_rule(BIND, SUBNET, ALIAS, env).startswith("Created"))
+        self.assertEqual(len(calls), 2)
 
     def test_tailscale_asks_for_the_any_profile_on_the_tailscale_interface(self) -> None:
-        run = FakeRun()
+        run = FakeRun(MISMATCH)
         with interpreter_exists():
             message = firewall.apply_listener_rule(TAILSCALE_BIND, TAILSCALE_SUBNET, "Tailscale", environment(run), firewall.PROFILE_ANY)
-        params = parameters_of(run.calls[0])
+        params = parameters_of(run.calls[1])
         self.assertEqual(
             (params["profile"], params["remote"], params["alias"], params["local"]), ("Any", TAILSCALE_SUBNET, "Tailscale", TAILSCALE_BIND)
         )
@@ -282,8 +327,6 @@ class InstallTest(unittest.TestCase):
             ):
                 with self.assertRaises(FirewallError):
                     firewall.apply_listener_rule(bind, subnet, alias, env)
-                with self.assertRaises(FirewallError):
-                    firewall.open_pairing_rule(bind, subnet, alias, env)
         self.assertEqual(run.calls, [])
 
     def test_an_interpreter_that_is_not_a_python_executable_is_refused(self) -> None:
@@ -301,16 +344,16 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(run.calls, [])
 
     def test_a_declined_prompt_is_reported_as_declined(self) -> None:
-        run = FakeRun(RunResult(firewall.DECLINED, "", ""))
+        run = FakeRun(MISMATCH, RunResult(firewall.DECLINED, "", ""))
         with interpreter_exists(), self.assertRaises(FirewallError) as caught:
             firewall.apply_listener_rule(BIND, SUBNET, ALIAS, environment(run))
         self.assertIn("declined", str(caught.exception))
         self.assertIn("did not change", str(caught.exception))
 
     def test_a_read_back_mismatch_is_reported_and_says_the_helper_removed_the_rule(self) -> None:
-        run = FakeRun(RunResult(firewall.EXIT_MISMATCH, "", ""))
+        run = FakeRun(MISMATCH, RunResult(firewall.EXIT_MISMATCH, "", ""))
         with interpreter_exists(), self.assertRaises(FirewallError) as caught:
-            firewall.open_pairing_rule(BIND, SUBNET, ALIAS, environment(run))
+            firewall.apply_listener_rule(BIND, SUBNET, ALIAS, environment(run))
         self.assertIn(f"code {firewall.EXIT_MISMATCH}", str(caught.exception))
         self.assertIn("removed it", str(caught.exception))
 
@@ -321,16 +364,18 @@ class InstallTest(unittest.TestCase):
             (firewall.UNKNOWN, ""),
             (77, ""),
         ):
-            run = FakeRun(RunResult(code, "", ""))
+            run = FakeRun(MISMATCH, RunResult(code, "", ""))
             with interpreter_exists(), self.assertRaises(FirewallError) as caught:
                 firewall.apply_listener_rule(BIND, SUBNET, ALIAS, environment(run))
             self.assertIn(f"code {code}", str(caught.exception))
             self.assertIn(reason, str(caught.exception))
 
-    def test_a_run_that_cannot_start_or_times_out_is_reported(self) -> None:
+    def test_an_elevation_that_cannot_start_or_times_out_is_reported(self) -> None:
         for error in (OSError("no powershell"), TimeoutError("too slow")):
 
-            def broken(*_args: Any, _error: Exception = error, **_options: Any) -> RunResult:
+            def broken(_command: str, args: Sequence[str] = (), _error: Exception = error, **_options: Any) -> RunResult:
+                if args[-1] == firewall._MATCH_SCRIPT:  # pyright: ignore[reportPrivateUsage]
+                    return MISMATCH
                 raise _error
 
             env = Environment(platform="win32", interpreter=PYTHON, run=broken, windows_directory=lambda: WINDOWS)
@@ -340,27 +385,13 @@ class InstallTest(unittest.TestCase):
     def test_other_systems_get_text_and_no_change(self) -> None:
         for platform in ("darwin", "linux"):
             run = FakeRun()
-            env = environment(run, platform)
-            for text in (
-                firewall.apply_listener_rule(BIND, SUBNET, ALIAS, env),
-                firewall.open_pairing_rule(BIND, SUBNET, ALIAS, env),
-            ):
-                for part in (BIND, SUBNET, "changes no firewall rule"):
-                    self.assertIn(part, text)
-            self.assertIn("47829", firewall.apply_listener_rule(BIND, SUBNET, ALIAS, env))
-            self.assertIn("47830", firewall.open_pairing_rule(BIND, SUBNET, ALIAS, env))
+            text = firewall.apply_listener_rule(BIND, SUBNET, ALIAS, environment(run, platform))
+            for part in (BIND, SUBNET, "changes no firewall rule", "47829 and 47830"):
+                self.assertIn(part, text)
             self.assertEqual(run.calls, [])
 
 
 class RemoveTest(unittest.TestCase):
-    def test_closing_the_pairing_rule_elevates_once_without_a_probe(self) -> None:
-        run = FakeRun()
-        message = firewall.close_pairing_rule(environment(run))
-        self.assertEqual(len(run.calls), 1)
-        self.assertEqual(run.calls[0][0], POWERSHELL)
-        self.assertEqual(parameters_of(run.calls[0]), {"action": "remove", "rule": "Agent Tabs pairing"})
-        self.assertIn("Removed", message)
-
     def test_an_existing_listener_rule_is_probed_then_removed_with_one_elevation(self) -> None:
         run = FakeRun(RunResult(0, "", ""), RunResult(0, "", ""))
         message = firewall.remove_listener_rule(environment(run))
@@ -373,17 +404,10 @@ class RemoveTest(unittest.TestCase):
         self.assertIn("Removed", message)
 
     def test_no_rule_means_no_elevation(self) -> None:
-        for remove in (firewall.remove_listener_rule, firewall.remove_stale_pairing_rule):
-            run = FakeRun(RunResult(1, "", ""))
-            message = remove(environment(run))
-            self.assertEqual(len(run.calls), 1)
-            self.assertIn("No firewall rule", message)
-
-    def test_a_stale_pairing_rule_is_removed(self) -> None:
-        run = FakeRun(RunResult(0, "", ""), RunResult(0, "", ""))
-        firewall.remove_stale_pairing_rule(environment(run))
-        self.assertEqual(run.calls[0][2][firewall._RULE_ENV], "Agent Tabs pairing")  # pyright: ignore[reportPrivateUsage]
-        self.assertEqual(parameters_of(run.calls[1])["rule"], "Agent Tabs pairing")
+        run = FakeRun(RunResult(1, "", ""))
+        message = firewall.remove_listener_rule(environment(run))
+        self.assertEqual(len(run.calls), 1)
+        self.assertIn("No firewall rule", message)
 
     def test_a_probe_that_cannot_tell_still_removes(self) -> None:
         run = FakeRun(RunResult(3, "", ""), RunResult(0, "", ""))
@@ -397,9 +421,9 @@ class RemoveTest(unittest.TestCase):
         self.assertIn("declined", str(caught.exception))
 
     def test_a_removal_the_helper_could_not_finish_is_reported(self) -> None:
-        run = FakeRun(RunResult(firewall.EXIT_NOT_REMOVED, "", ""))
+        run = FakeRun(RunResult(0, "", ""), RunResult(firewall.EXIT_NOT_REMOVED, "", ""))
         with self.assertRaises(FirewallError) as caught:
-            firewall.close_pairing_rule(environment(run))
+            firewall.remove_listener_rule(environment(run))
         self.assertIn("could not remove", str(caught.exception))
 
     def test_a_probe_that_cannot_run_is_reported(self) -> None:
@@ -411,23 +435,23 @@ class RemoveTest(unittest.TestCase):
             firewall.remove_listener_rule(env)
 
     def test_the_probe_refuses_other_rule_names(self) -> None:
-        with self.assertRaises(FirewallError):
-            firewall.rule_exists("Core Networking", environment(FakeRun()))
+        for rule in ("Core Networking", "Agent Tabs pairing"):
+            with self.assertRaises(FirewallError):
+                firewall.rule_exists(rule, environment(FakeRun()))
 
     def test_other_systems_change_nothing(self) -> None:
-        for remove in (firewall.remove_listener_rule, firewall.remove_stale_pairing_rule, firewall.close_pairing_rule):
-            run = FakeRun()
-            self.assertEqual(remove(environment(run, "linux")), "")
-            self.assertEqual(run.calls, [])
+        run = FakeRun()
+        self.assertEqual(firewall.remove_listener_rule(environment(run, "linux")), "")
+        self.assertEqual(run.calls, [])
 
 
 class ListenerServicesTest(unittest.TestCase):
     def test_apply_rule_scopes_the_rule_to_the_interface_subnet(self) -> None:
-        run = FakeRun(RunResult(0, INTERFACE_JSON, ""), RunResult(0, "", ""))
+        run = FakeRun(RunResult(0, INTERFACE_JSON, ""), MISMATCH, RunResult(0, "", ""))
         with interpreter_exists():
             message = firewall.apply_rule(BIND, 47829, ["192.168.1.20"], environment(run))
-        self.assertEqual(len(run.calls), 2)
-        params = parameters_of(run.calls[1])
+        self.assertEqual(len(run.calls), 3)
+        params = parameters_of(run.calls[2])
         self.assertEqual((params["rule"], params["remote"], params["alias"], params["local"]), ("Agent Tabs LAN", SUBNET, ALIAS, BIND))
         self.assertIn("Agent Tabs LAN", message)
 
