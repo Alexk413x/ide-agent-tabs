@@ -46,7 +46,6 @@ from .policy import (
     Policy,
     PolicyError,
     grant_for,
-    is_allowed_bind,
     load_network_config,
     load_policy,
     policy_path,
@@ -55,6 +54,7 @@ from .policy import (
 from .private_files import ensure_private_dir, make_private_file
 from .secrets import SecretsError, new_passphrase, store_passphrase
 from .store import NetStore, NetStoreError
+from .transport import LanTransport, network_enabled
 
 if TYPE_CHECKING:
     from .pair_cli import PairDeps
@@ -269,7 +269,7 @@ def apply_firewall(svc: Services, bind: str, port: int) -> None:
         if port != firewall.LISTENER_PORT:
             raise FirewallError(f"{port!r} is not the listener port {firewall.LISTENER_PORT}, so no firewall rule is created")
         info = svc.interface_for(bind)
-        text = svc.apply_firewall(bind, info.subnet, info.alias)
+        text = svc.apply_firewall(bind, LanTransport().firewall_scope(info), info.alias)
     except (FirewallError, InterfaceError) as error:
         svc.err(f"warning: {error}. Peers can connect only when the firewall allows them.")
         return
@@ -431,7 +431,7 @@ def _cmd_on(svc: Services, args: Sequence[str]) -> int:
     parser.add_argument("--at-login", action="store_true")
     options = parser.parse_args(args)
     bind: str = options.bind
-    if not is_allowed_bind(bind):
+    if not LanTransport().allows_bind(bind):
         raise CliError("--bind must be a private IPv4 address (10/8, 172.16/12, 192.168/16) or an IPv6 unique local address (fc00::/7)")
     if not svc.bind_available(bind):
         raise CliError(f"{bind} is not assigned to a local interface")
@@ -471,7 +471,7 @@ def _cmd_start(svc: Services, args: Sequence[str]) -> int:
     config, warnings = load_network_config(svc.home)
     for warning in warnings:
         svc.err(f"warning: {warning}")
-    if config.network != "lan" or config.bind is None:
+    if not network_enabled(config) or config.bind is None:
         raise CliError("the network is off or has no bind address; run agent-tabs net lan on --bind <address> in a terminal")
     problem = tls.runtime_problem()
     if problem is not None:

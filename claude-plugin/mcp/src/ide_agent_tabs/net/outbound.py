@@ -18,6 +18,7 @@ from . import wire
 from .origin import REMOTE_ORIGIN_REFUSAL, Caller, OriginChecker
 from .policy import ALIAS, DEFAULT_PORT, NetworkConfig, PeerGrant, PolicyError, load_network_config, load_policy
 from .store import NetStore, NetStoreError
+from .transport import network_enabled
 
 RATE_LIMIT = 10
 WINDOW_MS = 60_000
@@ -110,7 +111,7 @@ class Outbound:
 
     def _admit(self, caller: Caller) -> NetworkConfig:
         config, _ = load_network_config(self.home)
-        if config.network != "lan":
+        if not network_enabled(config):
             raise OutboundError(NETWORK_OFF)
         self.require_local_origin(caller)
         if not any(is_inside(caller.path, folder) for folder in config.outbound_folders):
@@ -220,7 +221,7 @@ class Outbound:
 
     def start_listener(self, caller: Caller) -> dict[str, Any]:
         config, _ = load_network_config(self.home)
-        if config.network != "lan" or config.bind is None:
+        if not network_enabled(config) or config.bind is None:
             raise OutboundError("refused: the user has not turned the network on with a bind address; this tool only restarts the listener")
         self.require_local_origin(caller)
         from .cli import Services, main
@@ -236,7 +237,7 @@ class Outbound:
 
     def remote_rows(self, caller: Caller, now_ms: int | None = None) -> list[dict[str, Any]]:
         config, _ = load_network_config(self.home)
-        if config.network != "lan" or not any(is_inside(caller.path, folder) for folder in config.outbound_folders):
+        if not network_enabled(config) or not any(is_inside(caller.path, folder) for folder in config.outbound_folders):
             return []
         if self._origin.is_remote(caller):
             return []

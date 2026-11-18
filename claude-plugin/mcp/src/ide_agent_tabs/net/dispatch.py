@@ -22,6 +22,7 @@ from .audit import ADMITTED, REFUSED, Audit, AuditError, AuditRecord
 from .policy import FolderGrant, PeerGrant, Policy, PolicyError, folder_grant, grant_for, load_network_config, load_policy
 from .remote_launch import RemoteLaunchError, claude_help_text, plan_remote_open
 from .store import COMPLETED, ConflictError, NetStore, NetStoreError, Reservation, db_path
+from .transport import network_enabled
 
 REPARSE_POINT = 0x400
 REMEMBERED_REQUESTS = 256
@@ -213,7 +214,7 @@ class NetDispatcher:
 
     def _process(self, trace: _Trace, request: object) -> dict[str, Any]:
         config, _ = load_network_config(self.home)
-        if config.network != "lan":
+        if not network_enabled(config):
             raise _Refusal("network-off")
         try:
             policy = load_policy(self.home)

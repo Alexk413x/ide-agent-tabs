@@ -60,6 +60,53 @@ class NetworkConfigTest(unittest.TestCase):
         self.assertEqual(warnings, [])
         self.assertEqual(config, NetworkConfig("lan", "10.1.2.3", 5000, openssl, (folder,), 2))
 
+    def test_member_folders_and_allowed_networks_default_to_empty(self) -> None:
+        config = NetworkConfig()
+        self.assertEqual((config.member_folders, config.allowed_networks), ((), ()))
+        write_config(self.home, {"network": "lan", "bind": "10.1.2.3"})
+        config, _ = policy.load_network_config(self.home)
+        self.assertEqual((config.member_folders, config.allowed_networks), ((), ()))
+
+    def test_member_folders_and_allowed_networks_are_read(self) -> None:
+        folder = os.path.abspath(os.sep + "projects")
+        ids = ["{3F2A9C1E-0B7D-4E55-9A41-6C2D8E7F1A00}", "gw:aa-bb-cc-dd-ee-ff.192.168.1.0.24", "home_net.1"]
+        write_config(self.home, {"network": "lan", "memberFolders": [folder], "allowedNetworks": ids})
+        config, warnings = policy.load_network_config(self.home)
+        self.assertEqual(warnings, [])
+        self.assertEqual(config.member_folders, (folder,))
+        self.assertEqual(config.allowed_networks, tuple(ids))
+        write_config(self.home, {"network": "lan", "memberFolders": [], "allowedNetworks": []})
+        config, warnings = policy.load_network_config(self.home)
+        self.assertEqual((config.member_folders, config.allowed_networks, warnings), ((), (), []))
+
+    def test_invalid_member_folders_and_allowed_networks_name_the_key(self) -> None:
+        cases: list[tuple[dict[str, Any], str]] = [
+            ({"memberFolders": "x"}, "network.memberFolders"),
+            ({"memberFolders": {"a": 1}}, "network.memberFolders"),
+            ({"memberFolders": ["relative"]}, "network.memberFolders"),
+            ({"memberFolders": [os.path.abspath(os.sep), 5]}, "network.memberFolders"),
+            ({"memberFolders": [""]}, "network.memberFolders"),
+            ({"allowedNetworks": "home"}, "network.allowedNetworks"),
+            ({"allowedNetworks": [5]}, "network.allowedNetworks"),
+            ({"allowedNetworks": [""]}, "network.allowedNetworks"),
+            ({"allowedNetworks": ["has space"]}, "network.allowedNetworks"),
+            ({"allowedNetworks": ["slash/net"]}, "network.allowedNetworks"),
+            ({"allowedNetworks": ["x" * 129]}, "network.allowedNetworks"),
+            ({"allowedNetworks": ["home", "home"]}, "network.allowedNetworks"),
+            ({"allowedNetworks": ["ok", None]}, "network.allowedNetworks"),
+        ]
+        for extra, key in cases:
+            with self.subTest(case=extra):
+                write_config(self.home, {"network": "lan", **extra})
+                config, warnings = policy.load_network_config(self.home)
+                self.assertEqual(config, NetworkConfig())
+                self.assertTrue(any(key in w for w in warnings))
+
+    def test_allowed_network_id_length_limits(self) -> None:
+        write_config(self.home, {"network": "lan", "allowedNetworks": ["x", "y" * 128]})
+        config, warnings = policy.load_network_config(self.home)
+        self.assertEqual((config.allowed_networks, warnings), (("x", "y" * 128), []))
+
     def test_unknown_key_warns_and_keeps_the_rest(self) -> None:
         write_config(self.home, {"network": "lan", "bind": "192.168.0.9", "color": "red"})
         config, warnings = policy.load_network_config(self.home)

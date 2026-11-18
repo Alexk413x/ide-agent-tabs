@@ -26,8 +26,11 @@ ALIAS = re.compile(r"[a-z0-9-]{1,32}")
 _ALIAS = ALIAS
 _DEVICE_ID = re.compile(r"[A-Za-z0-9-]{1,96}")
 _SESSION_ID = SESSION_ID
+_NETWORK_ID = re.compile(r"[A-Za-z0-9{}:._-]{1,128}")
 _MAX_MODEL_CHARS = 128
-_CONFIG_KEYS = frozenset({"network", "bind", "port", "openssl", "outboundFolders", "maxRemoteTabs", "deviceName"})
+_CONFIG_KEYS = frozenset(
+    {"network", "bind", "port", "openssl", "outboundFolders", "maxRemoteTabs", "deviceName", "memberFolders", "allowedNetworks"}
+)
 _PEER_KEYS = frozenset(
     {"label", "address", "folders", "agents", "models", "send", "maxTabs", "opensPerHour", "messagesPerMinute", "approveEachOpen"}
 )
@@ -50,6 +53,8 @@ class NetworkConfig:
     openssl: str | None = None
     outbound_folders: tuple[str, ...] = ()
     max_remote_tabs: int = DEFAULT_MAX_REMOTE_TABS
+    member_folders: tuple[str, ...] = ()
+    allowed_networks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -163,6 +168,28 @@ def _outbound_folders(value: Any, invalid: list[str]) -> tuple[str, ...]:
     return ()
 
 
+def _member_folders(value: Any, invalid: list[str]) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, list) and all(_is_local_path(f) for f in value):  # pyright: ignore[reportUnknownVariableType]
+        return tuple(value)  # pyright: ignore[reportUnknownArgumentType]
+    invalid.append("network.memberFolders must be a list of absolute paths")
+    return ()
+
+
+def _allowed_networks(value: Any, invalid: list[str]) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if (
+        isinstance(value, list)
+        and all(isinstance(n, str) and _NETWORK_ID.fullmatch(n) for n in value)  # pyright: ignore[reportUnknownVariableType]
+        and len(set(value)) == len(value)  # pyright: ignore[reportUnknownArgumentType]
+    ):
+        return tuple(value)  # pyright: ignore[reportUnknownArgumentType]
+    invalid.append("network.allowedNetworks must be a list of unique network ids of 1 to 128 characters from A-Z a-z 0-9 { } : . _ -")
+    return ()
+
+
 def _max_remote_tabs(value: Any, invalid: list[str]) -> int:
     if value is None:
         return DEFAULT_MAX_REMOTE_TABS
@@ -200,6 +227,8 @@ def load_network_config(home: str) -> tuple[NetworkConfig, list[str]]:
         openssl=_openssl(section.get("openssl"), invalid),
         outbound_folders=_outbound_folders(section.get("outboundFolders"), invalid),
         max_remote_tabs=_max_remote_tabs(section.get("maxRemoteTabs"), invalid),
+        member_folders=_member_folders(section.get("memberFolders"), invalid),
+        allowed_networks=_allowed_networks(section.get("allowedNetworks"), invalid),
     )
     if invalid:
         warnings.extend(f"Ignoring network in {CONFIG_FILE}, so the network is off: {reason}" for reason in invalid)

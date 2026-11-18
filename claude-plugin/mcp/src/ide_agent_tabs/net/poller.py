@@ -12,6 +12,7 @@ from . import wire
 from .client import NetClientError, send_request
 from .policy import NetworkConfig, Policy, PolicyError, load_network_config, load_policy
 from .store import NetStore
+from .transport import network_enabled
 
 PERIOD_S = 60.0
 DEADLINE_S = 30.0
@@ -142,7 +143,7 @@ class Poller:
 
     def _peers(self) -> list[str]:
         config, _ = self._load_config(self.home)
-        if config.network != "lan":
+        if not network_enabled(config):
             return []
         try:
             return [p.device_id for p in self._load_policy(self.home).peers]

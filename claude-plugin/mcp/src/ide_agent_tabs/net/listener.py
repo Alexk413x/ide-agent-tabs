@@ -38,7 +38,8 @@ from .client import (
 )
 from .identity import format_digest
 from .notify import powershell_path
-from .policy import NetworkConfig, PolicyError, is_allowed_bind, load_network_config, load_policy, policy_path
+from .policy import NetworkConfig, PolicyError, load_network_config, load_policy, policy_path
+from .transport import LanTransport, network_enabled
 
 MAX_CONNECTIONS = 8
 PER_SOURCE = 2
@@ -373,7 +374,7 @@ class _Refused(Exception):
 @dataclass
 class Options:
     config: NetworkConfig | None = None
-    bind_check: Callable[[str], bool] = is_allowed_bind
+    bind_check: Callable[[str], bool] = LanTransport().allows_bind
     network_check: Callable[[str], bool | None] = windows_network_is_public
     server_port: int = SERVER_DEFAULT_PORT
     stop: threading.Event = field(default_factory=threading.Event)
@@ -423,7 +424,7 @@ class Listener:
 
     def run(self) -> int:
         config = self._config()
-        if config.network != "lan" or config.bind is None:
+        if not network_enabled(config) or config.bind is None:
             return self._refuse("network is not lan or no bind address is set")
         bind = config.bind
         if not self._options.bind_check(bind):
@@ -492,7 +493,7 @@ class Listener:
             if self._options.config is None and time.monotonic() - config_checked >= CONFIG_RECHECK_S:
                 config_checked = time.monotonic()
                 current = self._config()
-                if current.network != "lan" or current.bind != started.bind or current.port != started.port:
+                if not network_enabled(current) or current.bind != started.bind or current.port != started.port:
                     self._halt("the network setting changed")
                     return
 

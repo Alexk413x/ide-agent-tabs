@@ -3,6 +3,15 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.14.0
+
+Plugin and MCP server 0.14.0. Not released yet.
+
+### Changed
+
+- The network code checks the mode through one transport layer, so a later Tailscale mode can plug in.
+  `config.json` accepts `network.memberFolders` and `network.allowedNetworks`.
+
 ## 0.13.0
 
 Plugin and MCP server 0.13.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).

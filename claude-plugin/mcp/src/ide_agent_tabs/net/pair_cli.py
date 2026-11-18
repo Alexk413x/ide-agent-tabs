@@ -31,10 +31,11 @@ from .cli import (
 )
 from .client import NetClientError, load_identity, local_device_id
 from .identity import der_from_pem
-from .interfaces import InterfaceError, InterfaceInfo, require_lan_ready
+from .interfaces import InterfaceError, InterfaceInfo
 from .pairing import INCOMPLETE_TEXT, PAIRING_PORT, PairIdentity, PairResult, PeerInfo
 from .policy import Policy, grant_for, load_network_config, load_policy
 from .private_files import check_private, ensure_private_dir, make_private_file
+from .transport import LanTransport
 
 INVITATION_FILE = "invitation.txt"
 RESULT_FILE = "pair-result.json"
@@ -109,7 +110,7 @@ def _spawn_server(home: str, bind: str, interpreter: str, launch_script: str) ->
 
 
 def _require_lan_ready(address: str, allow_virtual: bool) -> InterfaceInfo:
-    return require_lan_ready(address, allow_virtual=allow_virtual)
+    return LanTransport().require_ready(address, allow_virtual)
 
 
 @dataclass
@@ -121,7 +122,7 @@ class PairDeps:
     ensure_rule: Callable[[str, str, str], str] = firewall.apply_listener_rule
     spawn_server: Callable[[str, str, str, str], int | None] = _spawn_server
     bind_socket: Callable[[str, int], socket.socket] = bind_pairing_socket
-    check_destination: Callable[[str, int, str, int], str] = pairing.check_lan_destination
+    check_destination: Callable[[str, int, str, int], str] = LanTransport().check_destination
     listen: Callable[..., PairResult] = pairing.listen_once
     dial: Callable[..., PairResult] = pairing.dial
     timeouts: pairing.Timeouts = pairing.DEFAULT_TIMEOUTS
@@ -341,7 +342,7 @@ class Saver:
 
 def _ensure_rule(svc: Services, deps: PairDeps, prepared: Prepared) -> None:
     try:
-        text = deps.ensure_rule(prepared.bind, prepared.iface.subnet, prepared.iface.alias)
+        text = deps.ensure_rule(prepared.bind, LanTransport().firewall_scope(prepared.iface), prepared.iface.alias)
     except firewall.FirewallError as error:
         raise CliError(f"{error}. The other machine can reach this one only through the firewall rule {firewall.LISTENER_RULE}") from error
     if text:
