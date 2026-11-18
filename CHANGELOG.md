@@ -35,6 +35,23 @@ Plugin and MCP server 0.14.0. Not released yet.
   and its members from this machine and raises the policy generation.
 - `agent-tabs net folders`, `net folders add <path>` and `net folders remove <path>` change
   `network.memberFolders` with no typed confirmation.
+- `agent-tabs net discoverable on` sets `network.discoverable` and keeps the listener serving open joins on port 47830
+  across restarts. `off` stops serving joins and leaves members connected. `net off` also sets it to false.
+- `network.allowedNetworks` is enforced. The listener drops member connections and joins on a network that is not
+  listed, and `net status` reports "this network is not in network.allowedNetworks". When the network id can't be read,
+  the network counts as not allowed. `agent-tabs net networks`, `net networks add` and `net networks remove <id>` change
+  the list. `discoverable on`, `hub join` and `hub create --with` add the current network.
+- A network id is the profile name and subnet on Windows, and the gateway MAC address and subnet on macOS and Linux.
+- `agent-tabs net hub join <device id> --address <IP>` and `net hub create --with <device id>@<IP>` join a discoverable
+  machine over TLS pinned to the expected device id, with no token and no approval. Machines in different hubs refuse
+  with `already-in-another-hub` and save nothing on either side. Both sides save each other as hub members with
+  `maxTabs` 4, `opensPerHour` 30 and `messagesPerMinute` 60. The hub message carries the hub id and name, a random
+  32-byte `hubKey` and the other members. The joining machine stores the member list and the key in `net/hub.json`.
+- The firewall helper creates a second rule, `Agent Tabs LAN discovery`, for UDP port 47831 in the same elevated run as the
+  `Agent Tabs LAN` rule, so one Windows prompt covers both. `net off` removes both.
+- `net folders add|remove`, `net networks add|remove`, `net discoverable on|off`, `net hub create|join|leave`,
+  `net revoke` and `net grant` refuse when the calling process descends from a session that another machine opened.
+- `net pair` still works until the hub flow replaces it.
 
 ## 0.13.0
 

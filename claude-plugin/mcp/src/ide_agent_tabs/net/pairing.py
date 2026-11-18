@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, TypeVar
+from typing import Any, Literal, Protocol, TypeVar
 
 from ..files import file_lock, read_text_if_exists, write_atomically
 from ..liveness import pid_alive
@@ -41,6 +41,11 @@ FAILURES_PER_HOUR = 3
 HOUR_S = 3600
 LOCK_S = 3600
 OPEN_CAP_S = 1200
+MAX_JOIN_MEMBERS = 32
+MAX_HUB_FRAME = wire.MAX_FRAME
+JOIN_MODE = "join"
+ALREADY_IN_ANOTHER_HUB = "already-in-another-hub"
+NO_HUB = "no-hub"
 INCOMPLETE_TEXT = "Pairing may be incomplete on the other machine. Run `net status` there, or `net revoke <label>` here."
 
 DIALER = "dialer"
@@ -55,6 +60,9 @@ _IPV4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
 _HEX32 = re.compile(r"[0-9a-f]{64}")
 _RFC1918 = tuple(ipaddress.IPv4Network(block) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 _INVITATION_KEYS = frozenset({"v", "name", "address", "port", "id", "token", "exp"})
+_HUB_ID = re.compile(r"[0-9a-f]{32}")
+_HUB_LABEL = re.compile(r"[a-z0-9-]{1,32}")
+_MEMBER_KEYS = frozenset({"deviceId", "label", "address", "port", "certificatePem"})
 
 T = TypeVar("T")
 Outcome = Literal["paired", "incomplete", "declined", "failed"]
@@ -265,6 +273,36 @@ class PairResult:
     reason: str
     peer: PeerInfo | None = None
     locked: bool = False
+
+
+@dataclass(frozen=True)
+class HubRef:
+    id: str
+    name: str
+
+
+@dataclass(frozen=True)
+class MemberRef:
+    device_id: str
+    label: str
+    address: str
+    port: int
+    pem: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class HubMessage:
+    hub: HubRef
+    key: str = field(repr=False)
+    members: tuple[MemberRef, ...] = ()
+
+
+class JoinHandler(Protocol):
+    def hub(self) -> HubRef | None: ...
+
+    def message(self, peer: PeerInfo) -> HubMessage: ...
+
+    def save(self, peer: PeerInfo, received: HubMessage | None) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -481,6 +519,84 @@ def _check_hello(frame: dict[str, Any], own_der: bytes) -> tuple[str, bytes]:
     return name, der
 
 
+def check_hub_id(value: object) -> str:
+    if not isinstance(value, str) or _HUB_ID.fullmatch(value) is None:
+        raise PairingError("the hub id is malformed")
+    return value
+
+
+def check_hub_name(value: object) -> str:
+    if not isinstance(value, str) or _HUB_LABEL.fullmatch(value) is None:
+        raise PairingError("the hub name is malformed")
+    return value
+
+
+def check_hub_key(value: object) -> str:
+    if not isinstance(value, str) or _HEX32.fullmatch(value) is None:
+        raise PairingError("the hub key is malformed")
+    return value
+
+
+def canonical_pem(text: object) -> tuple[str, bytes]:
+    if not isinstance(text, str):
+        raise PairingError("a member certificate is missing")
+    try:
+        der = ssl.PEM_cert_to_DER_cert(text)
+    except ValueError as error:
+        raise PairingError("a member certificate is not PEM") from error
+    parse_certificate(base64.b64encode(der).decode("ascii"))
+    pem = ssl.DER_cert_to_PEM_cert(der)
+    if pem != text:
+        raise PairingError("a member certificate is not canonical PEM")
+    return pem, der
+
+
+def check_member_fields(value: object) -> MemberRef:
+    if not isinstance(value, dict) or set(value) != _MEMBER_KEYS:  # pyright: ignore[reportUnknownArgumentType]
+        raise PairingError("a member entry has missing or unknown fields")
+    device = full_device_id(value["deviceId"])
+    label = value["label"]
+    if not isinstance(label, str) or _HUB_LABEL.fullmatch(label) is None:
+        raise PairingError("a member label is malformed")
+    pem, der = canonical_pem(value["certificatePem"])
+    if device_id_of(der) != device:
+        raise PairingError("a member certificate does not match its device id")
+    return MemberRef(device, label, str(_ipv4(value["address"], "a member's address")), _port(value["port"]), pem)
+
+
+def hub_frame(message: HubMessage) -> dict[str, object]:
+    return {
+        "t": "hub",
+        "hub": {"id": message.hub.id, "name": message.hub.name},
+        "hubKey": message.key,
+        "members": [
+            {"deviceId": m.device_id, "label": m.label, "address": m.address, "port": m.port, "certificatePem": m.pem}
+            for m in message.members[:MAX_JOIN_MEMBERS]
+        ],
+    }
+
+
+def _hub_ref(value: object) -> HubRef:
+    if not isinstance(value, dict) or set(value) != {"id", "name"}:  # pyright: ignore[reportUnknownArgumentType]
+        raise PairingError("a hub entry has missing or unknown fields")
+    return HubRef(check_hub_id(value["id"]), check_hub_name(value["name"]))
+
+
+def parse_hub_message(value: object) -> HubMessage:
+    frame = _expect(value, "hub", ("hub", "hubKey", "members"))
+    members = frame["members"]
+    if not isinstance(members, list) or len(members) > MAX_JOIN_MEMBERS:  # pyright: ignore[reportUnknownArgumentType]
+        raise PairingError("the member list is malformed or too long")
+    refs = tuple(check_member_fields(m) for m in members)  # pyright: ignore[reportUnknownVariableType]
+    if len({m.device_id for m in refs}) != len(refs):
+        raise PairingError("the member list repeats a device")
+    return HubMessage(_hub_ref(frame["hub"]), check_hub_key(frame["hubKey"]), refs)
+
+
+def _hub_state(value: object) -> HubRef | None:
+    return None if value is None else _hub_ref(value)
+
+
 def _describe(error: BaseException) -> str:
     if isinstance(error, socket.timeout):
         return "timed out"
@@ -507,6 +623,7 @@ class _Session:
         save: Callable[[PeerInfo], None],
         limits: Limits,
         timeouts: Timeouts,
+        join: JoinHandler | None = None,
     ) -> None:
         self.conn = conn
         self.role = role
@@ -516,20 +633,21 @@ class _Session:
         self.save = save
         self.limits = limits
         self.timeouts = timeouts
+        self.join = join
         self.committed = False
 
     def close(self) -> None:
         with contextlib.suppress(OSError):
             self.conn.close()
 
-    def _send(self, frame: Mapping[str, object], deadline: float) -> None:
+    def _send(self, frame: Mapping[str, object], deadline: float, limit: int = MAX_FRAME) -> None:
         payload = wire.encode(frame)
-        if len(payload) > MAX_FRAME:
+        if len(payload) > limit:
             raise PairingError("a frame is too large")
         wire.write_frame(as_socket(DeadlineSocket(self.conn, deadline, _IDLE_S)), payload)
 
-    def _recv_raw(self, deadline: float) -> object:
-        return wire.parse_json(wire.read_frame(as_socket(DeadlineSocket(self.conn, deadline, _IDLE_S)), max_size=MAX_FRAME))
+    def _recv_raw(self, deadline: float, limit: int = MAX_FRAME) -> object:
+        return wire.parse_json(wire.read_frame(as_socket(DeadlineSocket(self.conn, deadline, _IDLE_S)), max_size=limit))
 
     def _recv(self, kind: str, keys: tuple[str, ...], deadline: float) -> dict[str, Any]:
         return _expect(self._recv_raw(deadline), kind, keys)
@@ -570,18 +688,25 @@ class _Session:
         deadline = time.monotonic() + self.timeouts.handshake_s
         own = self.identity
         nonce_d = secrets.token_bytes(32)
-        hello = {
+        hello: dict[str, object] = {
             "t": "hello",
             "v": VERSION,
-            "tag": token_tag(self.token),
             "name": own.name,
             "cert": base64.b64encode(own.der).decode("ascii"),
             "commit": commitment(own.der, nonce_d).hex(),
         }
+        if self.join is None:
+            hello["tag"] = token_tag(self.token)
+        else:
+            hello["mode"] = JOIN_MODE
         self._send(hello, deadline)
         reply = self._recv("hello", ("v", "name", "cert", "nonce"), deadline)
         name, der_l = _check_hello(reply, own.der)
         if not hmac.compare_digest(device_id_of(der_l).encode("ascii"), peer_id.encode("ascii")):
+            if self.join is not None:
+                raise PairingError(
+                    "the machine at that address is not the device that was found: its certificate does not match the device id"
+                )
             raise PairingError("the machine at that address is not the one that made the invitation")
         nonce_l = _hex32(reply["nonce"], "the listener's nonce")
         self._no_pending()
@@ -597,12 +722,18 @@ class _Session:
             first = self._recv_raw(start + self.timeouts.first_frame_s)
         except _EXPECTED as error:
             raise _Dropped from error
-        sent = first.get("tag") if isinstance(first, dict) else None
-        expected = token_tag(self.token)
-        if not isinstance(sent, str) or not hmac.compare_digest(sent.encode("utf-8"), expected.encode("ascii")) or not admit():
-            raise _Dropped
+        if self.join is None:
+            sent = first.get("tag") if isinstance(first, dict) else None
+            expected = token_tag(self.token)
+            if not isinstance(sent, str) or not hmac.compare_digest(sent.encode("utf-8"), expected.encode("ascii")) or not admit():
+                raise _Dropped
+            keys = ("v", "tag", "name", "cert", "commit")
+        else:
+            if not isinstance(first, dict) or first.get("mode") != JOIN_MODE or not admit():
+                raise _Dropped
+            keys = ("v", "mode", "name", "cert", "commit")
         deadline = start + self.timeouts.handshake_s
-        frame = _expect(first, "hello", ("v", "tag", "name", "cert", "commit"))
+        frame = _expect(first, "hello", keys)
         name, der_d = _check_hello(frame, own.der)
         commit = _hex32(frame["commit"], "the dialer's commitment")
         self._no_pending()
@@ -624,7 +755,7 @@ class _Session:
 
     def _finish(self, peer: PeerInfo, secret: bytes, deadline: float) -> PairResult:
         self._upgrade(peer, deadline)
-        return self._consent(peer, secret)
+        return self._consent(peer, secret) if self.join is None else self._join(peer)
 
     def _upgrade(self, peer: PeerInfo, deadline: float) -> None:
         listening = self.role == LISTENER
@@ -652,8 +783,11 @@ class _Session:
         proof = _hex32(consent["c"], "the consent proof")
         if consent["role"] != other or not hmac.compare_digest(proof, consent_proof(other, secret, self.token)):
             return self._result("failed", "the other machine doesn't hold this invitation's token", peer, counted=True)
+        return self._conclude(peer, lambda: self.save(peer))
+
+    def _conclude(self, peer: PeerInfo, save: Callable[[], None]) -> PairResult:
         try:
-            self.save(peer)
+            save()
         except Exception as error:  # noqa: BLE001 - the caller's save can fail in any way; nothing may be sent as saved
             return PairResult("failed", f"saving the trust entry failed: {error}", peer)
         try:
@@ -662,6 +796,33 @@ class _Session:
         except _EXPECTED:
             return PairResult("incomplete", INCOMPLETE_TEXT, peer)
         return PairResult("paired", "paired", peer)
+
+    # Each side learns the other's hub before any secret moves, so machines in different hubs share nothing. Both
+    # validate and send "ready" before either saves, so a side that rejects the hub message leaves both unsaved.
+    def _join(self, peer: PeerInfo) -> PairResult:
+        handler = self.join
+        assert handler is not None
+        deadline = time.monotonic() + self.timeouts.consent_s
+        mine = handler.hub()
+        self._send({"t": "state", "hub": None if mine is None else {"id": mine.id, "name": mine.name}}, deadline)
+        theirs = _hub_state(self._recv("state", ("hub",), deadline)["hub"])
+        if mine is None and theirs is None:
+            raise PairingError(f"{NO_HUB}: neither machine is in a hub; create one first")
+        if mine is not None and theirs is not None and mine.id != theirs.id:
+            raise PairingError(
+                f"{ALREADY_IN_ANOTHER_HUB}: this machine is in the hub {mine.name} and the other machine is in the hub {theirs.name}"
+            )
+        received: HubMessage | None = None
+        if mine is not None and (theirs is None or self.role == LISTENER):
+            self._send(hub_frame(handler.message(peer)), deadline, MAX_HUB_FRAME)
+        else:
+            received = parse_hub_message(self._recv_raw(deadline, MAX_HUB_FRAME))
+            if received.hub != theirs:
+                raise PairingError("the hub message names another hub than the one the other machine announced")
+        ready_deadline = time.monotonic() + self.timeouts.consent_s
+        self._send({"t": "ready"}, ready_deadline)
+        self._recv("ready", (), ready_deadline)
+        return self._conclude(peer, lambda: handler.save(peer, received))
 
 
 class _Window:
@@ -759,3 +920,103 @@ def dial(
     except OSError as error:
         return PairResult("failed", f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}")
     return _Session(conn, DIALER, target, identity, token, save, limits, timeouts).run_dialer(peer_id)
+
+
+def _no_save(_peer: PeerInfo) -> None:
+    raise PairingError("this session saves through its join handler")
+
+
+def private_source(address: str) -> bool:
+    try:
+        return _private(ipaddress.IPv4Address(address))
+    except ValueError:
+        return False
+
+
+def dial_join(
+    address: str,
+    port: int,
+    peer_id: str,
+    identity: PairIdentity,
+    handler: JoinHandler,
+    limits: Limits,
+    *,
+    timeouts: Timeouts = DEFAULT_TIMEOUTS,
+) -> PairResult:
+    target = str(_ipv4(address, "the address"))
+    _port(port)
+    full_device_id(peer_id)
+    limits.check_locked()
+    try:
+        conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
+    except OSError as error:
+        return PairResult("failed", f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}")
+    return _Session(conn, DIALER, target, identity, "", _no_save, limits, timeouts, handler).run_dialer(peer_id)
+
+
+def _serve_join(
+    slot: threading.Lock,
+    conn: socket.socket,
+    address: str,
+    identity: PairIdentity,
+    handler: JoinHandler,
+    limits: Limits,
+    timeouts: Timeouts,
+    on_result: Callable[[PairResult], None] | None,
+) -> None:
+    admitted = False
+
+    def admit() -> bool:
+        nonlocal admitted
+        admitted = slot.acquire(blocking=False)
+        return admitted
+
+    session = _Session(conn, LISTENER, address, identity, "", _no_save, limits, timeouts, handler)
+    result: PairResult | None
+    try:
+        result = session.run_listener(admit)
+    except Exception as error:  # noqa: BLE001 - a save bug must not leave the slot stuck
+        result = PairResult("failed", f"the join failed ({type(error).__name__})") if session.committed else None
+    if admitted:
+        slot.release()
+    if result is not None and on_result is not None:
+        with contextlib.suppress(Exception):
+            on_result(result)
+
+
+def serve_joins(
+    listener: socket.socket,
+    identity: PairIdentity,
+    handler: JoinHandler,
+    limits: Limits,
+    stop: threading.Event,
+    *,
+    timeouts: Timeouts = DEFAULT_TIMEOUTS,
+    clock: Callable[[], float] = time.monotonic,
+    on_result: Callable[[PairResult], None] | None = None,
+    allow_source: Callable[[str], bool] = private_source,
+) -> None:
+    slot = threading.Lock()
+    last = -timeouts.min_interval_s
+    listener.settimeout(0.1)
+    while not stop.is_set():
+        try:
+            conn, peer_address = listener.accept()
+        except socket.timeout:
+            continue
+        except OSError:
+            return
+        host = str(peer_address[0])
+        now = clock()
+        if now - last < timeouts.min_interval_s or not allow_source(host):
+            conn.close()
+            continue
+        last = now
+        try:
+            limits.check_locked()
+        except PairingError:
+            conn.close()
+            continue
+        conn.settimeout(None)
+        args = (slot, conn, host, identity, handler, limits, timeouts, on_result)
+        threading.Thread(target=_serve_join, args=args, daemon=True).start()

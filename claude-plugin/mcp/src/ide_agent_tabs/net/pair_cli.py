@@ -122,6 +122,7 @@ class PairDeps:
     check_destination: Callable[[str, int, str, int], str] = LanTransport().check_destination
     listen: Callable[..., PairResult] = pairing.listen_once
     dial: Callable[..., PairResult] = pairing.dial
+    dial_join: Callable[..., PairResult] = pairing.dial_join
     timeouts: pairing.Timeouts = pairing.DEFAULT_TIMEOUTS
     interpreter: str = field(default_factory=lambda: sys.executable)
     launch_script: str = field(default_factory=login_task.default_launch_script)
@@ -266,7 +267,7 @@ def _choose_bind(svc: Services, deps: PairDeps) -> str:
     return found[0].address
 
 
-def _prepare(svc: Services, deps: PairDeps, requested: str | None) -> Prepared:
+def prepare(svc: Services, deps: PairDeps, requested: str | None) -> Prepared:
     problem = tls.runtime_problem()
     if problem is not None:
         raise CliError(problem)
@@ -344,7 +345,7 @@ def _finish(svc: Services, prepared: Prepared, result: PairResult, label: str | 
 
 
 def _invite(svc: Services, deps: PairDeps, mode: Mode) -> int:
-    prepared = _prepare(svc, deps, mode.bind)
+    prepared = prepare(svc, deps, mode.bind)
     pairing.Limits(svc.home).check()
     _ensure_rule(svc, deps, prepared)
     started = deps.clock()
@@ -369,7 +370,7 @@ def _invite(svc: Services, deps: PairDeps, mode: Mode) -> int:
 
 
 def _serve(svc: Services, deps: PairDeps, mode: Mode) -> int:
-    prepared = _prepare(svc, deps, mode.bind)
+    prepared = prepare(svc, deps, mode.bind)
     limits = pairing.Limits(svc.home)
     try:
         limits.open_window()
@@ -397,7 +398,7 @@ def _serve(svc: Services, deps: PairDeps, mode: Mode) -> int:
 
 
 def _join(svc: Services, deps: PairDeps, mode: Mode) -> int:
-    prepared = _prepare(svc, deps, mode.bind)
+    prepared = prepare(svc, deps, mode.bind)
     limits = pairing.Limits(svc.home)
     limits.check_locked()
     invitation = pairing.parse_invitation(mode.invitation, deps.clock())

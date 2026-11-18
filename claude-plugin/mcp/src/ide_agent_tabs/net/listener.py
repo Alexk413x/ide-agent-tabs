@@ -26,7 +26,7 @@ from ..shared.client import request as http_request
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, SERVER_LAUNCHER, parse_port
 from ..version import PACKAGE_VERSION
-from . import ingress, tls, wire
+from . import ingress, pairing, tls, wire
 from .client import (
     IDLE_S,
     DeadlineSocket,
@@ -36,8 +36,10 @@ from .client import (
     peers_dir,
     read_peer_pem,
 )
+from .hubjoin import HubJoiner, local_pair_identity
 from .identity import format_digest
-from .notify import powershell_path
+from .netid import GateState, current_network_id, gate_state
+from .notify import notify, powershell_path
 from .policy import NetworkConfig, PolicyError, load_network_config, load_policy, policy_path
 from .transport import LanTransport, network_enabled
 
@@ -56,6 +58,7 @@ FAILURE_LOG_INTERVAL_S = 60.0
 FAILURE_LOG_ENTRIES = 256
 LOG_LIMIT = 1_000_000
 LISTEN_BACKLOG = 16
+JOIN_RETRY_S = 30.0
 _PROFILE_SCRIPT = (
     "$ErrorActionPreference = 'Stop';"
     "$i = (Get-NetIPAddress -IPAddress $env:AGENT_TABS_BIND).InterfaceIndex;"
@@ -329,6 +332,7 @@ class NetworkWatch:
         self._known = addresses()
         self._checked_at = clock()
         self._ok = True
+        self.changed = False
         self._lock = threading.Lock()
 
     def allowed(self) -> bool:
@@ -356,6 +360,7 @@ class NetworkWatch:
             return "the bind address is no longer assigned to a local interface"
         addresses = self._addresses()
         changed = addresses != self._known
+        self.changed = changed
         self._known = addresses
         if not changed and self._clock() - self._checked_at < PROFILE_REFRESH_S:
             return None
@@ -380,6 +385,11 @@ class Options:
     stop: threading.Event = field(default_factory=threading.Event)
     ready: Callable[[int], None] | None = None
     forwarder: IngressForwarder | None = None
+    network_id: Callable[[str], str | None] = current_network_id
+    join_port: int = pairing.PAIRING_PORT
+    join_timeouts: pairing.Timeouts = pairing.DEFAULT_TIMEOUTS
+    join_source_ok: Callable[[str], bool] = pairing.private_source
+    notice: Callable[[str], object] = notify
 
 
 class Listener:
@@ -396,6 +406,14 @@ class Listener:
         self._trust: TrustCache | None = None
         self._watch: NetworkWatch | None = None
         self._forwarder: IngressForwarder | None = None
+        self._live = NetworkConfig()
+        self._gate = GateState(False, None, "the network has not been checked yet")
+        self._network_id: str | None = None
+        self._network_read_at = float("-inf")
+        self._join_sock: socket.socket | None = None
+        self._join_thread: threading.Thread | None = None
+        self._join_stop = threading.Event()
+        self._join_retry_at = 0.0
 
     def log(self, text: str) -> None:
         append_log(log_file(self._home), text)
@@ -448,6 +466,8 @@ class Listener:
         except OSError as error:
             return self._refuse(f"cannot bind {bind} port {config.port}: {error}")
         self._sock, self._bind, self._watch = sock, bind, watch
+        self._live = config
+        self._refresh_gate(force=True)
         self._trust = TrustCache(self._home, identity.cert, identity.key, identity.passphrase, self.log)
         self._forwarder = self._options.forwarder or IngressForwarder(self._home, self._options.server_port, self.log)
         port = sock.getsockname()[1]
@@ -465,6 +485,7 @@ class Listener:
             self._serve()
         finally:
             self._stop.set()
+            self._stop_joins("the listener stopped")
             sock.close()
             info = read_listener(self._home)
             if info is not None and info.pid == os.getpid():
@@ -496,6 +517,82 @@ class Listener:
                 if not network_enabled(current) or current.bind != started.bind or current.port != started.port:
                     self._halt("the network setting changed")
                     return
+                self._live = current
+            self._refresh_gate(force=self._watch.changed)
+            self._sync_joins()
+
+    def _refresh_gate(self, force: bool = False) -> None:
+        now = time.monotonic()
+        if force or now - self._network_read_at >= PROFILE_REFRESH_S:
+            self._network_read_at = now
+            try:
+                self._network_id = self._options.network_id(self._bind)
+            except (OSError, ValueError):
+                self._network_id = None
+        state = gate_state(self._live.allowed_networks, self._network_id)
+        if (state.allowed, state.reason) != (self._gate.allowed, self._gate.reason):
+            self.log("this network is allowed" if state.allowed else f"network gate closed: {state.reason}")
+        self._gate = state
+
+    def join_port(self) -> int | None:
+        sock = self._join_sock
+        return None if sock is None else int(sock.getsockname()[1])
+
+    def _wants_joins(self) -> bool:
+        return network_enabled(self._live) and self._live.discoverable and self._gate.allowed and ":" not in self._bind
+
+    def _sync_joins(self) -> None:
+        wanted = self._wants_joins()
+        if wanted and self._join_sock is None:
+            self._start_joins()
+        elif not wanted and self._join_sock is not None:
+            self._stop_joins("discoverable is off, the network is not allowed, or LAN mode is off")
+
+    def _start_joins(self) -> None:
+        if time.monotonic() < self._join_retry_at:
+            return
+        self._join_retry_at = time.monotonic() + JOIN_RETRY_S
+        try:
+            identity = local_pair_identity(self._home)
+            sock = self._open_socket(self._bind, self._options.join_port)
+        except (pairing.PairingError, OSError) as error:
+            self.log(f"not serving joins: {error}")
+            return
+        stop = threading.Event()
+        handler = HubJoiner(self._home, self._saved)
+        thread = threading.Thread(
+            target=pairing.serve_joins,
+            args=(sock, identity, handler, pairing.Limits(self._home), stop),
+            kwargs={
+                "timeouts": self._options.join_timeouts,
+                "on_result": self._joined,
+                "allow_source": self._options.join_source_ok,
+            },
+            daemon=True,
+        )
+        self._join_sock, self._join_stop, self._join_thread = sock, stop, thread
+        thread.start()
+        self.log(f"serving joins on {self._bind} port {sock.getsockname()[1]}")
+
+    def _stop_joins(self, reason: str) -> None:
+        sock, thread = self._join_sock, self._join_thread
+        if sock is None:
+            return
+        self._join_stop.set()
+        if thread is not None:
+            thread.join(2.0)
+        sock.close()
+        self._join_sock, self._join_thread = None, None
+        self.log(f"stopped serving joins: {reason}")
+
+    def _saved(self, label: str, address: str) -> None:
+        self.log(f"a device joined the hub: {label} at {address}")
+        with contextlib.suppress(Exception):
+            self._options.notice(f"{label} at {address} joined this machine's hub")
+
+    def _joined(self, result: pairing.PairResult) -> None:
+        if result.outcome not in ("paired", "incomplete"):
+            self.log(f"join refused: {result.reason}")
 
     def _serve(self) -> None:
         assert self._sock is not None
@@ -515,7 +612,7 @@ class Listener:
         assert self._trust is not None and self._watch is not None
         source = _normalize(host)
         trust = self._trust.current()
-        if source is None or trust.context is None or source not in trust.addresses or not self._watch.allowed():
+        if source is None or trust.context is None or source not in trust.addresses or not self._watch.allowed() or not self._gate.allowed:
             conn.close()
             return
         with self._lock:

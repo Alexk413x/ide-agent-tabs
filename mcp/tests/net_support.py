@@ -26,6 +26,7 @@ from ide_agent_tabs.shared.state import ServerState, write_state
 OPENSSL = Path(r"C:\Program Files\Git\usr\bin\openssl.exe") if os.name == "nt" else Path(shutil.which("openssl") or "/nonexistent/openssl")
 HAS_OPENSSL = OPENSSL.is_file()
 LOOPBACK = "127.0.0.1"
+TEST_NETWORK = "test-network"
 
 
 def make_root(test: type[unittest.TestCase] | unittest.TestCase, prefix: str = "iat-net-") -> str:
@@ -154,9 +155,10 @@ class RunningListener:
         self.ready = threading.Event()
         self.port = 0
         self.options = Options(
-            config=NetworkConfig(network="lan", bind=LOOPBACK, port=0),
+            config=NetworkConfig(network="lan", bind=LOOPBACK, port=0, allowed_networks=(TEST_NETWORK,)),
             bind_check=lambda _address: True,
             network_check=network_check,
+            network_id=lambda _bind: TEST_NETWORK,
             server_port=server_port,
             ready=self._ready,
         )

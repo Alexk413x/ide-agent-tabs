@@ -722,7 +722,7 @@ class StatusAndDispatchTest(CliTestCase):
 
     def test_net_is_registered_in_the_agent_tabs_command(self) -> None:
         self.assertEqual(top_cli.COMMANDS["net"], "ide_agent_tabs.net.cli")
-        self.assertIn("net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders>", top_cli.usage())
+        self.assertIn("net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders|discoverable|networks>", top_cli.usage())
         captured = io.StringIO()
         with mock.patch.dict(os.environ, {"IDE_AGENT_TABS_HOME": self.a}), contextlib.redirect_stdout(captured):
             self.assertEqual(top_cli.main(["net", "status"]), 0)

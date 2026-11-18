@@ -17,6 +17,9 @@ POLICY_FILE = "policy.json"
 DEFAULT_PORT = 47829
 DEFAULT_MAX_REMOTE_TABS = 4
 MAX_REMOTE_TABS = 64
+MEMBER_MAX_TABS = 4
+MEMBER_OPENS_PER_HOUR = 30
+MEMBER_MESSAGES_PER_MINUTE = 60
 SUPPORTED_AGENTS = frozenset({"claude", "codex"})
 MAX_LIMIT = 1000
 MAX_UINT64 = 2**64 - 1
@@ -26,10 +29,22 @@ ALIAS = re.compile(r"[a-z0-9-]{1,32}")
 _ALIAS = ALIAS
 _DEVICE_ID = re.compile(r"[A-Za-z0-9-]{1,96}")
 _SESSION_ID = SESSION_ID
-_NETWORK_ID = re.compile(r"[A-Za-z0-9{}:._-]{1,128}")
+NETWORK_ID = re.compile(r"[A-Za-z0-9{}:._-]{1,128}")
+_NETWORK_ID = NETWORK_ID
 _MAX_MODEL_CHARS = 128
 _CONFIG_KEYS = frozenset(
-    {"network", "bind", "port", "openssl", "outboundFolders", "maxRemoteTabs", "deviceName", "memberFolders", "allowedNetworks"}
+    {
+        "network",
+        "bind",
+        "port",
+        "openssl",
+        "outboundFolders",
+        "maxRemoteTabs",
+        "deviceName",
+        "memberFolders",
+        "allowedNetworks",
+        "discoverable",
+    }
 )
 _PEER_KEYS = frozenset(
     {"label", "address", "folders", "agents", "models", "send", "maxTabs", "opensPerHour", "messagesPerMinute", "approveEachOpen", "member"}
@@ -57,6 +72,7 @@ class NetworkConfig:
     max_remote_tabs: int = DEFAULT_MAX_REMOTE_TABS
     member_folders: tuple[str, ...] = ()
     allowed_networks: tuple[str, ...] = ()
+    discoverable: bool = False
 
 
 @dataclass(frozen=True)
@@ -200,6 +216,15 @@ def _allowed_networks(value: Any, invalid: list[str]) -> tuple[str, ...]:
     return ()
 
 
+def _discoverable(value: Any, invalid: list[str]) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    invalid.append("network.discoverable must be true or false")
+    return False
+
+
 def _max_remote_tabs(value: Any, invalid: list[str]) -> int:
     if value is None:
         return DEFAULT_MAX_REMOTE_TABS
@@ -239,6 +264,7 @@ def load_network_config(home: str) -> tuple[NetworkConfig, list[str]]:
         max_remote_tabs=_max_remote_tabs(section.get("maxRemoteTabs"), invalid),
         member_folders=_member_folders(section.get("memberFolders"), invalid),
         allowed_networks=_allowed_networks(section.get("allowedNetworks"), invalid),
+        discoverable=_discoverable(section.get("discoverable"), invalid),
     )
     if invalid:
         warnings.extend(f"Ignoring network in {CONFIG_FILE}, so the network is off: {reason}" for reason in invalid)
