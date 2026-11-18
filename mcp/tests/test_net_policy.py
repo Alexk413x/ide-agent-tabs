@@ -6,7 +6,7 @@ import unittest
 from typing import Any
 
 from ide_agent_tabs.net import policy
-from ide_agent_tabs.net.policy import FolderGrant, NetworkConfig, PeerGrant, Policy, PolicyError
+from ide_agent_tabs.net.policy import FolderGrant, Hub, NetworkConfig, PeerGrant, Policy, PolicyError
 from support import temp_home
 
 DEVICE_A = "AAAAAAA-BBBBBBB-CCCCCCC-DDDDDDD-EEEEEEE-FFFFFFF-GGGGGGG-HHHHHHH"
@@ -354,6 +354,92 @@ class PolicyTest(unittest.TestCase):
     def test_save_does_not_change_generation(self) -> None:
         policy.save_policy(self.home, Policy((), 3))
         self.assertEqual(policy.load_policy(self.home).generation, 3)
+
+
+HUB_ID = "0123456789abcdef0123456789abcdef"
+
+
+class HubPolicyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.home = temp_home(self)
+
+    def test_a_policy_without_a_hub_loads_with_no_hub_and_no_members(self) -> None:
+        write_policy(self.home, {"generation": 2, "peers": {DEVICE_A: peer_obj()}})
+        loaded = policy.load_policy(self.home)
+        self.assertIsNone(loaded.hub)
+        self.assertFalse(loaded.peers[0].member)
+
+    def test_a_hub_and_member_peers_load(self) -> None:
+        write_policy(
+            self.home,
+            {
+                "hub": {"id": HUB_ID, "name": "home-1"},
+                "peers": {DEVICE_A: peer_obj(member=True), DEVICE_B: {"label": "old", "address": "10.0.0.2"}},
+            },
+        )
+        loaded = policy.load_policy(self.home)
+        self.assertEqual(loaded.hub, Hub(HUB_ID, "home-1"))
+        self.assertEqual([(p.label, p.member) for p in loaded.peers], [("laptop", True), ("old", False)])
+
+    def test_a_hub_with_no_members_loads(self) -> None:
+        write_policy(self.home, {"hub": {"id": HUB_ID, "name": "a"}, "peers": {}})
+        self.assertEqual(policy.load_policy(self.home).hub, Hub(HUB_ID, "a"))
+
+    def test_invalid_hubs_and_members_fail_closed(self) -> None:
+        cases: dict[str, Any] = {
+            "hub not an object": {"hub": "home", "peers": {}},
+            "hub null": {"hub": None, "peers": {}},
+            "hub unknown key": {"hub": {"id": HUB_ID, "name": "a", "x": 1}, "peers": {}},
+            "hub missing id": {"hub": {"name": "a"}, "peers": {}},
+            "hub missing name": {"hub": {"id": HUB_ID}, "peers": {}},
+            "hub id too short": {"hub": {"id": HUB_ID[:-1], "name": "a"}, "peers": {}},
+            "hub id too long": {"hub": {"id": HUB_ID + "0", "name": "a"}, "peers": {}},
+            "hub id uppercase": {"hub": {"id": HUB_ID.upper().replace("0", "A"), "name": "a"}, "peers": {}},
+            "hub id not hex": {"hub": {"id": "g" * 32, "name": "a"}, "peers": {}},
+            "hub id with newline": {"hub": {"id": HUB_ID[:-1] + "\n", "name": "a"}, "peers": {}},
+            "hub name uppercase": {"hub": {"id": HUB_ID, "name": "Home"}, "peers": {}},
+            "hub name empty": {"hub": {"id": HUB_ID, "name": ""}, "peers": {}},
+            "hub name too long": {"hub": {"id": HUB_ID, "name": "a" * 33}, "peers": {}},
+            "hub name with a space": {"hub": {"id": HUB_ID, "name": "a b"}, "peers": {}},
+            "hub name as number": {"hub": {"id": HUB_ID, "name": 5}, "peers": {}},
+            "duplicate hub key": f'{{"hub": {{"id": "{HUB_ID}", "id": "{HUB_ID}", "name": "a"}}, "peers": {{}}}}',
+            "member as int": {"hub": {"id": HUB_ID, "name": "a"}, "peers": {DEVICE_A: peer_obj(member=1)}},
+            "member as string": {"hub": {"id": HUB_ID, "name": "a"}, "peers": {DEVICE_A: peer_obj(member="true")}},
+            "member without a hub": {"peers": {DEVICE_A: peer_obj(member=True)}},
+        }
+        for name, case in cases.items():
+            with self.subTest(name):
+                write_policy(self.home, case)
+                with self.assertRaises(PolicyError):
+                    policy.load_policy(self.home)
+
+    def test_a_non_member_peer_without_a_hub_still_loads_with_member_false(self) -> None:
+        write_policy(self.home, {"peers": {DEVICE_A: peer_obj(member=False)}})
+        self.assertFalse(policy.load_policy(self.home).peers[0].member)
+
+    def test_save_round_trips_the_hub_and_the_member_flag(self) -> None:
+        original = Policy(
+            (PeerGrant(DEVICE_A, "laptop", "192.168.1.20", member=True), PeerGrant(DEVICE_B, "desk", "fd00::9")), 4, Hub(HUB_ID, "home")
+        )
+        policy.save_policy(self.home, original)
+        self.assertEqual(policy.load_policy(self.home), original)
+        with open(policy.policy_path(self.home), encoding="utf-8") as f:
+            saved = json.load(f)
+        self.assertEqual(saved["hub"], {"id": HUB_ID, "name": "home"})
+        self.assertIs(saved["peers"][DEVICE_A]["member"], True)
+        self.assertNotIn("member", saved["peers"][DEVICE_B])
+
+    def test_a_policy_without_a_hub_saves_without_a_hub_key(self) -> None:
+        policy.save_policy(self.home, Policy((PeerGrant(DEVICE_A, "laptop", "192.168.1.20"),), 1))
+        with open(policy.policy_path(self.home), encoding="utf-8") as f:
+            self.assertEqual(set(json.load(f)), {"generation", "peers"})
+
+    def test_save_refuses_a_member_without_a_hub(self) -> None:
+        with self.assertRaises(PolicyError):
+            policy.save_policy(self.home, Policy((PeerGrant(DEVICE_A, "laptop", "192.168.1.20", member=True),)))
+        with self.assertRaises(PolicyError):
+            policy.save_policy(self.home, Policy((), 0, Hub("short", "home")))
+        self.assertFalse(os.path.exists(policy.policy_path(self.home)))
 
 
 if __name__ == "__main__":

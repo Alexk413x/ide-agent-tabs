@@ -106,6 +106,28 @@ class RefreshTest(PollerCase):
         self.assertEqual([(s.id, s.name, s.agent, s.status) for s in sessions], [("tab-r", "api", "claude", "idle")])
         self.assertEqual(fetched, self.ticks())
 
+    def test_a_members_folders_are_kept_beside_its_sessions(self) -> None:
+        folders = ["C:\\Projects", "/home/me/code"]
+        self.fetch.replies[peer_id(0)] = {"re": "r", "ok": True, "body": {"sessions": [SESSION], "folders": folders}}
+        made = self.make()
+        made.poll_once()
+        store = NetStore(self.home)
+        try:
+            members = store.get_inventory(peer_id(0))
+            others = store.get_inventory(peer_id(1))
+        finally:
+            store.close()
+        assert members is not None and others is not None
+        self.assertEqual(wire.parse_inventory_folders(json.loads(members[0])), folders)
+        self.assertIsNone(wire.parse_inventory_folders(json.loads(others[0])))
+
+    def test_an_inventory_with_invalid_folders_is_refused_and_marks_the_peer_offline(self) -> None:
+        self.fetch.replies[peer_id(0)] = {"re": "r", "ok": True, "body": {"sessions": [SESSION], "folders": ["relative"]}}
+        made = self.make()
+        made.poll_once()
+        self.assertIsNone(self.cached(peer_id(0)))
+        self.assertTrue(made.is_failed(peer_id(0)))
+
     def test_a_peer_is_asked_at_most_once_in_sixty_seconds(self) -> None:
         made = self.make()
         made.poll_once()

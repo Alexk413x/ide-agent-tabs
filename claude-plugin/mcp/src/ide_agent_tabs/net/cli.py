@@ -8,6 +8,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import ssl
 import stat
 import sys
@@ -18,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from ..clock import now_ms
 from ..files import file_lock, read_text_if_exists, remove_file, write_atomically
 from ..home import agent_tabs_home
 from ..jev.settings import CONFIG_FILE
@@ -32,16 +34,19 @@ from .certgen import CertgenError, Identity, generate_identity
 from .client import identity_dir, local_device_id, peer_cert_path, peers_dir
 from .confirm import ConfirmError, confirm
 from .firewall import FirewallError
+from .hub import default_member_folder
 from .identity import der_from_pem, format_digest, parse_device_id
 from .interfaces import InterfaceError, InterfaceInfo, interface_for
 from .listener import append_log, live_listener, log_file, read_listener, request_stop
 from .login_task import LoginTaskError
 from .notify import notify
-from .pairing import PAIRING_FILE, Busy, Limits, Locked, PairingError
+from .outbound import OFFLINE_AFTER_MS
+from .pairing import PAIRING_FILE, Busy, Limits, Locked, PairingError, valid_device_name
 from .policy import (
     ALIAS,
     SUPPORTED_AGENTS,
     FolderGrant,
+    Hub,
     PeerGrant,
     Policy,
     PolicyError,
@@ -53,23 +58,27 @@ from .policy import (
 )
 from .private_files import ensure_private_dir, make_private_file
 from .secrets import SecretsError, new_passphrase, store_passphrase
-from .store import NetStore, NetStoreError
+from .store import NetStore, NetStoreError, db_path
 from .transport import LanTransport, network_enabled
 
 if TYPE_CHECKING:
     from .pair_cli import PairDeps
 
-USAGE = "net <id|status|off|trust|grant|revoke|rename|pair|lan>"
+USAGE = "net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders>"
 _GRAMMAR = (
     "agent-tabs net id | status | off | revoke <label> | rename <label> <new label>"
     " | pair --invite [--bind <address>] | pair --join <invitation> [--bind <address>]"
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
     " | grant <label> [--folder <alias>=<absolute path>] [--agent claude|codex] [--model <model>] [--send <session id>]"
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
+    " | hub create [--name <name>] [--folder <session folder>] | hub status | hub leave"
+    " | folders | folders add <absolute path> | folders remove <absolute path>"
 )
 LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MAX_CERT_BYTES = 65536
 _MAX_MODEL_CHARS = 128
+_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9 ._-]+")
+_LABEL_UNSAFE = re.compile(r"[^a-z0-9-]+")
 _DRIVE_REMOTE = 4
 _PROJECT_TABLE = re.compile(r"""\s*\[\s*projects\s*\.\s*("(?:[^"\\]|\\.)*"|'[^']*')\s*\]\s*(?:#.*)?""")
 _TRUST_LINE = re.compile(r"""\s*trust_level\s*=\s*("trusted"|'trusted')\s*(?:#.*)?""")
@@ -147,6 +156,8 @@ class Services:
     server_port: int = SERVER_DEFAULT_PORT
     start_wait_s: float = 3.0
     stop_wait_s: float = 5.0
+    cwd: Callable[[], str] = os.getcwd
+    new_hub_id: Callable[[], str] = lambda: os.urandom(16).hex()
 
     def record(self, event: str, **fields: object) -> None:
         pairs = " ".join(f"{key}={value}" for key, value in fields.items())
@@ -194,6 +205,30 @@ def set_network(home: str, updates: Mapping[str, Any]) -> None:
     write_atomically(os.path.join(home, CONFIG_FILE), stringify(config, 2) + "\n")
 
 
+def device_name(svc: Services) -> str:
+    configured: object = None
+    with contextlib.suppress(CliError):
+        section = read_config(svc.home).get("network")
+        if isinstance(section, dict):
+            configured = section.get("deviceName")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    if configured is not None:
+        if not isinstance(configured, str) or not valid_device_name(configured):
+            raise CliError("network.deviceName in config.json must be 1 to 32 letters, digits, spaces, - _ or ., with no run of six digits")
+        return configured
+    cleaned = _NAME_UNSAFE.sub("-", socket.gethostname()).strip(" -.")[:32].strip(" -.")
+    return cleaned if cleaned and valid_device_name(cleaned) else "this-machine"
+
+
+def default_label(name: str, policy: Policy) -> str:
+    base = _LABEL_UNSAFE.sub("-", name.lower()).strip("-")[:32].strip("-") or "peer"
+    taken = {peer.label for peer in policy.peers}
+    label, number = base, 2
+    while label in taken:
+        suffix = f"-{number}"
+        label, number = base[: 32 - len(suffix)] + suffix, number + 1
+    return label
+
+
 def _require_confirmed(svc: Services, lines: Sequence[str]) -> None:
     if not svc.confirm(lines):
         raise CliError("not confirmed; nothing changed")
@@ -207,6 +242,8 @@ def _peer_by_label(policy: Policy, label: str) -> PeerGrant:
 
 
 def grants_text(peer: PeerGrant) -> str:
+    if peer.member:
+        return "hub member"
     parts: list[str] = []
     if peer.folders:
         parts.append("folders " + ", ".join(f"{f.alias}={f.path}" for f in peer.folders))
@@ -346,11 +383,14 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     last = result_text(svc.home)
     if last is not None:
         svc.out(f"last pairing: {last}")
+    svc.out(f"member folders: {', '.join(config.member_folders) or 'none'}")
     try:
         policy = load_policy(svc.home)
     except PolicyError as error:
+        svc.out(f"hub: unreadable ({error})")
         svc.out(f"peers: unreadable ({error})")
         return 0
+    svc.out(f"hub: {policy.hub.name} ({policy.hub.id})" if policy.hub is not None else "hub: none")
     if not policy.peers:
         svc.out("peers: none")
         return 0
@@ -655,19 +695,24 @@ def _has_link_component(path: str) -> bool:
     return False
 
 
+def _local_folder(raw: str, subject: str) -> str:
+    if not os.path.isabs(raw) or "\0" in raw or raw.startswith(("\\\\", "//")):
+        raise CliError(f"{subject}: the path must be a local absolute path, not a network path")
+    real = _strip_extended(os.path.realpath(raw))
+    if real.startswith(("\\\\", "//")) or _is_remote_drive(real):
+        raise CliError(f"{subject}: network folders are refused")
+    if not os.path.isdir(real):
+        raise CliError(f"{subject}: {real} is not a folder")
+    if _has_link_component(real):
+        raise CliError(f"{subject}: {real} passes through a symbolic link or reparse point")
+    return real
+
+
 def folder_grant(spec: str) -> FolderGrant:
     alias, separator, raw = spec.partition("=")
     if not separator or ALIAS.fullmatch(alias) is None:
         raise CliError("--folder needs <alias>=<absolute path>; an alias is 1 to 32 characters of a-z, 0-9 and -")
-    if not os.path.isabs(raw) or "\0" in raw or raw.startswith(("\\\\", "//")):
-        raise CliError(f"folder {alias}: the path must be a local absolute path, not a network path")
-    real = _strip_extended(os.path.realpath(raw))
-    if real.startswith(("\\\\", "//")) or _is_remote_drive(real):
-        raise CliError(f"folder {alias}: network folders are refused")
-    if not os.path.isdir(real):
-        raise CliError(f"folder {alias}: {real} is not a folder")
-    if _has_link_component(real):
-        raise CliError(f"folder {alias}: {real} passes through a symbolic link or reparse point")
+    real = _local_folder(raw, f"folder {alias}")
     status = os.stat(real)
     if status.st_ino == 0:
         raise CliError(f"folder {alias}: this file system reports no file identity for {real}")
@@ -850,6 +895,153 @@ def _cmd_rename(svc: Services, args: Sequence[str]) -> int:
     return 0
 
 
+def _folder_key(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path))
+
+
+def _cmd_hub_create(svc: Services, args: Sequence[str]) -> int:
+    parser = make_parser("hub create")
+    parser.add_argument("--name")
+    parser.add_argument("--folder")
+    options = parser.parse_args(args)
+    config, warnings = load_network_config(svc.home)
+    for warning in warnings:
+        svc.err(f"warning: {warning}")
+    name: str = options.name if options.name is not None else default_label(device_name(svc), Policy())
+    if LABEL.fullmatch(name) is None:
+        raise CliError("--name is 1 to 32 characters of a-z, 0-9 and -")
+    session = os.path.abspath(options.folder if options.folder is not None else svc.cwd())
+    _local_folder(session, "the session folder")
+    default = _local_folder(default_member_folder(session, svc.user_home), "the default member folder")
+    net_dir_for(svc.home)
+    with file_lock(policy_path(svc.home)):
+        policy = load_policy(svc.home)
+        if policy.hub is not None:
+            raise CliError(f"this machine is already in the hub {policy.hub.name} ({policy.hub.id}); run agent-tabs net hub leave first")
+        hub = Hub(svc.new_hub_id(), name)
+        save_policy(svc.home, replace(policy, hub=hub))
+    updates: dict[str, Any] = {}
+    if not config.member_folders:
+        updates["memberFolders"] = [default]
+    if not config.outbound_folders:
+        updates["outboundFolders"] = [default]
+    if updates:
+        set_network(svc.home, updates)
+    svc.record("hub-create", hub=hub.id)
+    svc.out(f"Created the hub {hub.name} ({hub.id}).")
+    svc.out(f"member folders: {', '.join(updates.get('memberFolders', config.member_folders))}")
+    svc.out(f"outbound folders: {', '.join(updates.get('outboundFolders', config.outbound_folders))}")
+    return 0
+
+
+def _member_state(svc: Services, peer: PeerGrant) -> str:
+    if not os.path.exists(db_path(svc.home)):
+        return "unknown"
+    try:
+        store = NetStore(svc.home)
+        try:
+            cached = store.get_inventory(peer.device_id)
+        finally:
+            store.close()
+    except (NetStoreError, sqlite3.Error, OSError):
+        return "unknown"
+    if cached is None:
+        return "unknown"
+    return "online" if now_ms() - cached[1] <= OFFLINE_AFTER_MS else "offline"
+
+
+def _cmd_hub_status(svc: Services, args: Sequence[str]) -> int:
+    make_parser("hub status").parse_args(args)
+    config, warnings = load_network_config(svc.home)
+    for warning in warnings:
+        svc.err(f"warning: {warning}")
+    policy = load_policy(svc.home)
+    if policy.hub is None:
+        svc.out("hub: none")
+        return 0
+    svc.out(f"hub: {policy.hub.name} ({policy.hub.id})")
+    members = [p for p in policy.peers if p.member]
+    if members:
+        svc.out("members:")
+        for peer in members:
+            svc.out(f"  {peer.label}  {peer.device_id[:15]}  {peer.address}  {_member_state(svc, peer)}")
+    else:
+        svc.out("members: none")
+    svc.out(f"member folders: {', '.join(config.member_folders) or 'none'}")
+    svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
+    return 0
+
+
+def _cmd_hub_leave(svc: Services, args: Sequence[str]) -> int:
+    make_parser("hub leave").parse_args(args)
+    net_dir_for(svc.home)
+    with file_lock(policy_path(svc.home)):
+        policy = load_policy(svc.home)
+        hub = policy.hub
+        if hub is None:
+            raise CliError("this machine is not in a hub")
+        members = [p for p in policy.peers if p.member]
+        save_policy(svc.home, replace(policy, peers=tuple(p for p in policy.peers if not p.member), hub=None))
+    for peer in members:
+        remove_file(str(peer_cert_path(svc.home, peer.device_id)))
+    store = NetStore(svc.home)
+    try:
+        generation = store.bump_generation()
+    finally:
+        store.close()
+    svc.record("hub-leave", hub=hub.id, members=len(members), generation=generation)
+    svc.out(f"Left the hub {hub.name} ({hub.id}); removed {len(members)} member(s); the policy generation is {generation}.")
+    svc.out("The other members are not told yet, and keep their trust of this machine until they revoke it.")
+    svc.out("Requests already handed off to a local tab may still finish.")
+    return 0
+
+
+def _cmd_hub(svc: Services, args: Sequence[str]) -> int:
+    handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
+        "create": _cmd_hub_create,
+        "status": _cmd_hub_status,
+        "leave": _cmd_hub_leave,
+    }
+    if not args or args[0] not in handlers:
+        raise UsageError("agent-tabs net hub: expected create, status or leave")
+    return handlers[args[0]](svc, args[1:])
+
+
+def _cmd_folders(svc: Services, args: Sequence[str]) -> int:
+    parser = make_parser("folders")
+    parser.add_argument("action", nargs="?", choices=("add", "remove"))
+    parser.add_argument("path", nargs="?")
+    options = parser.parse_args(args)
+    config, warnings = load_network_config(svc.home)
+    for warning in warnings:
+        svc.err(f"warning: {warning}")
+    folders = list(config.member_folders)
+    if options.action is None:
+        svc.out("member folders: " + (", ".join(folders) if folders else "none"))
+        return 0
+    path: str | None = options.path
+    if path is None:
+        raise UsageError(f"agent-tabs net folders {options.action}: expected an absolute path")
+    if options.action == "add":
+        real = _local_folder(path, "member folder")
+        if any(_folder_key(f) == _folder_key(real) for f in folders):
+            svc.out(f"{real} is already a member folder.")
+            return 0
+        folders.append(real)
+    else:
+        if not os.path.isabs(path):
+            raise CliError("member folder: the path must be an absolute path")
+        wanted = {_folder_key(path), _folder_key(os.path.realpath(path))}
+        kept = [f for f in folders if _folder_key(f) not in wanted]
+        if len(kept) == len(folders):
+            raise CliError(f"{path} is not a member folder; agent-tabs net folders lists them")
+        folders = kept
+    set_network(svc.home, {"memberFolders": folders})
+    svc.record("folders", action=options.action, count=len(folders))
+    svc.out("member folders: " + (", ".join(folders) if folders else "none"))
+    return 0
+
+
 def _cmd_lan(svc: Services, args: Sequence[str]) -> int:
     handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
         "setup": _cmd_setup,
@@ -880,6 +1072,8 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         "rename": _cmd_rename,
         "pair": _cmd_pair,
         "lan": _cmd_lan,
+        "hub": _cmd_hub,
+        "folders": _cmd_folders,
     }
     try:
         if not argv or argv[0] not in handlers:

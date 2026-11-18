@@ -205,14 +205,21 @@ class Outbound:
         agent, folder, task, model = given.get("agent"), given.get("path"), given.get("prompt"), given.get("model")
         if agent not in wire.OPEN_AGENTS:
             raise OutboundError(f"agent must be one of {', '.join(wire.OPEN_AGENTS)} when host is given")
-        if not isinstance(folder, str) or ALIAS.fullmatch(folder) is None:
+        if not isinstance(folder, str) or (ALIAS.fullmatch(folder) is None and not wire.valid_path(folder)):
             raise OutboundError("path must be a folder alias the peer granted when host is given")
         if not isinstance(task, str) or trim(task) == "" or len(task) > wire.MAX_TASK_CHARS:
             raise OutboundError(f"prompt is the task and must hold 1 to {wire.MAX_TASK_CHARS} characters when host is given")
         self._admit(caller)
         peer = self._peer(label)
+        if peer.member:
+            if not wire.valid_path(folder):
+                raise OutboundError("path must be an absolute folder path on the peer when host is a hub member")
+            body: dict[str, Any] = {"agent": agent, "path": folder, "task": task}
+        else:
+            if ALIAS.fullmatch(folder) is None:
+                raise OutboundError("path must be a folder alias the peer granted when host is given")
+            body = {"agent": agent, "folder": folder, "task": task}
         self._take_slot(caller.session)
-        body: dict[str, Any] = {"agent": agent, "folder": folder, "task": task}
         if model is not None:
             body["model"] = model
         tab = _field(self._call(peer, "open", body, OPEN_TIMEOUT_S), "tab", _TAB_ID)
@@ -255,17 +262,23 @@ class Outbound:
             if cached is None:
                 continue
             try:
-                sessions = wire.parse_inventory(json.loads(cached[0]))
+                inventory = json.loads(cached[0])
+                sessions = wire.parse_inventory(inventory)
+                folders = wire.parse_inventory_folders(inventory)
             except (ValueError, wire.WireError):
                 continue
             age = max(0, now - cached[1])
             offline = age > OFFLINE_AFTER_MS or poller.is_failed(self.home, peer.device_id)
-            rows.extend(_row(peer.label, s, age, offline) for s in sessions)
+            rows.extend(_row(peer.label, s, age, offline, folders) for s in sessions)
         return rows
 
 
-def _row(label: str, session: wire.RemoteSession, age_ms: int, offline: bool) -> dict[str, Any]:
+def _row(label: str, session: wire.RemoteSession, age_ms: int, offline: bool, folders: list[str] | None = None) -> dict[str, Any]:
     from ..messaging.messaging import harness_of
+
+    remote: dict[str, Any] = {"label": label, "ageMs": age_ms, "offline": offline}
+    if folders is not None:
+        remote["folders"] = folders
 
     name = f"{wire.escape_display(session.name) or session.id}@{label}"
     where = f"{label} (remote)"
@@ -277,7 +290,7 @@ def _row(label: str, session: wire.RemoteSession, age_ms: int, offline: bool) ->
         "agent": session.agent,
         "route": "remote",
         "state": session.status,
-        "remote": {"label": label, "ageMs": age_ms, "offline": offline},
+        "remote": remote,
         "where": where,
         "host": where,
         "harness": harness_of(session.agent),

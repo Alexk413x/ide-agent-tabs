@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -15,11 +16,23 @@ from typing import Any, Callable, Protocol
 
 from ..liveness import pid_alive
 from ..messaging.db import MailError
-from ..messaging.sessions import SESSIONS_DIR, is_session_id, live_session
+from ..messaging.sessions import SESSIONS_DIR, Presence, is_session_id, live_session
 from ..messaging.store import send_message
 from . import wire
 from .audit import ADMITTED, REFUSED, Audit, AuditError, AuditRecord
-from .policy import FolderGrant, PeerGrant, Policy, PolicyError, folder_grant, grant_for, load_network_config, load_policy
+from .outbound import is_inside
+from .policy import (
+    FolderGrant,
+    NetworkConfig,
+    PeerGrant,
+    Policy,
+    PolicyError,
+    folder_grant,
+    grant_for,
+    load_network_config,
+    load_policy,
+    model_ok,
+)
 from .remote_launch import RemoteLaunchError, claude_help_text, plan_remote_open
 from .store import COMPLETED, ConflictError, NetStore, NetStoreError, Reservation, db_path
 from .transport import network_enabled
@@ -27,8 +40,11 @@ from .transport import network_enabled
 REPARSE_POINT = 0x400
 REMEMBERED_REQUESTS = 256
 MINUTE_MS = 60_000
+HOUR_MS = 3_600_000
+MAX_NOTICES = 256
 _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _BAD_NAME_CATEGORIES = frozenset({"Cc", "Cs", "Zl", "Zp"})
+_SHELL_UNSAFE = frozenset("\"'`$;|&<>%")
 
 
 class TabService(Protocol):
@@ -104,6 +120,10 @@ def folder_problem(folder: FolderGrant) -> str | None:
     return None
 
 
+def _shell_safe_folder(path: str) -> bool:
+    return path.isprintable() and not any(char in _SHELL_UNSAFE for char in path) and os.path.isdir(path)
+
+
 def _digest(request: object) -> str:
     return hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
 
@@ -136,6 +156,7 @@ class NetDispatcher:
         self._lock = threading.Lock()
         self._sent: dict[str, deque[int]] = {}
         self._seen: dict[str, OrderedDict[str, tuple[str, dict[str, Any]]]] = {}
+        self._noticed: OrderedDict[tuple[str, str], int] = OrderedDict()
 
     def handle(self, peer: str, request: object) -> dict[str, Any]:
         trace = _Trace(peer if isinstance(peer, str) else "", raw_request_id(request))  # pyright: ignore[reportUnnecessaryIsInstance]
@@ -231,17 +252,16 @@ class NetDispatcher:
         trace.op = parsed.op
         body = parsed.body
         if isinstance(body, wire.OpenBody):
-            return self._open(trace, policy, grant, parsed.id, request, body, config.max_remote_tabs)
+            return self._open(trace, policy, grant, parsed.id, request, body, config)
         if isinstance(body, wire.CloseBody):
             return self._close(trace, policy, grant, parsed.id, request, body)
         if isinstance(body, wire.SendBody):
             return self._send(trace, grant, parsed.id, request, body)
-        return self._inventory(trace, grant)
+        return self._inventory(trace, grant, config.member_folders)
 
-    def _open(
-        self, trace: _Trace, policy: Policy, grant: PeerGrant, request_id: str, request: object, body: wire.OpenBody, max_global: int
-    ) -> dict[str, Any]:
-        peer = trace.peer
+    def _granted_folder(self, grant: PeerGrant, body: wire.OpenBody) -> FolderGrant:
+        if body.folder is None:
+            raise _Refusal("path-not-granted")
         if body.agent not in grant.agents:
             raise _Refusal("agent-not-granted")
         folder = folder_grant(grant, body.folder)
@@ -252,6 +272,70 @@ class NetDispatcher:
             raise _Refusal(f"folder-{problem}")
         if body.model is not None and body.model not in grant.models:
             raise _Refusal("model-not-granted")
+        return folder
+
+    def _member_folder(self, grant: PeerGrant, body: wire.OpenBody, member_folders: tuple[str, ...]) -> FolderGrant:
+        if body.path is None:
+            raise _Refusal("path-required")
+        if body.model is not None and not model_ok(body.model):
+            raise _Refusal("model-invalid")
+        path = os.path.normpath(body.path)
+        if not os.path.isabs(path):
+            raise _Refusal("not-local")
+        if not any(is_inside(path, folder) for folder in member_folders):
+            self._notify_folder_refused(grant, path)
+            raise _Refusal("folder-not-allowed")
+        try:
+            status = os.stat(path)
+        except OSError:
+            raise _Refusal("folder-missing") from None
+        folder = FolderGrant("member", path, status.st_dev, status.st_ino)
+        problem = folder_problem(folder)
+        if problem is not None:
+            raise _Refusal(f"folder-{problem}")
+        return folder
+
+    def _notify_folder_refused(self, grant: PeerGrant, path: str) -> None:
+        now = self._now_ms()
+        key = (grant.device_id, os.path.normcase(path))
+        with self._lock:
+            last = self._noticed.get(key)
+            if last is not None and now - last < HOUR_MS:
+                return
+            self._noticed[key] = now
+            self._noticed.move_to_end(key)
+            while len(self._noticed) > MAX_NOTICES:
+                self._noticed.popitem(last=False)
+        label = wire.escape_display(grant.label)
+        if _shell_safe_folder(path):
+            text = (
+                f"The hub member {label} asked to open a tab in {path}, which is outside network.memberFolders, "
+                "so this machine refused. To allow it, ask your user, then run: "
+                f'agent-tabs net folders add "{path}"'
+            )
+        else:
+            text = (
+                f"{label} asked to open a tab outside network.memberFolders; this machine refused. "
+                "Run agent-tabs net folders to see the list."
+            )
+        try:
+            store = self._open_store()
+            for session in self._live_sessions():
+                if self._owner(store, session["id"]) is None:
+                    with contextlib.suppress(_Refusal):
+                        self._deliver("net-notice", session["id"], text, None, "notice-failed")
+        except Exception as e:  # noqa: BLE001 - the notice is best effort; the refusal stands either way
+            self._log(f"net: delivering a folder notice failed: {type(e).__name__}")
+
+    def _open(
+        self, trace: _Trace, policy: Policy, grant: PeerGrant, request_id: str, request: object, body: wire.OpenBody, config: NetworkConfig
+    ) -> dict[str, Any]:
+        peer = trace.peer
+        max_global = config.max_remote_tabs
+        if grant.member:
+            folder = self._member_folder(grant, body, config.member_folders)
+        else:
+            folder = self._granted_folder(grant, body)
         try:
             plan = plan_remote_open(body.agent, folder.path, self._claude_help, grant.label)
         except RemoteLaunchError:
@@ -286,13 +370,16 @@ class NetDispatcher:
             except PolicyError:
                 return False
             now = grant_for(current, peer)
+            if now is None or current.generation != policy.generation or now.member != grant.member or folder_problem(folder) is not None:
+                return False
+            if now.member:
+                latest, _ = load_network_config(self.home)
+                return any(is_inside(folder.path, f) for f in latest.member_folders)
             return (
-                now is not None
-                and current.generation == policy.generation
+                body.folder is not None
                 and body.agent in now.agents
                 and folder_grant(now, body.folder) == folder
                 and (body.model is None or body.model in now.models)
-                and folder_problem(folder) is None
             )
 
         if not store.dispatch_handoff(peer, request_id, generation, still_granted):
@@ -409,9 +496,10 @@ class NetDispatcher:
         now = self._now_ms()
         sender = f"{grant.label}-remote"
         owned = self._owner(store, body.to) == peer
-        allowed = owned or body.to in grant.send
+        direct = owned or body.to in grant.send
+        allowed = direct or grant.member
         presence = live_session(self.home, body.to, self._alive, now)
-        if not allowed and body.reply_to is not None and presence is not None:
+        if not direct and body.reply_to is not None and presence is not None:
             generation = session_generation(presence)
             remote = None if generation is None else store.find_reply_grant(peer, body.to, generation, body.reply_to, now)
             if remote is not None:
@@ -429,26 +517,30 @@ class NetDispatcher:
         self._remember(peer, request_id, digest, reply)
         return reply
 
-    def _inventory(self, trace: _Trace, grant: PeerGrant) -> dict[str, Any]:
-        from ..messaging.messaging import session_names
-
-        trace.admitted = True
-        store = self._open_store()
+    def _live_sessions(self) -> list[Presence]:
         now = self._now_ms()
         folder = os.path.join(self.home, SESSIONS_DIR)
         try:
             files = sorted(n for n in os.listdir(folder) if n.endswith(".json"))
         except OSError:
             files = []
-        live = [p for p in (live_session(self.home, n[:-5], self._alive, now) for n in files if is_session_id(n[:-5])) if p is not None]
+        return [p for p in (live_session(self.home, n[:-5], self._alive, now) for n in files if is_session_id(n[:-5])) if p is not None]
+
+    def _inventory(self, trace: _Trace, grant: PeerGrant, member_folders: tuple[str, ...]) -> dict[str, Any]:
+        from ..messaging.messaging import session_names
+
+        trace.admitted = True
+        store = self._open_store()
+        live = self._live_sessions()
         names = session_names(live)
         rows: list[wire.RemoteSession] = []
         for p in live:
-            if p["id"] not in grant.send and self._owner(store, p["id"]) != trace.peer:
+            if not grant.member and p["id"] not in grant.send and self._owner(store, p["id"]) != trace.peer:
                 continue
             if p["agent"] in wire.SESSION_AGENTS and p["state"] in wire.STATUSES:
                 rows.append(wire.RemoteSession(p["id"], _clean_name(names[p["id"]]), p["agent"], p["state"]))
+        folders = [f for f in member_folders if wire.valid_path(f)][: wire.MAX_FOLDERS] if grant.member else None
         try:
-            return wire.inventory_body(rows[: wire.MAX_SESSIONS])
+            return wire.inventory_body(rows[: wire.MAX_SESSIONS], folders)
         except wire.WireError:
             raise _Refusal("inventory-invalid", "failed") from None

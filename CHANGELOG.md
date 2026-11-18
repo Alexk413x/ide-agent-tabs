@@ -11,6 +11,30 @@ Plugin and MCP server 0.14.0. Not released yet.
 
 - The network code checks the mode through one transport layer, so a later Tailscale mode can plug in.
   `config.json` accepts `network.memberFolders` and `network.allowedNetworks`.
+- `net status` shows the hub and the member folders. A hub member's row in `net status` reads
+  `grants: hub member`.
+- With `host` toward a hub member, `open_tab` takes an absolute folder path on that machine in `path`
+  instead of a folder alias.
+- The `open_tab` tool text describes the member form of `path`.
+
+### Added
+
+- `policy.json` accepts an optional `hub` object (`id`, `name`) and a `member` flag on a peer.
+- A hub member has one role with no per-peer grants. It lists every live session in the inventory, messages
+  any live session, and opens `claude` or `codex` tabs in an absolute folder path inside this machine's
+  `network.memberFolders`. A path outside the list is refused with `folder-not-allowed`, and every local
+  session that no peer opened gets a message that names the folder and `agent-tabs net folders add <path>`.
+  The message omits the path and the command when the path is not an existing folder or holds shell
+  syntax or control characters.
+  The tab keeps this machine's permission mode, and the request cannot name one.
+- The inventory reply to a hub member carries the machine's member folders in an optional `folders` list.
+  The open request carries an optional `path` in place of `folder`.
+- `agent-tabs net hub create [--name <name>] [--folder <session folder>]`, `net hub status` and
+  `net hub leave`. `hub create` sets `network.memberFolders` and `network.outboundFolders` to the folder
+  one level below the drive root, `/` or the home folder when they are empty. `hub leave` removes the hub
+  and its members from this machine and raises the policy generation.
+- `agent-tabs net folders`, `net folders add <path>` and `net folders remove <path>` change
+  `network.memberFolders` with no typed confirmation.
 
 ## 0.13.0
 

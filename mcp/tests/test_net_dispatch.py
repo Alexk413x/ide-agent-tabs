@@ -7,6 +7,7 @@ import sys
 import unittest
 from collections.abc import Callable, Collection, Mapping
 from typing import Any
+from unittest import mock
 
 from ide_agent_tabs.messaging.db import MailError
 from ide_agent_tabs.messaging.sessions import update_presence
@@ -725,6 +726,395 @@ class InventoryTest(DispatchCase):
     def test_an_empty_inventory(self) -> None:
         self.assertEqual(self.handle({"id": "i1", "op": "inventory", "body": {}})["body"], {"sessions": []})
         self.assertEqual((self.last_audit()["op"], self.last_audit()["decision"]), ("inventory", "admitted"))
+
+
+HUB = policy.Hub("0123456789abcdef0123456789abcdef", "home")
+
+
+class MemberCase(DispatchCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.base = os.path.join(self.home, "members")
+        self.inside = os.path.join(self.base, "proj")
+        os.makedirs(self.inside)
+        self.set_member()
+
+    def set_member(self, folders: Collection[str] | None = None, generation: int = 0, **changes: Any) -> None:
+        write_config(
+            self.home,
+            network="lan",
+            bind="192.168.1.10",
+            memberFolders=list([self.base] if folders is None else folders),
+        )
+        member = PeerGrant(device_id=PEER, label="laptop", address="192.168.1.20", member=True, **changes)
+        policy.save_policy(self.home, Policy((member,), generation, HUB))
+
+    def member_open(self, path: str, request_id: str = "r1", **body: Any) -> dict[str, Any]:
+        fields: dict[str, Any] = {"agent": "claude", "path": path, "task": TASK}
+        fields.update(body)
+        return {"id": request_id, "op": "open", "body": fields}
+
+    def sessions(self) -> list[dict[str, Any]]:
+        reply = self.handle({"id": "i1", "op": "inventory", "body": {}})
+        self.assertTrue(reply["ok"], self.last_audit())
+        return list(reply["body"]["sessions"])
+
+
+class MemberInventoryTest(MemberCase):
+    def test_every_live_session_is_listed_with_no_send_grant(self) -> None:
+        write_presence(self.home, "one", name="Planner")
+        write_presence(self.home, "two", agent="codex", state="busy")
+        reply = self.handle({"id": "i1", "op": "inventory", "body": {}})
+        self.assertEqual({s["id"] for s in reply["body"]["sessions"]}, {"one", "two"})
+        self.assertEqual(wire.parse_inventory(reply["body"])[0].id, "one")
+
+    def test_the_reply_carries_the_member_folders(self) -> None:
+        other = os.path.join(self.home, "elsewhere")
+        os.makedirs(other)
+        self.set_member([self.base, other])
+        reply = self.handle({"id": "i1", "op": "inventory", "body": {}})
+        self.assertEqual(reply["body"]["folders"], [self.base, other])
+        self.assertEqual(wire.parse_inventory_folders(reply["body"]), [self.base, other])
+
+    def test_an_empty_member_folder_list_is_an_empty_array(self) -> None:
+        self.set_member([])
+        self.assertEqual(self.handle({"id": "i1", "op": "inventory", "body": {}})["body"], {"sessions": [], "folders": []})
+
+    def test_a_folder_the_wire_cannot_carry_is_left_out(self) -> None:
+        self.set_member([self.base, os.path.join(self.base, "a" * (wire.MAX_PATH_CHARS + 1))])
+        self.assertEqual(self.handle({"id": "i1", "op": "inventory", "body": {}})["body"]["folders"], [self.base])
+
+    def test_a_non_member_reply_has_no_folders_and_no_ungranted_sessions(self) -> None:
+        write_presence(self.home, "one")
+        write_policy(self.home, [self.peer_grant()])
+        write_config(self.home, network="lan", bind="192.168.1.10", memberFolders=[self.base])
+        self.assertEqual(self.handle({"id": "i1", "op": "inventory", "body": {}})["body"], {"sessions": []})
+
+
+class MemberSendTest(MemberCase):
+    def send_request(self, to: str, text: str = "hello", request_id: str = "s1", **extra: Any) -> dict[str, Any]:
+        return {"id": request_id, "op": "send", "body": {"to": to, "text": text, **extra}}
+
+    def test_a_member_messages_any_live_session(self) -> None:
+        write_presence(self.home, "local-1")
+        reply = self.handle(self.send_request("local-1", "ping"))
+        self.assertTrue(reply["ok"], self.last_audit())
+        mail = mail_to(self.home, "local-1")
+        self.assertEqual([(m["text"], m["from"]) for m in mail], [("ping", {"id": "laptop-remote", "agent": "remote", "path": ""})])
+
+    def test_a_session_that_is_not_live_is_refused(self) -> None:
+        self.assertRefused(self.handle(self.send_request("local-1")), "s1", "no-session")
+
+    def test_the_message_rate_limit_still_applies(self) -> None:
+        write_presence(self.home, "local-1")
+        self.set_member(messages_per_minute=2)
+        self.assertTrue(self.handle(self.send_request("local-1", "a", "s1"))["ok"])
+        self.assertTrue(self.handle(self.send_request("local-1", "b", "s2"))["ok"])
+        self.assertRefused(self.handle(self.send_request("local-1", "c", "s3")), "s3", "rate-limit")
+
+    def test_a_reply_keeps_the_remote_session_in_the_sender(self) -> None:
+        write_presence(self.home, "local-1")
+        store = self.use_store()
+        generation = session_generation({"startedAt": "2027-01-15T07:00:00.000Z"})
+        assert generation is not None
+        store.add_reply_grant("local-1", generation, PEER, "remote-sess", "m-0123456789abcdef", NOW)
+        self.assertTrue(self.handle(self.send_request("local-1", "answer", replyTo="m-0123456789abcdef"))["ok"])
+        self.assertEqual(mail_to(self.home, "local-1")[0]["from"]["id"], "remote-sess@laptop")
+
+    def test_a_non_member_still_needs_a_send_grant(self) -> None:
+        write_presence(self.home, "local-1")
+        write_policy(self.home, [self.peer_grant()])
+        self.assertRefused(self.handle(self.send_request("local-1")), "s1", "target-not-granted")
+
+
+class MemberOpenTest(MemberCase):
+    def test_an_open_inside_a_member_folder_launches_with_the_receivers_plan(self) -> None:
+        self.assertEqual(self.handle(self.member_open(self.inside)), {"re": "r1", "ok": True, "body": {"tab": "tab-1"}})
+        self.assertEqual(
+            self.service.opened,
+            [
+                {
+                    "path": self.inside,
+                    "agent": "claude",
+                    "args": ["--permission-mode", "manual"],
+                    "prompt": FIRST_TURN.format(label="laptop"),
+                }
+            ],
+        )
+        self.assertEqual([m["text"] for m in mail_to(self.home, "tab-1")], [TASK])
+        self.assertEqual(self.dispatcher.is_remote_origin("tab-1"), PEER)
+
+    def test_the_member_folder_itself_and_a_deeper_folder_are_inside(self) -> None:
+        deeper = os.path.join(self.inside, "a", "b")
+        os.makedirs(deeper)
+        self.set_member(max_tabs=3)
+        self.assertTrue(self.handle(self.member_open(self.base, "r1"))["ok"])
+        self.assertTrue(self.handle(self.member_open(deeper, "r2"))["ok"])
+        self.assertEqual([o["path"] for o in self.service.opened], [self.base, deeper])
+
+    def test_codex_and_any_model_that_passes_the_model_check_are_accepted(self) -> None:
+        self.set_member(max_tabs=3)
+        reply = self.handle(self.member_open(self.inside, "r1", agent="codex", model="gpt-5.4:high/x@y+z"))
+        self.assertTrue(reply["ok"], self.last_audit())
+        opened = self.service.opened[0]
+        self.assertEqual((opened["agent"], opened["model"]), ("codex", "gpt-5.4:high/x@y+z"))
+        self.assertEqual(opened["args"][-2:], ["-C", self.inside])
+        self.assertTrue(self.handle(self.member_open(self.inside, "r2", model="opus"))["ok"])
+        self.assertEqual(self.service.opened[1]["model"], "opus")
+
+    def test_a_model_the_policy_check_refuses_is_refused(self) -> None:
+        self.assertRefused(self.handle(self.member_open(self.inside, model="m" * 129)), "r1", "model-invalid")
+        self.assertEqual(self.service.opened, [])
+
+    def test_agents_outside_claude_and_codex_are_refused_by_the_wire(self) -> None:
+        self.assertRefused(self.handle(self.member_open(self.inside, agent="agy")), "r1", "bad-request")
+
+    def test_a_member_cannot_name_a_permission_mode(self) -> None:
+        extras: list[dict[str, Any]] = [
+            {"args": ["--permission-mode", "bypassPermissions"]},
+            {"permissionMode": "bypassPermissions"},
+            {"permission_mode": "bypassPermissions"},
+            {"env": {"X": "1"}},
+        ]
+        for extra in extras:
+            with self.subTest(extra):
+                self.assertRefused(self.handle(self.member_open(self.inside, "r1", **extra)), "r1", "bad-request")
+        self.assertEqual(self.service.opened, [])
+        self.assertTrue(self.handle(self.member_open(self.inside, "r2"))["ok"])
+        self.assertEqual(self.service.opened[0]["args"], ["--permission-mode", "manual"])
+
+    def test_a_path_outside_the_member_folders_is_refused(self) -> None:
+        outside = os.path.join(self.home, "outside")
+        os.makedirs(outside)
+        self.assertRefused(self.handle(self.member_open(outside)), "r1", "folder-not-allowed")
+        self.assertEqual(self.service.opened, [])
+        self.assertEqual(self.last_audit()["decision"], "refused")
+
+    def test_an_empty_member_folder_list_allows_nothing(self) -> None:
+        self.set_member([])
+        self.assertRefused(self.handle(self.member_open(self.inside)), "r1", "folder-not-allowed")
+
+    def test_a_sibling_that_shares_a_prefix_is_outside(self) -> None:
+        sibling = self.inside + "-other"
+        os.makedirs(sibling)
+        self.set_member([self.inside])
+        self.assertRefused(self.handle(self.member_open(sibling)), "r1", "folder-not-allowed")
+
+    def test_dot_dot_components_cannot_leave_the_list(self) -> None:
+        outside = os.path.join(self.home, "outside")
+        os.makedirs(outside)
+        sneaky = os.path.join(self.inside, "..", "..", "outside")
+        self.assertRefused(self.handle(self.member_open(sneaky)), "r1", "folder-not-allowed")
+
+    def test_a_link_that_leads_out_of_the_list_is_outside(self) -> None:
+        target = os.path.join(self.home, "outside")
+        os.makedirs(target)
+        link = os.path.join(self.inside, "link")
+        if sys.platform == "win32":
+            done = subprocess.run(["cmd", "/c", "mklink", "/J", link, target], capture_output=True, check=False)
+            if done.returncode != 0:
+                self.skipTest("cannot create a junction")
+        else:
+            try:
+                os.symlink(target, link)
+            except OSError:
+                self.skipTest("cannot create a symlink")
+        self.assertRefused(self.handle(self.member_open(link)), "r1", "folder-not-allowed")
+
+    def test_a_link_between_the_list_and_the_folder_is_refused_by_the_folder_checks(self) -> None:
+        real = os.path.join(self.inside, "real")
+        os.makedirs(os.path.join(real, "inner"))
+        link = os.path.join(self.inside, "link")
+        if sys.platform == "win32":
+            done = subprocess.run(["cmd", "/c", "mklink", "/J", link, real], capture_output=True, check=False)
+            if done.returncode != 0:
+                self.skipTest("cannot create a junction")
+        else:
+            try:
+                os.symlink(real, link)
+            except OSError:
+                self.skipTest("cannot create a symlink")
+        self.assertRefused(self.handle(self.member_open(os.path.join(link, "inner"))), "r1", "folder-link")
+        self.assertEqual(self.service.opened, [])
+
+    def test_a_missing_folder_inside_the_list_is_refused(self) -> None:
+        self.assertRefused(self.handle(self.member_open(os.path.join(self.inside, "nope"))), "r1", "folder-missing")
+
+    def test_a_file_inside_the_list_is_refused(self) -> None:
+        file = os.path.join(self.inside, "afile")
+        with open(file, "w", encoding="utf-8") as f:
+            f.write("x")
+        self.assertRefused(self.handle(self.member_open(file)), "r1")
+        self.assertEqual(self.service.opened, [])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows paths ignore case")
+    def test_the_comparison_ignores_case_on_windows(self) -> None:
+        self.assertTrue(self.handle(self.member_open(self.inside.upper()))["ok"], self.last_audit())
+
+    def test_the_alias_form_needs_a_path_from_a_member(self) -> None:
+        self.assertRefused(self.handle(self.open_request()), "r1", "path-required")
+
+    def test_a_non_member_cannot_send_a_path(self) -> None:
+        write_policy(self.home, [self.peer_grant()])
+        self.assertRefused(self.handle(self.member_open(self.folder)), "r1", "path-not-granted")
+        self.assertEqual(self.service.opened, [])
+
+    def test_a_relative_unc_or_empty_path_is_refused_by_the_wire(self) -> None:
+        for bad in ("proj", "..\\proj", "\\\\server\\share\\proj", "//server/share/proj", "", "C:proj", self.inside + "\n"):
+            with self.subTest(bad):
+                self.assertRefused(self.handle(self.member_open(bad)), "r1", "bad-request")
+
+    def test_both_a_folder_and_a_path_are_refused_by_the_wire(self) -> None:
+        self.assertRefused(self.handle(self.member_open(self.inside, folder="proj")), "r1", "bad-request")
+
+    def test_a_member_may_hold_only_max_tabs_and_opens_per_hour(self) -> None:
+        self.set_member(max_tabs=1, opens_per_hour=5)
+        self.open_member("r1")
+        self.assertRefused(self.handle(self.member_open(self.inside, "r2")), "r2", "limit")
+
+    def open_member(self, request_id: str) -> str:
+        reply = self.handle(self.member_open(self.inside, request_id))
+        self.assertTrue(reply["ok"], self.last_audit())
+        return str(reply["body"]["tab"])
+
+    def test_a_member_closes_only_a_tab_it_opened(self) -> None:
+        tab = self.open_member("r1")
+        self.assertTrue(self.handle({"id": "c1", "op": "close", "body": {"tab": tab}})["ok"])
+        self.assertEqual(self.service.closed, [tab])
+        self.assertRefused(self.handle({"id": "c2", "op": "close", "body": {"tab": "local-tab"}}), "c2", "not-opened-by-peer")
+
+    def test_a_folder_removed_from_the_list_between_reserve_and_handoff_launches_nothing(self) -> None:
+        store = self.use_store(HooksStore)
+        assert isinstance(store, HooksStore)
+        store.after_reserve = lambda: self.set_member([])
+        self.assertRefused(self.handle(self.member_open(self.inside)), "r1", "superseded")
+        self.assertEqual(self.service.opened, [])
+
+    def test_a_member_flag_dropped_between_reserve_and_handoff_launches_nothing(self) -> None:
+        store = self.use_store(HooksStore)
+        assert isinstance(store, HooksStore)
+        store.after_reserve = lambda: write_policy(self.home, [self.peer_grant()])
+        self.assertRefused(self.handle(self.member_open(self.inside)), "r1", "superseded")
+        self.assertEqual(self.service.opened, [])
+
+    def test_a_policy_generation_bump_between_reserve_and_handoff_launches_nothing(self) -> None:
+        store = self.use_store(HooksStore)
+        assert isinstance(store, HooksStore)
+        store.after_reserve = lambda: self.set_member(generation=1)
+        self.assertRefused(self.handle(self.member_open(self.inside)), "r1", "superseded")
+        self.assertEqual(self.service.opened, [])
+
+
+class MemberNoticeTest(MemberCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.outside = os.path.join(self.home, "outside", "deep")
+        os.makedirs(self.outside)
+        write_presence(self.home, "local-1")
+        write_presence(self.home, "local-2")
+
+    def refuse(self, request_id: str = "r1", path: str | None = None) -> None:
+        self.assertRefused(self.handle(self.member_open(path or self.outside, request_id)), request_id, "folder-not-allowed")
+
+    def test_every_local_session_gets_a_notice_with_the_folder_and_the_command(self) -> None:
+        self.refuse()
+        for session in ("local-1", "local-2"):
+            mail = mail_to(self.home, session)
+            self.assertEqual(len(mail), 1)
+            text = mail[0]["text"]
+            self.assertIn(self.outside, text)
+            self.assertIn(f'agent-tabs net folders add "{self.outside}"', text)
+            self.assertIn("laptop", text)
+            self.assertIn("ask your user", text)
+            self.assertEqual(mail[0]["from"]["agent"], "remote")
+        self.assertNotIn("SENTINEL", json.dumps(mail_to(self.home, "local-1")))
+
+    def assertGenericNotice(self, session: str = "local-1") -> None:
+        mail = mail_to(self.home, session)
+        self.assertEqual(len(mail), 1)
+        self.assertEqual(
+            mail[0]["text"],
+            "laptop asked to open a tab outside network.memberFolders; this machine refused. Run agent-tabs net folders to see the list.",
+        )
+
+    def test_a_path_with_shell_syntax_gets_a_notice_without_the_path_or_the_command(self) -> None:
+        hostile = os.path.join(self.outside, '"; rm -rf ~; "')
+        self.refuse("r1", hostile)
+        self.assertGenericNotice()
+        self.assertGenericNotice("local-2")
+        self.assertNotIn("rm -rf", json.dumps(mail_to(self.home, "local-1")))
+
+    def test_a_path_that_does_not_exist_gets_the_notice_without_the_path_or_the_command(self) -> None:
+        self.refuse("r1", os.path.join(self.outside, "not-there"))
+        self.assertGenericNotice()
+
+    def test_an_existing_folder_with_a_shell_character_gets_the_notice_without_the_path(self) -> None:
+        for index, char in enumerate(";$&%'`|<>"):
+            folder = os.path.join(self.outside, f"a{char}b")
+            try:
+                os.makedirs(folder)
+            except OSError:
+                continue
+            with self.subTest(char):
+                self.refuse(f"r{index}", folder)
+                self.assertNotIn("net folders add", " ".join(m["text"] for m in mail_to(self.home, "local-1")))
+                self.assertNotIn(f"a{char}b", " ".join(m["text"] for m in mail_to(self.home, "local-1")))
+
+    def test_a_path_with_a_control_character_is_refused_by_the_wire_and_sends_no_notice(self) -> None:
+        self.assertRefused(self.handle(self.member_open(self.outside + "\n; rm -rf ~")), "r1", "bad-request")
+        self.assertEqual(mail_to(self.home, "local-1"), [])
+
+    def test_the_label_goes_through_the_display_escaping(self) -> None:
+        with mock.patch.object(wire, "escape_display", return_value="ESCAPED") as shown:
+            self.refuse("r1", os.path.join(self.outside, "not-there"))
+        shown.assert_called_with("laptop")
+        self.assertTrue(mail_to(self.home, "local-1")[0]["text"].startswith("ESCAPED asked"))
+
+    def test_the_notice_never_carries_the_task_text(self) -> None:
+        self.refuse()
+        self.assertNotIn("SENTINEL", mail_to(self.home, "local-1")[0]["text"])
+
+    def test_a_repeat_of_the_same_refusal_sends_no_second_notice_within_an_hour(self) -> None:
+        with mock.patch.object(dispatch, "send_message", wraps=dispatch.send_message) as sent:
+            self.refuse("r1")
+            self.refuse("r2")
+            self.assertEqual(sent.call_count, 2)
+            self.clock.at += HOUR + 1
+            self.refuse("r3")
+            self.assertEqual(sent.call_count, 4)
+        self.assertEqual(len(mail_to(self.home, "local-1")), 1)
+
+    def test_a_different_folder_gets_its_own_notice(self) -> None:
+        self.refuse("r1")
+        other = os.path.join(self.home, "outside", "second")
+        os.makedirs(other)
+        self.refuse("r2", other)
+        self.assertEqual(len(mail_to(self.home, "local-1")), 2)
+
+    def test_a_tab_a_peer_opened_gets_no_notice(self) -> None:
+        tab = self.handle(self.member_open(self.inside, "r0"))["body"]["tab"]
+        write_presence(self.home, tab)
+        self.refuse("r1")
+        self.assertEqual([m["text"] for m in mail_to(self.home, tab)], [TASK])
+
+    def test_a_refusal_with_no_live_session_still_refuses(self) -> None:
+        os.remove(os.path.join(self.home, "sessions", "local-1.json"))
+        os.remove(os.path.join(self.home, "sessions", "local-2.json"))
+        self.refuse()
+
+    def test_a_failing_mailbox_does_not_change_the_refusal(self) -> None:
+        with mock.patch("ide_agent_tabs.net.dispatch.send_message", side_effect=MailError("full")):
+            self.refuse()
+        self.assertEqual(mail_to(self.home, "local-1"), [])
+
+    def test_an_open_inside_the_list_sends_no_notice(self) -> None:
+        self.assertTrue(self.handle(self.member_open(self.inside))["ok"])
+        self.assertEqual(mail_to(self.home, "local-1"), [])
+
+    def test_a_non_member_refusal_sends_no_notice(self) -> None:
+        write_policy(self.home, [self.peer_grant()])
+        self.assertRefused(self.handle(self.open_request(folder="elsewhere")), "r1", "folder-not-granted")
+        self.assertEqual(mail_to(self.home, "local-1"), [])
 
 
 class AuditFailureTest(DispatchCase):

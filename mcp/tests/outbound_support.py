@@ -11,7 +11,7 @@ from ide_agent_tabs.mcp_tools import Call, ToolDeps, Tools
 from ide_agent_tabs.messaging.messaging import Messaging
 from ide_agent_tabs.net.origin import OriginChecker
 from ide_agent_tabs.net.outbound import Outbound, SessionNet, close_all
-from ide_agent_tabs.net.policy import PeerGrant, Policy, save_policy
+from ide_agent_tabs.net.policy import Hub, PeerGrant, Policy, save_policy
 from ide_agent_tabs.net.store import NetStore
 from support import session, temp_home
 
@@ -84,8 +84,12 @@ def write_policy(home: str, peers: Collection[PeerGrant]) -> None:
     save_policy(home, Policy(tuple(peers), 0))
 
 
-def peer_grant(device_id: str = PEER, label: str = "laptop", address: str = "192.168.1.9") -> PeerGrant:
-    return PeerGrant(device_id=device_id, label=label, address=address)
+def write_member_policy(home: str, peers: Collection[PeerGrant]) -> None:
+    save_policy(home, Policy(tuple(peers), 0, Hub("0123456789abcdef0123456789abcdef", "home")))
+
+
+def peer_grant(device_id: str = PEER, label: str = "laptop", address: str = "192.168.1.9", member: bool = False) -> PeerGrant:
+    return PeerGrant(device_id=device_id, label=label, address=address, member=member)
 
 
 class NetCase(unittest.TestCase):

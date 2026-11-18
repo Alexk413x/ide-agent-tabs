@@ -4,7 +4,6 @@ import contextlib
 import ipaddress
 import json
 import os
-import re
 import shutil
 import socket
 import sys
@@ -22,10 +21,11 @@ from .cli import (
     Services,
     UsageError,
     create_identity,
+    default_label,
+    device_name,
     enable_lan,
     grants_text,
     make_parser,
-    read_config,
     set_network,
     store_peer,
 )
@@ -33,7 +33,7 @@ from .client import NetClientError, load_identity, local_device_id
 from .identity import der_from_pem
 from .interfaces import InterfaceError, InterfaceInfo
 from .pairing import INCOMPLETE_TEXT, PAIRING_PORT, PairIdentity, PairResult, PeerInfo
-from .policy import Policy, grant_for, load_network_config, load_policy
+from .policy import grant_for, load_network_config, load_policy
 from .private_files import check_private, ensure_private_dir, make_private_file
 from .transport import LanTransport
 
@@ -44,9 +44,6 @@ INVITATION_POLL_S = 0.2
 INVITATION_LIFETIME_S = 300
 INVITATION_CLOCK_SLACK_S = 2.0
 LOCK_NOTICE = "Pairing is locked for an hour after repeated failed attempts. `net trust` still works."
-
-_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9 ._-]+")
-_LABEL_UNSAFE = re.compile(r"[^a-z0-9-]+")
 
 
 def find_openssl(
@@ -238,30 +235,6 @@ def _mode(args: Sequence[str]) -> Mode:
     return Mode("invite", bind=bind)
 
 
-def _device_name(svc: Services) -> str:
-    configured: object = None
-    with contextlib.suppress(CliError):
-        section = read_config(svc.home).get("network")
-        if isinstance(section, dict):
-            configured = section.get("deviceName")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    if configured is not None:
-        if not isinstance(configured, str) or not pairing.valid_device_name(configured):
-            raise CliError("network.deviceName in config.json must be 1 to 32 letters, digits, spaces, - _ or ., with no run of six digits")
-        return configured
-    cleaned = _NAME_UNSAFE.sub("-", socket.gethostname()).strip(" -.")[:32].strip(" -.")
-    return cleaned if cleaned and pairing.valid_device_name(cleaned) else "this-machine"
-
-
-def default_label(name: str, policy: Policy) -> str:
-    base = _LABEL_UNSAFE.sub("-", name.lower()).strip("-")[:32].strip("-") or "peer"
-    taken = {peer.label for peer in policy.peers}
-    label, number = base, 2
-    while label in taken:
-        suffix = f"-{number}"
-        label, number = base[: 32 - len(suffix)] + suffix, number + 1
-    return label
-
-
 @dataclass(frozen=True)
 class Prepared:
     identity: PairIdentity
@@ -300,7 +273,7 @@ def _prepare(svc: Services, deps: PairDeps, requested: str | None) -> Prepared:
     config, warnings = load_network_config(svc.home)
     for warning in warnings:
         svc.err(f"warning: {warning}")
-    name = _device_name(svc)
+    name = device_name(svc)
     chosen = requested or config.bind
     bind = chosen if chosen is not None else _choose_bind(svc, deps)
     iface = deps.require_lan_ready(bind, chosen is not None)

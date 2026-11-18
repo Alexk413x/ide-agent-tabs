@@ -218,6 +218,7 @@ class Poller:
         reply: Mapping[str, Any] = self._fetch(self.home, peer, "inventory", {}, timeout=timeout)
         if reply.get("ok") is not True:
             raise _Unanswered
-        sessions = wire.parse_inventory(reply.get("body"))
-        text = json.dumps(wire.inventory_body(sessions), separators=(",", ":"), ensure_ascii=False)
+        body = reply.get("body")
+        sessions = wire.parse_inventory(body)
+        text = json.dumps(wire.inventory_body(sessions, wire.parse_inventory_folders(body)), separators=(",", ":"), ensure_ascii=False)
         self._db().put_inventory(peer, text, self._now_ms())
