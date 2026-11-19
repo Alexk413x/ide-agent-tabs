@@ -198,6 +198,19 @@ class SendingTest(PlainHomeCase):
         epoch[0] += 1
         self.assertTrue(wait_until(lambda: len(self.script.sent) == 2, 5))
 
+    def test_a_rebind_reopens_the_endpoint_on_the_new_address_and_sends_the_member_beacon_at_once(self) -> None:
+        self.in_hub()
+        moved = InterfaceInfo("Wi-Fi", "192.168.1.88", 24, "192.168.1.0/24", "Private", True)
+        service = self.run_service(
+            lambda: BeaconState(True, False), interval_s=3600.0, interface=lambda bind: moved if bind == "192.168.1.88" else LAN
+        )
+        self.assertTrue(wait_until(lambda: len(self.script.sent) == 1, 5))
+        self.assertEqual(self.script.wires[0].bind, LAN.address)
+        service.service.rebind("192.168.1.88")
+        self.assertTrue(wait_until(lambda: self.script.opened == 2 and len(self.script.sent) == 2, 5), service.log)
+        self.assertEqual((self.script.closed, self.script.wires[1].bind), (1, "192.168.1.88"))
+        self.assertIsInstance(parsed(self.script)[1], MemberBeacon)
+
     def test_beacons_stop_when_the_network_is_not_allowed_and_resume_when_it_is(self) -> None:
         self.in_hub()
         gate = [True]

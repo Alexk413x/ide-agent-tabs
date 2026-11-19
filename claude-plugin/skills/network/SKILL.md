@@ -138,9 +138,11 @@ When a join refuses, the command prints the reason and says nothing was saved:
   names, lowercased to `a-z0-9-`.
 - A member's address updates by itself: a signed member beacon names the new address, and the address
   changes only after pinned mutual TLS to the device succeeds. When this machine's own address changes, its
-  listener stops and `net status` says why. Run `agent-tabs net discoverable on --bind <new address>`, then
-  `net discoverable off` if the machine should not stay discoverable. A DHCP reservation on the router
-  avoids the stop.
+  listener rebinds by itself: it takes the new private address on an allowed network, saves it as
+  `network.bind`, restarts the join service and the beacons, and sends a member beacon so the members learn the
+  address. If the subnet changed, run `agent-tabs net discoverable on` once to update the Windows firewall rule.
+  When no address on an allowed network appears within 2 minutes, or two addresses qualify, the listener stops
+  and `net status` says why. Run `agent-tabs net discoverable on --bind <new address>` then.
 
 ## What members can do
 
@@ -188,10 +190,14 @@ leftover firewall rule named `Agent Tabs LAN` or `Agent Tabs LAN discovery` in W
 
 ## Machines paired with 0.13.0
 
-Peers paired with 0.13.0 keep their keys and become hub members on the first start of this version. The
-current network is added to `network.allowedNetworks`. Each moved peer gets the full member role, so its
-old narrow grants no longer apply. Run `agent-tabs net hub status` to check, and `net revoke <label>` to
-remove a peer.
+Peers paired with 0.13.0 keep their keys and become members of one hub named `home` on the first `net` command
+or listener start of this version, on each machine, with no action by the user. Two machines that paired each other
+derive the same hub id, and they agree on one hub key over mutual TLS once both run this version. The current
+network is added to `network.allowedNetworks` when the list is empty, and empty member folders get the default.
+Each moved peer gets the full member role, so its old narrow grants no longer apply. Each machine's sessions get one
+notice that lists the moved machines. Run `agent-tabs net hub status` to check, and `net revoke <label>` to remove
+a peer. When a machine was paired with two others that were not paired with each other, the machines can end in
+different hubs: run `agent-tabs net hub leave` on one and join the other (see Connect machines).
 
 ## Trust a machine by hand
 

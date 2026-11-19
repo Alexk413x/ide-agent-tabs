@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Protocol
 
-from .interfaces import InterfaceError, InterfaceInfo, require_lan_ready
+from .interfaces import InterfaceError, InterfaceInfo, private_interfaces, require_lan_ready
 from .pairing import check_lan_destination
 from .policy import NetworkConfig, is_allowed_bind
 
@@ -15,6 +15,8 @@ class Transport(Protocol):
     def allows_bind(self, address: str) -> bool: ...
 
     def bind_address(self, config: NetworkConfig) -> str | None: ...
+
+    def candidates(self, addresses: Iterable[str], describe: Callable[[str], InterfaceInfo]) -> list[InterfaceInfo]: ...
 
     def check_destination(self, address: str, port: int, interface_address: str, prefix_len: int) -> str: ...
 
@@ -40,6 +42,9 @@ class LanTransport:
 
     def bind_address(self, config: NetworkConfig) -> str | None:
         return config.bind if config.bind is not None and self.allows_bind(config.bind) else None
+
+    def candidates(self, addresses: Iterable[str], describe: Callable[[str], InterfaceInfo]) -> list[InterfaceInfo]:
+        return private_interfaces(addresses, describe)
 
     def check_destination(self, address: str, port: int, interface_address: str, prefix_len: int) -> str:
         return check_lan_destination(address, port, interface_address, prefix_len)

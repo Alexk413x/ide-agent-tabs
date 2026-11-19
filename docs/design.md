@@ -2619,11 +2619,27 @@ A hub is a set of machines that trust each other as equals.
   `network.allowedNetworks` and, when empty, set `network.memberFolders` and `network.outboundFolders` to the
   default folder (see Member folders). They turn the listener on, with its firewall rules, and register it to
   start at login.
-- **Machines paired with 0.13.0.** At the first start of 0.14.0, peers paired with 0.13.0 keep their pinned keys
-  and become members of one hub, with no action. The current network is added to `network.allowedNetworks`. The
-  old narrow grants (`send`, folder, agent) are dropped, so each moved peer gets the full member role, which
-  widens what it can do on the other machines. Each machine's sessions get a one-time notice that lists the moved
-  machines, and `net revoke` removes one.
+- **Machines paired with 0.13.0.** At the first `net` command or listener start of 0.14.0, a machine with pinned
+  peers and no hub creates a hub locally and saves each pinned peer that has a stored certificate as a member. The
+  peers keep their pinned keys, labels and addresses. The old narrow grants (`send`, folder, agent) are dropped, so each
+  moved peer gets the full member role and the member limits, which widens what it can do on the other machines. A
+  marker, `net/hub-migration.json`, makes this run once, including on a machine with no peers, so a peer trusted by
+  hand later stays a plain peer. The same step adds the current network to `network.allowedNetworks` when the list is
+  empty (the listener adds it once the id can be read, when it can't be read at that moment), and sets
+  `network.memberFolders` and `network.outboundFolders`, when empty, to the default folder of each folder the old grants
+  named (the session folder of the command when no grant named one). Each machine's sessions get one notice that lists
+  the moved machines and names `net revoke`. The marker records that the notice reached at least one live local
+  session, so a notice that no session could receive is retried.
+- **One hub for machines paired with 0.13.0.** The hub id is the first 16 bytes of SHA-256 over the domain string
+  `agent-tabs hub migration 1`, a zero byte and the lowest device id among this machine and the moved peers, in
+  lowercase hexadecimal. The hub name is `home`. Two machines that paired each other see the same two ids, so each derives
+  the same hub whenever it upgrades, with no coordination. Only public data goes into the id. The hub key is random on
+  each machine. Each machine queues a `rekey` to every moved peer, and the epoch rule (see Hub sync) leaves both machines
+  with the higher `(epoch, key)` after the first delivery over pinned mutual TLS. A machine that upgrades first can't
+  deliver: a 0.13.0 peer refuses the unknown request and the queue drops the task. The machine that upgrades second
+  delivers it, so the order of the upgrades doesn't matter. Machines paired in a chain, or a star whose centre doesn't
+  have the lowest device id, derive different hubs and refuse each other with `already-in-another-hub`. The person runs
+  `net hub leave` on one machine and joins the other.
 
 ### Joining a hub
 
@@ -2873,7 +2889,8 @@ touching the hub, the member role or the join protocol. The code builds them; Ta
 
 - **`Transport`** (`net/transport.py`), chosen by `transport_for(config)`, which returns the LAN transport for `lan` and
   nothing for any other value. Methods: `allows_bind(address)`, `bind_address(config)`,
-  `check_destination(address, port, interface_address, prefix_len)`, `check_connection(address)` (a no-op for LAN; the
+  `candidates(addresses, describe)` (the addresses that can serve as the bind address, used for the first choice and for
+  the rebind), `check_destination(address, port, interface_address, prefix_len)`, `check_connection(address)` (a no-op for LAN; the
   `whois` owner check for Tailscale), `firewall_scope(info)` (the subnet for LAN, `100.64.0.0/10` on the Tailscale
   interface), `require_ready(address, allow_virtual)` and `wait_ready(address, timeout_s, ...)`.
 - **`Discovery`** (`net/discovery.py`), with `announce(hub_id, hub_name, device_name, port)` and `browse(timeout)`, which
@@ -2898,10 +2915,10 @@ LAN mode stays the minimal option for one home or office network, with nothing e
 - `bind` is one fixed RFC 1918 IPv4 address of a physical interface; VPN, Hyper-V, WSL and Docker adapters
   only when named. The listener's firewall rules admit that interface's subnet (for example `192.168.1.0/24`) on the
   Private profile.
-- A member's address changes are followed automatically (see Discovery). When this machine's own address changes, its
-  listener stops, because the bind address is no longer assigned, and `net status` says why. Nothing rebinds it. The
-  fix is `net discoverable on --bind <new address>` (then `net discoverable off` to stop serving joins), or
-  `net lan on --bind <new address>`. A DHCP reservation on the router avoids it.
+- A member's address changes are followed automatically (see Discovery). When this machine's own address changes, the
+  listener rebinds (see Running the command). `net status` shows the new `bind`. When it can't pick one, the listener
+  stops and says why, and the fix is `net discoverable on --bind <new address>`. A DHCP reservation on the router avoids
+  the change.
 
 ### Running the command
 
@@ -2980,8 +2997,20 @@ LAN mode stays the minimal option for one home or office network, with nothing e
   service (47830) runs only while `network.discoverable` is true, LAN mode is on and the network gate is open, and a
   monitor thread starts and stops it. The beacon service sends and receives UDP announcements on 47831 and reconnects
   members (see Discovery). The listener reads `config.json` again every 5 s.
-- The listener halts when the network setting or the bind address changes, when the bind address is no longer
-  assigned to a local interface, and when Windows marks the network Public. It doesn't rebind by itself.
+- The listener halts when `network.network` or `network.port` changes, when `network.bind` changes while the bound
+  address is still assigned, and when Windows marks the network Public.
+- **Own address change.** When the bound address is no longer assigned to a local interface (a DHCP renewal, or a new
+  Wi-Fi on an allowed network), the listener closes its gate and looks for a replacement every 5 s. A replacement is a
+  private IPv4 address of a physical interface, chosen the way `net discoverable on` chooses one, whose network id is in
+  `network.allowedNetworks`. When more than one qualifies, the one in the old address's /24 wins, and otherwise the
+  listener picks none. When it finds one that isn't on a Public network, it saves it as `network.bind`, opens the member
+  socket on it, closes the old one, restarts the join service on it, rewrites `net/listener.json`, and reopens the
+  beacons so the member beacon goes out at once. Members then verify the new address by pinned mutual TLS. When no
+  replacement appears within 2 minutes, the listener halts. A start with a bind address that is already gone does the
+  same lookup before it binds. A `network.bind` written by a command while the old address is gone is followed too.
+  The firewall rule keeps the old subnet, so after a move to another subnet, `net discoverable on` updates it.
+  `net discoverable on`, `net find`, `net hub join` and `net networks add` use the current address and not a saved one
+  that is gone.
 - The listener needs no agent session on its machine. When a verified request arrives and no local
   server runs, it starts the shared server, so a remote `open` works on a machine where nothing else
   runs. It uses the server port and home recorded in the `network` section, starts the server from its
@@ -3161,9 +3190,8 @@ conversation; an action in flight follows D6 reconciliation.
 
 Addresses: a peer is reached at its recorded IP literal. In Tailscale mode addresses don't change. In LAN mode, when
 a member gets a new DHCP address, its beacon names the new address and the others update it after pinned mutual TLS
-matches (see Discovery). When this machine's own address changes, its listener stops until the person runs
-`net discoverable on --bind <new address>` or `net lan on --bind <new address>`; a DHCP reservation on the router
-avoids it.
+matches (see Discovery). When this machine's own address changes, its listener rebinds to the new address on an
+allowed network and sends a member beacon (see Running the command).
 
 ### Outbound limits
 

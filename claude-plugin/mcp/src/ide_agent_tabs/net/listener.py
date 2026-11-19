@@ -41,9 +41,12 @@ from .client import (
 from .hubjoin import HubJoiner, local_pair_identity
 from .hubsync import introduce_member
 from .identity import format_digest
+from .interfaces import InterfaceInfo, interface_for, local_addresses
+from .migration import ERRORS as MIGRATION_ERRORS
+from .migration import Migrator
 from .netid import GateState, current_network_id, fallback_of, gate_state, legacy_of, store_upgraded_network, upgraded_allowed
 from .notify import notify, powershell_path
-from .policy import NetworkConfig, PolicyError, load_network_config, load_policy, policy_path
+from .policy import NetworkConfig, PolicyError, load_network_config, load_policy, policy_path, update_network_section
 from .transport import LanTransport, network_enabled
 
 MAX_CONNECTIONS = 8
@@ -62,6 +65,9 @@ FAILURE_LOG_ENTRIES = 256
 LOG_LIMIT = 1_000_000
 LISTEN_BACKLOG = 16
 JOIN_RETRY_S = 30.0
+REBIND_WAIT_S = 120.0
+REBIND_RETRY_S = 5.0
+MIGRATION_TICK_S = 30.0
 _PROFILE_SCRIPT = (
     "$ErrorActionPreference = 'Stop';"
     "$i = (Get-NetIPAddress -IPAddress $env:AGENT_TABS_BIND).InterfaceIndex;"
@@ -327,8 +333,10 @@ class NetworkWatch:
         check: Callable[[str], bool | None],
         clock: Callable[[], float] = time.monotonic,
         addresses: Callable[[], frozenset[str]] = _local_addresses,
+        present: Callable[[str], bool] | None = None,
     ) -> None:
         self._bind = bind
+        self._present = present
         self._check = check
         self._clock = clock
         self._addresses = addresses
@@ -336,6 +344,7 @@ class NetworkWatch:
         self._checked_at = clock()
         self._ok = True
         self.changed = False
+        self.lost = False
         self._lock = threading.Lock()
 
     def allowed(self) -> bool:
@@ -357,9 +366,17 @@ class NetworkWatch:
         with self._lock:
             self._ok = ok
 
+    def retarget(self, bind: str) -> None:
+        self._bind = bind
+        self._known = self._addresses()
+        self._checked_at = self._clock()
+        self.lost = False
+        self._set(True)
+
     def tick(self) -> str | None:
-        if not _address_present(self._bind):
+        if not (self._present or _address_present)(self._bind):
             self._set(False)
+            self.lost = True
             return "the bind address is no longer assigned to a local interface"
         addresses = self._addresses()
         changed = addresses != self._known
@@ -395,6 +412,10 @@ class Options:
     notice: Callable[[str], object] = notify
     beacons: BeaconSettings | None = None
     member_request: Callable[..., dict[str, Any]] | None = None
+    address_present: Callable[[str], bool] | None = None
+    candidates: Callable[[], list[InterfaceInfo]] | None = None
+    rebind_wait_s: float = REBIND_WAIT_S
+    migration: Migrator | None = None
 
 
 class Listener:
@@ -422,6 +443,12 @@ class Listener:
         self._join_retry_at = 0.0
         self._address_epoch = 0
         self._beacon_thread: threading.Thread | None = None
+        self._beacons: BeaconService | None = None
+        self._started = NetworkConfig()
+        self._started_ms = now_ms()
+        self._rebind_at = 0.0
+        self._rebind_note = ""
+        self._migration_at = 0.0
 
     def log(self, text: str) -> None:
         append_log(log_file(self._home), text)
@@ -448,11 +475,66 @@ class Listener:
             raise
         return sock
 
+    def _is_present(self, bind: str) -> bool:
+        return (self._options.address_present or _address_present)(bind)
+
+    def _pick_address(self, allowed: Sequence[str], old: str) -> str | None:
+        try:
+            if self._options.candidates is not None:
+                found = self._options.candidates()
+            else:
+                found = LanTransport().candidates(local_addresses(), interface_for)
+        except (OSError, ValueError) as error:
+            self._note_rebind(f"the addresses of this machine can't be listed: {error}")
+            return None
+        usable: list[str] = []
+        for info in found:
+            try:
+                network = self._options.network_id(info.address)
+            except (OSError, ValueError):
+                continue
+            if gate_state(allowed, network).allowed:
+                usable.append(info.address)
+        if len(usable) > 1:
+            try:
+                near = ipaddress.ip_network(f"{old}/24", strict=False)
+                usable = [a for a in usable if ipaddress.ip_address(a) in near]
+            except ValueError:
+                usable = []
+        if len(usable) == 1:
+            return usable[0]
+        self._note_rebind(
+            "no address on an allowed network replaced it"
+            if not usable
+            else f"more than one address on an allowed network could replace it: {', '.join(usable)}"
+        )
+        return None
+
+    def _note_rebind(self, text: str) -> None:
+        if text != self._rebind_note:
+            self._rebind_note = text
+            self.log(f"the bind address is gone and {text}")
+
     def run(self) -> int:
+        if self._options.migration is not None:
+            try:
+                self._options.migration.start(self._home)
+            except MIGRATION_ERRORS as error:
+                self.log(f"moving the paired machines into a hub failed: {type(error).__name__}: {error}")
         config = self._config()
         if not network_enabled(config) or config.bind is None:
             return self._refuse("network is not lan or no bind address is set")
         bind = config.bind
+        if not self._is_present(bind):
+            moved = self._pick_address(config.allowed_networks, bind)
+            if moved is not None:
+                try:
+                    update_network_section(self._home, {"bind": moved})
+                except (OSError, ValueError) as error:
+                    return self._refuse(f"the bind address {bind} is gone, and the new address {moved} could not be saved: {error}")
+                self.log(f"the bind address {bind} is gone; using {moved} and saving it as network.bind")
+                bind = moved
+                config = replace(config, bind=moved)
         if not self._options.bind_check(bind):
             return self._refuse("the bind address is not a private IPv4 or IPv6 unique local address")
         problem = tls.runtime_problem()
@@ -465,7 +547,7 @@ class Listener:
         existing = read_listener(self._home)
         if existing is not None and existing.pid != os.getpid() and pid_alive(existing.pid):
             return self._refuse(f"a listener already runs (pid {existing.pid})")
-        watch = NetworkWatch(bind, self._options.network_check)
+        watch = NetworkWatch(bind, self._options.network_check, present=self._options.address_present)
         reason = watch.initial()
         if reason is not None:
             return self._refuse(reason)
@@ -474,7 +556,8 @@ class Listener:
         except OSError as error:
             return self._refuse(f"cannot bind {bind} port {config.port}: {error}")
         self._sock, self._bind, self._watch = sock, bind, watch
-        self._live = config
+        self._live = self._started = config
+        self._started_ms = now_ms()
         self._refresh_gate(force=True)
         self._trust = TrustCache(self._home, identity.cert, identity.key, identity.passphrase, self.log)
         self._forwarder = self._options.forwarder or IngressForwarder(self._home, self._options.server_port, self.log)
@@ -482,16 +565,17 @@ class Listener:
         with contextlib.suppress(OSError):
             remove_file(str(stop_file(self._home)))
         write_atomically(
-            str(listener_file(self._home)), stringify({"pid": os.getpid(), "startedMs": now_ms(), "bind": bind, "port": port}, 2) + "\n"
+            str(listener_file(self._home)),
+            stringify({"pid": os.getpid(), "startedMs": self._started_ms, "bind": bind, "port": port}, 2) + "\n",
         )
         self.log(f"listening on {bind} port {port} (pid {os.getpid()})")
         if self._options.ready is not None:
             self._options.ready(port)
-        monitor = threading.Thread(target=self._monitor, args=(config,), daemon=True)
+        monitor = threading.Thread(target=self._monitor, daemon=True)
         monitor.start()
         if self._options.beacons is not None:
-            service = BeaconService(self._home, bind, self._beacon_state, self._stop, self.log, self._options.beacons)
-            self._beacon_thread = service.start()
+            self._beacons = BeaconService(self._home, bind, self._beacon_state, self._stop, self.log, self._options.beacons)
+            self._beacon_thread = self._beacons.start()
         try:
             self._serve()
         finally:
@@ -499,7 +583,8 @@ class Listener:
             if self._beacon_thread is not None:
                 self._beacon_thread.join(2.0)
             self._stop_joins("the listener stopped")
-            sock.close()
+            if self._sock is not None:
+                self._sock.close()
             info = read_listener(self._home)
             if info is not None and info.pid == os.getpid():
                 with contextlib.suppress(OSError):
@@ -511,9 +596,10 @@ class Listener:
         self.log(f"stopping: {reason}")
         self._stop.set()
 
-    def _monitor(self, started: NetworkConfig) -> None:
+    def _monitor(self) -> None:
         assert self._watch is not None
         config_checked = time.monotonic()
+        lost_since: float | None = None
         while not self._stop.wait(MONITOR_S):
             if os.path.exists(stop_file(self._home)):
                 with contextlib.suppress(OSError):
@@ -521,20 +607,102 @@ class Listener:
                 self._halt("stop requested")
                 return
             reason = self._watch.tick()
-            if reason is not None:
+            lost = self._watch.lost
+            if reason is not None and not lost:
                 self._halt(reason)
                 return
             if self._options.config is None and time.monotonic() - config_checked >= CONFIG_RECHECK_S:
                 config_checked = time.monotonic()
                 current = self._config()
-                if not network_enabled(current) or current.bind != started.bind or current.port != started.port:
+                if not network_enabled(current) or current.port != self._started.port:
+                    self._halt("the network setting changed")
+                    return
+                if current.bind != self._started.bind and not (current.bind is not None and self._follow_config(current.bind)):
                     self._halt("the network setting changed")
                     return
                 self._live = current
+            if lost and self._watch.lost:
+                now = time.monotonic()
+                lost_since = now if lost_since is None else lost_since
+                if now >= self._rebind_at:
+                    self._rebind_at = now + REBIND_RETRY_S
+                    moved = self._pick_address(self._live.allowed_networks, self._bind)
+                    if moved is not None and self._move_to(moved, persist=True):
+                        lost_since = None
+                if lost_since is not None:
+                    if now - lost_since >= self._options.rebind_wait_s:
+                        self._halt(f"{reason}, and no address on an allowed network replaced it within {self._options.rebind_wait_s:g} s")
+                        return
+                    continue
+            lost_since = None
             if self._watch.changed:
                 self._address_epoch += 1
             self._refresh_gate(force=self._watch.changed)
             self._sync_joins()
+            self._tick_migration()
+
+    def _tick_migration(self) -> None:
+        migration = self._options.migration
+        if migration is None or time.monotonic() < self._migration_at:
+            return
+        self._migration_at = time.monotonic() + MIGRATION_TICK_S
+        try:
+            migration.tick(self._home, self._network_id)
+        except MIGRATION_ERRORS as error:
+            self.log(f"completing the move into a hub failed: {type(error).__name__}: {error}")
+
+    def _follow_config(self, bind: str) -> bool:
+        if self._is_present(self._bind):
+            return False
+        return self._move_to(bind, persist=False)
+
+    def _move_to(self, bind: str, *, persist: bool) -> bool:
+        old = self._bind
+        if not self._options.bind_check(bind):
+            self.log(f"not moving to {bind}: it is not a private IPv4 or IPv6 unique local address")
+            return False
+        public = self._options.network_check(bind)
+        if public is None or public:
+            self.log(f"not moving to {bind}: its network is marked Public or its category can't be read")
+            return False
+        try:
+            sock = self._open_socket(bind, self._live.port)
+        except OSError as error:
+            self.log(f"not moving to {bind}: cannot bind it: {error}")
+            return False
+        if persist:
+            try:
+                update_network_section(self._home, {"bind": bind})
+            except (OSError, ValueError) as error:
+                sock.close()
+                self.log(f"not moving to {bind}: network.bind could not be saved: {error}")
+                return False
+        self._started = replace(self._started, bind=bind)
+        previous, self._sock, self._bind = self._sock, sock, bind
+        self._live = replace(self._live, bind=bind)
+        if previous is not None:
+            with contextlib.suppress(OSError):
+                previous.close()
+        assert self._watch is not None
+        self._watch.retarget(bind)
+        self._stop_joins("the bind address changed")
+        self._join_retry_at = 0.0
+        self._network_read_at = float("-inf")
+        self._address_epoch += 1
+        port = sock.getsockname()[1]
+        write_atomically(
+            str(listener_file(self._home)),
+            stringify({"pid": os.getpid(), "startedMs": self._started_ms, "bind": bind, "port": port}, 2) + "\n",
+        )
+        self._refresh_gate(force=True)
+        if self._beacons is not None:
+            self._beacons.rebind(bind)
+        self._rebind_note = ""
+        self.log(
+            f"the bind address {old} is gone; now listening on {bind} port {port}. "
+            "If the subnet changed, run agent-tabs net discoverable on to update the firewall rule"
+        )
+        return True
 
     def _refresh_gate(self, force: bool = False) -> None:
         now = time.monotonic()
@@ -774,7 +942,7 @@ def main(argv: Sequence[str]) -> int:
     server_port = parse_port(os.environ.get(PORT_OPTION_ENV)) or SERVER_DEFAULT_PORT
     if len(argv) == 2 and argv[0] == "--server-port":
         server_port = parse_port(argv[1]) or server_port
-    options = Options(server_port=server_port, beacons=BeaconSettings())
+    options = Options(server_port=server_port, beacons=BeaconSettings(), migration=Migrator())
     if sys.platform != "win32":
         signal.signal(signal.SIGTERM, lambda _signal, _frame: options.stop.set())
     return run_listener(agent_tabs_home(), options)

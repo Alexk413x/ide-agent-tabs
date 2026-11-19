@@ -7,9 +7,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from ..files import read_text_if_exists, write_atomically
+from ..files import file_lock, read_text_if_exists, write_atomically
 from ..jev.settings import CONFIG_FILE
-from ..jsjson import parse
+from ..jsjson import parse, stringify
 from ..messaging.sessions import SESSION_ID
 
 NET_DIR = "net"
@@ -270,6 +270,23 @@ def load_network_config(home: str) -> tuple[NetworkConfig, list[str]]:
         warnings.extend(f"Ignoring network in {CONFIG_FILE}, so the network is off: {reason}" for reason in invalid)
         return NetworkConfig(), warnings
     return result, warnings
+
+
+def update_network_section(home: str, updates: dict[str, Any]) -> None:
+    path = os.path.join(home, CONFIG_FILE)
+    with file_lock(path):
+        text = read_text_if_exists(path)
+        config: Any = parse(text) if text and text.strip() else {}
+        if not isinstance(config, dict):
+            raise PolicyError(f"{path} must hold a JSON object")
+        section: Any = config.get("network")  # pyright: ignore[reportUnknownMemberType]
+        if section is None:
+            section = {}
+        if not isinstance(section, dict):
+            raise PolicyError(f'"network" in {path} must be an object')
+        section.update(updates)  # pyright: ignore[reportUnknownMemberType]
+        config["network"] = section
+        write_atomically(path, stringify(config, 2) + "\n")
 
 
 def policy_path(home: str) -> str:

@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import contextlib
-import ipaddress
 import json
 import os
 import shutil
-import socket
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -29,7 +26,7 @@ from .client import NetClientError, load_identity, local_device_id, send_request
 from .find import FindRequest, FindResult, device_lines, find_devices, not_found_text
 from .hubjoin import HubJoiner
 from .identity import der_from_pem
-from .interfaces import InterfaceError, InterfaceInfo
+from .interfaces import InterfaceInfo, local_addresses
 from .listener import live_listener
 from .netid import fallback_of, gate_state, upgraded_allowed
 from .pairing import INCOMPLETE_TEXT, PAIRING_PORT, PairIdentity, PairResult
@@ -57,19 +54,6 @@ def find_openssl(
         if found:
             candidates.append(found)
     return next((path for path in candidates if os.path.isabs(path) and os.path.isfile(path)), None)
-
-
-def local_addresses() -> list[str]:
-    found: set[str] = set()
-    host = socket.gethostname()
-    with contextlib.suppress(OSError):
-        found.update(socket.gethostbyname_ex(host)[2])
-    with contextlib.suppress(OSError):
-        found.update(str(info[4][0]) for info in socket.getaddrinfo(host, None, socket.AF_INET))
-    with contextlib.suppress(OSError), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-        probe.connect(("10.255.255.255", 9))
-        found.add(str(probe.getsockname()[0]))
-    return sorted(found)
 
 
 def _require_lan_ready(address: str, allow_virtual: bool) -> InterfaceInfo:
@@ -101,15 +85,7 @@ class Prepared:
 
 
 def _choose_bind(svc: Services, deps: PairDeps) -> str:
-    found: list[InterfaceInfo] = []
-    for address in deps.local_addresses():
-        try:
-            ip = ipaddress.IPv4Address(address)
-            info = svc.interface_for(address)
-        except (ValueError, InterfaceError):
-            continue
-        if ip.is_private and not ip.is_loopback and not ip.is_link_local and info.physical:
-            found.append(info)
+    found = LanTransport().candidates(deps.local_addresses(), svc.interface_for)
     if not found:
         raise CliError(
             "No private address (10.x.x.x, 172.16-31.x.x or 192.168.x.x) of a physical network interface was found. "
@@ -122,6 +98,13 @@ def _choose_bind(svc: Services, deps: PairDeps) -> str:
     return found[0].address
 
 
+def current_bind(svc: Services, deps: PairDeps, saved: str | None) -> tuple[str | None, bool]:
+    if saved is None or svc.bind_available(saved):
+        return saved, saved is not None
+    svc.out(f"The saved address {saved} is no longer assigned to this machine.")
+    return _choose_bind(svc, deps), False
+
+
 def prepare(svc: Services, deps: PairDeps, requested: str | None) -> Prepared:
     problem = tls.runtime_problem()
     if problem is not None:
@@ -130,9 +113,12 @@ def prepare(svc: Services, deps: PairDeps, requested: str | None) -> Prepared:
     for warning in warnings:
         svc.err(f"warning: {warning}")
     name = device_name(svc)
-    chosen = requested or config.bind
-    bind = chosen if chosen is not None else _choose_bind(svc, deps)
-    iface = deps.require_lan_ready(bind, chosen is not None)
+    if requested is not None:
+        bind, explicit = requested, True
+    else:
+        found, explicit = current_bind(svc, deps, config.bind)
+        bind = found if found is not None else _choose_bind(svc, deps)
+    iface = deps.require_lan_ready(bind, explicit)
     if local_device_id(svc.home) is None:
         openssl = deps.find_openssl(config.openssl, svc.env)
         if openssl is None:
@@ -366,7 +352,8 @@ def networks(svc: Services, args: Sequence[str]) -> int:
             raise UsageError("agent-tabs net networks add: takes no id; it adds the current network")
         if config.bind is None:
             raise CliError("no bind address is set; run agent-tabs net discoverable on first")
-        current = _require_network_id(svc, config.bind)
+        bind, _explicit = current_bind(svc, _deps(svc), config.bind)
+        current = _require_network_id(svc, bind or config.bind)
         upgraded = upgraded_allowed(allowed, current)
         if upgraded is None and current in allowed:
             svc.out(f"{current} is already allowed.")

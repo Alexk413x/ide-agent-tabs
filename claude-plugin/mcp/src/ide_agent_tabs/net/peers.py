@@ -30,6 +30,11 @@ class LabelTaken(PolicyError):
 def _as_member(peer: PeerGrant) -> PeerGrant:
     return replace(
         peer,
+        folders=(),
+        agents=(),
+        models=(),
+        send=(),
+        approve_each_open=False,
         member=True,
         max_tabs=MEMBER_MAX_TABS,
         opens_per_hour=MEMBER_OPENS_PER_HOUR,

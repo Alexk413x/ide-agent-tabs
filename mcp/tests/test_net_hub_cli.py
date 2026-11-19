@@ -286,6 +286,20 @@ class NetworksTest(HubCliCase):
         self.assertEqual(load_network_config(self.a)[0].allowed_networks, ())
         self.assertEqual(self.h.confirmed, [])
 
+    def test_add_reads_the_network_of_the_current_address_when_the_saved_one_is_gone(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "192.168.50.11"}}))
+        self.addresses = [BIND]
+        seen: list[str] = []
+
+        def network_id(address: str) -> str | None:
+            seen.append(address)
+            return NETWORK
+
+        h = self.harness(self.a, bind_available=lambda address: address != "192.168.50.11", network_id=network_id)
+        self.assertEqual(h.run("networks", "add"), 0, h.errors)
+        self.assertEqual(seen, [BIND])
+        self.assertEqual(load_network_config(self.a)[0].allowed_networks, (NETWORK,))
+
     def test_add_needs_a_bind_address_and_a_readable_network(self) -> None:
         self.assertEqual(self.h.run("networks", "add"), 1)
         self.assertIn("no bind address", self.h.errors)
@@ -552,6 +566,35 @@ class PrepareTest(HubCliCase):
         self.addresses = []
         self.assertEqual(self.h.run("discoverable", "on"), 0, self.h.errors)
         self.assertEqual(self.config()["bind"], "192.168.50.11")
+
+    def test_a_saved_bind_that_is_gone_is_replaced_by_the_current_address(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"deviceName": "alpha", "bind": "192.168.50.11"}}))
+        self.addresses = [BIND, "127.0.0.1"]
+        h = self.harness(self.a, bind_available=lambda address: address != "192.168.50.11")
+        self.assertEqual(h.run("discoverable", "on"), 0, h.errors)
+        self.assertIn("The saved address 192.168.50.11 is no longer assigned to this machine.", h.text)
+        self.assertIn(f"Using {BIND} on Ethernet.", h.text)
+        self.assertEqual(self.config()["bind"], BIND)
+
+    def test_prepare_uses_the_current_address_rather_than_the_saved_one(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"deviceName": "alpha", "bind": "192.168.50.11"}}))
+        self.addresses = [BIND]
+        svc = self.harness(self.a, bind_available=lambda address: address != "192.168.50.11").services
+        prepared = hub_cli.prepare(svc, self.deps(), None)
+        self.assertEqual((prepared.bind, prepared.iface.address), (BIND, BIND))
+
+    def test_a_saved_bind_that_is_gone_with_no_current_address_names_the_fix(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"deviceName": "alpha", "bind": "192.168.50.11"}}))
+        self.addresses = ["127.0.0.1"]
+        h = self.harness(self.a, bind_available=lambda address: address != "192.168.50.11")
+        self.assertEqual(h.run("discoverable", "on"), 1)
+        self.assertIn("--bind", h.errors)
+        self.assertEqual(self.config()["bind"], "192.168.50.11")
+
+    def test_a_bind_option_for_an_address_that_is_gone_is_still_used_as_given(self) -> None:
+        h = self.harness(self.a, bind_available=lambda _address: False)
+        self.assertEqual(h.run("discoverable", "on", "--bind", BIND), 0, h.errors)
+        self.assertEqual(self.config()["bind"], BIND)
 
     def test_the_bind_option_wins_over_the_configured_bind(self) -> None:
         Path(self.a, "config.json").write_text(json.dumps({"network": {"deviceName": "alpha", "bind": "192.168.50.11"}}))

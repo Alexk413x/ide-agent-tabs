@@ -102,6 +102,13 @@ Plugin and MCP server 0.14.0. Not released yet.
   undelivered changes in `net/hub.json` and retries every 60 seconds for up to 14 days.
 - Three new peer requests, `introduce`, `remove` and `rekey`, carry these changes. Only a pinned hub member can send them.
 
+- Machines paired with 0.13.0 become members of one hub on the first `net` command or listener start of this version. Each
+  pinned peer keeps its key and label, loses its old grants and gets the member role. Both machines derive the same hub id
+  from the lowest device id among them, and a queued `rekey` leaves them with one hub key. The same step adds the current
+  network to `network.allowedNetworks` when it is empty, sets empty `network.memberFolders` and `network.outboundFolders`
+  to the default folder, and posts one notice to the local sessions that lists the moved machines and names `net revoke`.
+  `net/hub-migration.json` records that the step ran.
+
 ### Removed
 
 - The `net pair` command, with `--invite`, `--join` and `--serve`, and the `atp1-invite:` invitation line. The hub flow
@@ -110,6 +117,11 @@ Plugin and MCP server 0.14.0. Not released yet.
 
 ### Fixed
 
+- When the machine's own address changed (a DHCP renewal, or a new Wi-Fi on an allowed network), the listener stopped and
+  nothing rebound it, and `net find`, `net discoverable on` and `net hub join` used the stale `network.bind`. The listener
+  now takes the new private address on an allowed network, saves it as `network.bind`, rebinds the member socket, the join
+  server and the beacons, and sends a member beacon. When no address on an allowed network appears within 2 minutes, it
+  stops as before. The commands use the current address when the saved one is gone.
 - Mutual TLS with two or more pinned peers failed for one of them, because every device certificate has the subject
   `CN=agent-tabs` and OpenSSL picked the wrong certificate as the issuer. The TLS contexts now accept the exact pinned
   certificate as the trust anchor.

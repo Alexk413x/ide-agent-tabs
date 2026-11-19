@@ -41,6 +41,8 @@ from .identity import der_from_pem, format_digest, parse_device_id
 from .interfaces import InterfaceError, InterfaceInfo, interface_for
 from .listener import append_log, live_listener, log_file, read_listener, request_stop
 from .login_task import LoginTaskError
+from .migration import ERRORS as MIGRATION_ERRORS
+from .migration import Migrator
 from .names import BAD_DEVICE_NAME, DeviceNameError, default_label, device_name_of
 from .netid import current_network_id, gate_state
 from .notify import notify
@@ -181,6 +183,7 @@ class Services:
     new_hub_id: Callable[[], str] = lambda: os.urandom(16).hex()
     network_id: Callable[[str], str | None] = current_network_id
     is_remote_origin: Callable[[str], bool] = _caller_is_remote
+    migrator: Migrator | None = None
 
     def record(self, event: str, **fields: object) -> None:
         pairs = " ".join(f"{key}={value}" for key, value in fields.items())
@@ -189,7 +192,9 @@ class Services:
 
 def default_services() -> Services:
     env = os.environ
-    return Services(home=agent_tabs_home(env), env=env, server_port=parse_port(env.get(PORT_OPTION_ENV)) or SERVER_DEFAULT_PORT)
+    return Services(
+        home=agent_tabs_home(env), env=env, server_port=parse_port(env.get(PORT_OPTION_ENV)) or SERVER_DEFAULT_PORT, migrator=Migrator()
+    )
 
 
 def make_parser(name: str) -> _Parser:
@@ -1145,6 +1150,11 @@ def _cmd_find(svc: Services, args: Sequence[str]) -> int:
 
 def main(argv: Sequence[str], services: Services | None = None) -> int:
     svc = services or default_services()
+    if svc.migrator is not None:
+        try:
+            svc.migrator.start(svc.home, svc.cwd())
+        except MIGRATION_ERRORS as error:
+            svc.record("migrate-failed", error=type(error).__name__)
     handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
         "id": _cmd_id,
         "status": _cmd_status,

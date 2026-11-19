@@ -186,6 +186,7 @@ class BeaconService:
         self._noted: dict[str, float] = {}
         self._flush_at = 0.0
         self._flushing = threading.Lock()
+        self._next_bind: str | None = None
         self._recorded: dict[str, float] = {}
         self._reconnect = Reconnector(
             home,
@@ -201,6 +202,9 @@ class BeaconService:
         thread = threading.Thread(target=self.run, daemon=True)
         thread.start()
         return thread
+
+    def rebind(self, bind: str) -> None:
+        self._next_bind = bind
 
     def _note(self, key: str, text: str) -> None:
         now = time.monotonic()
@@ -252,6 +256,13 @@ class BeaconService:
         next_send = 0.0
         try:
             while not self._stop.is_set():
+                moved = self._next_bind
+                if moved is not None:
+                    self._next_bind = None
+                    self._bind, self._wire = moved, None
+                    if endpoint is not None:
+                        endpoint.close()
+                        endpoint, inbox = None, None
                 state = self._state()
                 if not state.open:
                     if endpoint is not None:
