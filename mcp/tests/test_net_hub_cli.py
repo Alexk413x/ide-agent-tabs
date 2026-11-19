@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import unittest
@@ -8,18 +9,18 @@ from typing import Any
 from unittest import mock
 
 from ide_agent_tabs.clock import now_ms
-from ide_agent_tabs.net import cli, pairing
+from ide_agent_tabs.net import cli, hub_cli, pairing
 from ide_agent_tabs.net.client import peer_cert_path
+from ide_agent_tabs.net.hub_cli import PairDeps
 from ide_agent_tabs.net.hubstate import read_hub_state
 from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
 from ide_agent_tabs.net.listener import listener_file
 from ide_agent_tabs.net.netid import tagged_network_id
-from ide_agent_tabs.net.pair_cli import PairDeps
 from ide_agent_tabs.net.pairing import PairResult
 from ide_agent_tabs.net.policy import Hub, PeerGrant, Policy, load_network_config, load_policy, policy_path, save_policy
 from ide_agent_tabs.net.store import NetStore
 from ide_agent_tabs.profiles import TAB_ID_ENV
-from net_support import create_home, device_of, make_root
+from net_support import HAS_OPENSSL, OPENSSL, create_home, device_of, make_root
 from test_net_cli import NEEDS, Harness
 from test_net_join import FAST, HUB_ID, JoinServer, make_hub, reset, set_name
 
@@ -523,6 +524,75 @@ class OriginGuardTest(HubCliCase):
 
     def test_the_real_check_is_false_when_no_store_exists(self) -> None:
         self.assertFalse(cli._caller_is_remote(make_root(self)))  # pyright: ignore[reportPrivateUsage]
+
+
+class PrepareTest(HubCliCase):
+    def test_a_single_physical_private_address_is_shown_and_used(self) -> None:
+        self.addresses = [BIND, "10.0.0.5", "8.8.8.8", "127.0.0.1", "169.254.1.1"]
+
+        def interface(address: str) -> InterfaceInfo:
+            return InterfaceInfo(
+                "Ethernet" if address == BIND else "vEthernet (WSL)", address, 24, "192.168.50.0/24", "Private", address == BIND
+            )
+
+        h = self.harness(self.a, interface_for=interface)
+        self.assertEqual(h.run("discoverable", "on"), 0, h.errors)
+        self.assertIn(f"Using {BIND} on Ethernet.", h.text)
+        self.assertEqual(self.config()["bind"], BIND)
+
+    def test_no_physical_private_address_names_the_fix(self) -> None:
+        self.addresses = ["8.8.8.8", "127.0.0.1"]
+        self.assertEqual(self.h.run("discoverable", "on"), 1)
+        self.assertIn("--bind", self.h.errors)
+        self.assertIn("run the command again", self.h.errors)
+        self.assertConfigUntouched()
+
+    def test_a_configured_bind_is_used_without_listing_addresses(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"deviceName": "alpha", "bind": "192.168.50.11"}}))
+        self.addresses = []
+        self.assertEqual(self.h.run("discoverable", "on"), 0, self.h.errors)
+        self.assertEqual(self.config()["bind"], "192.168.50.11")
+
+    def test_the_bind_option_wins_over_the_configured_bind(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"deviceName": "alpha", "bind": "192.168.50.11"}}))
+        self.assertEqual(self.h.run("discoverable", "on", "--bind", BIND), 0, self.h.errors)
+        self.assertEqual(self.config()["bind"], BIND)
+
+    @unittest.skipUnless(HAS_OPENSSL, "needs an openssl")
+    def test_a_missing_identity_is_created_with_the_found_openssl(self) -> None:
+        home = make_root(self)
+        deps = dataclasses.replace(self.deps(), find_openssl=lambda _configured, _env: str(OPENSSL))
+        h = self.harness(home, pair=deps)
+        self.assertEqual(h.run("discoverable", "on"), 0, h.errors)
+        self.assertIn(f"identity with openssl at {OPENSSL}", h.text)
+        self.assertIsNotNone(device_of(home))
+        self.assertEqual(json.loads(Path(home, "config.json").read_text())["network"]["openssl"], str(OPENSSL))
+
+    def test_a_missing_openssl_stops_before_anything_starts(self) -> None:
+        home = make_root(self)
+        h = self.harness(home)
+        self.assertEqual(h.run("discoverable", "on"), 1)
+        self.assertIn("No openssl", h.errors)
+        self.assertIn("lan setup --openssl", h.errors)
+        self.assertEqual((h.spawned, h.logins, h.firewall), ([], [], []))
+        self.assertFalse(os.path.exists(os.path.join(home, "net", "identity")))
+
+
+class FindOpensslTest(unittest.TestCase):
+    def test_find_openssl_prefers_git_for_windows_then_the_path(self) -> None:
+        root = make_root(self)
+        git = os.path.join(root, "Git", "usr", "bin")
+        os.makedirs(git)
+        exe = os.path.join(git, "openssl.exe")
+        Path(exe).write_text("x")
+        other = os.path.join(root, "path-openssl")
+        Path(other).write_text("x")
+        self.assertEqual(hub_cli.find_openssl(None, {"ProgramFiles": root}, "win32", lambda _n: other), exe)
+        self.assertIsNone(hub_cli.find_openssl(None, {"ProgramFiles": os.path.join(root, "none")}, "win32", lambda _n: other))
+        self.assertEqual(hub_cli.find_openssl(None, {}, "linux", lambda _n: other), other)
+        self.assertIsNone(hub_cli.find_openssl(None, {}, "linux", lambda _n: None))
+        self.assertEqual(hub_cli.find_openssl(other, {}, "linux", lambda _n: None), other)
+        self.assertIsNone(hub_cli.find_openssl("relative/openssl", {}, "linux", lambda _n: None))
 
 
 class PolicyFilesTest(unittest.TestCase):

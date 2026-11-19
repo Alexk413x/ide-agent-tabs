@@ -71,12 +71,11 @@ from .transport import LanTransport, network_enabled
 
 if TYPE_CHECKING:
     from .find import FindRequest, FindResult
-    from .pair_cli import PairDeps
+    from .hub_cli import PairDeps
 
-USAGE = "net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders|discoverable|networks|find>"
+USAGE = "net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|networks|find>"
 _GRAMMAR = (
     "agent-tabs net id | status | off | revoke <label> | rename <label> <new label>"
-    " | pair --invite [--bind <address>] | pair --join <invitation> [--bind <address>]"
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
     " | grant <label> [--folder <alias>=<absolute path>] [--agent claude|codex] [--model <model>] [--send <session id>]"
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
@@ -400,11 +399,6 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     svc.out(f"login task: {svc.login_status(svc.home)}")
     svc.out(f"identity: {local_device_id(svc.home) or 'none'}")
     svc.out(f"pairing: {_pairing_state(svc)}")
-    from .pair_cli import result_text
-
-    last = result_text(svc.home)
-    if last is not None:
-        svc.out(f"last pairing: {last}")
     svc.out(f"member folders: {', '.join(config.member_folders) or 'none'}")
     svc.out(f"discoverable: {'on' if config.discoverable else 'off'}")
     svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
@@ -1149,12 +1143,6 @@ def _cmd_find(svc: Services, args: Sequence[str]) -> int:
     return hub_cli.find(svc, args)
 
 
-def _cmd_pair(svc: Services, args: Sequence[str]) -> int:
-    from . import pair_cli
-
-    return pair_cli.run(svc, svc.pair or pair_cli.default_deps(), args)
-
-
 def main(argv: Sequence[str], services: Services | None = None) -> int:
     svc = services or default_services()
     handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
@@ -1165,7 +1153,6 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         "grant": _cmd_grant,
         "revoke": _cmd_revoke,
         "rename": _cmd_rename,
-        "pair": _cmd_pair,
         "lan": _cmd_lan,
         "hub": _cmd_hub,
         "folders": _cmd_folders,

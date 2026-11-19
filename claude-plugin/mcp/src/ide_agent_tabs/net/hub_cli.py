@@ -1,15 +1,23 @@
 from __future__ import annotations
 
+import contextlib
+import ipaddress
 import json
-from collections.abc import Sequence
-from dataclasses import replace
+import os
+import shutil
+import socket
+import sys
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 
-from . import hubsync, ingress, pairing
+from . import elevation, hubsync, ingress, pairing, tls
 from .beacon import wire_for
 from .cli import (
     CliError,
     Services,
     UsageError,
+    create_identity,
+    device_name,
     enable_lan,
     folder_defaults,
     make_parser,
@@ -17,19 +25,133 @@ from .cli import (
     report_folders,
     set_network,
 )
-from .client import send_request
+from .client import NetClientError, load_identity, local_device_id, send_request
 from .find import FindRequest, FindResult, device_lines, find_devices, not_found_text
 from .hubjoin import HubJoiner
+from .identity import der_from_pem
+from .interfaces import InterfaceError, InterfaceInfo
 from .listener import live_listener
 from .netid import fallback_of, gate_state, upgraded_allowed
-from .pair_cli import PairDeps, Prepared, default_deps, prepare
-from .pairing import INCOMPLETE_TEXT, PAIRING_PORT, PairResult
+from .pairing import INCOMPLETE_TEXT, PAIRING_PORT, PairIdentity, PairResult
 from .policy import NETWORK_ID, NetworkConfig, grant_for, load_network_config, load_policy
-from .transport import network_enabled
+from .transport import LanTransport, network_enabled
+
+
+def find_openssl(
+    configured: str | None,
+    env: Mapping[str, str],
+    platform: str = sys.platform,
+    which: Callable[[str], str | None] = shutil.which,
+) -> str | None:
+    candidates: list[str] = [configured] if configured else []
+    if platform == "win32":
+        for key in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+            root = env.get(key)
+            if root:
+                candidates.append(os.path.join(root, "Git", "usr", "bin", "openssl.exe"))
+        local = env.get("LOCALAPPDATA")
+        if local:
+            candidates.append(os.path.join(local, "Programs", "Git", "usr", "bin", "openssl.exe"))
+    else:
+        found = which("openssl")
+        if found:
+            candidates.append(found)
+    return next((path for path in candidates if os.path.isabs(path) and os.path.isfile(path)), None)
+
+
+def local_addresses() -> list[str]:
+    found: set[str] = set()
+    host = socket.gethostname()
+    with contextlib.suppress(OSError):
+        found.update(socket.gethostbyname_ex(host)[2])
+    with contextlib.suppress(OSError):
+        found.update(str(info[4][0]) for info in socket.getaddrinfo(host, None, socket.AF_INET))
+    with contextlib.suppress(OSError), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.connect(("10.255.255.255", 9))
+        found.add(str(probe.getsockname()[0]))
+    return sorted(found)
+
+
+def _require_lan_ready(address: str, allow_virtual: bool) -> InterfaceInfo:
+    return LanTransport().require_ready(address, allow_virtual)
+
+
+@dataclass
+class PairDeps:
+    refuse_if_elevated: Callable[[], None] = elevation.refuse_if_elevated
+    local_addresses: Callable[[], list[str]] = local_addresses
+    require_lan_ready: Callable[[str, bool], InterfaceInfo] = _require_lan_ready
+    find_openssl: Callable[[str | None, Mapping[str, str]], str | None] = find_openssl
+    check_destination: Callable[[str, int, str, int], str] = LanTransport().check_destination
+    dial_join: Callable[..., PairResult] = pairing.dial_join
+    timeouts: pairing.Timeouts = pairing.DEFAULT_TIMEOUTS
 
 
 def _deps(svc: Services) -> PairDeps:
-    return svc.pair or default_deps()
+    return svc.pair or PairDeps()
+
+
+@dataclass(frozen=True)
+class Prepared:
+    identity: PairIdentity
+    device_id: str
+    name: str
+    iface: InterfaceInfo
+    bind: str
+
+
+def _choose_bind(svc: Services, deps: PairDeps) -> str:
+    found: list[InterfaceInfo] = []
+    for address in deps.local_addresses():
+        try:
+            ip = ipaddress.IPv4Address(address)
+            info = svc.interface_for(address)
+        except (ValueError, InterfaceError):
+            continue
+        if ip.is_private and not ip.is_loopback and not ip.is_link_local and info.physical:
+            found.append(info)
+    if not found:
+        raise CliError(
+            "No private address (10.x.x.x, 172.16-31.x.x or 192.168.x.x) of a physical network interface was found. "
+            "Pass --bind <this machine's address>, then run the command again."
+        )
+    if len(found) > 1:
+        listed = ", ".join(f"{info.address} ({info.alias})" for info in found)
+        raise CliError(f"This machine has more than one private address: {listed}. Pass --bind <address> to choose one.")
+    svc.out(f"Using {found[0].address} on {found[0].alias or 'the network'}.")
+    return found[0].address
+
+
+def prepare(svc: Services, deps: PairDeps, requested: str | None) -> Prepared:
+    problem = tls.runtime_problem()
+    if problem is not None:
+        raise CliError(problem)
+    config, warnings = load_network_config(svc.home)
+    for warning in warnings:
+        svc.err(f"warning: {warning}")
+    name = device_name(svc)
+    chosen = requested or config.bind
+    bind = chosen if chosen is not None else _choose_bind(svc, deps)
+    iface = deps.require_lan_ready(bind, chosen is not None)
+    if local_device_id(svc.home) is None:
+        openssl = deps.find_openssl(config.openssl, svc.env)
+        if openssl is None:
+            raise CliError(
+                "No openssl program was found. Install Git for Windows (or openssl elsewhere), "
+                "or run agent-tabs net lan setup --openssl <absolute path of openssl>, then run the command again."
+            )
+        svc.out(f"Creating this machine's network identity with openssl at {openssl}.")
+        create_identity(svc, openssl)
+    try:
+        local = load_identity(svc.home)
+        der = der_from_pem(local.cert.read_text(encoding="ascii"))
+    except (NetClientError, OSError, ValueError) as error:
+        raise CliError(f"this machine's network identity cannot be read: {error}") from error
+    identity = PairIdentity(name, der, local.cert, local.key, lambda: local.passphrase)
+    device = local_device_id(svc.home)
+    if device is None:
+        raise CliError("this machine's network identity cannot be read")
+    return Prepared(identity, device, name, iface, bind)
 
 
 def _read_network_id(svc: Services, bind: str) -> str | None:

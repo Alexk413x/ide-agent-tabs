@@ -51,25 +51,6 @@ def wire_frame(text: str) -> bytes:
     return len(data).to_bytes(4, "big") + data
 
 
-def invitation_text(**changes: Any) -> str:
-    body: dict[str, Any] = {
-        "v": 2,
-        "name": "alpha",
-        "address": "192.168.1.20",
-        "port": 47830,
-        "id": GOOD_ID,
-        "token": pairing.new_invitation_token(),
-        "exp": NOW + 300,
-    }
-    for key, value in changes.items():
-        if value is KeyError:
-            del body[key]
-        else:
-            body[key] = value
-    raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
-    return pairing.INVITE_PREFIX + base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-
 class HashTest(unittest.TestCase):
     CERT_D = b"dialer certificate bytes"
     CERT_L = b"listener certificate bytes"
@@ -171,139 +152,6 @@ class NameAndTokenTest(unittest.TestCase):
         for value in refused:
             with self.assertRaises(pairing.PairingError, msg=repr(value)):
                 pairing.full_device_id(value)
-
-
-class InvitationTest(unittest.TestCase):
-    def test_round_trip(self) -> None:
-        token = pairing.new_invitation_token()
-        text = pairing.make_invitation("alpha", "192.168.1.20", 47830, GOOD_ID, token, NOW + 300)
-        self.assertTrue(text.startswith("atp1-invite:"))
-        self.assertNotIn("=", text)
-        invitation = pairing.parse_invitation(text, NOW)
-        self.assertEqual(invitation, pairing.Invitation("alpha", "192.168.1.20", 47830, GOOD_ID, token, NOW + 300))
-
-    def test_surrounding_whitespace_is_ignored(self) -> None:
-        self.assertEqual(pairing.parse_invitation(f"  {invitation_text()}\n", NOW).name, "alpha")
-
-    def test_expiry_window(self) -> None:
-        self.assertEqual(pairing.parse_invitation(invitation_text(exp=NOW + 600), NOW).expires, NOW + 600)
-        self.assertEqual(pairing.parse_invitation(invitation_text(exp=NOW + 1), NOW).expires, NOW + 1)
-        for exp in (NOW, NOW - 1, NOW + 601, -1, True, "1700000300", 1.5):
-            with self.assertRaises(pairing.PairingError, msg=repr(exp)):
-                pairing.parse_invitation(invitation_text(exp=exp), NOW)
-
-    def test_refused_text(self) -> None:
-        good = invitation_text()
-        body = good[len(pairing.INVITE_PREFIX) :]
-        refused = [
-            "",
-            "atp1-invite:",
-            body,
-            "atp2-invite:" + body,
-            "ATP1-INVITE:" + body,
-            good + "=",
-            good + " x",
-            good[:-1] + "+",
-            good[:-1] + "/",
-            good[:-1] + "é",
-            good[: len(good) // 2] + "\n" + good[len(good) // 2 :],
-            good + "A" * 2000,
-            pairing.INVITE_PREFIX + "A" * 1000,
-            pairing.INVITE_PREFIX + "!!!!",
-            pairing.INVITE_PREFIX + "A",
-        ]
-        for text in refused:
-            with self.assertRaises(pairing.PairingError, msg=text[:40]):
-                pairing.parse_invitation(text, NOW)
-
-    def test_non_canonical_base64_is_refused(self) -> None:
-        good = invitation_text()
-        last = good[-1]
-        swapped = "B" if last != "B" else "C"
-        with self.assertRaises(pairing.PairingError):
-            pairing.parse_invitation(good[:-1] + swapped, NOW)
-
-    def test_refused_json(self) -> None:
-        def wrap(raw: bytes) -> str:
-            return pairing.INVITE_PREFIX + base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-        token = pairing.new_invitation_token()
-        duplicate = f'{{"v":2,"v":2,"name":"a","address":"192.168.1.2","port":1,"id":"{GOOD_ID}","token":"{token}","exp":{NOW + 5}}}'
-        for raw in (b"", b"[]", b"1", b"null", b"{", b'{"v":2}', b"\xff\xfe", duplicate.encode(), b"{}"):
-            with self.assertRaises(pairing.PairingError, msg=repr(raw)):
-                pairing.parse_invitation(wrap(raw), NOW)
-
-    def test_refused_fields(self) -> None:
-        token = pairing.new_invitation_token()
-        cases: list[dict[str, Any]] = [
-            {"v": 1},
-            {"v": 3},
-            {"v": True},
-            {"v": "2"},
-            {"v": KeyError},
-            {"extra": 1},
-            {"name": ""},
-            {"name": "x" * 33},
-            {"name": "pair123456"},
-            {"name": "café"},
-            {"name": "tab\t"},
-            {"name": 5},
-            {"name": KeyError},
-            {"port": 0},
-            {"port": 65536},
-            {"port": -1},
-            {"port": "47830"},
-            {"port": True},
-            {"port": 1.5},
-            {"port": None},
-            {"address": "example.com"},
-            {"address": "localhost"},
-            {"address": "192.168.1"},
-            {"address": "192.168.1.256"},
-            {"address": "192.168.01.1"},
-            {"address": "192.168.1.1/24"},
-            {"address": "::1"},
-            {"address": "192.168.1.1\n"},
-            {"address": "١٩٢.١٦٨.١.١"},
-            {"address": 3232235777},
-            {"id": GOOD_ID.split("-")[0]},
-            {"id": "abcdefg"},
-            {"id": "ABCDEFGH"},
-            {"id": GOOD_ID.lower()},
-            {"id": GOOD_ID.replace("-", "")},
-            {"id": GOOD_ID[:-8]},
-            {"id": GOOD_ID + "-AAAAAAA"},
-            {"id": GOOD_ID[:-1] + "1"},
-            {"id": " " + GOOD_ID},
-            {"id": 5},
-            {"id": None},
-            {"id": KeyError},
-            {"token": token[:-1]},
-            {"token": token + "A"},
-            {"token": "A" * 21 + "B"},
-            {"token": "!" * 22},
-            {"token": "ABC234"},
-            {"token": 5},
-        ]
-        for change in cases:
-            with self.assertRaises(pairing.PairingError, msg=repr(change)):
-                pairing.parse_invitation(invitation_text(**change), NOW)
-
-    def test_make_invitation_refuses_bad_fields(self) -> None:
-        token = pairing.new_invitation_token()
-        with self.assertRaises(pairing.PairingError):
-            pairing.make_invitation("pair123456", "192.168.1.2", 1, GOOD_ID, token, NOW + 5)
-        with self.assertRaises(pairing.PairingError):
-            pairing.make_invitation("alpha", "host.local", 1, GOOD_ID, token, NOW + 5)
-        with self.assertRaises(pairing.PairingError):
-            pairing.make_invitation("alpha", "192.168.1.2", 1, GOOD_ID, "short", NOW + 5)
-        for bad_id in (GOOD_ID.split("-")[0], GOOD_ID.lower(), GOOD_ID.replace("-", ""), ""):
-            with self.assertRaises(pairing.PairingError, msg=bad_id):
-                pairing.make_invitation("alpha", "192.168.1.2", 1, bad_id, token, NOW + 5)
-
-    def test_a_version_1_invitation_is_refused(self) -> None:
-        with self.assertRaisesRegex(pairing.PairingError, "version"):
-            pairing.parse_invitation(invitation_text(v=1), NOW)
 
 
 class LanDestinationTest(unittest.TestCase):
@@ -867,23 +715,6 @@ class PairingSessionTest(unittest.TestCase):
         lm, dm, _listened, _dialed = self.run_pair()
         self.assertEqual(lm.side.saved[0].pem, self.b.pem.replace("\r\n", "\n"))
         self.assertEqual(dm.side.saved[0].pem, self.a.pem.replace("\r\n", "\n"))
-
-    def test_an_invitation_drives_the_dial(self) -> None:
-        lm, dm = self.machines()
-        window = Window(self, lm)
-        text = pairing.make_invitation("alpha", "127.0.0.1", window.port, lm.device_id, TOKEN, NOW + 300)
-        invitation = pairing.parse_invitation(text, NOW)
-        dialed = pairing.dial(
-            invitation.address,
-            invitation.port,
-            invitation.token,
-            invitation.id,
-            dm.identity,
-            dm.side.save,
-            dm.limits,
-            timeouts=FAST,
-        )
-        self.assertEqual((window.end().outcome, dialed.outcome), ("paired", "paired"))
 
     def test_the_token_never_appears_in_a_frame_on_the_wire(self) -> None:
         lm, dm = self.machines()

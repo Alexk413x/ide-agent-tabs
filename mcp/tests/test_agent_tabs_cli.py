@@ -55,7 +55,7 @@ class Dispatch(unittest.TestCase):
             self.assertEqual(
                 json.loads(done.stderr),
                 {
-                    "error": "Usage: agent-tabs list-ides | jev <status|ask|choose|check|rank|route> | net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders|discoverable|networks|find> | server status|stop [--port <port>] | sync-ides <--hook|--status|--install|--agents|--register|--unregister> [<editor cli or agent>...]"
+                    "error": "Usage: agent-tabs list-ides | jev <status|ask|choose|check|rank|route> | net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|networks|find> | server status|stop [--port <port>] | sync-ides <--hook|--status|--install|--agents|--register|--unregister> [<editor cli or agent>...]"
                 },
             )
 

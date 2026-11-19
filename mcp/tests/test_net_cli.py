@@ -22,6 +22,7 @@ from ide_agent_tabs.net.identity import format_digest, parse_device_id
 from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
 from ide_agent_tabs.net.listener import listener_file, log_file, read_listener, stop_file, write_atomically
 from ide_agent_tabs.net.login_task import LoginTaskError
+from ide_agent_tabs.net.names import default_label
 from ide_agent_tabs.net.pairing import Limits
 from ide_agent_tabs.net.policy import PeerGrant, Policy, load_policy, policy_path, save_policy
 from ide_agent_tabs.net.private_files import check_private
@@ -723,11 +724,26 @@ class StatusAndDispatchTest(CliTestCase):
 
     def test_net_is_registered_in_the_agent_tabs_command(self) -> None:
         self.assertEqual(top_cli.COMMANDS["net"], "ide_agent_tabs.net.cli")
-        self.assertIn("net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders|discoverable|networks|find>", top_cli.usage())
+        self.assertIn("net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|networks|find>", top_cli.usage())
         captured = io.StringIO()
         with mock.patch.dict(os.environ, {"IDE_AGENT_TABS_HOME": self.a}), contextlib.redirect_stdout(captured):
             self.assertEqual(top_cli.main(["net", "status"]), 0)
         self.assertIn("network: off", captured.getvalue())
+
+
+class DefaultLabelTest(unittest.TestCase):
+    def test_the_default_label_is_lowercased_made_safe_and_unique(self) -> None:
+        def policy(*labels: str) -> Policy:
+            return Policy(tuple(PeerGrant(format_digest(bytes([index]) * 32), label, "192.168.50.5") for index, label in enumerate(labels)))
+
+        self.assertEqual(default_label("Work PC.1", policy()), "work-pc-1")
+        self.assertEqual(default_label("Work PC", policy("work-pc")), "work-pc-2")
+        self.assertEqual(default_label("Work PC", policy("work-pc", "work-pc-2")), "work-pc-3")
+        self.assertEqual(default_label("...", policy()), "peer")
+        long = "a" * 32
+        label = default_label(long, policy(long))
+        self.assertEqual(label, "a" * 30 + "-2")
+        self.assertEqual(len(label), 32)
 
 
 class ConfirmTest(unittest.TestCase):

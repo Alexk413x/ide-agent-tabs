@@ -20,8 +20,8 @@ Plugin and MCP server 0.14.0. Not released yet.
   is given. `--address` and `<device id>@<address>` still work and skip the search.
 - Pairing failure counts and locks are kept per remote address in `net/pairing.json`. Three failures from one address lock
   that address for an hour and leave every other address free. A join attempt that fails after it was admitted counts as a
-  failure, except a hub mismatch, a local save error and a busy server. The one-at-a-time and three-per-hour window limits
-  stay global. The minimum gap between connections is kept per address. `net status` lists the locked addresses.
+  failure, except a hub mismatch, a local save error and a busy server. A join server takes one join at a time. The
+  minimum gap between connections is kept per address. `net status` lists the locked addresses.
 
 ### Added
 
@@ -101,7 +101,12 @@ Plugin and MCP server 0.14.0. Not released yet.
 - A member that is offline during an introduction, a removal or a key change gets it later. The listener keeps the
   undelivered changes in `net/hub.json` and retries every 60 seconds for up to 14 days.
 - Three new peer requests, `introduce`, `remove` and `rekey`, carry these changes. Only a pinned hub member can send them.
-- `net pair` still works until the hub flow replaces it.
+
+### Removed
+
+- The `net pair` command, with `--invite`, `--join` and `--serve`, and the `atp1-invite:` invitation line. The hub flow
+  (`net discoverable on` on one machine, `net hub join <device id>` or `net find` on the other) replaces it. `net status`
+  no longer shows a `last pairing` line.
 
 ### Fixed
 
@@ -118,7 +123,7 @@ Plugin and MCP server 0.13.0. The bundled IDE packages are unchanged (VS Code 0.
 - Agents run pairing end to end. `net pair --invite` starts a background listener and prints an
   invitation; the agent sends it to the session on the other machine, which runs
   `net pair --join <invitation>`. No windows open and you type nothing. See
-  [Pairing](docs/design.md#pairing).
+  [Joining a hub](docs/design.md#joining-a-hub).
 - The invitation pins the inviting machine's full device id and carries a secret token that never
   crosses the network. The six-digit code, `net pair` without `--invite`, and `--peer` are gone.
   Pairing protocol version 2 doesn't pair with 0.12.0.
@@ -148,7 +153,7 @@ Plugin and MCP server 0.12.0. The bundled IDE packages are unchanged (VS Code 0.
   `net pair --peer <IP> --token <token>` on the other. Each machine opens a window that shows a
   six-digit code; you type the code shown on the other machine's own screen, then approve one summary
   of the label, grants (none by default), listener and login task. See
-  [Pairing](docs/design.md#pairing).
+  [Joining a hub](docs/design.md#joining-a-hub).
 - `net pair` creates the identity, checks the network and installs an `agent-tabs` command in
   `~/.ide-agent-tabs/bin`, and offers to add that folder to your PATH.
 - The `network` skill leads with pairing.

@@ -32,9 +32,6 @@ from .private_files import check_private, ensure_private_dir, make_private_file
 VERSION = 2
 PAIRING_PORT = 47830
 MAX_FRAME = 8192
-INVITE_PREFIX = "atp1-invite:"
-MAX_INVITATION_CHARS = 1024
-MAX_INVITATION_AHEAD_S = 600
 PAIRING_FILE = "pairing.json"
 WINDOWS_PER_HOUR = 3
 FAILURES_PER_HOUR = 3
@@ -54,14 +51,12 @@ DIALER = "dialer"
 LISTENER = "listener"
 
 _IDLE_S = 3600.0
-_BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
 _INVITE_TOKEN = re.compile(r"[A-Za-z0-9_-]{22}")
 _NAME = re.compile(r"[A-Za-z0-9 ._-]{1,32}")
 _DIGIT_RUN = re.compile(r"[0-9]{6}")
 _IPV4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
 _HEX32 = re.compile(r"[0-9a-f]{64}")
 _RFC1918 = tuple(ipaddress.IPv4Network(block) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
-_INVITATION_KEYS = frozenset({"v", "name", "address", "port", "id", "token", "exp"})
 _HUB_ID = re.compile(r"[0-9a-f]{32}")
 _HUB_LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MEMBER_KEYS = frozenset({"deviceId", "label", "address", "port", "certificatePem"})
@@ -126,13 +121,13 @@ def new_invitation_token() -> str:
 
 def full_device_id(value: object) -> str:
     if not isinstance(value, str):
-        raise PairingError("the invitation's device id is malformed")
+        raise PairingError("the device id is malformed")
     try:
         canonical = format_digest(parse_device_id(value))
     except ValueError as error:
-        raise PairingError("the invitation's device id is malformed") from error
+        raise PairingError("the device id is malformed") from error
     if canonical != value:
-        raise PairingError("the invitation's device id is not in canonical form")
+        raise PairingError("the device id is not in canonical form")
     return value
 
 
@@ -175,16 +170,6 @@ def check_lan_destination(address: str, port: int, interface_address: str, prefi
     return str(destination)
 
 
-@dataclass(frozen=True)
-class Invitation:
-    name: str
-    address: str
-    port: int
-    id: str
-    token: str
-    expires: int
-
-
 def _invitation_token(value: object) -> str:
     if not isinstance(value, str) or _INVITE_TOKEN.fullmatch(value) is None:
         raise PairingError("the invitation token is malformed")
@@ -195,55 +180,6 @@ def _invitation_token(value: object) -> str:
     if len(raw) != 16 or base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value:
         raise PairingError("the invitation token is malformed")
     return value
-
-
-def _fields(name: object, address: object, port: object, device: object, token: object, expires: object) -> Invitation:
-    if not isinstance(name, str) or not valid_device_name(name):
-        raise PairingError("the invitation's device name is not allowed")
-    if isinstance(expires, bool) or not isinstance(expires, int) or expires < 0:
-        raise PairingError("the invitation's expiry is malformed")
-    return Invitation(
-        name, str(_ipv4(address, "the invitation's address")), _port(port), full_device_id(device), _invitation_token(token), expires
-    )
-
-
-def make_invitation(name: str, address: str, port: int, device_id: str, token: str, expires: int) -> str:
-    _fields(name, address, port, device_id, token, expires)
-    body = {"v": VERSION, "name": name, "address": address, "port": port, "id": device_id, "token": token, "exp": expires}
-    raw = json.dumps(body, separators=(",", ":")).encode("utf-8")
-    return INVITE_PREFIX + base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-
-def parse_invitation(text: str, now: float) -> Invitation:
-    text = text.strip()
-    if len(text) > MAX_INVITATION_CHARS:
-        raise PairingError("the invitation is too long")
-    if not text.startswith(INVITE_PREFIX):
-        raise PairingError("this is not an Agent Tabs invitation")
-    body = text[len(INVITE_PREFIX) :]
-    if _BASE64URL.fullmatch(body) is None:
-        raise PairingError("the invitation is not base64url")
-    try:
-        raw = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4))
-    except (binascii.Error, ValueError) as error:
-        raise PairingError("the invitation is not base64url") from error
-    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != body:
-        raise PairingError("the invitation is not canonical base64url")
-    try:
-        value = wire.parse_json(raw)
-    except wire.WireError as error:
-        raise PairingError(f"the invitation is not valid JSON: {error}") from error
-    if not isinstance(value, dict) or set(value) != _INVITATION_KEYS:
-        raise PairingError("the invitation has missing or unknown fields")
-    version = value["v"]
-    if isinstance(version, bool) or version != VERSION:
-        raise PairingError("the invitation's version is not supported")
-    invitation = _fields(value["name"], value["address"], value["port"], value["id"], value["token"], value["exp"])
-    if invitation.expires <= now:
-        raise PairingError("the invitation has expired")
-    if invitation.expires > now + MAX_INVITATION_AHEAD_S:
-        raise PairingError("the invitation expires too far ahead")
-    return invitation
 
 
 @dataclass(frozen=True)
