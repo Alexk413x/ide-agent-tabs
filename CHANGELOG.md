@@ -3,6 +3,23 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.14.1
+
+Plugin and MCP server 0.14.1. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Changed
+
+- When a hub member refuses an open because the folder is outside its `network.memberFolders`, the
+  requesting agent gets the reason: `<label> refused: <path> is not in that machine's member folders.
+  Its user can add it there with agent-tabs net folders add.` The requesting machine writes this text
+  itself. A refused reply carries an optional `reason` from a fixed list, which holds only
+  `folder-not-allowed`. Other refusals keep the generic text. The receiving machine's notice is unchanged.
+
+### Removed
+
+- `net hub join --address` and the `<device id>@<address>` form of `net hub create --with`. Every join
+  finds the device with `net find`.
+
 ## 0.14.0
 
 Plugin and MCP server 0.14.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
