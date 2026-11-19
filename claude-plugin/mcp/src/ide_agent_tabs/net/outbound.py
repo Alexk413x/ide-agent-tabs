@@ -18,6 +18,7 @@ from . import wire
 from .origin import REMOTE_ORIGIN_REFUSAL, Caller, OriginChecker
 from .policy import ALIAS, DEFAULT_PORT, NetworkConfig, PeerGrant, PolicyError, load_network_config, load_policy
 from .store import NetStore, NetStoreError
+from .transport import network_enabled
 
 RATE_LIMIT = 10
 WINDOW_MS = 60_000
@@ -110,7 +111,7 @@ class Outbound:
 
     def _admit(self, caller: Caller) -> NetworkConfig:
         config, _ = load_network_config(self.home)
-        if config.network != "lan":
+        if not network_enabled(config):
             raise OutboundError(NETWORK_OFF)
         self.require_local_origin(caller)
         if not any(is_inside(caller.path, folder) for folder in config.outbound_folders):
@@ -204,14 +205,21 @@ class Outbound:
         agent, folder, task, model = given.get("agent"), given.get("path"), given.get("prompt"), given.get("model")
         if agent not in wire.OPEN_AGENTS:
             raise OutboundError(f"agent must be one of {', '.join(wire.OPEN_AGENTS)} when host is given")
-        if not isinstance(folder, str) or ALIAS.fullmatch(folder) is None:
+        if not isinstance(folder, str) or (ALIAS.fullmatch(folder) is None and not wire.valid_path(folder)):
             raise OutboundError("path must be a folder alias the peer granted when host is given")
         if not isinstance(task, str) or trim(task) == "" or len(task) > wire.MAX_TASK_CHARS:
             raise OutboundError(f"prompt is the task and must hold 1 to {wire.MAX_TASK_CHARS} characters when host is given")
         self._admit(caller)
         peer = self._peer(label)
+        if peer.member:
+            if not wire.valid_path(folder):
+                raise OutboundError("path must be an absolute folder path on the peer when host is a hub member")
+            body: dict[str, Any] = {"agent": agent, "path": folder, "task": task}
+        else:
+            if ALIAS.fullmatch(folder) is None:
+                raise OutboundError("path must be a folder alias the peer granted when host is given")
+            body = {"agent": agent, "folder": folder, "task": task}
         self._take_slot(caller.session)
-        body: dict[str, Any] = {"agent": agent, "folder": folder, "task": task}
         if model is not None:
             body["model"] = model
         tab = _field(self._call(peer, "open", body, OPEN_TIMEOUT_S), "tab", _TAB_ID)
@@ -220,7 +228,7 @@ class Outbound:
 
     def start_listener(self, caller: Caller) -> dict[str, Any]:
         config, _ = load_network_config(self.home)
-        if config.network != "lan" or config.bind is None:
+        if not network_enabled(config) or config.bind is None:
             raise OutboundError("refused: the user has not turned the network on with a bind address; this tool only restarts the listener")
         self.require_local_origin(caller)
         from .cli import Services, main
@@ -236,7 +244,7 @@ class Outbound:
 
     def remote_rows(self, caller: Caller, now_ms: int | None = None) -> list[dict[str, Any]]:
         config, _ = load_network_config(self.home)
-        if config.network != "lan" or not any(is_inside(caller.path, folder) for folder in config.outbound_folders):
+        if not network_enabled(config) or not any(is_inside(caller.path, folder) for folder in config.outbound_folders):
             return []
         if self._origin.is_remote(caller):
             return []
@@ -254,17 +262,23 @@ class Outbound:
             if cached is None:
                 continue
             try:
-                sessions = wire.parse_inventory(json.loads(cached[0]))
+                inventory = json.loads(cached[0])
+                sessions = wire.parse_inventory(inventory)
+                folders = wire.parse_inventory_folders(inventory)
             except (ValueError, wire.WireError):
                 continue
             age = max(0, now - cached[1])
             offline = age > OFFLINE_AFTER_MS or poller.is_failed(self.home, peer.device_id)
-            rows.extend(_row(peer.label, s, age, offline) for s in sessions)
+            rows.extend(_row(peer.label, s, age, offline, folders) for s in sessions)
         return rows
 
 
-def _row(label: str, session: wire.RemoteSession, age_ms: int, offline: bool) -> dict[str, Any]:
+def _row(label: str, session: wire.RemoteSession, age_ms: int, offline: bool, folders: list[str] | None = None) -> dict[str, Any]:
     from ..messaging.messaging import harness_of
+
+    remote: dict[str, Any] = {"label": label, "ageMs": age_ms, "offline": offline}
+    if folders is not None:
+        remote["folders"] = folders
 
     name = f"{wire.escape_display(session.name) or session.id}@{label}"
     where = f"{label} (remote)"
@@ -276,7 +290,7 @@ def _row(label: str, session: wire.RemoteSession, age_ms: int, offline: bool) ->
         "agent": session.agent,
         "route": "remote",
         "state": session.status,
-        "remote": {"label": label, "ageMs": age_ms, "offline": offline},
+        "remote": remote,
         "where": where,
         "host": where,
         "harness": harness_of(session.agent),

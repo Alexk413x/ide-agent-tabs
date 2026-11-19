@@ -3,6 +3,134 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.14.0
+
+Plugin and MCP server 0.14.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Changed
+
+- The network code checks the mode through one transport layer, so a later Tailscale mode can plug in.
+  `config.json` accepts `network.memberFolders` and `network.allowedNetworks`.
+- `net status` shows the hub and the member folders. A hub member's row in `net status` reads
+  `grants: hub member`.
+- With `host` toward a hub member, `open_tab` takes an absolute folder path on that machine in `path`
+  instead of a folder alias.
+- The `open_tab` tool text describes the member form of `path`.
+- `net hub join <device id>` and `net hub create --with <device id>` find the address through `net find` when no address
+  is given. `--address` and `<device id>@<address>` still work and skip the search.
+- Pairing failure counts and locks are kept per remote address in `net/pairing.json`. Three failures from one address lock
+  that address for an hour and leave every other address free. A join attempt that fails after it was admitted counts as a
+  failure, except a hub mismatch, a local save error and a busy server. A `net find` probe of a discoverable machine ends
+  cleanly and never counts, so repeated finds no longer lock the finder's address. A join server takes one join at a
+  time. The minimum gap between connections is kept per address. `net status` lists the locked addresses.
+
+### Added
+
+- `policy.json` accepts an optional `hub` object (`id`, `name`) and a `member` flag on a peer.
+- A hub member has one role with no per-peer grants. It lists every live session in the inventory, messages
+  any live session, and opens `claude` or `codex` tabs in an absolute folder path inside this machine's
+  `network.memberFolders`. A path outside the list is refused with `folder-not-allowed`, and every local
+  session that no peer opened gets a message that names the folder and `agent-tabs net folders add <path>`.
+  The message omits the path and the command when the path is not an existing folder or holds shell
+  syntax or control characters. A member gets at most one such message per hour, whatever path it names, and each
+  refused open counts against its `opensPerHour` limit.
+  The tab keeps this machine's permission mode, and the request cannot name one.
+- The inventory reply to a hub member carries the machine's member folders in an optional `folders` list.
+  The open request carries an optional `path` in place of `folder`.
+- `agent-tabs net hub create [--name <name>] [--folder <session folder>]`, `net hub status` and
+  `net hub leave`. `hub create` sets `network.memberFolders` and `network.outboundFolders` to the folder
+  one level below the drive root, `/` or the home folder when they are empty. `hub leave` removes the hub
+  and its members from this machine and raises the policy generation.
+- `agent-tabs net folders`, `net folders add <path>` and `net folders remove <path>` change
+  `network.memberFolders` with no typed confirmation.
+- `agent-tabs net discoverable on` sets `network.discoverable` and keeps the listener serving open joins on port 47830
+  across restarts. `off` stops serving joins and leaves members connected. `net off` also sets it to false.
+- `network.allowedNetworks` is enforced. The listener drops member connections and joins on a network that is not
+  listed, and `net status` reports "this network is not in network.allowedNetworks". When the network id can't be read,
+  the network counts as not allowed. `agent-tabs net networks`, `net networks add` and `net networks remove <id>` change
+  the list. `discoverable on`, `hub join` and `hub create --with` add the current network.
+- A network id is the profile name, the subnet and the default gateway's MAC address on Windows, and the gateway MAC
+  address and subnet on macOS and Linux. On Windows the MAC comes from `Get-NetNeighbor`, with `arp -a` as the fallback.
+  When neither returns it, the id uses the profile name and the subnet only, and the listener logs that. A stored entry
+  in the older name-and-subnet form no longer opens the gate while the gateway MAC is readable, because another network
+  can share that name and subnet. `net networks` says so, and `discoverable on`, `hub join` and `networks add` replace
+  the entry with the new id in `config.json`. The listener doesn't rewrite it.
+- `agent-tabs net hub join <device id> --address <IP>` and `net hub create --with <device id>@<IP>` join a discoverable
+  machine over TLS pinned to the expected device id, with no token and no approval. Machines in different hubs refuse
+  with `already-in-another-hub` and save nothing on either side. Both sides save each other as hub members with
+  `maxTabs` 4, `opensPerHour` 30 and `messagesPerMinute` 60. The hub message carries the hub id and name, a random
+  32-byte `hubKey` and the other members. The joining machine stores the member list and the key in `net/hub.json`.
+- The firewall helper creates a second rule, `Agent Tabs LAN discovery`, for UDP port 47831 in the same elevated run as the
+  `Agent Tabs LAN` rule, so one Windows prompt covers both. `net off` removes both.
+- `net folders add|remove`, `net networks add|remove`, `net discoverable on|off`, `net hub create|join|leave`,
+  `net revoke` and `net grant` refuse when the calling process descends from a session that another machine opened.
+- The listener announces itself over UDP port 47831, once at start, on every address change and every 30 seconds. Each
+  announcement goes to the multicast group 239.255.47.31 (TTL 1, from the bind interface) and to the subnet broadcast
+  address. Receivers drop duplicates by a random 16-byte announcement id and read each datagram strictly: at most
+  1200 bytes, JSON, exact keys and a version field. A join announcement (`kind` `join`) goes out only while the machine is
+  discoverable and carries `v`, `kind`, `id`, `deviceName`, `deviceId`, `hubId`, `hubName`, `port` and `transport`. It
+  carries no token, path, session name or user name. A member beacon (`kind` `member`) goes out from every hub member and
+  carries `v`, `kind`, `id`, `hubId`, `deviceId`, `port`, `ts` and `mac`, an HMAC-SHA256 under the hub key. Receivers ignore a
+  beacon for another hub, with a bad MAC, with a `ts` more than 120 seconds from their clock, or older than the last one
+  accepted from that device. Nothing is sent or read while LAN mode is off or the current network is not in
+  `network.allowedNetworks`.
+- A member beacon that names a new address for a known member starts one pinned mutual TLS check per device and address
+  every 60 seconds. The address in `policy.json` and `net/hub.json` changes only after that check matches the member's
+  certificate.
+- At start the listener asks each member's last known address for an inventory, and `net hub status` shows each member as
+  online or offline from that result and from received beacons (`net/presence.json`).
+- `agent-tabs net find [--json] [--bind <address>]` lists the devices on the local network. It listens for announcements for
+  up to 10 seconds. When nothing is verified within 5 seconds it connects to TCP ports 47829 and 47830 on each address of the
+  /24 that holds the bind address (64 connections at a time, 300 ms each). It lists a device only after verification:
+  pinned mutual TLS on port 47829 for a hub member, and TLS on port 47830 with the certificate's device id matching the
+  announced one for a discoverable machine. Each row shows the device name, device id, address, hub name or `no hub`,
+  whether it is a member and the source (`multicast`, `broadcast`, `probe` or `remembered`). A warning line appears when
+  two rows share a name. When nothing is found, the message names the likely causes, says that Wi-Fi client isolation
+  blocks all traffic between devices, and points to Tailscale mode.
+- A device that joins a hub through one member is introduced to every other member over pinned mutual TLS. Each member
+  saves it with the member role and posts "`<name>` joined from `<address>`" to its local sessions. The joining device
+  pins and saves the members from the hub message, and the hub message now carries the key epoch. An introduction is
+  accepted only from a pinned member of the same hub, only for a valid certificate that matches the device id and a private
+  address, and never turns an existing non-member peer into a member.
+- `net revoke <label>` on a hub member also tells every other member to remove it, replaces the hub key and sends the new
+  key to the remaining members. After that, requests from the removed device are refused at once on every reachable
+  member, and on an offline member once the queued removal arrives. A message that names the receiving device is
+  refused, so a member cannot be removed by a message sent to itself. Each member remembers the removed device, so a
+  late introduction can't add it again.
+- The hub key has an epoch in `net/hub.json`. A member accepts a new key only when `(epoch, key)` is higher than its own, and
+  answers with the version it holds, so two members that replace the key at the same time end with the same one. Beacons
+  under an older key are ignored.
+- `net hub leave` tells each member over mutual TLS before it clears local state. The member with the lowest device id
+  that answers removes the leaver, replaces the key, and sends the removal and the new key to every other member. When no
+  member answers, `net hub leave` says the key is not replaced yet.
+- A member that is offline during an introduction, a removal or a key change gets it later. The listener keeps the
+  undelivered changes in `net/hub.json` and retries every 60 seconds for up to 14 days.
+- Three new peer requests, `introduce`, `remove` and `rekey`, carry these changes. Only a pinned hub member can send them.
+
+- Machines paired with 0.13.0 become members of one hub on the first `net` command or listener start of this version. Each
+  pinned peer keeps its key and label, loses its old grants and gets the member role. Both machines derive the same hub id
+  from the lowest device id among them, and a queued `rekey` leaves them with one hub key. The same step adds the current
+  network to `network.allowedNetworks` when it is empty, sets empty `network.memberFolders` and `network.outboundFolders`
+  to the default folder, and posts one notice to the local sessions that lists the moved machines and names `net revoke`.
+  `net/hub-migration.json` records that the step ran.
+
+### Removed
+
+- The `net pair` command, with `--invite`, `--join` and `--serve`, and the `atp1-invite:` invitation line. The hub flow
+  (`net discoverable on` on one machine, `net hub join <device id>` or `net find` on the other) replaces it. `net status`
+  no longer shows a `last pairing` line.
+
+### Fixed
+
+- When the machine's own address changed (a DHCP renewal, or a new Wi-Fi on an allowed network), the listener stopped and
+  nothing rebound it, and `net find`, `net discoverable on` and `net hub join` used the stale `network.bind`. The listener
+  now takes the new private address on an allowed network, saves it as `network.bind`, rebinds the member socket, the join
+  server and the beacons, and sends a member beacon. When no address on an allowed network appears within 2 minutes, it
+  stops as before. The commands use the current address when the saved one is gone.
+- Mutual TLS with two or more pinned peers failed for one of them, because every device certificate has the subject
+  `CN=agent-tabs` and OpenSSL picked the wrong certificate as the issuer. The TLS contexts now accept the exact pinned
+  certificate as the trust anchor.
+
 ## 0.13.0
 
 Plugin and MCP server 0.13.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
@@ -12,7 +140,7 @@ Plugin and MCP server 0.13.0. The bundled IDE packages are unchanged (VS Code 0.
 - Agents run pairing end to end. `net pair --invite` starts a background listener and prints an
   invitation; the agent sends it to the session on the other machine, which runs
   `net pair --join <invitation>`. No windows open and you type nothing. See
-  [Pairing](docs/design.md#pairing).
+  [Joining a hub](docs/design.md#joining-a-hub).
 - The invitation pins the inviting machine's full device id and carries a secret token that never
   crosses the network. The six-digit code, `net pair` without `--invite`, and `--peer` are gone.
   Pairing protocol version 2 doesn't pair with 0.12.0.
@@ -42,7 +170,7 @@ Plugin and MCP server 0.12.0. The bundled IDE packages are unchanged (VS Code 0.
   `net pair --peer <IP> --token <token>` on the other. Each machine opens a window that shows a
   six-digit code; you type the code shown on the other machine's own screen, then approve one summary
   of the label, grants (none by default), listener and login task. See
-  [Pairing](docs/design.md#pairing).
+  [Joining a hub](docs/design.md#joining-a-hub).
 - `net pair` creates the identity, checks the network and installs an `agent-tabs` command in
   `~/.ide-agent-tabs/bin`, and offers to add that folder to your PATH.
 - The `network` skill leads with pairing.

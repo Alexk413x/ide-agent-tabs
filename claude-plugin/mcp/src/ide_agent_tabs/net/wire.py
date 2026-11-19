@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn, Union
 
 from ..messaging.sessions import SESSION_ID
+from .identity import format_digest, parse_device_id
 from .policy import ALIAS
 
 PROTOCOL_VERSION = 1
@@ -18,9 +19,13 @@ MAX_DEPTH = 16
 MAX_INT_DIGITS = 16
 MAX_SESSIONS = 256
 MAX_NAME_CHARS = 128
+MAX_PATH_CHARS = 1024
+MAX_FOLDERS = 64
 MAX_TASK_CHARS = 30000
 MAX_TEXT_CHARS = 32000
-OPS = ("open", "close", "send", "inventory")
+OPS = ("open", "close", "send", "inventory", "introduce", "remove", "rekey")
+MAX_EPOCH = 2**31 - 1
+MAX_PEM_CHARS = 8192
 OPEN_AGENTS = ("claude", "codex")
 SESSION_AGENTS = (
     "claude",
@@ -43,6 +48,11 @@ _SESSION_ID = SESSION_ID
 _TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _MESSAGE_ID = re.compile(r"m-[0-9a-f]{16}")
 _MODEL = re.compile(r"[A-Za-z0-9._:/@+-]{1,200}")
+_HUB_ID = re.compile(r"[0-9a-f]{32}")
+_HUB_KEY = re.compile(r"[0-9a-f]{64}")
+_MEMBER_LABEL = re.compile(r"[a-z0-9-]{1,32}")
+_IPV4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
+_ABSOLUTE_PATH = re.compile(r"(?:[A-Za-z]:[\\/]|/(?![/\\])).*", re.DOTALL)
 _BAD_NAME_CATEGORIES = frozenset({"Cc", "Cs", "Zl", "Zp"})
 _ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 _SHORT_ESCAPES = {"\\": "\\\\", "\n": "\\n", "\r": "\\r", "\t": "\\t"}
@@ -55,9 +65,10 @@ class WireError(Exception):
 @dataclass(frozen=True)
 class OpenBody:
     agent: str
-    folder: str
+    folder: str | None
     task: str
     model: str | None = None
+    path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -77,7 +88,32 @@ class InventoryBody:
     pass
 
 
-Body = Union[OpenBody, CloseBody, SendBody, InventoryBody]
+@dataclass(frozen=True)
+class IntroduceBody:
+    hub: str
+    device_id: str
+    label: str
+    address: str
+    port: int
+    pem: str
+
+
+@dataclass(frozen=True)
+class RemoveBody:
+    hub: str
+    device: str
+    rotate: bool
+
+
+@dataclass(frozen=True)
+class RekeyBody:
+    hub: str
+    epoch: int
+    key: str
+
+
+HubBody = Union[IntroduceBody, RemoveBody, RekeyBody]
+Body = Union[OpenBody, CloseBody, SendBody, InventoryBody, IntroduceBody, RemoveBody, RekeyBody]
 
 
 @dataclass(frozen=True)
@@ -262,13 +298,31 @@ def hello_frame() -> bytes:
     return encode({"v": PROTOCOL_VERSION, "hello": HELLO})
 
 
+def valid_path(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= MAX_PATH_CHARS
+        and _ABSOLUTE_PATH.fullmatch(value) is not None
+        and not any(unicodedata.category(char) in _ESCAPED_CATEGORIES for char in value)
+    )
+
+
+def _path(value: object, field: str) -> str:
+    if not valid_path(value):
+        _fail(f"{field} is malformed")
+    return str(value)
+
+
 def _parse_open(body: dict[str, Any]) -> OpenBody:
-    _only(body, ("agent", "folder", "task"), ("model",), "open body")
+    _only(body, ("agent", "task"), ("folder", "path", "model"), "open body")
+    if ("folder" in body) == ("path" in body):
+        _fail("open body needs exactly one of folder and path")
     return OpenBody(
         agent=_one_of(body["agent"], "agent", OPEN_AGENTS),
-        folder=_text(body["folder"], "folder", ALIAS),
+        folder=_text(body["folder"], "folder", ALIAS) if "folder" in body else None,
         task=_text(body["task"], "task", None, MAX_TASK_CHARS),
         model=_text(body["model"], "model", _MODEL) if "model" in body else None,
+        path=_path(body["path"], "path") if "path" in body else None,
     )
 
 
@@ -291,6 +345,50 @@ def _parse_inventory_request(body: dict[str, Any]) -> InventoryBody:
     return InventoryBody()
 
 
+def _whole(value: object, field: str, low: int, high: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        _fail(f"{field} is malformed")
+    return value
+
+
+def _device(value: object, field: str) -> str:
+    if not isinstance(value, str):
+        _fail(f"{field} must be a string")
+    try:
+        canonical = format_digest(parse_device_id(value))
+    except ValueError:
+        _fail(f"{field} is malformed")
+    if canonical != value:
+        _fail(f"{field} is not in canonical form")
+    return value
+
+
+def _parse_introduce(body: dict[str, Any]) -> IntroduceBody:
+    _only(body, ("hub", "member"), (), "introduce body")
+    member = _object(body["member"], "member")
+    _only(member, ("deviceId", "label", "address", "port", "certificatePem"), (), "member")
+    return IntroduceBody(
+        hub=_text(body["hub"], "hub", _HUB_ID),
+        device_id=_device(member["deviceId"], "deviceId"),
+        label=_text(member["label"], "label", _MEMBER_LABEL),
+        address=_text(member["address"], "address", _IPV4),
+        port=_whole(member["port"], "port", 1, 65535),
+        pem=_text(member["certificatePem"], "certificatePem", None, MAX_PEM_CHARS),
+    )
+
+
+def _parse_remove(body: dict[str, Any]) -> RemoveBody:
+    _only(body, ("hub", "device", "rotate"), (), "remove body")
+    if not isinstance(body["rotate"], bool):
+        _fail("rotate must be a boolean")
+    return RemoveBody(_text(body["hub"], "hub", _HUB_ID), _device(body["device"], "device"), body["rotate"])
+
+
+def _parse_rekey(body: dict[str, Any]) -> RekeyBody:
+    _only(body, ("hub", "epoch", "key"), (), "rekey body")
+    return RekeyBody(_text(body["hub"], "hub", _HUB_ID), _whole(body["epoch"], "epoch", 0, MAX_EPOCH), _text(body["key"], "key", _HUB_KEY))
+
+
 def parse_request(obj: object) -> Request:
     frame = _object(obj, "request")
     _only(frame, ("id", "op", "body"), (), "request")
@@ -303,6 +401,12 @@ def parse_request(obj: object) -> Request:
         return Request(request_id, op, _parse_close(body))
     if op == "send":
         return Request(request_id, op, _parse_send(body))
+    if op == "introduce":
+        return Request(request_id, op, _parse_introduce(body))
+    if op == "remove":
+        return Request(request_id, op, _parse_remove(body))
+    if op == "rekey":
+        return Request(request_id, op, _parse_rekey(body))
     return Request(request_id, op, _parse_inventory_request(body))
 
 
@@ -339,7 +443,7 @@ def _session_name(value: object) -> str:
 
 def parse_inventory(body: object) -> list[RemoteSession]:
     frame = _object(body, "inventory")
-    _only(frame, ("sessions",), (), "inventory")
+    _only(frame, ("sessions",), ("folders",), "inventory")
     rows = frame["sessions"]
     if not isinstance(rows, list):
         _fail("sessions must be an array")
@@ -365,9 +469,27 @@ def parse_inventory(body: object) -> list[RemoteSession]:
     return sessions
 
 
-def inventory_body(sessions: Sequence[RemoteSession]) -> dict[str, Any]:
+def parse_inventory_folders(body: object) -> list[str] | None:
+    frame = _object(body, "inventory")
+    if "folders" not in frame:
+        return None
+    rows = frame["folders"]
+    if not isinstance(rows, list):
+        _fail("folders must be an array")
+    if len(rows) > MAX_FOLDERS:
+        _fail("too many folders")
+    folders = [_path(row, "folder") for row in rows]
+    if len(set(folders)) != len(folders):
+        _fail("duplicate folder")
+    return folders
+
+
+def inventory_body(sessions: Sequence[RemoteSession], folders: Sequence[str] | None = None) -> dict[str, Any]:
     body: dict[str, Any] = {"sessions": [{"id": s.id, "name": s.name, "agent": s.agent, "status": s.status} for s in sessions]}
+    if folders is not None:
+        body["folders"] = list(folders)
     parse_inventory(body)
+    parse_inventory_folders(body)
     return body
 
 

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import json
 import os
 import re
+import socket
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -224,3 +227,29 @@ def require_lan_ready(address: str, env: Environment | None = None, *, allow_vir
     if env.platform == "win32" and not MIN_PREFIX <= info.prefix_len <= MAX_PREFIX:
         raise InterfaceError(f"{name} has the prefix length /{info.prefix_len}, which leaves no subnet to scope the firewall rule to")
     return info
+
+
+def local_addresses() -> list[str]:
+    found: set[str] = set()
+    host = socket.gethostname()
+    with contextlib.suppress(OSError):
+        found.update(socket.gethostbyname_ex(host)[2])
+    with contextlib.suppress(OSError):
+        found.update(str(info[4][0]) for info in socket.getaddrinfo(host, None, socket.AF_INET))
+    with contextlib.suppress(OSError), socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.connect(("10.255.255.255", 9))
+        found.add(str(probe.getsockname()[0]))
+    return sorted(found)
+
+
+def private_interfaces(addresses: Iterable[str], describe: Callable[[str], InterfaceInfo]) -> list[InterfaceInfo]:
+    found: list[InterfaceInfo] = []
+    for address in addresses:
+        try:
+            ip = ipaddress.IPv4Address(address)
+            info = describe(address)
+        except (ValueError, InterfaceError):
+            continue
+        if ip.is_private and not ip.is_loopback and not ip.is_link_local and info.physical:
+            found.append(info)
+    return found

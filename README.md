@@ -104,12 +104,11 @@ what each agent gets and why.
 
 LAN mode, off by default, lets an agent open Claude Code and Codex tabs on your other machines on the
 same local network, and message the sessions there. Tell an agent which two machines to connect: it runs
-`agent-tabs net pair --invite` on one and sends the invitation to the agent session on the other machine
-through Remote Control, and that session joins. You type nothing; on Windows you approve one firewall
+`agent-tabs net discoverable on` on one and `agent-tabs net hub join <device id>` on the other, through
+Remote Control. You type nothing; on Windows you approve one firewall
 prompt per machine, the first time. The machines then connect over mutual TLS pinned to each other's
-certificates, and the listener starts at each login. Pairing grants nothing by default: on each machine,
-you choose the folders and agents the peer may use. LAN mode works on Private networks only and finds no
-machines by itself. See
+certificates, and the listener starts at each login. A hub member has no per-peer grants: on each machine,
+you choose the folders a member may open tabs in. LAN mode works on Private networks only. See
 the `network` skill or [Network](docs/design.md#network). Version 1 needs Python with TLS 1.3 and
 `openssl`, and has been tested on Windows only.
 

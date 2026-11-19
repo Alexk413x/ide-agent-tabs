@@ -465,6 +465,108 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(parse_inventory(reply.body), [RemoteSession("s1", "Main", "claude", "idle")])
 
 
+class OpenPathTest(unittest.TestCase):
+    def assertRejects(self, body: Any) -> None:
+        with self.assertRaises(WireError):
+            parse_request(request("open", body))
+
+    def test_a_path_open_carries_the_absolute_path(self) -> None:
+        for path in ("C:\\Projects\\x", "c:/Projects/x", "D:\\", "/home/me/x", "/", "/a b/é"):
+            with self.subTest(path):
+                parsed = parse_request(request("open", {"agent": "codex", "path": path, "task": "t", "model": "m"}))
+                self.assertEqual(parsed.body, OpenBody(agent="codex", folder=None, task="t", model="m", path=path))
+
+    def test_an_alias_open_has_no_path(self) -> None:
+        parsed = parse_request(request("open", {"agent": "claude", "folder": "proj", "task": "t"}))
+        assert isinstance(parsed.body, OpenBody)
+        self.assertIsNone(parsed.body.path)
+
+    def test_exactly_one_of_folder_and_path(self) -> None:
+        self.assertRejects({"agent": "claude", "task": "t"})
+        self.assertRejects({"agent": "claude", "task": "t", "folder": "proj", "path": "/x"})
+
+    def test_malformed_paths(self) -> None:
+        bad: list[Any] = [
+            "",
+            "proj",
+            "x/y",
+            "..\\x",
+            "C:x",
+            "C:",
+            "\\\\server\\share",
+            "//server/share",
+            "\\rooted",
+            "/x\n",
+            "/x\x00",
+            "/x\x1b",
+            "/x\u202e",
+            "/x\u2028",
+            "/" + "a" * wire.MAX_PATH_CHARS,
+            5,
+            None,
+            ["/x"],
+        ]
+        for path in bad:
+            with self.subTest(path=path):
+                self.assertRejects({"agent": "claude", "path": path, "task": "t"})
+
+    def test_the_path_length_limit(self) -> None:
+        parse_request(request("open", {"agent": "claude", "path": "/" + "a" * (wire.MAX_PATH_CHARS - 1), "task": "t"}))
+
+    def test_a_path_open_refuses_the_same_extra_fields(self) -> None:
+        good: dict[str, Any] = {"agent": "claude", "path": "/x", "task": "t"}
+        for field, value in (("args", ["--permission-mode", "bypassPermissions"]), ("permissionMode", "x"), ("env", {}), ("cwd", "/x")):
+            with self.subTest(field):
+                self.assertRejects({**good, field: value})
+
+
+class InventoryFoldersTest(unittest.TestCase):
+    def test_an_inventory_without_folders_parses_and_has_none(self) -> None:
+        body = {"sessions": [session()]}
+        self.assertEqual(len(parse_inventory(body)), 1)
+        self.assertIsNone(wire.parse_inventory_folders(body))
+
+    def test_folders_parse_beside_the_sessions(self) -> None:
+        body = {"sessions": [session()], "folders": ["C:\\Projects", "/home/me/code"]}
+        self.assertEqual(len(parse_inventory(body)), 1)
+        self.assertEqual(wire.parse_inventory_folders(body), ["C:\\Projects", "/home/me/code"])
+        self.assertEqual(wire.parse_inventory_folders({"sessions": [], "folders": []}), [])
+
+    def test_invalid_folders_are_refused(self) -> None:
+        bad: list[Any] = [
+            "C:\\Projects",
+            {"a": 1},
+            None,
+            [""],
+            ["relative"],
+            ["\\\\server\\share"],
+            ["/x", "/x"],
+            ["/x\n"],
+            [5],
+            [None],
+            ["/x"] * 65,
+        ]
+        for folders in bad:
+            with self.subTest(folders=folders), self.assertRaises(WireError):
+                wire.parse_inventory_folders({"sessions": [], "folders": folders})
+
+    def test_the_folder_count_limit(self) -> None:
+        folders = [f"/f{i}" for i in range(wire.MAX_FOLDERS)]
+        self.assertEqual(wire.parse_inventory_folders({"sessions": [], "folders": folders}), folders)
+
+    def test_an_unknown_inventory_field_is_still_refused(self) -> None:
+        with self.assertRaises(WireError):
+            parse_inventory({"sessions": [], "folderz": []})
+
+    def test_inventory_body_adds_folders_only_when_given(self) -> None:
+        sessions = [RemoteSession("s1", "Main", "claude", "idle")]
+        self.assertEqual(set(wire.inventory_body(sessions)), {"sessions"})
+        self.assertEqual(wire.inventory_body(sessions, [])["folders"], [])
+        self.assertEqual(wire.inventory_body(sessions, ["/x"])["folders"], ["/x"])
+        with self.assertRaises(WireError):
+            wire.inventory_body(sessions, ["relative"])
+
+
 class EscapeDisplayTest(unittest.TestCase):
     def test_plain_text_is_unchanged(self) -> None:
         self.assertEqual(wire.escape_display("Main tab é 日本 \U0001f600"), "Main tab é 日本 \U0001f600")

@@ -22,7 +22,8 @@ from ide_agent_tabs.net.outbound import (
     is_inside,
     parse_remote_target,
 )
-from outbound_support import MESSAGE_ID, OTHER, PEER, NetCase, peer_grant, write_config, write_policy
+from ide_agent_tabs.net.policy import load_policy
+from outbound_support import MESSAGE_ID, OTHER, PEER, NetCase, peer_grant, write_config, write_member_policy, write_policy
 
 SENTINEL = "PEER-TEXT-SENTINEL"
 
@@ -400,6 +401,115 @@ class RowsTest(NetCase):
             failed, text = self.call(name, args)
             self.assertFalse(failed, text)
             self.assertEqual([r["id"] for r in json.loads(text)["sessions"]], ["tab-a", "tab-r@laptop"])
+
+
+class MemberOpenTest(NetCase):
+    def setUp(self) -> None:
+        super().setUp()
+        write_member_policy(self.home, [peer_grant(member=True)])
+        self.request.reply = {"re": "r", "ok": True, "body": {"tab": "tab-77"}}
+        self.path = "C:\\Projects\\api" if os.name == "nt" else "/srv/projects/api"
+
+    def open(self, **fields: Any) -> dict[str, Any]:
+        given: dict[str, Any] = {"host": "laptop", "path": self.path, "agent": "claude", "prompt": "fix the build"}
+        given.update(fields)
+        return self.net.open(self.messaging.caller(), given)
+
+    def test_an_open_toward_a_member_sends_the_absolute_path_form(self) -> None:
+        self.assertEqual(self.open(agent="codex", model="gpt-6.1"), {"remote": "laptop", "tab": "tab-77"})
+        call = self.request.calls[0]
+        self.assertEqual((call["peer"], call["op"]), (PEER, "open"))
+        self.assertEqual(call["body"], {"agent": "codex", "path": self.path, "task": "fix the build", "model": "gpt-6.1"})
+        parsed = wire.parse_request({"id": "r1", "op": "open", "body": call["body"]})
+        assert isinstance(parsed.body, wire.OpenBody)
+        self.assertEqual((parsed.body.path, parsed.body.folder), (self.path, None))
+
+    def test_both_path_styles_are_sent_as_given(self) -> None:
+        for path in ("C:\\Projects\\api", "/srv/projects/api"):
+            with self.subTest(path):
+                self.open(path=path)
+                self.assertEqual(self.request.calls[-1]["body"]["path"], path)
+
+    def test_a_member_open_still_needs_a_valid_path_agent_and_task(self) -> None:
+        for fields in (
+            {"path": "proj"},
+            {"path": "..\\x"},
+            {"path": "\\\\server\\share"},
+            {"path": None},
+            {"agent": "copilot"},
+            {"prompt": " "},
+        ):
+            with self.subTest(fields=repr(fields)), self.assertRaises(OutboundError):
+                self.open(**fields)
+        self.assertEqual(self.request.calls, [])
+
+    def test_the_outbound_checks_apply_to_a_member_open(self) -> None:
+        self.enable(outboundFolders=[])
+        with self.assertRaises(OutboundError) as caught:
+            self.open()
+        self.assertEqual(str(caught.exception), FOLDER_REFUSAL)
+        self.enable()
+        self.record_remote_tab("tab-a")
+        with self.assertRaises(OutboundError) as caught:
+            self.open()
+        self.assertEqual(str(caught.exception), REMOTE_ORIGIN_REFUSAL)
+        self.assertEqual(self.request.calls, [])
+
+    def test_a_non_member_peer_still_gets_the_alias_form_and_refuses_a_path(self) -> None:
+        write_member_policy(self.home, [peer_grant(OTHER, "desk", "192.168.1.10", member=True), peer_grant()])
+        self.open(host="laptop", path="proj")
+        self.assertEqual(self.request.calls[0]["body"], {"agent": "claude", "folder": "proj", "task": "fix the build"})
+        with self.assertRaisesRegex(OutboundError, "folder alias"):
+            self.open(host="laptop")
+
+    def test_a_member_sends_to_any_session_without_a_grant(self) -> None:
+        self.request.reply = {"re": "r", "ok": True, "body": {"id": MESSAGE_ID}}
+        self.assertEqual(self.net.send(self.messaging.caller(), {"to": "tab-r@laptop", "text": "hi"})["delivery"], "remote")
+
+
+class MemberRowsTest(NetCase):
+    def setUp(self) -> None:
+        super().setUp()
+        write_member_policy(self.home, [peer_grant(member=True), peer_grant(OTHER, "desk", "192.168.1.10")])
+
+    def seed(self, body: dict[str, Any], peer: str = PEER) -> None:
+        self.store().put_inventory(peer, json.dumps(body), now_ms() - 5000)
+
+    def remote_rows(self) -> list[dict[str, Any]]:
+        return [r for r in self.messaging.list_sessions()["sessions"] if r["route"] == "remote"]
+
+    def test_a_members_sessions_are_listed_with_its_folders(self) -> None:
+        folders = ["C:\\Projects", "/home/me/code"]
+        self.seed({"sessions": [wire_row("tab-r"), wire_row("tab-s", "api", "codex", "busy")], "folders": folders})
+        rows = self.remote_rows()
+        self.assertEqual([r["id"] for r in rows], ["tab-r@laptop", "tab-s@laptop"])
+        self.assertEqual([r["remote"]["folders"] for r in rows], [folders, folders])
+        self.assertEqual(
+            {k: v for k, v in rows[0]["remote"].items() if k != "ageMs"}, {"label": "laptop", "offline": False, "folders": folders}
+        )
+
+    def test_a_peer_that_sent_no_folders_has_the_original_remote_shape(self) -> None:
+        self.seed({"sessions": [wire_row("tab-r")]}, OTHER)
+        row = self.remote_rows()[0]
+        self.assertEqual(set(row["remote"]), {"label", "ageMs", "offline"})
+
+    def test_a_member_row_needs_no_send_grant_here(self) -> None:
+        self.assertEqual(load_policy(self.home).peers[0].send, ())
+        self.seed({"sessions": [wire_row("tab-r")], "folders": []})
+        self.assertEqual([r["id"] for r in self.remote_rows()], ["tab-r@laptop"])
+
+    def test_no_rows_appear_outside_an_allowed_folder(self) -> None:
+        self.seed({"sessions": [wire_row("tab-r")], "folders": []})
+        self.enable(outboundFolders=[])
+        self.assertEqual(self.remote_rows(), [])
+
+    def test_an_inventory_with_bad_folders_is_skipped(self) -> None:
+        self.seed({"sessions": [wire_row("tab-r")], "folders": ["relative"]})
+        self.assertEqual(self.remote_rows(), [])
+
+
+def wire_row(session_id: str, name: str = "main", agent: str = "claude", status: str = "idle") -> dict[str, str]:
+    return {"id": session_id, "name": name, "agent": agent, "status": status}
 
 
 class StartListenerTest(NetCase):

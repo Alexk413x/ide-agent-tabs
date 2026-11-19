@@ -5,7 +5,7 @@ import secrets
 import socket
 import ssl
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -137,6 +137,7 @@ def send_request(
     timeout: float = 30,
     port: int = DEFAULT_PORT,
     request_id: str | None = None,
+    address: str | None = None,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     try:
@@ -161,10 +162,45 @@ def send_request(
         raise NetClientError(f"the request is invalid: {error}") from error
     try:
         context = tls.client_context(identity.cert, identity.key, lambda: identity.passphrase, [pem])
-        with socket.create_connection((peer.address, port), timeout=max(0.1, min(CONNECT_S, deadline - time.monotonic()))) as raw:
+        with socket.create_connection(
+            (address or peer.address, port), timeout=max(0.1, min(CONNECT_S, deadline - time.monotonic()))
+        ) as raw:
             raw.settimeout(max(0.1, deadline - time.monotonic()))
             with context.wrap_socket(raw, server_hostname=None) as tls_sock:
                 return _exchange(tls_sock, deadline, expected, frame, rid)
+    except NetClientError:
+        raise
+    except (OSError, wire.WireError, ValueError) as error:
+        raise NetClientError(_reason(error)) from error
+
+
+def verify_pinned(home: str, address: str, device_ids: Sequence[str], *, port: int = DEFAULT_PORT, timeout: float = CONNECT_S) -> str:
+    deadline = time.monotonic() + timeout
+    pinned: dict[bytes, tuple[str, str]] = {}
+    for candidate in device_ids:
+        pem = read_peer_pem(home, candidate)
+        if pem is None:
+            continue
+        try:
+            pinned[parse_device_id(candidate)] = (candidate, pem)
+        except ValueError:
+            continue
+    if not pinned:
+        raise NetClientError("no stored certificate matches a device to check")
+    identity = load_identity(home)
+    try:
+        context = tls.client_context(identity.cert, identity.key, lambda: identity.passphrase, [pem for _, pem in pinned.values()])
+        with socket.create_connection((address, port), timeout=max(0.1, min(CONNECT_S, deadline - time.monotonic()))) as raw:
+            raw.settimeout(max(0.1, deadline - time.monotonic()))
+            with context.wrap_socket(raw, server_hostname=None) as tls_sock:
+                tls.check_not_reused(tls_sock)
+                found = pinned.get(tls.peer_digest(tls_sock))
+                if found is None:
+                    raise NetClientError("the peer's certificate does not match its pinned certificate")
+                sock = as_socket(DeadlineSocket(cast(socket.socket, tls_sock), deadline))
+                wire.write_frame(sock, wire.hello_frame())
+                wire.check_hello(wire.parse_json(wire.read_frame(sock)))
+                return found[0]
     except NetClientError:
         raise
     except (OSError, wire.WireError, ValueError) as error:

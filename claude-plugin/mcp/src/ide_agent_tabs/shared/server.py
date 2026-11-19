@@ -160,8 +160,9 @@ class SharedServer:
 
     def sync_net(self) -> bool:
         from ..net.policy import load_network_config
+        from ..net.transport import network_enabled
 
-        lan = load_network_config(self.home)[0].network == "lan"
+        lan = network_enabled(load_network_config(self.home)[0])
         with self._poller_lock:
             if self._net_closed:
                 return False

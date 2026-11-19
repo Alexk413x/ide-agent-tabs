@@ -14,6 +14,7 @@ from typing import Any
 from unittest import mock
 
 from ide_agent_tabs import cli as top_cli
+from ide_agent_tabs.files import file_lock
 from ide_agent_tabs.net import cli, confirm, notify, tls
 from ide_agent_tabs.net.cli import Services
 from ide_agent_tabs.net.client import peer_cert_path
@@ -22,6 +23,7 @@ from ide_agent_tabs.net.identity import format_digest, parse_device_id
 from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
 from ide_agent_tabs.net.listener import listener_file, log_file, read_listener, stop_file, write_atomically
 from ide_agent_tabs.net.login_task import LoginTaskError
+from ide_agent_tabs.net.names import default_label
 from ide_agent_tabs.net.pairing import Limits
 from ide_agent_tabs.net.policy import PeerGrant, Policy, load_policy, policy_path, save_policy
 from ide_agent_tabs.net.private_files import check_private
@@ -455,6 +457,13 @@ class RevokeAndOffTest(CliTestCase):
         self.assertTrue(peer_cert_path(self.a, self.b_id).exists())
         self.assertIn("marbles-xps", self.h.text)
 
+    def test_rename_refuses_a_session_that_another_machine_opened_and_changes_nothing(self) -> None:
+        self.trust_b()
+        remote = Harness(self, self.a, is_remote_origin=lambda _home: True)
+        self.assertEqual(remote.run("rename", "laptop", "marbles-xps"), 1)
+        self.assertEqual(remote.err, [f"error: {cli.NETWORK_SETTINGS_REFUSAL}"])
+        self.assertEqual(load_policy(self.a).peers[0].label, "laptop")
+
     def test_rename_refuses_a_bad_or_taken_label_and_an_unknown_peer(self) -> None:
         self.trust_b()
         for args in (("laptop", "Bad Label"), ("laptop", "x" * 33), ("nobody", "fine")):
@@ -675,17 +684,18 @@ class StatusAndDispatchTest(CliTestCase):
     def test_status_shows_the_pairing_lockout(self) -> None:
         limits = Limits(self.a)
         for _ in range(3):
-            limits.record_failure()
+            limits.record_failure("192.168.1.77")
         self.assertEqual(self.h.run("status"), 0)
-        self.assertRegex(self.h.text, r"pairing: pairing is locked for \d+ more minutes")
+        self.assertRegex(self.h.text, r"pairing: available; locked for 192\.168\.1\.77 \(\d+ more minutes\)")
+        self.assertIn("other addresses can still pair", self.h.text)
         self.assertIn("net trust", self.h.text)
 
-    def test_status_shows_an_open_pairing_window_and_changes_no_firewall_rule(self) -> None:
-        limits = Limits(self.a)
-        limits.open_window()
-        self.addCleanup(limits.close_window)
+    def test_status_reports_an_unreadable_pairing_file_and_changes_no_firewall_rule(self) -> None:
+        damaged = Path(self.a, "net", "pairing.json")
+        damaged.write_text("{not json", encoding="utf-8")
+        self.addCleanup(damaged.unlink, missing_ok=True)
         self.assertEqual(self.h.run("status"), 0)
-        self.assertIn("pairing busy", self.h.text)
+        self.assertRegex(self.h.text, r"pairing: unreadable \(")
         self.assertNotIn("firewall", self.h.events)
         self.assertEqual(self.h.firewall_removals, 0)
 
@@ -722,11 +732,68 @@ class StatusAndDispatchTest(CliTestCase):
 
     def test_net_is_registered_in_the_agent_tabs_command(self) -> None:
         self.assertEqual(top_cli.COMMANDS["net"], "ide_agent_tabs.net.cli")
-        self.assertIn("net <id|status|off|trust|grant|revoke|rename|pair|lan>", top_cli.usage())
+        self.assertIn("net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|networks|find>", top_cli.usage())
         captured = io.StringIO()
         with mock.patch.dict(os.environ, {"IDE_AGENT_TABS_HOME": self.a}), contextlib.redirect_stdout(captured):
             self.assertEqual(top_cli.main(["net", "status"]), 0)
         self.assertIn("network: off", captured.getvalue())
+
+
+class SetNetworkTest(unittest.TestCase):
+    def test_a_change_waits_for_the_config_lock_and_keeps_what_another_writer_saved_meanwhile(self) -> None:
+        home = make_root(self)
+        path = os.path.join(home, "config.json")
+        Path(path).write_text(json.dumps({"network": {"bind": "10.0.0.5"}}), encoding="utf-8")
+        finished = threading.Event()
+        errors: list[BaseException] = []
+
+        def change() -> None:
+            try:
+                cli.set_network(home, {"discoverable": True})
+            except BaseException as error:  # noqa: BLE001 - reported to the test thread
+                errors.append(error)
+            finally:
+                finished.set()
+
+        with file_lock(path):
+            worker = threading.Thread(target=change, daemon=True)
+            worker.start()
+            self.assertFalse(finished.wait(0.5))
+            Path(path).write_text(json.dumps({"network": {"bind": "10.0.0.5", "memberFolders": ["/x"]}}), encoding="utf-8")
+        self.assertTrue(finished.wait(10))
+        worker.join(5)
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            json.loads(Path(path).read_text(encoding="utf-8"))["network"],
+            {"bind": "10.0.0.5", "memberFolders": ["/x"], "discoverable": True},
+        )
+
+    def test_a_config_that_is_not_json_is_a_cli_error(self) -> None:
+        home = make_root(self)
+        Path(home, "config.json").write_text("{not json", encoding="utf-8")
+        with self.assertRaisesRegex(cli.CliError, "is not valid JSON"):
+            cli.set_network(home, {"discoverable": True})
+
+    def test_a_network_section_that_is_not_an_object_is_a_cli_error(self) -> None:
+        home = make_root(self)
+        Path(home, "config.json").write_text(json.dumps({"network": []}), encoding="utf-8")
+        with self.assertRaisesRegex(cli.CliError, "must be an object"):
+            cli.set_network(home, {"discoverable": True})
+
+
+class DefaultLabelTest(unittest.TestCase):
+    def test_the_default_label_is_lowercased_made_safe_and_unique(self) -> None:
+        def policy(*labels: str) -> Policy:
+            return Policy(tuple(PeerGrant(format_digest(bytes([index]) * 32), label, "192.168.50.5") for index, label in enumerate(labels)))
+
+        self.assertEqual(default_label("Work PC.1", policy()), "work-pc-1")
+        self.assertEqual(default_label("Work PC", policy("work-pc")), "work-pc-2")
+        self.assertEqual(default_label("Work PC", policy("work-pc", "work-pc-2")), "work-pc-3")
+        self.assertEqual(default_label("...", policy()), "peer")
+        long = "a" * 32
+        label = default_label(long, policy(long))
+        self.assertEqual(label, "a" * 30 + "-2")
+        self.assertEqual(len(label), 32)
 
 
 class ConfirmTest(unittest.TestCase):

@@ -7,9 +7,9 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from ..files import read_text_if_exists, write_atomically
+from ..files import file_lock, read_text_if_exists, write_atomically
 from ..jev.settings import CONFIG_FILE
-from ..jsjson import parse
+from ..jsjson import parse, stringify
 from ..messaging.sessions import SESSION_ID
 
 NET_DIR = "net"
@@ -17,6 +17,9 @@ POLICY_FILE = "policy.json"
 DEFAULT_PORT = 47829
 DEFAULT_MAX_REMOTE_TABS = 4
 MAX_REMOTE_TABS = 64
+MEMBER_MAX_TABS = 4
+MEMBER_OPENS_PER_HOUR = 30
+MEMBER_MESSAGES_PER_MINUTE = 60
 SUPPORTED_AGENTS = frozenset({"claude", "codex"})
 MAX_LIMIT = 1000
 MAX_UINT64 = 2**64 - 1
@@ -26,14 +29,31 @@ ALIAS = re.compile(r"[a-z0-9-]{1,32}")
 _ALIAS = ALIAS
 _DEVICE_ID = re.compile(r"[A-Za-z0-9-]{1,96}")
 _SESSION_ID = SESSION_ID
+NETWORK_ID = re.compile(r"[A-Za-z0-9{}:._-]{1,128}")
+_NETWORK_ID = NETWORK_ID
 _MAX_MODEL_CHARS = 128
-_CONFIG_KEYS = frozenset({"network", "bind", "port", "openssl", "outboundFolders", "maxRemoteTabs", "deviceName"})
+_CONFIG_KEYS = frozenset(
+    {
+        "network",
+        "bind",
+        "port",
+        "openssl",
+        "outboundFolders",
+        "maxRemoteTabs",
+        "deviceName",
+        "memberFolders",
+        "allowedNetworks",
+        "discoverable",
+    }
+)
 _PEER_KEYS = frozenset(
-    {"label", "address", "folders", "agents", "models", "send", "maxTabs", "opensPerHour", "messagesPerMinute", "approveEachOpen"}
+    {"label", "address", "folders", "agents", "models", "send", "maxTabs", "opensPerHour", "messagesPerMinute", "approveEachOpen", "member"}
 )
 _LATER_STAGE_PEER_KEYS = frozenset({"person", "expires", "paused"})
 _FOLDER_KEYS = frozenset({"alias", "path", "dev", "ino"})
-_POLICY_KEYS = frozenset({"generation", "peers"})
+_POLICY_KEYS = frozenset({"generation", "peers", "hub"})
+_HUB_KEYS = frozenset({"id", "name"})
+_HUB_ID = re.compile(r"[0-9a-f]{32}")
 _PRIVATE_V4 = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 _UNIQUE_LOCAL_V6 = ipaddress.ip_network("fc00::/7")
 
@@ -50,6 +70,9 @@ class NetworkConfig:
     openssl: str | None = None
     outbound_folders: tuple[str, ...] = ()
     max_remote_tabs: int = DEFAULT_MAX_REMOTE_TABS
+    member_folders: tuple[str, ...] = ()
+    allowed_networks: tuple[str, ...] = ()
+    discoverable: bool = False
 
 
 @dataclass(frozen=True)
@@ -73,12 +96,20 @@ class PeerGrant:
     opens_per_hour: int = 6
     messages_per_minute: int = 10
     approve_each_open: bool = False
+    member: bool = False
+
+
+@dataclass(frozen=True)
+class Hub:
+    id: str
+    name: str
 
 
 @dataclass(frozen=True)
 class Policy:
     peers: tuple[PeerGrant, ...] = ()
     generation: int = 0
+    hub: Hub | None = None
 
 
 def is_allowed_bind(address: str) -> bool:
@@ -163,6 +194,37 @@ def _outbound_folders(value: Any, invalid: list[str]) -> tuple[str, ...]:
     return ()
 
 
+def _member_folders(value: Any, invalid: list[str]) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, list) and all(_is_local_path(f) for f in value):  # pyright: ignore[reportUnknownVariableType]
+        return tuple(value)  # pyright: ignore[reportUnknownArgumentType]
+    invalid.append("network.memberFolders must be a list of absolute paths")
+    return ()
+
+
+def _allowed_networks(value: Any, invalid: list[str]) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if (
+        isinstance(value, list)
+        and all(isinstance(n, str) and _NETWORK_ID.fullmatch(n) for n in value)  # pyright: ignore[reportUnknownVariableType]
+        and len(set(value)) == len(value)  # pyright: ignore[reportUnknownArgumentType]
+    ):
+        return tuple(value)  # pyright: ignore[reportUnknownArgumentType]
+    invalid.append("network.allowedNetworks must be a list of unique network ids of 1 to 128 characters from A-Z a-z 0-9 { } : . _ -")
+    return ()
+
+
+def _discoverable(value: Any, invalid: list[str]) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    invalid.append("network.discoverable must be true or false")
+    return False
+
+
 def _max_remote_tabs(value: Any, invalid: list[str]) -> int:
     if value is None:
         return DEFAULT_MAX_REMOTE_TABS
@@ -200,11 +262,31 @@ def load_network_config(home: str) -> tuple[NetworkConfig, list[str]]:
         openssl=_openssl(section.get("openssl"), invalid),
         outbound_folders=_outbound_folders(section.get("outboundFolders"), invalid),
         max_remote_tabs=_max_remote_tabs(section.get("maxRemoteTabs"), invalid),
+        member_folders=_member_folders(section.get("memberFolders"), invalid),
+        allowed_networks=_allowed_networks(section.get("allowedNetworks"), invalid),
+        discoverable=_discoverable(section.get("discoverable"), invalid),
     )
     if invalid:
         warnings.extend(f"Ignoring network in {CONFIG_FILE}, so the network is off: {reason}" for reason in invalid)
         return NetworkConfig(), warnings
     return result, warnings
+
+
+def update_network_section(home: str, updates: dict[str, Any]) -> None:
+    path = os.path.join(home, CONFIG_FILE)
+    with file_lock(path):
+        text = read_text_if_exists(path)
+        config: Any = parse(text) if text and text.strip() else {}
+        if not isinstance(config, dict):
+            raise PolicyError(f"{path} must hold a JSON object")
+        section: Any = config.get("network")  # pyright: ignore[reportUnknownMemberType]
+        if section is None:
+            section = {}
+        if not isinstance(section, dict):
+            raise PolicyError(f'"network" in {path} must be an object')
+        section.update(updates)  # pyright: ignore[reportUnknownMemberType]
+        config["network"] = section
+        write_atomically(path, stringify(config, 2) + "\n")
 
 
 def policy_path(home: str) -> str:
@@ -259,7 +341,7 @@ def _string_list(obj: dict[str, Any], key: str, where: str, check: Callable[[str
     return tuple(items)
 
 
-def _model_ok(text: str) -> bool:
+def model_ok(text: str) -> bool:
     return 0 < len(text) <= _MAX_MODEL_CHARS and text.isprintable()
 
 
@@ -311,6 +393,9 @@ def _peer(device_id: str, value: Any) -> PeerGrant:
     approve = obj.get("approveEachOpen", False)
     if not isinstance(approve, bool):
         raise PolicyError(f"{where}: approveEachOpen must be true or false")
+    member = obj.get("member", False)
+    if not isinstance(member, bool):
+        raise PolicyError(f"{where}: member must be true or false")
     agents = _string_list(obj, "agents", where, lambda a: a in SUPPORTED_AGENTS)
     return PeerGrant(
         device_id=device_id,
@@ -318,13 +403,25 @@ def _peer(device_id: str, value: Any) -> PeerGrant:
         address=_address(obj.get("address"), where),
         folders=_folders(obj, where),
         agents=agents,
-        models=_string_list(obj, "models", where, _model_ok),
+        models=_string_list(obj, "models", where, model_ok),
         send=_string_list(obj, "send", where, _SESSION_ID.fullmatch),
         max_tabs=_limit(obj, "maxTabs", 1, where),
         opens_per_hour=_limit(obj, "opensPerHour", 6, where),
         messages_per_minute=_limit(obj, "messagesPerMinute", 10, where),
         approve_each_open=approve,
+        member=member,
     )
+
+
+def _hub(value: Any) -> Hub:
+    obj = _object(value, "policy: hub")
+    _check_keys(obj, _HUB_KEYS, "policy: hub")
+    hub_id, name = obj.get("id"), obj.get("name")
+    if not isinstance(hub_id, str) or not _HUB_ID.fullmatch(hub_id):
+        raise PolicyError("policy: hub id must be 32 lowercase hexadecimal characters")
+    if not isinstance(name, str) or not _LABEL.fullmatch(name):
+        raise PolicyError("policy: hub name must match [a-z0-9-]{1,32}")
+    return Hub(hub_id, name)
 
 
 def _policy(value: Any) -> Policy:
@@ -339,7 +436,10 @@ def _policy(value: Any) -> Policy:
         raise PolicyError("policy: duplicate device id")
     if len({p.label for p in peers}) != len(peers):
         raise PolicyError("policy: duplicate label")
-    return Policy(peers, generation)
+    hub = _hub(obj["hub"]) if "hub" in obj else None
+    if hub is None and any(p.member for p in peers):
+        raise PolicyError("policy: a member peer needs a hub")
+    return Policy(peers, generation, hub)
 
 
 def load_policy(home: str) -> Policy:
@@ -358,7 +458,7 @@ def load_policy(home: str) -> Policy:
 
 
 def _peer_object(peer: PeerGrant) -> dict[str, Any]:
-    return {
+    obj: dict[str, Any] = {
         "label": peer.label,
         "address": peer.address,
         "folders": [{"alias": f.alias, "path": f.path, "dev": f.dev, "ino": f.ino} for f in peer.folders],
@@ -370,6 +470,9 @@ def _peer_object(peer: PeerGrant) -> dict[str, Any]:
         "messagesPerMinute": peer.messages_per_minute,
         "approveEachOpen": peer.approve_each_open,
     }
+    if peer.member:
+        obj["member"] = True
+    return obj
 
 
 def save_policy(home: str, policy: Policy) -> None:
@@ -378,7 +481,9 @@ def save_policy(home: str, policy: Policy) -> None:
         if peer.device_id in peers:
             raise PolicyError("policy: duplicate device id")
         peers[peer.device_id] = _peer_object(peer)
-    obj = {"generation": policy.generation, "peers": peers}
+    obj: dict[str, Any] = {"generation": policy.generation, "peers": peers}
+    if policy.hub is not None:
+        obj["hub"] = {"id": policy.hub.id, "name": policy.hub.name}
     _policy(obj)
     write_atomically(policy_path(home), json.dumps(obj, indent=2) + "\n")
 

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import socket
+import sqlite3
 import ssl
 import stat
 import sys
@@ -18,59 +19,81 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from ..files import file_lock, read_text_if_exists, remove_file, write_atomically
+from ..clock import now_ms
+from ..files import file_lock, remove_file
 from ..home import agent_tabs_home
 from ..jev.settings import CONFIG_FILE
-from ..jsjson import parse, stringify
+from ..jsjson import parse
 from ..liveness import pid_alive
 from ..messaging.sessions import SESSION_ID
 from ..processes import spawn_detached, terminal_environment
+from ..profiles import TAB_ID_ENV
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, parse_port
-from . import elevation, firewall, ingress, login_task, tls
+from . import elevation, firewall, hubsync, ingress, login_task, tls
 from .certgen import CertgenError, Identity, generate_identity
-from .client import identity_dir, local_device_id, peer_cert_path, peers_dir
+from .client import identity_dir, local_device_id, peer_cert_path, send_request
 from .confirm import ConfirmError, confirm
 from .firewall import FirewallError
+from .hub import default_member_folder
+from .hubstate import HubStateError, clear_removed, ensure_hub_key, remove_hub_state
 from .identity import der_from_pem, format_digest, parse_device_id
 from .interfaces import InterfaceError, InterfaceInfo, interface_for
 from .listener import append_log, live_listener, log_file, read_listener, request_stop
 from .login_task import LoginTaskError
+from .migration import ERRORS as MIGRATION_ERRORS
+from .migration import Migrator
+from .names import BAD_DEVICE_NAME, DeviceNameError, default_label, device_name_of
+from .netid import current_network_id, gate_state
 from .notify import notify
-from .pairing import PAIRING_FILE, Busy, Limits, Locked, PairingError
+from .origin import Caller, OriginChecker
+from .outbound import OFFLINE_AFTER_MS
+from .pairing import PAIRING_FILE, Limits, PairingError
+from .peers import LabelTaken, remove_peer, save_peer
 from .policy import (
     ALIAS,
     SUPPORTED_AGENTS,
     FolderGrant,
+    Hub,
+    NetworkConfig,
     PeerGrant,
     Policy,
     PolicyError,
     grant_for,
-    is_allowed_bind,
     load_network_config,
     load_policy,
     policy_path,
     save_policy,
+    update_network_section,
 )
-from .private_files import ensure_private_dir, make_private_file
+from .presence import read_presence
+from .private_files import ensure_private_dir
 from .secrets import SecretsError, new_passphrase, store_passphrase
-from .store import NetStore, NetStoreError
+from .store import NetStore, NetStoreError, db_path
+from .transport import LanTransport, network_enabled
 
 if TYPE_CHECKING:
-    from .pair_cli import PairDeps
+    from .find import FindRequest, FindResult
+    from .hub_cli import PairDeps
 
-USAGE = "net <id|status|off|trust|grant|revoke|rename|pair|lan>"
+USAGE = "net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|networks|find>"
 _GRAMMAR = (
     "agent-tabs net id | status | off | revoke <label> | rename <label> <new label>"
-    " | pair --invite [--bind <address>] | pair --join <invitation> [--bind <address>]"
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
     " | grant <label> [--folder <alias>=<absolute path>] [--agent claude|codex] [--model <model>] [--send <session id>]"
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
+    " | hub create [--name <name>] [--folder <session folder>] [--with <device id>[@<address>] ...] [--bind <address>]"
+    " | hub join <device id> [--address <IP>] [--folder <session folder>] [--bind <address>] | hub status | hub leave"
+    " | folders | folders add <absolute path> | folders remove <absolute path>"
+    " | discoverable [on [--bind <address>] [--folder <session folder>] | off | status]"
+    " | networks | networks add | networks remove <network id>"
+    " | find [--json] [--bind <address>]"
 )
 LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MAX_CERT_BYTES = 65536
 _MAX_MODEL_CHARS = 128
 _DRIVE_REMOTE = 4
+NETWORK_SETTINGS_REFUSAL = "refused: a session opened by another machine can't change this machine's network settings"
 _PROJECT_TABLE = re.compile(r"""\s*\[\s*projects\s*\.\s*("(?:[^"\\]|\\.)*"|'[^']*')\s*\]\s*(?:#.*)?""")
 _TRUST_LINE = re.compile(r"""\s*trust_level\s*=\s*("trusted"|'trusted')\s*(?:#.*)?""")
 
@@ -125,6 +148,14 @@ def _bind_available(address: str) -> bool:
         sock.close()
 
 
+def _caller_is_remote(home: str) -> bool:
+    checker = OriginChecker(home)
+    try:
+        return checker.is_remote(Caller("cli", os.getcwd(), os.environ.get(TAB_ID_ENV) or None, os.getpid()))
+    finally:
+        checker.close()
+
+
 @dataclass
 class Services:
     home: str
@@ -142,11 +173,18 @@ class Services:
     interface_for: Callable[[str], InterfaceInfo] = interface_for
     unsupported_reason: Callable[[], str | None] = elevation.unsupported_reason
     pair: PairDeps | None = None
+    find: Callable[[FindRequest], FindResult] | None = None
+    member_request: Callable[..., dict[str, Any]] | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     user_home: str = field(default_factory=lambda: os.path.expanduser("~"))
     server_port: int = SERVER_DEFAULT_PORT
     start_wait_s: float = 3.0
     stop_wait_s: float = 5.0
+    cwd: Callable[[], str] = os.getcwd
+    new_hub_id: Callable[[], str] = lambda: os.urandom(16).hex()
+    network_id: Callable[[str], str | None] = current_network_id
+    is_remote_origin: Callable[[str], bool] = _caller_is_remote
+    migrator: Migrator | None = None
 
     def record(self, event: str, **fields: object) -> None:
         pairs = " ".join(f"{key}={value}" for key, value in fields.items())
@@ -155,7 +193,9 @@ class Services:
 
 def default_services() -> Services:
     env = os.environ
-    return Services(home=agent_tabs_home(env), env=env, server_port=parse_port(env.get(PORT_OPTION_ENV)) or SERVER_DEFAULT_PORT)
+    return Services(
+        home=agent_tabs_home(env), env=env, server_port=parse_port(env.get(PORT_OPTION_ENV)) or SERVER_DEFAULT_PORT, migrator=Migrator()
+    )
 
 
 def make_parser(name: str) -> _Parser:
@@ -168,30 +208,25 @@ def net_dir_for(home: str) -> Path:
     return path
 
 
-def read_config(home: str) -> dict[str, Any]:
-    path = os.path.join(home, CONFIG_FILE)
-    text = read_text_if_exists(path)
-    if text is None or not text.strip():
-        return {}
-    try:
-        config = parse(text)
-    except ValueError as error:
-        raise CliError(f"{path} is not valid JSON: {error}") from error
-    if not isinstance(config, dict):
-        raise CliError(f"{path} must hold a JSON object")
-    return config  # pyright: ignore[reportUnknownVariableType]
-
-
 def set_network(home: str, updates: Mapping[str, Any]) -> None:
-    config = read_config(home)
-    section = config.get("network")
-    if section is None:
-        section = {}
-    if not isinstance(section, dict):
-        raise CliError(f'"network" in {os.path.join(home, CONFIG_FILE)} must be an object')
-    section.update(updates)  # pyright: ignore[reportUnknownMemberType]
-    config["network"] = section
-    write_atomically(os.path.join(home, CONFIG_FILE), stringify(config, 2) + "\n")
+    try:
+        update_network_section(home, dict(updates))
+    except PolicyError as error:
+        raise CliError(str(error)) from error
+    except ValueError as error:
+        raise CliError(f"{os.path.join(home, CONFIG_FILE)} is not valid JSON: {error}") from error
+
+
+def device_name(svc: Services) -> str:
+    try:
+        return device_name_of(svc.home)
+    except DeviceNameError as error:
+        raise CliError(BAD_DEVICE_NAME) from error
+
+
+def refuse_remote_origin(svc: Services) -> None:
+    if svc.is_remote_origin(svc.home):
+        raise CliError(NETWORK_SETTINGS_REFUSAL)
 
 
 def _require_confirmed(svc: Services, lines: Sequence[str]) -> None:
@@ -207,6 +242,8 @@ def _peer_by_label(policy: Policy, label: str) -> PeerGrant:
 
 
 def grants_text(peer: PeerGrant) -> str:
+    if peer.member:
+        return "hub member"
     parts: list[str] = []
     if peer.folders:
         parts.append("folders " + ", ".join(f"{f.alias}={f.path}" for f in peer.folders))
@@ -269,7 +306,7 @@ def apply_firewall(svc: Services, bind: str, port: int) -> None:
         if port != firewall.LISTENER_PORT:
             raise FirewallError(f"{port!r} is not the listener port {firewall.LISTENER_PORT}, so no firewall rule is created")
         info = svc.interface_for(bind)
-        text = svc.apply_firewall(bind, info.subnet, info.alias)
+        text = svc.apply_firewall(bind, LanTransport().firewall_scope(info), info.alias)
     except (FirewallError, InterfaceError) as error:
         svc.err(f"warning: {error}. Peers can connect only when the firewall allows them.")
         return
@@ -282,7 +319,7 @@ def _remove_firewall(svc: Services) -> bool:
         text = svc.remove_firewall()
     except FirewallError as error:
         svc.err(
-            f"error: {error}. Delete the rule named {firewall.LISTENER_RULE} in Windows Defender Firewall, or run agent-tabs net off again."
+            f"error: {error}. Delete the rules named {firewall.LISTENER_RULE} and {firewall.DISCOVERY_RULE} in Windows Defender Firewall, or run agent-tabs net off again."
         )
         return False
     if text:
@@ -311,17 +348,24 @@ def _cmd_id(svc: Services, args: Sequence[str]) -> int:
 
 
 def _pairing_state(svc: Services) -> str:
-    state = "available"
-    if (ingress.net_dir(svc.home) / PAIRING_FILE).exists():
-        try:
-            Limits(svc.home).check()
-        except Busy as error:
-            return str(error)
-        except Locked as error:
-            state = str(error)
-        except PairingError as error:
-            return f"unreadable ({error})"
-    return state
+    if not (ingress.net_dir(svc.home) / PAIRING_FILE).exists():
+        return "available"
+    limits = Limits(svc.home)
+    try:
+        locked = limits.locked_addresses()
+    except PairingError as error:
+        return f"unreadable ({error})"
+    if not locked:
+        return "available"
+    where = ", ".join(f"{address} ({-(-left // 60)} more minutes)" for address, left in sorted(locked.items()))
+    return f"available; locked for {where} after failed attempts; other addresses can still pair, and `net trust` still works"
+
+
+def _read_network_id(svc: Services, bind: str) -> str | None:
+    try:
+        return svc.network_id(bind)
+    except (OSError, ValueError):
+        return None
 
 
 def _cmd_status(svc: Services, args: Sequence[str]) -> int:
@@ -341,16 +385,20 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     svc.out(f"login task: {svc.login_status(svc.home)}")
     svc.out(f"identity: {local_device_id(svc.home) or 'none'}")
     svc.out(f"pairing: {_pairing_state(svc)}")
-    from .pair_cli import result_text
-
-    last = result_text(svc.home)
-    if last is not None:
-        svc.out(f"last pairing: {last}")
+    svc.out(f"member folders: {', '.join(config.member_folders) or 'none'}")
+    svc.out(f"discoverable: {'on' if config.discoverable else 'off'}")
+    svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
+    if network_enabled(config) and config.bind is not None:
+        gate = gate_state(config.allowed_networks, _read_network_id(svc, config.bind))
+        svc.out(f"current network: {gate.network_id or 'unreadable'}")
+        svc.out(f"network gate: {'open' if gate.allowed else gate.reason}")
     try:
         policy = load_policy(svc.home)
     except PolicyError as error:
+        svc.out(f"hub: unreadable ({error})")
         svc.out(f"peers: unreadable ({error})")
         return 0
+    svc.out(f"hub: {policy.hub.name} ({policy.hub.id})" if policy.hub is not None else "hub: none")
     if not policy.peers:
         svc.out("peers: none")
         return 0
@@ -431,7 +479,7 @@ def _cmd_on(svc: Services, args: Sequence[str]) -> int:
     parser.add_argument("--at-login", action="store_true")
     options = parser.parse_args(args)
     bind: str = options.bind
-    if not is_allowed_bind(bind):
+    if not LanTransport().allows_bind(bind):
         raise CliError("--bind must be a private IPv4 address (10/8, 172.16/12, 192.168/16) or an IPv6 unique local address (fc00::/7)")
     if not svc.bind_available(bind):
         raise CliError(f"{bind} is not assigned to a local interface")
@@ -471,7 +519,7 @@ def _cmd_start(svc: Services, args: Sequence[str]) -> int:
     config, warnings = load_network_config(svc.home)
     for warning in warnings:
         svc.err(f"warning: {warning}")
-    if config.network != "lan" or config.bind is None:
+    if not network_enabled(config) or config.bind is None:
         raise CliError("the network is off or has no bind address; run agent-tabs net lan on --bind <address> in a terminal")
     problem = tls.runtime_problem()
     if problem is not None:
@@ -495,7 +543,7 @@ def _cmd_off(svc: Services, args: Sequence[str]) -> int:
     make_parser("off").parse_args(args)
     net_dir_for(svc.home)
     try:
-        set_network(svc.home, {"network": "off"})
+        set_network(svc.home, {"network": "off", **({"discoverable": False} if load_network_config(svc.home)[0].discoverable else {})})
     except CliError as error:
         svc.err(f"warning: {error}; the network counts as off until config.json is fixed")
     store = NetStore(svc.home)
@@ -548,24 +596,13 @@ def store_peer(
     folders: Sequence[FolderGrant] = (),
     agents: Sequence[str] = (),
 ) -> tuple[PeerGrant, bool]:
-    net_dir_for(svc.home)
-    with file_lock(policy_path(svc.home)):
-        policy = load_policy(svc.home)
-        current = grant_for(policy, identity)
-        if current is None and any(p.label == label for p in policy.peers):
-            raise CliError(f"the label {label} belongs to another peer")
-        ensure_private_dir(peers_dir(svc.home))
-        target = peer_cert_path(svc.home, identity)
-        write_atomically(str(target), pem)
-        make_private_file(target)
-        if current is None:
-            result = PeerGrant(device_id=identity, label=label, address=address, folders=tuple(folders), agents=tuple(agents))
-            peers = (*policy.peers, result)
-        else:
-            result = replace(current, address=address)
-            peers = tuple(result if p.device_id == identity else p for p in policy.peers)
-        save_policy(svc.home, replace(policy, peers=peers))
-    return result, current is None
+    try:
+        saved = save_peer(svc.home, identity, pem, address, label, folders=folders, agents=agents)
+    except LabelTaken as error:
+        raise CliError(str(error)) from error
+    with contextlib.suppress(HubStateError):
+        clear_removed(svc.home, identity)
+    return saved
 
 
 def _cmd_trust(svc: Services, args: Sequence[str]) -> int:
@@ -655,19 +692,24 @@ def _has_link_component(path: str) -> bool:
     return False
 
 
+def _local_folder(raw: str, subject: str) -> str:
+    if not os.path.isabs(raw) or "\0" in raw or raw.startswith(("\\\\", "//")):
+        raise CliError(f"{subject}: the path must be a local absolute path, not a network path")
+    real = _strip_extended(os.path.realpath(raw))
+    if real.startswith(("\\\\", "//")) or _is_remote_drive(real):
+        raise CliError(f"{subject}: network folders are refused")
+    if not os.path.isdir(real):
+        raise CliError(f"{subject}: {real} is not a folder")
+    if _has_link_component(real):
+        raise CliError(f"{subject}: {real} passes through a symbolic link or reparse point")
+    return real
+
+
 def folder_grant(spec: str) -> FolderGrant:
     alias, separator, raw = spec.partition("=")
     if not separator or ALIAS.fullmatch(alias) is None:
         raise CliError("--folder needs <alias>=<absolute path>; an alias is 1 to 32 characters of a-z, 0-9 and -")
-    if not os.path.isabs(raw) or "\0" in raw or raw.startswith(("\\\\", "//")):
-        raise CliError(f"folder {alias}: the path must be a local absolute path, not a network path")
-    real = _strip_extended(os.path.realpath(raw))
-    if real.startswith(("\\\\", "//")) or _is_remote_drive(real):
-        raise CliError(f"folder {alias}: network folders are refused")
-    if not os.path.isdir(real):
-        raise CliError(f"folder {alias}: {real} is not a folder")
-    if _has_link_component(real):
-        raise CliError(f"folder {alias}: {real} passes through a symbolic link or reparse point")
+    real = _local_folder(raw, f"folder {alias}")
     status = os.stat(real)
     if status.st_ino == 0:
         raise CliError(f"folder {alias}: this file system reports no file identity for {real}")
@@ -764,6 +806,7 @@ def _cmd_grant(svc: Services, args: Sequence[str]) -> int:
     parser.add_argument("--model", action="append", default=[])
     parser.add_argument("--send", action="append", default=[])
     options = parser.parse_args(args)
+    refuse_remote_origin(svc)
     if not (options.folder or options.agent or options.model or options.send):
         raise UsageError("agent-tabs net grant: name at least one of --folder, --agent, --model or --send")
     new_folders = [folder_grant(spec) for spec in options.folder]
@@ -812,12 +855,11 @@ def _cmd_revoke(svc: Services, args: Sequence[str]) -> int:
     parser = make_parser("revoke")
     parser.add_argument("label")
     options = parser.parse_args(args)
+    refuse_remote_origin(svc)
     net_dir_for(svc.home)
-    with file_lock(policy_path(svc.home)):
-        policy = load_policy(svc.home)
-        peer = _peer_by_label(policy, options.label)
-        save_policy(svc.home, replace(policy, peers=tuple(p for p in policy.peers if p.device_id != peer.device_id)))
-    remove_file(str(peer_cert_path(svc.home, peer.device_id)))
+    policy = load_policy(svc.home)
+    peer = _peer_by_label(policy, options.label)
+    remove_peer(svc.home, peer.device_id)
     store = NetStore(svc.home)
     try:
         generation = store.bump_generation()
@@ -826,6 +868,13 @@ def _cmd_revoke(svc: Services, args: Sequence[str]) -> int:
     svc.record("revoke", device=peer.device_id, generation=generation)
     svc.out(f"Revoked {peer.label} ({peer.device_id}); the policy generation is {generation}.")
     svc.out("Requests already handed off to a local tab may still finish. Revoking here removes no trust on the other machine.")
+    if peer.member and policy.hub is not None:
+        report = hubsync.announce_removal(svc.home, peer.device_id, svc.member_request or send_request)
+        svc.record("hub-revoke", device=peer.device_id, told=len(report.told), queued=len(report.queued))
+        if report.state_problem is None:
+            svc.out("The hub key was replaced, and the other members were sent the removal and the new key.")
+        for line in report.lines():
+            svc.out(line)
     return 0
 
 
@@ -834,6 +883,7 @@ def _cmd_rename(svc: Services, args: Sequence[str]) -> int:
     parser.add_argument("label")
     parser.add_argument("new_label")
     options = parser.parse_args(args)
+    refuse_remote_origin(svc)
     new_label: str = options.new_label
     if LABEL.fullmatch(new_label) is None:
         raise CliError("a label is 1 to 32 characters of a-z, 0-9 and -")
@@ -850,6 +900,210 @@ def _cmd_rename(svc: Services, args: Sequence[str]) -> int:
     return 0
 
 
+def _folder_key(path: str) -> str:
+    return os.path.normcase(os.path.normpath(path))
+
+
+def folder_defaults(svc: Services, config: NetworkConfig, folder: str | None) -> dict[str, list[str]]:
+    if config.member_folders and config.outbound_folders:
+        return {}
+    session = os.path.abspath(folder if folder is not None else svc.cwd())
+    _local_folder(session, "the session folder")
+    default = _local_folder(default_member_folder(session, svc.user_home), "the default member folder")
+    updates: dict[str, list[str]] = {}
+    if not config.member_folders:
+        updates["memberFolders"] = [default]
+    if not config.outbound_folders:
+        updates["outboundFolders"] = [default]
+    return updates
+
+
+def report_folders(svc: Services, config: NetworkConfig, updates: Mapping[str, Sequence[str]]) -> None:
+    svc.out(f"member folders: {', '.join(updates.get('memberFolders', config.member_folders))}")
+    svc.out(f"outbound folders: {', '.join(updates.get('outboundFolders', config.outbound_folders))}")
+
+
+def _cmd_hub_create(svc: Services, args: Sequence[str]) -> int:
+    parser = make_parser("hub create")
+    parser.add_argument("--name")
+    parser.add_argument("--folder")
+    parser.add_argument("--with", dest="members", action="append", default=[])
+    parser.add_argument("--bind")
+    options = parser.parse_args(args)
+    refuse_remote_origin(svc)
+    config, warnings = load_network_config(svc.home)
+    for warning in warnings:
+        svc.err(f"warning: {warning}")
+    name: str = options.name if options.name is not None else default_label(device_name(svc), Policy())
+    if LABEL.fullmatch(name) is None:
+        raise CliError("--name is 1 to 32 characters of a-z, 0-9 and -")
+    _local_folder(os.path.abspath(options.folder if options.folder is not None else svc.cwd()), "the session folder")
+    updates = folder_defaults(svc, config, options.folder)
+    net_dir_for(svc.home)
+    with file_lock(policy_path(svc.home)):
+        policy = load_policy(svc.home)
+        if policy.hub is not None and not options.members:
+            raise CliError(f"this machine is already in the hub {policy.hub.name} ({policy.hub.id}); run agent-tabs net hub leave first")
+        if policy.hub is not None and options.name is not None and options.name != policy.hub.name:
+            raise CliError(f"this machine is already in the hub {policy.hub.name} ({policy.hub.id}); --name {options.name} does not match")
+        created = policy.hub is None
+        hub = Hub(svc.new_hub_id(), name) if policy.hub is None else policy.hub
+        if created:
+            save_policy(svc.home, replace(policy, hub=hub))
+    ensure_hub_key(svc.home, hub.id)
+    if updates:
+        set_network(svc.home, updates)
+    svc.record("hub-create" if created else "hub-reuse", hub=hub.id)
+    svc.out(f"{'Created' if created else 'Using'} the hub {hub.name} ({hub.id}).")
+    report_folders(svc, config, updates)
+    if options.members:
+        from . import hub_cli
+
+        return hub_cli.join_listed(svc, options.members, options.bind, options.folder)
+    return 0
+
+
+def _member_state(svc: Services, peer: PeerGrant) -> str:
+    seen = read_presence(svc.home).get(peer.device_id)
+    cached_at: int | None = None
+    if os.path.exists(db_path(svc.home)):
+        try:
+            store = NetStore(svc.home)
+            try:
+                cached = store.get_inventory(peer.device_id)
+            finally:
+                store.close()
+        except (NetStoreError, sqlite3.Error, OSError):
+            cached = None
+        cached_at = None if cached is None else cached[1]
+    if seen is not None and (cached_at is None or seen.at_ms >= cached_at):
+        if not seen.online:
+            return "offline"
+        if now_ms() - seen.at_ms <= OFFLINE_AFTER_MS:
+            return "online"
+        if cached_at is None:
+            return "unknown"
+    if cached_at is None:
+        return "unknown"
+    return "online" if now_ms() - cached_at <= OFFLINE_AFTER_MS else "offline"
+
+
+def _cmd_hub_status(svc: Services, args: Sequence[str]) -> int:
+    make_parser("hub status").parse_args(args)
+    config, warnings = load_network_config(svc.home)
+    for warning in warnings:
+        svc.err(f"warning: {warning}")
+    policy = load_policy(svc.home)
+    if policy.hub is None:
+        svc.out("hub: none")
+        return 0
+    svc.out(f"hub: {policy.hub.name} ({policy.hub.id})")
+    members = [p for p in policy.peers if p.member]
+    if members:
+        svc.out("members:")
+        for peer in members:
+            svc.out(f"  {peer.label}  {peer.device_id[:15]}  {peer.address}  {_member_state(svc, peer)}")
+    else:
+        svc.out("members: none")
+    svc.out(f"member folders: {', '.join(config.member_folders) or 'none'}")
+    svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
+    return 0
+
+
+def _cmd_hub_leave(svc: Services, args: Sequence[str]) -> int:
+    make_parser("hub leave").parse_args(args)
+    refuse_remote_origin(svc)
+    net_dir_for(svc.home)
+    policy = load_policy(svc.home)
+    hub = policy.hub
+    if hub is None:
+        raise CliError("this machine is not in a hub")
+    members = [p for p in policy.peers if p.member]
+    report = hubsync.leave_hub(svc.home, svc.member_request or send_request)
+    with file_lock(policy_path(svc.home)):
+        policy = load_policy(svc.home)
+        save_policy(svc.home, replace(policy, peers=tuple(p for p in policy.peers if not p.member), hub=None))
+    for peer in members:
+        remove_file(str(peer_cert_path(svc.home, peer.device_id)))
+    remove_hub_state(svc.home)
+    store = NetStore(svc.home)
+    try:
+        generation = store.bump_generation()
+    finally:
+        store.close()
+    svc.record(
+        "hub-leave", hub=hub.id, members=len(members), generation=generation, told=len(report.told), rotator=report.rotator or "none"
+    )
+    svc.out(f"Left the hub {hub.name} ({hub.id}); removed {len(members)} member(s); the policy generation is {generation}.")
+    if report.rotator is not None:
+        for line in report.lines("Not told directly: {names}."):
+            svc.out(line)
+        svc.out(f"{report.rotator} replaces the hub key and sends the departure and the new key to every remaining member.")
+    elif members:
+        for line in report.lines("Not told: {names}."):
+            svc.out(line)
+        svc.out(
+            "No member accepted the key change, so the hub key is not replaced yet. The members keep trusting this machine until they revoke it."
+        )
+    svc.out("Requests already handed off to a local tab may still finish.")
+    return 0
+
+
+def _cmd_hub_join(svc: Services, args: Sequence[str]) -> int:
+    from . import hub_cli
+
+    return hub_cli.join(svc, args)
+
+
+def _cmd_hub(svc: Services, args: Sequence[str]) -> int:
+    handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
+        "create": _cmd_hub_create,
+        "join": _cmd_hub_join,
+        "status": _cmd_hub_status,
+        "leave": _cmd_hub_leave,
+    }
+    if not args or args[0] not in handlers:
+        raise UsageError("agent-tabs net hub: expected create, join, status or leave")
+    return handlers[args[0]](svc, args[1:])
+
+
+def _cmd_folders(svc: Services, args: Sequence[str]) -> int:
+    parser = make_parser("folders")
+    parser.add_argument("action", nargs="?", choices=("add", "remove"))
+    parser.add_argument("path", nargs="?")
+    options = parser.parse_args(args)
+    if options.action is not None:
+        refuse_remote_origin(svc)
+    config, warnings = load_network_config(svc.home)
+    for warning in warnings:
+        svc.err(f"warning: {warning}")
+    folders = list(config.member_folders)
+    if options.action is None:
+        svc.out("member folders: " + (", ".join(folders) if folders else "none"))
+        return 0
+    path: str | None = options.path
+    if path is None:
+        raise UsageError(f"agent-tabs net folders {options.action}: expected an absolute path")
+    if options.action == "add":
+        real = _local_folder(path, "member folder")
+        if any(_folder_key(f) == _folder_key(real) for f in folders):
+            svc.out(f"{real} is already a member folder.")
+            return 0
+        folders.append(real)
+    else:
+        if not os.path.isabs(path):
+            raise CliError("member folder: the path must be an absolute path")
+        wanted = {_folder_key(path), _folder_key(os.path.realpath(path))}
+        kept = [f for f in folders if _folder_key(f) not in wanted]
+        if len(kept) == len(folders):
+            raise CliError(f"{path} is not a member folder; agent-tabs net folders lists them")
+        folders = kept
+    set_network(svc.home, {"memberFolders": folders})
+    svc.record("folders", action=options.action, count=len(folders))
+    svc.out("member folders: " + (", ".join(folders) if folders else "none"))
+    return 0
+
+
 def _cmd_lan(svc: Services, args: Sequence[str]) -> int:
     handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
         "setup": _cmd_setup,
@@ -862,14 +1116,31 @@ def _cmd_lan(svc: Services, args: Sequence[str]) -> int:
     return handlers[args[0]](svc, args[1:])
 
 
-def _cmd_pair(svc: Services, args: Sequence[str]) -> int:
-    from . import pair_cli
+def _cmd_discoverable(svc: Services, args: Sequence[str]) -> int:
+    from . import hub_cli
 
-    return pair_cli.run(svc, svc.pair or pair_cli.default_deps(), args)
+    return hub_cli.discoverable(svc, args)
+
+
+def _cmd_networks(svc: Services, args: Sequence[str]) -> int:
+    from . import hub_cli
+
+    return hub_cli.networks(svc, args)
+
+
+def _cmd_find(svc: Services, args: Sequence[str]) -> int:
+    from . import hub_cli
+
+    return hub_cli.find(svc, args)
 
 
 def main(argv: Sequence[str], services: Services | None = None) -> int:
     svc = services or default_services()
+    if svc.migrator is not None:
+        try:
+            svc.migrator.start(svc.home, svc.cwd())
+        except MIGRATION_ERRORS as error:
+            svc.record("migrate-failed", error=type(error).__name__)
     handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
         "id": _cmd_id,
         "status": _cmd_status,
@@ -878,8 +1149,12 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         "grant": _cmd_grant,
         "revoke": _cmd_revoke,
         "rename": _cmd_rename,
-        "pair": _cmd_pair,
         "lan": _cmd_lan,
+        "hub": _cmd_hub,
+        "folders": _cmd_folders,
+        "discoverable": _cmd_discoverable,
+        "networks": _cmd_networks,
+        "find": _cmd_find,
     }
     try:
         if not argv or argv[0] not in handlers:

@@ -12,8 +12,10 @@ from .interfaces import InterfaceError, interface_for, is_safe_alias
 from .login_task import Environment, LoginTaskError
 
 LISTENER_RULE = "Agent Tabs LAN"
+DISCOVERY_RULE = "Agent Tabs LAN discovery"
 LISTENER_PORT = 47829
 PAIRING_PORT = 47830
+DISCOVERY_PORT = 47831
 PROFILE_PRIVATE = "Private"
 PROFILE_ANY = "Any"
 ELEVATION_TIMEOUT_S = 150.0
@@ -32,6 +34,7 @@ _PARAMS_ENV = "AGENT_TABS_PARAMS"
 _RULE_ENV = "AGENT_TABS_RULE"
 
 LISTENER_PORTS = (LISTENER_PORT, PAIRING_PORT)
+DISCOVERY_PORTS = (DISCOVERY_PORT,)
 _MATCH_ENV = "AGENT_TABS_MATCH"
 _PROGRAM = re.compile(r"[A-Za-z]:\\(?:[^\\/:*?<>|\x00-\x1f\"]+\\)*python(?:w)?\.exe", re.IGNORECASE)
 _DOTS = re.compile(r"(?:^|\\)\.\.?(?:\\|$)")
@@ -54,8 +57,10 @@ _OUTER_SCRIPT = (
 )
 
 # The elevated helper. It is one line without double quotes, because it travels on a command line. It validates
-# every value again, creates or removes the one fixed rule, reads a created rule back, and removes the rule when
-# any step fails.
+# every value again, creates or removes the two fixed rules, reads each created rule back, and removes every rule
+# it created when any step fails. The discovery rule (UDP) carries the listener rule's scope but no local address:
+# a broadcast or multicast datagram is addressed to the group, not to the bind address, so a local-address filter
+# would never match it.
 _HELPER_LINES = (
     "& { param([string]$Data)",
     "$ErrorActionPreference = 'Stop';",
@@ -66,7 +71,7 @@ _HELPER_LINES = (
     "function Mask([int]$b) { return (4294967295 -shl (32 - $b)) -band 4294967295 };",
     "function Dotted([long]$v) { return ((24, 16, 8, 0 | ForEach-Object { ($v -shr $_) -band 255 }) -join '.') };",
     "function Within($ip, $net, [int]$len) { return (($ip -band (Mask $len)) -eq $net) };",
-    "$e = 2; $rule = ''; $created = $false;",
+    "$e = 2; $rule = ''; $made = @();",
     "try {",
     "if ($Data -notmatch '^[A-Za-z0-9+/=]{1,4096}$') { throw 'data' };",
     "$p = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Data)) | ConvertFrom-Json;",
@@ -74,8 +79,9 @@ _HELPER_LINES = (
     "if ($rule -cne 'Agent Tabs LAN') { throw 'rule' };",
     "if ($p.action -ceq 'remove') {",
     "$e = 5;",
-    "if (@(Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue).Count -gt 0) { Remove-NetFirewallRule -DisplayName $rule -ErrorAction Stop };",
-    "if (@(Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue).Count -gt 0) { throw 'left' };",
+    "foreach ($n in @('Agent Tabs LAN', 'Agent Tabs LAN discovery')) {",
+    "if (@(Get-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue).Count -gt 0) { Remove-NetFirewallRule -DisplayName $n -ErrorAction Stop };",
+    "if (@(Get-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue).Count -gt 0) { throw 'left' } };",
     "exit 0 };",
     "if ($p.action -cne 'add') { throw 'action' };",
     "$ports = @('47829', '47830');",
@@ -99,13 +105,18 @@ _HELPER_LINES = (
     "if (-not $ok) { throw 'remote range' };",
     "$local = Ip ([string]$p.local);",
     "if ($null -eq $local -or -not (Within $local $net $len)) { throw 'local' };",
-    "$e = 3;",
+    "$wide = (Dotted $net) + '/' + (Dotted (Mask $len));",
+    "$specs = @(@('Agent Tabs LAN', 'TCP', $ports, $false), @('Agent Tabs LAN discovery', 'UDP', @('47831'), $true));",
+    "foreach ($s in $specs) {",
+    "$rule = $s[0]; $proto = $s[1]; $sp = $s[2]; $e = 3;",
     "if (@(Get-NetFirewallRule -DisplayName $rule -ErrorAction SilentlyContinue).Count -gt 0) { Remove-NetFirewallRule -DisplayName $rule -ErrorAction Stop };",
     (
-        "New-NetFirewallRule -DisplayName $rule -Direction Inbound -Action Allow -Protocol TCP -LocalPort $ports"
-        " -LocalAddress $p.local -RemoteAddress $p.remote -Program $program -Profile $prof -InterfaceAlias $alias -Enabled True -ErrorAction Stop | Out-Null;"
+        "if ($s[3]) { New-NetFirewallRule -DisplayName $rule -Direction Inbound -Action Allow -Protocol $proto -LocalPort $sp"
+        " -RemoteAddress $p.remote -Program $program -Profile $prof -InterfaceAlias $alias -Enabled True -ErrorAction Stop | Out-Null }"
+        " else { New-NetFirewallRule -DisplayName $rule -Direction Inbound -Action Allow -Protocol $proto -LocalPort $sp"
+        " -LocalAddress $p.local -RemoteAddress $p.remote -Program $program -Profile $prof -InterfaceAlias $alias -Enabled True -ErrorAction Stop | Out-Null };"
     ),
-    "$created = $true;",
+    "$made += $rule;",
     "$e = 4;",
     "$r = @(Get-NetFirewallRule -DisplayName $rule);",
     "if ($r.Count -ne 1) { throw 'count' };",
@@ -116,35 +127,38 @@ _HELPER_LINES = (
     ),
     "$pf = $r | Get-NetFirewallPortFilter;",
     (
-        "if ([string]$pf.Protocol -ne 'TCP' -or (@($pf.LocalPort | Sort-Object) -join ',') -ne ($ports -join ',')"
+        "if ([string]$pf.Protocol -ne $proto -or (@($pf.LocalPort | Sort-Object) -join ',') -ne (@($sp | Sort-Object) -join ',')"
         " -or (@($pf.RemotePort) -join ',') -ne 'Any') { throw 'port filter' };"
     ),
     "$af = $r | Get-NetFirewallAddressFilter;",
     "$remote = @($af.RemoteAddress) -join ',';",
-    "$wide = (Dotted $net) + '/' + (Dotted (Mask $len));",
+    "$wantLocal = $(if ($s[3]) { 'Any' } else { [string]$p.local });",
     (
-        "if (@($af.LocalAddress).Count -ne 1 -or [string]$af.LocalAddress -ne [string]$p.local -or ($remote -ne [string]$p.remote -and $remote -ne $wide))"
+        "if (@($af.LocalAddress).Count -ne 1 -or [string]$af.LocalAddress -ne $wantLocal -or ($remote -ne [string]$p.remote -and $remote -ne $wide))"
         " { throw 'address filter' };"
     ),
     "$ap = $r | Get-NetFirewallApplicationFilter;",
     "if ([string]$ap.Program -ne $program) { throw 'application filter' };",
     "$nf = $r | Get-NetFirewallInterfaceFilter;",
-    "if ((@($nf.InterfaceAlias) -join ',') -ne $alias) { throw 'interface filter' };",
+    "if ((@($nf.InterfaceAlias) -join ',') -ne $alias) { throw 'interface filter' } };",
     "exit 0",
     "} catch {",
-    "if ($created -and $e -lt 5) { try { Remove-NetFirewallRule -DisplayName $rule -ErrorAction Stop } catch { } };",
+    "if ($e -lt 5) { foreach ($n in $made) { try { Remove-NetFirewallRule -DisplayName $n -ErrorAction Stop } catch { } } };",
     "exit $e }",
     "}",
 )
 HELPER_SCRIPT = " ".join(_HELPER_LINES)
 
 _PROBE_SCRIPT = (
-    "try { if (@(Get-NetFirewallRule -DisplayName $env:"
+    "try { if (@(Get-NetFirewallRule -DisplayName @($env:"
     + _RULE_ENV
-    + " -ErrorAction SilentlyContinue).Count -gt 0) { exit 0 } else { exit 1 } } catch { exit 3 }"
+    + ", ($env:"
+    + _RULE_ENV
+    + " + ' discovery')) -ErrorAction SilentlyContinue).Count -gt 0) { exit 0 } else { exit 1 } } catch { exit 3 }"
 )
 
-# Runs unelevated and only reads. It exits 0 when the one listener rule matches every value it was given.
+# Runs unelevated and only reads. It exits 0 when the listener rule and its discovery sibling (the same name plus
+# ' discovery', UDP port 47831, any local address) match every value it was given.
 _MATCH_SCRIPT = " ".join(
     (
         "try {",
@@ -165,6 +179,19 @@ _MATCH_SCRIPT = " ".join(
         "if (@($p.remotes) -notcontains (@($af.RemoteAddress) -join ',')) { exit 1 };",
         "if ([string]($r | Get-NetFirewallApplicationFilter).Program -ne [string]$p.program) { exit 1 };",
         "if ((@(($r | Get-NetFirewallInterfaceFilter).InterfaceAlias) -join ',') -ne [string]$p.alias) { exit 1 };",
+        "$d = @(Get-NetFirewallRule -DisplayName ([string]$p.rule + ' discovery') -ErrorAction SilentlyContinue);",
+        "if ($d.Count -ne 1) { exit 1 }; $d = $d[0];",
+        (
+            "if ([string]$d.Enabled -ne 'True' -or [string]$d.Direction -ne 'Inbound' -or [string]$d.Action -ne 'Allow'"
+            " -or [string]$d.Profile -ne [string]$p.profile) { exit 1 };"
+        ),
+        "$pf = $d | Get-NetFirewallPortFilter;",
+        "if ([string]$pf.Protocol -ne 'UDP' -or (@($pf.LocalPort) -join ',') -ne '47831' -or (@($pf.RemotePort) -join ',') -ne 'Any') { exit 1 };",
+        "$af = $d | Get-NetFirewallAddressFilter;",
+        "if (@($af.LocalAddress).Count -ne 1 -or [string]$af.LocalAddress -ne 'Any') { exit 1 };",
+        "if (@($p.remotes) -notcontains (@($af.RemoteAddress) -join ',')) { exit 1 };",
+        "if ([string]($d | Get-NetFirewallApplicationFilter).Program -ne [string]$p.program) { exit 1 };",
+        "if ((@(($d | Get-NetFirewallInterfaceFilter).InterfaceAlias) -join ',') -ne [string]$p.alias) { exit 1 };",
         "exit 0 } catch { exit 3 }",
     )
 )
@@ -305,7 +332,7 @@ def _ports_text(ports: Sequence[int]) -> str:
 def manual_rule_text(bind: str, ports: Sequence[int], remote: str) -> str:
     return (
         f"This system changes no firewall rule. If a firewall runs here, allow inbound TCP ports {_ports_text(ports)} on {bind} "
-        f"from {remote} for the Python that runs Agent Tabs, and nothing wider."
+        f"and inbound UDP port {DISCOVERY_PORT} from {remote} for the Python that runs Agent Tabs, and nothing wider."
     )
 
 
@@ -348,12 +375,13 @@ def apply_listener_rule(
             raise FirewallError(f"the interpreter {env.interpreter} is not a file")
         where = f"on {interface_alias}" if profile == PROFILE_ANY else f"on the {profile} profile of {interface_alias}"
         what = f"ports {_ports_text(spec.ports)} on {bind} from {spec.remote} {where}"
+        discovery = f'and "{DISCOVERY_RULE}" admits UDP port {DISCOVERY_PORT} from {spec.remote} {where}'
         if rule_matches(spec, env):
-            return f'The Windows firewall rule "{LISTENER_RULE}" already admits {what}.'
+            return f'The Windows firewall rule "{LISTENER_RULE}" already admits {what}, {discovery}.'
         _elevate(env, encode_parameters("add", LISTENER_RULE, spec))
     except LoginTaskError as error:
         raise FirewallError(str(error)) from error
-    return f'Created the Windows firewall rule "{LISTENER_RULE}" for {what}.'
+    return f'Created the Windows firewall rule "{LISTENER_RULE}" for {what}, {discovery}.'
 
 
 def _remove(rule: str, env: Environment | None, only_if_present: bool, prefix: str = "") -> str:

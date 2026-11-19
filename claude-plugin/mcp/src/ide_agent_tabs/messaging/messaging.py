@@ -621,9 +621,11 @@ class Messaging:
 
     def _remote_rows(self) -> list[dict[str, Any]]:
         try:
-            if load_network_config(self.deps.home)[0].network != "lan":
-                return []
             from ..net.outbound import remote_session_rows
+            from ..net.transport import network_enabled
+
+            if not network_enabled(load_network_config(self.deps.home)[0]):
+                return []
 
             return remote_session_rows(self.deps.home, self.caller(), int(self._now()))
         except Exception as e:  # noqa: BLE001 - a failure in the network layer must not hide the local sessions
