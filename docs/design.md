@@ -20,7 +20,7 @@ This document is the contract every part builds against. Change it before you ch
 | Handoff to a new tab: the `handoff` tool and skill | Built | `claude-plugin/mcp/src/ide_agent_tabs/handoff.py`, `claude-plugin/skills/handoff/` |
 | Shared HTTP server for Claude Code sessions, its headers helper and start hook | Built | `claude-plugin/mcp/src/ide_agent_tabs/shared/`, `claude-plugin/mcp/launch/` |
 | Jev judgment tools in the MCP server, and the `jev` skill (optional) | Built | `claude-plugin/mcp/src/ide_agent_tabs/jev/`, `claude-plugin/skills/jev/`; later steps in [jev-integration.md](jev-integration.md) |
-| Network across one person's machines on a LAN: certificates, mutual TLS, grants | Built; not yet tested between two machines. See [Network](#network) | `claude-plugin/mcp/src/ide_agent_tabs/net/`, `claude-plugin/mcp/launch/net_listener.py`, `claude-plugin/skills/network/` |
+| Network across one person's machines on a LAN: hubs, discovery, certificates, mutual TLS, the member role | Built; not yet tested between two machines. See [Network](#network) | `claude-plugin/mcp/src/ide_agent_tabs/net/`, `claude-plugin/mcp/launch/net_listener.py`, `claude-plugin/skills/network/` |
 
 Claude Code sessions message each other with Claude Code's own `ListAgents` and `SendMessage`. Sessions
 of different agent CLIs message each other through the MCP server. See [Messaging](#messaging).
@@ -2455,39 +2455,41 @@ input tokens and estimated cost from the ledger, `sure`, the tier names and the 
 
 This section is the contract for working across one person's machines on a local network. Four
 reviewers (Claude Opus, Gemini through Antigravity CLI, Codex gpt-6.1-sol and the coordinating Claude
-session) agreed to it on 2026-11-14. Version 1 shipped in 0.11.0. The same reviewers agreed to the
-pairing design on 2026-11-15, and `net pair` shipped in 0.12.0. In 0.13.0, at the person's direction, the
-agents run pairing end to end: the typed six-digit code is gone, and the invitation channel carries the
-trust (see Pairing). That change hasn't had the reviewers' review. The elevated firewall helper ran on a
-real machine; a full pairing between two machines and the at-login task are still to test. Accepting the
+session) agreed to the first design on 2026-11-14, and to the pairing design on 2026-11-15. Version 1
+shipped in 0.11.0, a pairing command in 0.12.0, and agent-run pairing in 0.13.0. In 0.14.0 hubs, discovery and
+the equal member role replace pairing by invitation. The hub design hasn't had the reviewers' review, and two real machines
+haven't run it: the tests bind loopback only. The elevated firewall helper ran on a real machine. Accepting the
 design doesn't certify the implementation.
 
 ### Scope
 
-- Version 1: two or more machines of one person, on one local network. From one machine, open a Claude
-  Code or Codex tab in a granted folder on another, and let sessions on paired machines message each
-  other.
+- Version 1: two or more machines of one person, on one trusted local network. From one machine, open a
+  Claude Code or Codex tab on another inside that machine's member folders, and let sessions on connected
+  machines message each other.
+- LAN mode trusts every device on the network that can reach a discoverable machine. It fits a private home
+  network, not a shared, guest, office or public network. Remote and untrusted cases belong to Tailscale mode.
 - One setting, `network` in `config.json`, picks the mode: `off` (the default: today's single-machine
   tooling, nothing beyond `127.0.0.1`), `lan` or `tailscale`. Team mode is an addition to
-  `lan` or `tailscale`, not a separate value. 0.12.0 refuses `tailscale` and the team-mode keys
-  until their reviews pass. The `net` commands are the supported writer; an update never changes it.
+  `lan` or `tailscale`, not a separate value. The code accepts `off` and `lan` and refuses `tailscale` and the
+  team-mode keys until their reviews pass. The `net` commands are the supported writer; an update never
+  changes it.
 - LAN mode is the first networked mode and needs no outside tool.
 - **Tailscale mode** (see Tailscale mode below), a supported option for reaching home machines from
   another network. The listener binds the machine's Tailscale address instead of a LAN address, so
-  paired machines reach each other without a public inbound port. Tailscale addresses are in
+  connected machines reach each other without a public inbound port. Tailscale addresses are in
   `100.64.0.0/10` (RFC 6598 shared space, not RFC 1918), so that review names the range explicitly
   rather than widening the LAN address check. The design recommends Tailnet Lock and a
   Tailscale access rule that lets only the user's tagged devices reach the Agent Tabs port. Everything
   else in this section stays the same: Tailscale is an extra layer, not a replacement for pinned TLS
-  and grants. Other overlays that give a private interface (Headscale, NetBird, Nebula, ZeroTier,
+  and the member role. Other overlays that give a private interface (Headscale, NetBird, Nebula, ZeroTier,
   plain WireGuard) may work the same way but aren't supported until tested.
 - After Tailscale mode, with its own review: **team mode**, where the user adds a teammate's machines
   so both people's agents coordinate in one trusted space instead of across chat channels. It changes
   the trust model, because a peer is no longer the same person:
-  - Trust is per person as well as per machine. Both people agree to each pairing, and either can
+  - Trust is per person as well as per machine. Both people agree to each connection, and either can
     revoke it.
-  - A teammate's machine starts with no grants, like any peer. Grants name the person, and the local
-    user sees which person and machine a request came from.
+  - A teammate's machine starts with no grants, like any hand-trusted peer, and doesn't get the equal member
+    role. Grants name the person, and the local user sees which person and machine a request came from.
   - Each person's agents run under that person's own accounts and subscriptions on their own machines.
     Machines share work and messages, never credentials.
   - A teammate's agent is a peer whose prompts can be injected, so their messages and tasks get the same
@@ -2496,7 +2498,7 @@ design doesn't certify the implementation.
     the design picks one during that review.
   - Disconnecting and reconnecting is cheap: `agent-tabs net pause <peer>` refuses all traffic from
     and to that peer but keeps its certificate and grants, and `net resume <peer>` restores them.
-    `net trust … --for <duration>` makes a pairing expire on its own. `net revoke` stays the permanent
+    `net trust … --for <duration>` makes a trust entry expire on its own. `net revoke` stays the permanent
     removal.
   - Pause and expiry use D12's dispatch authority and generation checks for inbound and outbound work,
     including replies. Every dispatch checks paused state and the expiry deadline under that lock.
@@ -2510,158 +2512,321 @@ design doesn't certify the implementation.
 - Later, each with its own design and review: a hub that starts sessions from the Claude app
   (`claude remote-control` server mode), a Remote Control carrier, Remote Control on peer-opened tabs
   (`--remote-control`, reviewed with the hub, because it lets any device on the claude.ai account answer
-  a remote tab's permission prompts), a short-code pairing helper, and a separate OS user for
-  containment. Public use isn't planned.
-- Threats in scope: anyone on the LAN, a compromised paired machine, and a prompt injected into any
+  a remote tab's permission prompts), and a separate OS user for containment. Public use isn't planned.
+- Threats in scope: anyone on the LAN, a compromised hub member, and a prompt injected into any
   agent. Accepted and stated: malware running as the same OS user owns that machine and its keys.
 
 ### Security rules
 
 These hold for every install, because every user gets this code:
 
-- **Off by default.** Nothing listens, dials or answers discovery until the user runs `net pair` (or
-  the manual `net lan setup`, `net trust` and `net lan on`). An install that never does so behaves as
-  before. An update never turns it on.
+- **Off by default.** Nothing listens, dials, announces or answers discovery until the user turns on
+  discoverability (`net discoverable on`), joins a hub (`net hub join`, `net hub create --with`), or runs the
+  manual `net lan setup`, `net trust` and `net lan on`. An install that never does so behaves as before. An
+  update never turns it on.
 - **One private address.** The listener binds one address: an RFC 1918 IPv4 address of a physical
   interface in LAN mode, or the machine's Tailscale address in Tailscale mode. Never `0.0.0.0`, `::` or a
   public address. No UPnP, relay or port mapping.
-- **No discovery.** Nothing broadcasts, announces or looks up machines. A machine learns a peer's
-  address from a pairing invitation that agents carry, from the person's own Tailscale machine list, or
-  from the person.
-- **Private networks only in LAN mode.** The LAN listener and pairing run only on networks the OS marks
+- **Discovery is limited.** UDP announcements go out only from the bind interface, only while LAN mode is on
+  and the current network is in `network.allowedNetworks`, and carry no secret (see Discovery). A machine
+  trusts an address it learns from an announcement only after pinned TLS to the expected device id succeeds.
+- **Private networks only in LAN mode.** The LAN listener and joins run only on networks the OS marks
   Private; Windows' Domain profile counts as Public. Away from home, Tailscale mode is the answer.
-- **Identity from certificates.** A peer is trusted only after the person's own agents exchange an
-  invitation that pins one machine's full device id and carries a secret token (pairing), or after a
-  person imports its certificate and types its full id from that machine's screen (manual trust).
-- **Pairing grants nothing.** Every capability is a local, per-peer grant.
-- **The receiver decides.** The machine that does the work checks every request against its own grants
-  and limits. Nothing in a request widens them.
+- **Identity from certificates.** A device is trusted only after a join over TLS pinned to the device id the
+  user picked, an introduction from a pinned hub member, or a person importing its certificate and typing
+  its full id from that machine's screen (manual trust).
+- **One equal member role.** Joining grants it. A member has the same abilities on every other member, limited
+  by each machine's `network.memberFolders`. A hand-trusted peer (`net trust`) still gets no grants until
+  the user makes them.
+- **The receiver decides.** The machine that does the work checks every request against its own policy,
+  member folders and limits. Nothing in a request widens them.
 
-### Identity and pairing
+Protections that cost the user nothing:
+
+| Protection | How |
+|---|---|
+| Discoverability off by default | `net discoverable on` sets `network.discoverable`. It stays on across restarts until `net discoverable off` or `net off`. It has no time limit, and a restart never turns it on when it was off. |
+| Public and Domain networks refused | `net/interfaces.py` `require_lan_ready`, and a recheck by the listener |
+| Keys pinned after the first connection | Each certificate is pinned to its device id. Mutual TLS 1.3, `net/tls.py`. |
+| Allowed networks | The machine stays silent and drops connections on every network not in `network.allowedNetworks`. |
+| Visible member list | `net status` and `net hub status` show members. Each introduced member posts a "joined from `<address>`" message to the local sessions that no peer opened, and the machine that took a join shows a desktop notification. |
+| One-step removal | `net revoke <label>` on any member removes it here, forwards the removal to the other members and replaces the hub key. |
+| Members can't run shell commands over the link | A member acts only through tabs, messages and the inventory. |
+| Announcement contents | Device name, hub name, hub id, device id (public), port and transport for a join announcement; hub id, device id, port, timestamp and a MAC for a member beacon. Never tokens, keys, paths, session names or the user name. |
+| Keys at rest | Encrypted private key, passphrase in DPAPI on Windows or a 0600 file elsewhere (`net/secrets.py`), folders restricted to the user (`net/private_files.py`). The hub key lives in `net/hub.json`, a private file. |
+| Origin guard | A session that another machine opened can't change network settings (see Settings). |
+| Leave a hub | `net hub leave` tells the members and clears local state. |
+
+### Remaining risks
+
+| Risk | What remains | Limit, with no added step |
+|---|---|---|
+| A device on the LAN joins a discoverable machine | It gets the full member role: messages, tabs and agents on every member, and it is introduced to them. | Off by default, Private networks only, allowed networks, join notices, one-step revoke |
+| A joined machine starts agents on every other member | The agents run unattended in `network.memberFolders` with the pinned permission mode, which Claude Code `default` or `manual` and Codex `workspace-write` with `on-request` set (see Remote tabs). Allow rules and hooks in the user's settings still apply, and inside a folder a command can reach files outside it. A change in how Claude Code or Codex treats those flags changes this. | Member folders, join notices, the member list, one-step revoke. Re-run Phase 0 gate 3 after a Claude Code or Codex update. |
+| A compromised member admits or removes members | Any member can send `introduce` and `remove` to every other member, so it can add a device it controls or remove others. | Pinned mutual TLS limits senders to members. Each machine shows a notice. Revoke the compromised member, which also replaces the hub key. |
+| A laptop takes discoverability to another network | Without a limit, it would announce and answer there too. | `network.allowedNetworks`: the machine stays silent on every other network |
+| A fake hub or device with a copied name | The user may join the wrong device. | `net find` warns when two rows share a name and shows the full device id, which the user compares with the other machine's screen. Keys are pinned from then on. |
+| A man in the middle at the first connection | The first join has no proof of the other side beyond the device id the user matched. | The join pins the device id that `net find` verified, Public networks refused |
+| A forged member beacon | Any member can forge another member's beacon, because the MAC uses one key per hub. | A beacon changes an address only after pinned mutual TLS to that device succeeds. The hub key rotates on revoke and leave. Reconnect attempts per device and address are rate limited. |
+| A member sends an injected prompt | The receiving agent may act within its own permissions. | Messages stay data under the peer-message rules. Revoke. |
+| A flood of join attempts | Join connections from one address. | Lock per address after 3 failures in an hour, 1 connection per second per address, one join at a time |
+| A lost or stolen device | It keeps its pinned keys until removed. | Revoke it from any member, which replaces the hub key |
+| Wi-Fi client isolation | No LAN method works. | Tailscale mode (later) |
+
+Stricter controls go to the Tailscale design, not LAN mode: Remote Control tokens, approval from one place, and the
+`tailscale whois` owner check.
+
+### Identity
 
 - Each machine has one self-signed certificate with an ECDSA P-256 key, chosen for compatibility. Its
   **device id** is the full SHA-256 of the DER certificate, written in base32 with check characters, as
   Syncthing device ids are. The encoding is specified exactly, with test vectors. Check characters
   catch typos only.
-- `agent-tabs net id` prints the full id and writes the public certificate to a file. The user copies
-  the file to the other machine by any channel and runs `agent-tabs net trust <cert file> --id <full id
-  read from the other machine's screen> --address <IP> --label <name>` there. It refuses unless the
-  file's DER hash equals the id. Prefixes and short forms are refused. No private key leaves its
-  machine, and no listener ever accepts an unknown certificate.
-- Pairing derives a new peer's label from its device name, reduced to `a-z0-9-` and made unique; a label
-  never carries other text a peer sends. `net trust` takes a label from the local user, and
-  `net rename <label> <new label>` changes one without changing trust or grants.
-- `net trust` for a known id with a new address changes only the address and says so. It prints the
-  peer's effective grants: none for a new peer.
-- A renewed certificate is a new id and needs `net trust` again. Grants never move automatically.
-- `net trust` is the manual fallback. `net pair` (below) is the normal path.
+- `agent-tabs net id` prints the full id and writes the public certificate to a file. No private key leaves
+  its machine, and no listener ever accepts an unknown certificate.
+- The first `net discoverable on`, `net find`, `net hub join` or `net hub create --with` on a machine creates the
+  identity as `net lan setup` does, finding `openssl` itself (Git for Windows' copy on Windows, then the PATH
+  elsewhere).
+- A label is a peer's local name, 1 to 32 characters of `a-z`, `0-9` and `-`. A join derives a new peer's label
+  from its device name, reduced to `a-z0-9-` and made unique; a label never carries other text a peer sends.
+  `net rename <label> <new label>` changes one without changing trust.
+- Device names default to the host name; `deviceName` sets another. A name is 1 to 32 characters of ASCII
+  letters, digits, space, `-`, `_` and `.`, with no run of six digits.
+- A renewed certificate is a new id and needs a new join, or `net trust` for a hand-trusted peer.
+- `net trust` is the manual fallback for a machine that can't join a hub. `net trust` for a known id with a new
+  address changes only the address and says so. It prints the peer's effective grants: none for a new peer.
 
-### Pairing
+### Hubs and the member role
 
-`agent-tabs net pair` replaces the four manual commands, and the agents run it end to end. The person
-asks an agent to connect two machines. The agent on one machine runs `net pair --invite` and sends the
-invitation to the agent session on the other machine, which runs `net pair --join <invitation>`. Nobody
-types a code or answers a prompt; on Windows, the person approves one firewall prompt per machine, once.
+A hub is a set of machines that trust each other as equals.
 
-Trust comes from the channel that carries the invitation. Claude Code Remote Control (`ListAgents` and
-`SendMessage`) reaches the person's own sessions on their other machines under one claude.ai account, and
-an Agent Tabs message reaches a session on an already-paired machine. The invitation pins the inviting
-machine by its full device id and carries a 128-bit secret token, so the joining machine connects only to
-the machine that made the invitation, and the inviting machine accepts only a machine that holds the
-token. A man in the middle on the local network sees neither the token nor a way to pass either check.
+- **Hub identity.** A hub has an id (16 random bytes, 32 lowercase hex characters) and a name (a label).
+  `policy.json` holds `hub` (`id`, `name`) and marks each hub member with `member: true`. `net/hub.json`, a
+  private file, holds the hub key, its epoch, each member's certificate and last address, and the queue of
+  undelivered changes (see Hub sync).
+- **Member role.** A member has one role, set at join, with no per-member levels and no per-peer grants. It can
+  list every live session on this machine, message any live session, open `claude` or `codex` tabs in a folder
+  inside this machine's `network.memberFolders`, and close the tabs it opened. Its limits are `maxTabs` 4,
+  `opensPerHour` 30 and `messagesPerMinute` 60, counted by peer, plus the machine's `maxRemoteTabs`. A hub holds
+  at most 32 members.
+- **One hub per machine.** Machines in different hubs refuse each other with `already-in-another-hub` and save
+  nothing. `net hub leave` clears the membership.
+- **Commands.** `net hub create [--name <name>] [--folder <session folder>] [--with <device id>[@<address>] ...]`
+  makes the hub on this machine, and with `--with` joins each device. `net hub join <device id>` joins a
+  discoverable device. `net hub status` lists the hub, the members with their state (`online`, `offline` or
+  `unknown`), the member folders and the allowed networks. `net hub leave` leaves.
+- **Defaults at join.** `net discoverable on`, `net hub join` and `net hub create --with` add the current network to
+  `network.allowedNetworks` and, when empty, set `network.memberFolders` and `network.outboundFolders` to the
+  default folder (see Member folders). They turn the listener on, with its firewall rules, and register it to
+  start at login.
+- **Machines paired with 0.13.0.** At the first start of 0.14.0, peers paired with 0.13.0 keep their pinned keys
+  and become members of one hub, with no action. The current network is added to `network.allowedNetworks`. The
+  old narrow grants (`send`, folder, agent) are dropped, so each moved peer gets the full member role, which
+  widens what it can do on the other machines. Each machine's sessions get a one-time notice that lists the moved
+  machines, and `net revoke` removes one.
 
-Residual risk, accepted: an agent that follows injected instructions, or a compromised claude.ai account,
-can pass an invitation to a machine the person didn't mean to pair. Pairing grants nothing, `net status`
-lists every peer, and `net revoke` removes one.
+### Joining a hub
 
-**The invitation.** `atp1-invite:<base64url JSON>` with the version, the inviting machine's device name,
-address and pairing port, its full canonical device id, the token, and the expiry, 5 minutes ahead.
-`--join` refuses a malformed, expired or non-canonical invitation.
+A join runs between a dialer (the machine that runs `net hub join`) and a listener (the discoverable machine).
+The listener serves joins on TCP port 47830 only while `network.discoverable` is true, LAN mode is on and the
+current network is in `network.allowedNetworks`. `net discoverable off` takes effect within a few seconds. The dialer pins the device id that `net find` verified, or that the user gave
+as `<device id>@<address>`. The user's choice of device carries the trust: the join has no token, no consent
+proof and no approval on the listener.
 
-Steps:
-
-1. **Prepare (both machines).** The command creates the identity if there is none, as `lan setup` does,
-   finding `openssl` itself (Git for Windows' copy on Windows, then the PATH elsewhere). It picks the
-   address from `--bind`, the configured `bind`, or the one private address of a physical interface, and
-   refuses with the list when there are several. It checks the mode's network rules (LAN mode: a Private
-   network) and stops with the exact fix before anything listens.
-2. **Invite.** `--invite` makes sure the listener's firewall rule exists and matches (below), then starts
-   a detached, windowless `net pair --serve` that listens on the pairing port for 5 minutes, writes the
-   invitation to a private file in `net/`, and holds the one pairing window. `--invite` prints the
-   invitation from that file and exits.
-3. **Join.** `--join` checks the invitation, then checks the numeric IPv4 address and port against the
-   active mode before any dial. LAN: an RFC 1918 unicast address on the selected interface's actual
-   subnet, on a Private network, and not the interface's own, network or broadcast address. It refuses
-   host names and keeps the checked address for the dial, with no DNS lookup or redirect.
-4. **Exchange.** Each connection carries exactly one ordered transcript, in the existing frame format,
-   each frame at most 8 KiB, read with exact-length `recv` and no buffering. Unknown fields, repeats,
-   trailing data and out-of-order frames end the session. Each side parses the peer's certificate as one
-   canonical DER certificate. Nonces come from the OS random generator (`secrets`). The frames, in order:
-   - D → L: `hello` with the version (2), `tag = H("atp2 token", token)`, the dialer's device name and
-     certificate, and `C = H("atp2 commit", "dialer", cert_d, nonce_d)` with a fresh 32-byte nonce;
-   - L → D: `hello` with the listener's name, certificate and its fresh 32-byte `nonce_l`. The dialer
-     checks that the device id of `cert_l` equals the invitation's id, and stops otherwise;
+1. **Source check.** The listener accepts only connections from a private IPv4 source address, spaces them to one a
+   second per address, and refuses addresses that are locked (see Pairing locks).
+2. **Exchange.** The connection carries one ordered transcript, in the existing frame format, each frame at most 8 KiB
+   (the hub frame at the wire frame limit), read with exact-length `recv` and no buffering. Unknown fields,
+   repeats, trailing data and out-of-order frames end the session. Each side parses the peer's certificate as one
+   canonical DER certificate. Nonces come from the OS random generator. The frames, in order:
+   - D → L: `hello` with the version (2), `mode: join`, the dialer's device name and certificate, and
+     `C = H("atp2 commit", "dialer", cert_d, nonce_d)` with a fresh 32-byte nonce. The first frame must arrive
+     within 5 s and the handshake must finish within 30 s;
+   - L → D: `hello` with the listener's name, certificate and a fresh 32-byte `nonce_l`. The dialer checks that
+     the device id of `cert_l` equals the pinned id, and stops otherwise;
    - D → L: `reveal` with `nonce_d`; L checks it against `C`.
 
    `H(…)` is SHA-256 over the fields, each preceded by its length as 4 bytes big-endian. Both compute
-   `S = H("atp2 session", cert_d, cert_l, nonce_d, nonce_l)`. The listener drops, without counting, any
-   connection whose first frame doesn't carry the right `tag`. The token itself never crosses the network.
-5. **Prove keys.** The listener sends a plaintext `tls` frame and becomes the TLS server; the dialer the
-   client. The context follows the Transport rules (TLS 1.3, mutual certificates, no system CAs, no
-   resumption, `num_tickets = 0`) and pins exactly the two certificates just exchanged. Each side checks
-   that the peer's exact DER certificate equals the one from that peer's `hello`, that `version()` is
-   `TLSv1.3` and that `session_reused` is false.
-6. **Consent.** Inside TLS each side sends `consent` with `H("atp2 consent", role, S, token)`. A wrong
-   proof means the other side doesn't hold the token; the session ends and counts as a failed attempt.
-7. **Save and turn on.** After valid consent, each side saves the peer and sends `saved`. A new peer gets
-   the label from its device name lowercased to `a-z0-9-`, made unique, and no grants. A known device id
-   keeps its label and grants and gets the new address. Each side then turns the listener on with its
-   firewall rule and registers it to start at login, so the machines stay connected across restarts. A
-   side that saves trust but gets no `saved` back says "Pairing may be incomplete on the other machine.
-   Run `net status` there, or `net revoke <label>` here." Each side writes the outcome to
-   `net/pair-result.json`, and `net status` shows it as `last pairing:`.
+   `S = H("atp2 session", cert_d, cert_l, nonce_d, nonce_l)`.
+3. **Prove keys.** The listener sends a plaintext `tls` frame and becomes the TLS server; the dialer the client. The
+   context follows the Transport rules (TLS 1.3, mutual certificates, no system CAs, no resumption,
+   `num_tickets = 0`) and pins exactly the two certificates just exchanged. Each side checks that the peer's exact
+   DER certificate equals the one from that peer's `hello`, that `version()` is `TLSv1.3` and that
+   `session_reused` is false.
+4. **Hub state.** Inside TLS each side sends `state` with its hub (id and name) or none. Two machines with no hub stop
+   with `no-hub`. Two different hubs stop with `already-in-another-hub`. The machine that is in a hub sends the
+   `hub` frame: the hub id and name, a random 32-byte `hubKey`, the key epoch, and the other members (device id,
+   label, address, port, certificate; at most 32). When both are in the same hub, the listener sends it.
+5. **Ready, save, saved.** Each side validates the hub frame and sends `ready` before either saves, so a side that
+   rejects the frame leaves both unsaved. Then each side saves the other as a member and sends `saved`. The side that
+   received the hub frame also pins and saves the listed members. A side that saves but gets no `saved` back says
+   "Pairing may be incomplete on the other machine. Run `net status` there, or `net revoke <label>` here."
+6. **After the join.** The machine that took the join introduces the newcomer to every other member (see Hub sync) and
+   shows a desktop notification. The dialer sets the default folders and allowed network, turns the listener on and
+   registers the login task.
 
-Rules:
+**Pairing locks.** Failure counts and locks are kept per remote address in `net/pairing.json`. Three failures from one
+address within an hour lock that address for an hour and leave every other address free. A join attempt that fails
+after the listener admitted it counts as a failure, except `already-in-another-hub`, `no-hub`, a local save error and a
+busy listener. The listener serves one join at a time and drops a second connection, with no hourly cap. The dialer
+refuses to dial a locked address. `net status` lists the locked addresses, and `net trust` still works during a lock.
 
-- The token, the invitation file and the result file are private files. The invitation travels only
-  between the person's own agent sessions.
-- A machine holds at most one pairing window at a time and opens at most 3 per hour; a further request
-  returns "pairing busy" and opens nothing.
-- Lockout: three failed attempts within an hour (a wrong consent proof) lock `net pair` on that machine
-  for an hour. The count is stored in `net/`, survives restarts, and a lockout shows a desktop
-  notification that also says `net trust` still works. The window closes after a successful pairing, at
-  a lockout or at the timeout.
-- A session that ends before the reveal doesn't use up the window and doesn't count as a failure. The
-  window allows one session at a time. The first frame must arrive within 5 s and the handshake must
-  finish within 30 s. Incoming connections are limited to 1 per second.
-- Device names default to the host name; `deviceName` sets another. A name is 1 to 32 characters of
-  ASCII letters, digits, space, `-`, `_` and `.`, with no run of six digits.
-- **Windows elevation.** Pairing, the listener, the server and tabs run under the signed-in user's
+### Discovery
+
+The beacon is how machines find each other, both to join and to stay connected. LAN discovery implements the
+`Discovery` interface (see The transport and discovery seam).
+
+- **Transport.** The plugin's own UDP port, 47831, with standard-library sockets only. It doesn't use mDNS on 5353,
+  because Windows' mDNS service holds that port and the project has no Python dependencies.
+- **Send paths.** Each announcement goes out twice: to the multicast group 239.255.47.31 (TTL 1, from the bind
+  interface) and to the subnet broadcast address. Some routers and mesh systems drop one path but pass the other.
+  Senders and receivers share the port, so `net find` runs beside the listener on one machine. Receivers drop duplicates
+  by a random 16-byte announcement id (remembered for 300 s, at most 4096) and read each datagram strictly: at most
+  1200 bytes, JSON, exact keys, a version field, no duplicate keys. They accept only a source address inside the bind
+  interface's subnet that isn't their own.
+- **Schedule.** The listener announces once at start, on every change of the machine's address set, and every 30 s.
+  Nothing is sent or read while LAN mode is off, the bind address is IPv6, or the current network is not in
+  `network.allowedNetworks`. The listener stops on a network Windows marks Public.
+- **Join announcement** (`kind` `join`). Sent only while the machine is discoverable. Fields: `v`, `kind`, `id`,
+  `deviceName`, `deviceId`, `hubId`, `hubName`, `port` (47830) and `transport` (`lan`).
+- **Member beacon** (`kind` `member`). Sent by every hub member that holds the hub key, discoverable or not. Fields:
+  `v`, `kind`, `id`, `hubId`, `deviceId`, `port` (47829), `ts` and `mac`.
+- **Beacon authentication.** The `mac` is HMAC-SHA256 under the hub key over the canonical JSON of the other fields.
+  The first design signed beacons with the device key. The build uses a per-hub secret instead, because the Python
+  standard library has no asymmetric signing and the project has no dependencies. Any member could forge another
+  member's beacon, but every member already has the equal role, and a beacon changes nothing until pinned mutual TLS
+  to that device succeeds. Conditions: the hub key rotates when a member is revoked or leaves, with an epoch so the
+  newest key wins (see Hub sync), and beacon-triggered reconnects are limited (below).
+- **Receiving a member beacon.** A receiver ignores a beacon for another hub, from a device that isn't a known member,
+  with a bad MAC, with a `ts` more than 120 s from its clock, or older than the last one accepted from that device.
+  A beacon from a member's stored address marks the member online. A beacon that names another address starts one
+  pinned mutual TLS check per device and address every 60 s, with at most 4 checks at once. The address in
+  `policy.json` and `net/hub.json` changes only after that check matches the member's certificate. This is how a
+  changed address of a member reaches the others.
+- **Remembered addresses.** Each member's last known address is saved. At start the listener asks each member's last
+  address for an inventory and records the member as online or offline (`net/presence.json`). `net hub status` reads
+  that and the received beacons.
+- **`net find [--json] [--bind <address>]`.** It lists devices on the local network:
+  1. It tries each member's remembered address.
+  2. It listens for announcements for up to 10 s. Each announcing device is verified before it is listed.
+  3. When nothing is verified within 5 s, it probes the /24 that holds the bind address (the bind subnet when that
+     is smaller than a /24): TCP 47829 and 47830 on each address, 64 connections at a time, 300 ms each. A host that
+     answers on 47829 is checked as a member, then on 47830 as a discoverable device.
+  4. **Verify before listing.** UDP announcements prove nothing. For a member, the command opens mutual TLS on 47829
+     pinned to the stored key. For a discoverable device, it opens TLS on 47830 and checks that the certificate hash
+     equals the announced device id, then reads the device's hub state. A candidate that fails is dropped, and the
+     attempt is logged.
+  
+  Each row shows the device name, device id, address, hub name or `no hub`, whether it is a member, and the source
+  (`remembered`, `multicast`, `broadcast`, `probe`, or several joined with `+`). A warning line appears when two rows
+  share a name. When nothing is found, the message names the likely causes: the other machine isn't discoverable, a
+  network is Public, the network isn't in `network.allowedNetworks` there, the UDP rule is missing on Windows, or the
+  machines are on different subnets. It adds that Wi-Fi client isolation, common on guest networks, blocks all
+  traffic between devices, and points to Tailscale mode. There is no manual IP entry in the agent flow.
+  `net hub join <device id> --address <IP>` and `<device id>@<address>` skip the search for tests and diagnosis.
+
+### Hub sync
+
+Members keep one membership list by sending each other three requests over pinned mutual TLS, in the existing
+request frame. Only a pinned member of the same hub can send them. Replies use the generic `refused`, and the reason
+goes to the audit log (`not-a-member`, `wrong-hub`).
+
+- **`introduce`.** After a join, the machine that took it sends the newcomer's id, label, address, port and
+  certificate to every other member. A receiver saves it as a member when the certificate is valid and matches the id,
+  the address is private, the hub has fewer than 32 members, and the id isn't known. It never turns an existing
+  non-member peer into a member (`not-a-member-peer`). A label clash gets a new label. The receiver posts a notice to
+  its local sessions.
+- **`remove`.** Names a device. The receiver removes a member, raises the policy generation and posts a notice. It
+  refuses to remove itself, and a message that names the receiving device is refused, so a member can't be removed by
+  a message sent to itself. A request with `rotate` set, sent when a member leaves, makes the receiver replace the hub
+  key and send the removal and the new key to every other member.
+- **`rekey`.** Carries the hub id, an epoch and a 32-byte key. A member accepts a key only when `(epoch, key)` is
+  higher than its own and answers with the version it holds, so two members that replace the key at once end with the
+  same one. Beacons under an older key are ignored.
+- **Revoke.** `net revoke <label>` on a member removes it here, sends `remove` to every other member, increments the key
+  epoch with a new random key, and sends `rekey` to the remaining members.
+- **Leave.** `net hub leave` sends `remove` with `rotate` to the members in device-id order until one answers. That
+  member removes the leaver, rotates the key and sends the removal and the new key to every other member. The leaver
+  sends `remove` without `rotate` to the rest and clears local state. When no member answers, the command says the key
+  isn't replaced yet, and the members keep trusting the machine until they revoke it.
+- **Retry queue.** An `introduce`, `remove` or `rekey` that can't reach a member goes into `net/hub.json`, which keeps the newest 256
+  entries. The listener retries every 60 s for up to 14 days, drops an entry whose target left the hub, and shows the
+  undelivered names in the command output.
+
+### Network ids and allowed networks
+
+`network.allowedNetworks` lists the networks where this machine announces, listens, serves joins and accepts member
+connections. On any other network, the listener stays bound but drops every connection, sends no announcement and
+serves no join, and `net status` says why.
+
+- **Automatic entry.** The network where the user turns on discoverability or joins is added.
+- **Commands.** `agent-tabs net networks` shows the list, the current network id and the gate state. `net networks add`
+  adds the current network. `net networks remove <id>` removes one. No typed confirmation.
+- **Network id** (1 to 128 characters from `A-Z a-z 0-9 { } : . _ -`):
+  - Windows: `win:<profile name>:<subnet>:<digest>`. The digest hashes the profile name, the subnet and the MAC
+    address of the default gateway. The MAC comes from `Get-NetNeighbor`, with `arp -a` as the fallback. When neither
+    returns it, the id uses the profile name and the subnet only, and the listener logs that. Two networks with the same
+    profile name and subnet get different ids only when their gateway MACs differ.
+  - macOS and Linux: `<gateway MAC>_<subnet>`. The MAC comes from `ip -j neigh` on Linux, and `route`, `ifconfig`
+    and `arp` on macOS. With no gateway MAC the id can't be built.
+  - A stored entry in the older name-and-subnet form on Windows still opens the gate. The listener,
+    `discoverable on`, `hub join` and `networks add` rewrite it to the new id in `config.json`.
+- **Gate.** The listener reads the id at start, every 30 s and when the address set changes. When the id can't be read,
+  the network counts as not allowed. The gate covers member connections, join service, announcements and
+  beacon handling, and doesn't stop the listener.
+
+### Member folders
+
+- `network.memberFolders` lists the folders where members can open tabs on this machine. Every member has the same
+  abilities inside them. `net folders` shows the list, and `net folders add <absolute path>` and
+  `net folders remove <absolute path>` change it with no typed confirmation. `add` takes an existing local folder.
+- **Default.** The command that turns on discoverability or joins sets the list, when empty, to the top-level folder
+  that holds the session: the folder one level below the drive root (or below `/`), or one level below the home folder
+  when the session is inside home. `C:\Projects\X` gives `C:\Projects`, and `C:\Users\me\code\x` gives
+  `C:\Users\me\code`. The default is never a drive root, `/`, the home folder or a system folder (Windows, Program
+  Files, ProgramData, `/usr`, `/etc` and similar). In those cases it is the session folder itself. The same command
+  sets `network.outboundFolders` when it is empty.
+- **Open request.** A member's `open` carries an absolute `path` instead of a folder alias. The receiver normalizes it
+  and requires it inside a member folder, then checks that it exists and that no component is a link or reparse point
+  (`folder_problem`). A path outside the list gets the generic `refused` and the audit reason `folder-not-allowed`. The
+  requesting agent sees only that the peer refused. Every local session that no peer opened gets a message that
+  names the folder and `agent-tabs net folders add "<path>"`, at most once an hour for each peer and path. The message
+  omits the path and the command when the path isn't an existing folder or holds shell syntax or control characters.
+- **Inventory.** The reply to a member lists every live session and the machine's member folders (at most 64), so the
+  requesting agent can pick a path.
+- **Recheck.** The dispatcher rechecks the member folders and the folder identity at hand-off.
+
+### Windows elevation and firewall
+
+- Everything except firewall changes (the listener, joins, the server and tabs) runs under the signed-in user's
   normal, unelevated token. Only the firewall changes are elevated: one UAC prompt runs a fixed helper,
   `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command` with a
   constant `New-NetFirewallRule` / `Remove-NetFirewallRule` script whose only parameters are the ports, the
   program path, an address or subnet list, the profile, the interface alias and the rule name, each
   passed as data, never interpolated into the script. The elevated helper validates them again itself
-  and accepts only the plugin's Python executable, the listener and pairing ports, the selected interface
-  and profile, an address range allowed in the mode and the fixed rule name; it refuses any other
-  value. Before it asks for elevation, the command reads the existing rule unelevated, and it skips the
-  prompt when the rule already matches every value. The helper then reads the installed rule back and
+  and accepts only the plugin's Python executable, the listener, join and discovery ports, the selected interface
+  and profile, an address range allowed in the mode and the fixed rule names; it refuses any other
+  value. Before it asks for elevation, the command reads the existing rules unelevated, and it skips the
+  prompt when they already match every value. The helper then reads each installed rule back and
   checks it, and removes a rule it added when any step fails. No plugin code runs elevated. A command
   started elevated stops before doing anything and asks for a normal terminal. Where Windows can't give
   an unelevated token (UAC off, or the built-in Administrator account), the network feature isn't
   supported, and `net status` says why.
-- **Firewall for pairing.** One rule, `Agent Tabs LAN`, admits TCP `47829` (the listener) and `47830`
-  (pairing) to the plugin's Python from the mode's range (LAN: the selected interface's subnet;
-  Tailscale: the Tailscale interface and `100.64.0.0/10`). Each machine adds it once, at its first
-  invitation or at the listener's first start, and keeps it until `net off`. Later pairings show no UAC
-  prompt. Nothing listens on `47830` outside an open pairing window.
+- **Two rules, one prompt.** `Agent Tabs LAN` admits TCP 47829 (the listener) and 47830 (joins) to the plugin's Python on
+  the bound address, from the mode's range (LAN: the selected interface's subnet; Tailscale: the Tailscale interface and
+  `100.64.0.0/10`), on the Private profile. `Agent Tabs LAN discovery` admits UDP 47831 from the same range on the same
+  interface and profile. Both come from the first `discoverable on`, `hub join` or `hub create --with` on the machine,
+  in one elevated run, and `net off` removes both. A machine with the older one-rule setup gets one prompt that
+  recreates both. Nothing listens on 47830 unless the machine is discoverable.
+- macOS and Linux get no firewall change. The command prints the ports to allow.
 
 ### Tailscale mode
 
-`network: tailscale` runs the same listener, pairing, grants and pinned mutual TLS over the Tailscale
+`network: tailscale` runs the same listener, joins, hubs and pinned mutual TLS over the Tailscale
 interface instead of a LAN address. Tailscale gives each machine a fixed `100.x` address on any network,
 reaches machines away from home, and encrypts everything with WireGuard. It is the recommended mode for
-more than one network, for travel and for teammates later.
+more than one network, for travel and for teammates later. The code refuses `tailscale` until the review passes;
+this section is the design the seam in the next section prepares for.
 
 - **Requirements.** Tailscale installed, running and logged in on both machines. Tailscale's client runs
   while the person is logged in unless they chose `tailscale up --unattended`. Phase 0 records whether
@@ -2669,8 +2834,8 @@ more than one network, for travel and for teammates later.
 - **Address.** `bind` is the machine's Tailscale IPv4 address, read from `tailscale ip -4` (the binary by
   absolute path, with a timeout). The listener refuses an address outside `100.64.0.0/10` or not on the
   Tailscale interface.
-- **Picking the peer.** Pairing uses the same invitation as LAN mode, carried between the person's own
-  agent sessions, so no machine list is needed to pair.
+- **Picking the peer.** Discovery reads `tailscale status --json` for the person's own machines, and a join pins the
+  device id as in LAN mode. No UDP beacon is needed.
 - **Tailscale check.** Before dialing, and for each accepted connection, the command asks the local
   Tailscale service (`tailscale whois --json`, by absolute path, with a timeout) about the address. It
   requires exactly one node, in this tailnet, not shared in, not tagged, and owned by the same user as
@@ -2678,48 +2843,76 @@ more than one network, for travel and for teammates later.
   owner or the share status is missing, ambiguous or in an unknown format, or when `tailscale` doesn't
   answer. The listener reads its own owner from `tailscale status --self --json` at start. Tests cover
   each supported Tailscale and Headscale version before the design claims support for it. This check
-  narrows; it is never the identity. Pinned mutual TLS and the invitation decide who the peer is. The check
+  narrows; it is never the identity. Pinned mutual TLS and the device id decide who the peer is. The check
   doesn't exclude traffic that the person's own nodes proxy (a subnet router, `tailscale serve` or
-  Funnel); pinned TLS still holds.
+  Funnel); pinned TLS still holds. The Public-network refusal goes away, because WireGuard protects the link.
 - **Authority stays local.** Tailscale's access rules and app capabilities never grant anything here.
   `policy.json` is the only authority. Everything Tailscale reports (addresses, `whois`, the machine list)
-  comes from the coordination server, so it narrows and routes only; pinned TLS and the invitation carry every
+  comes from the coordination server, so it narrows and routes only; pinned TLS and the device id carry every
   security decision. The design recommends an access rule that reaches the Agent Tabs ports only from
   the person's own devices, `{"src": ["autogroup:member"], "dst": ["autogroup:self"], "ip":
   ["tcp:47829", "tcp:47830"]}`, with no broader rule covering those ports. Tagged devices have no user
   owner, so the owner check refuses them; they aren't supported in version 1.
-- **Firewall.** The Windows rule admits the listener's program on its port from `100.64.0.0/10` on the
+- **Firewall.** The Windows rule admits the listener's program on its ports from `100.64.0.0/10` on the
   Tailscale interface only. The interface matters: phone hotspots and carrier NAT also hand out
   `100.64.0.0/10` addresses on physical adapters.
 - **Startup.** At login the Tailscale interface can come up after the listener. The listener waits up to
   2 minutes for a `100.64.0.0/10` address on the Tailscale interface, then fails closed and reports why.
 - **Coordination.** By default Tailscale's coordination server distributes keys, and the person trusts it
-  not to inject a node. Pinned TLS means an injected node still can't pass as a paired machine. The design
+  not to inject a node. Pinned TLS means an injected node still can't pass as a connected machine. The design
   recommends Tailnet Lock where the person's plan has it, and supports a self-hosted Headscale server for
   a fully local setup. With Headscale the person runs the coordination server, and Tailnet Lock may be
   unavailable; Phase 0 records which `whois` and `status` fields Headscale fills. Without internet, existing Tailscale connections keep working; a cold start may
   not find peers.
 - **Addresses** don't change when a machine moves, so Tailscale mode needs no address updates.
 
+### The transport and discovery seam
+
+The LAN code reaches the network through two interfaces, so Tailscale mode can replace the LAN parts without
+touching the hub, the member role or the join protocol. The code builds them; Tailscale implements neither yet.
+
+- **`Transport`** (`net/transport.py`), chosen by `transport_for(config)`, which returns the LAN transport for `lan` and
+  nothing for any other value. Methods: `allows_bind(address)`, `bind_address(config)`,
+  `check_destination(address, port, interface_address, prefix_len)`, `check_connection(address)` (a no-op for LAN; the
+  `whois` owner check for Tailscale), `firewall_scope(info)` (the subnet for LAN, `100.64.0.0/10` on the Tailscale
+  interface), `require_ready(address, allow_virtual)` and `wait_ready(address, timeout_s, ...)`.
+- **`Discovery`** (`net/discovery.py`), with `announce(hub_id, hub_name, device_name, port)` and `browse(timeout)`, which
+  returns candidates (device id and name, hub, address, port, kind and a verified flag). LAN uses UDP multicast and
+  broadcast. Tailscale would read `tailscale status --json`. A null implementation returns nothing.
+- **Mode checks.** `network_enabled(config)` (the mode is in `ENABLED_MODES`, which holds `lan`) replaces every
+  `network != "lan"` check in the outbound, dispatch, listener, poller and messaging code.
+- Join and beacon payloads carry a `transport` field (`lan`). A receiver refuses a join announcement with another value.
+- **Same in both modes:** pinned TLS, device ids, commit-then-reveal, hubs, the equal member role, revoke, leave and key
+  storage. **Different in Tailscale mode:** the discovery source, owner checks, the optional Remote Control token and
+  approval, and the firewall scope.
+- Not yet behind the seam: the beacon service (`net/beaconsvc.py`) and the `net find` probe call the LAN implementation
+  directly, and the login task runs `net lan start`.
+
 ### LAN mode limits
 
 LAN mode stays the minimal option for one home or office network, with nothing else to install:
 
 - Private networks only. Windows' Domain and Public profiles refuse. Away from home, use Tailscale mode.
-- No broadcast, discovery, beacon or lookup of any kind. Machines find each other by invitation.
+- Discovery works on the local subnet only: multicast with TTL 1 and the subnet broadcast address. It crosses no router,
+  and Wi-Fi client isolation blocks it.
 - `bind` is one fixed RFC 1918 IPv4 address of a physical interface; VPN, Hyper-V, WSL and Docker adapters
-  only when named. The listener's firewall rule admits that interface's subnet (for example
-  `192.168.1.0/24`) on the Private profile.
-- When a machine's address changes, its listener refuses to start and `net status` says why. The fix is
-  `net pair` again, or `net lan on --bind` and `net trust --address`. A DHCP reservation on the router
-  avoids it.
+  only when named. The listener's firewall rules admit that interface's subnet (for example `192.168.1.0/24`) on the
+  Private profile.
+- A member's address changes are followed automatically (see Discovery). When this machine's own address changes, its
+  listener stops, because the bind address is no longer assigned, and `net status` says why. Nothing rebinds it. The
+  fix is `net discoverable on --bind <new address>` (then `net discoverable off` to stop serving joins), or
+  `net lan on --bind <new address>`. A DHCP reservation on the router avoids it.
 
 ### Running the command
 
 - Agents run `net` commands through the plugin's launcher by absolute path; nothing is added to the PATH.
-- The `network` skill leads with pairing: the person names the machines to connect, and the agent runs
-  `net pair --invite` on one, sends the invitation to the session on the other machine, and that session
-  runs `net pair --join`. The skill keeps the manual `net trust` path as a fallback.
+- The `network` skill leads with the hub flow: the person names the machines to connect. The agent runs
+  `net discoverable on` on one machine, then `net find` and `net hub join <device id>` (or
+  `net hub create --with <device id>`) on the other. The skill keeps the manual `net trust` path as a fallback.
+- Command summary: `net id | status | off | revoke <label> | rename <label> <new label>`;
+  `net discoverable [on | off | status]`; `net find`; `net hub create | join | status | leave`;
+  `net folders [add | remove]`; `net networks [add | remove]`; and, for hand-trusted peers, `net trust`, `net grant`,
+  `net lan setup | on | start | stop`.
 
 ### Certificates and keys
 
@@ -2780,7 +2973,15 @@ LAN mode stays the minimal option for one home or office network, with nothing e
 ### Listener
 
 - `agent-tabs net lan on --bind <private address>` starts the listener as its own process, separate from
-  the loopback MCP server. On Windows it sets `SO_EXCLUSIVEADDRUSE` before `bind`.
+  the loopback MCP server. On Windows it sets `SO_EXCLUSIVEADDRUSE` before `bind`. `net discoverable on`,
+  `net hub join` and `net hub create --with` record `network: lan` and the bind address, apply the firewall rules,
+  register the login task and start the listener the same way, with no typed confirmation (see Settings).
+- The listener runs three things on one process. The member port (47829) takes pinned mutual TLS requests. The join
+  service (47830) runs only while `network.discoverable` is true, LAN mode is on and the network gate is open, and a
+  monitor thread starts and stops it. The beacon service sends and receives UDP announcements on 47831 and reconnects
+  members (see Discovery). The listener reads `config.json` again every 5 s.
+- The listener halts when the network setting or the bind address changes, when the bind address is no longer
+  assigned to a local interface, and when Windows marks the network Public. It doesn't rebind by itself.
 - The listener needs no agent session on its machine. When a verified request arrives and no local
   server runs, it starts the shared server, so a remote `open` works on a machine where nothing else
   runs. It uses the server port and home recorded in the `network` section, starts the server from its
@@ -2816,10 +3017,12 @@ LAN mode stays the minimal option for one home or office network, with nothing e
 - Limits: 8 connections, 2 per source, 5 s handshake, 30 s idle, 64 KiB requests. No fragmentation.
 - On Windows, the LAN listener refuses to start on a network marked Public or Domain. Each accept checks a cached network state, refreshed every 30 s and when the local address set
   changes. This reacts promptly, not instantly; pinned mutual TLS carries the guarantee.
-- The Windows firewall rule is scoped to the listener and pairing ports and the listener's program, and to the bound
-  interface's subnet on the Private profile (LAN mode) or `100.64.0.0/10` on the Tailscale interface
-  (Tailscale mode). Creating or changing it needs elevation, through the fixed helper described under
-  Pairing.
+- Each accept also requires that the source address belongs to a pinned peer and that the network gate is open (see
+  Network ids and allowed networks). Otherwise the listener closes the connection.
+- The Windows firewall rules are scoped to the listener, join and discovery ports and the listener's program, and to the
+  bound interface's subnet on the Private profile (LAN mode) or `100.64.0.0/10` on the Tailscale interface
+  (Tailscale mode). Creating or changing them needs elevation, through the fixed helper described under Windows
+  elevation and firewall.
 
 ### Requests
 
@@ -2837,11 +3040,16 @@ LAN mode stays the minimal option for one home or office network, with nothing e
   duplicate is possible after a restart; the mailbox's one-minute duplicate check and the per-peer
   limits still apply.
 - The peer gets one generic `refused`; the reason goes to the local audit log.
+- The operations are `open`, `close`, `send`, `inventory` and, between hub members only, `introduce`, `remove` and
+  `rekey` (see Hub sync). `open` carries `folder` (an alias, for a hand-trusted peer) or `path` (an absolute folder,
+  for a hub member). The `inventory` reply to a hub member carries an optional `folders` list.
 
 ### Grants
 
-`~/.ide-agent-tabs/net/policy.json` holds a grant per trusted peer, keyed by its device id. A new peer
-has none.
+`~/.ide-agent-tabs/net/policy.json` holds an entry per trusted peer, keyed by its device id. A hub member has the
+member role (see Hubs and the member role). The dispatcher doesn't read a member's `folders`, `agents`, `models` or
+`send`, and `net grant` doesn't refuse a member, so a grant on a member has no effect. A hand-trusted peer
+(`net trust`) has no grants until the user adds them, and the rest of this section applies to it.
 
 - `folders`: aliases it may open tabs in. Each alias is pinned to the real path and file identity
   (`st_dev`, `st_ino`; Windows fills them from the volume serial and file index) recorded when the user
@@ -2859,7 +3067,8 @@ has none.
   from that conversation and the same local recipient. It allows message delivery only, never open,
   close, inventory or forwarding, and normal limits apply. A new local session doesn't inherit an
   expired session's grant. The remote session id is still the peer machine's claim.
-- `inventory`: shows only what that peer may use, with no absolute paths.
+- `inventory`: shows only what that peer may use, with no absolute paths. A hub member sees every live session, and
+  the reply carries this machine's member folders.
 - Limits: `maxTabs`, `opensPerHour` and `messagesPerMinute`, counted by peer from server-owned launch
   records, with reservations taken before launch, plus a global tab cap.
 - `close`: only tabs that peer opened.
@@ -2869,14 +3078,16 @@ has none.
 ### Remote tabs
 
 Remote tabs run with permissions the receiving machine selects. Within those permissions an agent acts
-without asking; outside them it asks the local user or fails. The per-peer grant is the user's consent
-to that unattended scope.
+without asking; outside them it asks the local user or fails. Joining a hub, which sets the member folders, or a
+per-peer grant is the user's consent to that unattended scope. A member's open and a granted open use the same
+launch plan, and the request can't name a permission mode.
 
 - **Claude Code:** `--permission-mode default`. Claude Code 2.1.325 still accepts `default` but no
   longer lists it; `manual` behaves the same in Phase 0 and is the listed name. The launch plan uses
   whichever the installed version lists. If it lists neither `manual` nor `default`, remote Claude Code
   opens are refused until Gate 3 runs again on that version. Tools the user already allows in their own settings, and
-  their own hooks, still apply. `net lan on` lists the user's broad allow rules as a warning.
+  their own hooks, still apply. The flag overrides a `defaultMode: bypassPermissions` in the user's settings (Phase 0
+  gate 3, Claude Code 2.1.325); re-run the gate after a Claude Code update.
 - **Codex:** `--sandbox workspace-write --ask-for-approval on-request -c approvals_reviewer="user"`.
   The launch plan always passes the granted folder with `-C`, because a Codex shell can resolve a
   relative path outside it. Within the workspace, Codex edits files and runs ordinary commands without
@@ -2897,8 +3108,9 @@ to that unattended scope.
 
 ### Trust boundary
 
-- A trusted peer with grants can run agents in its granted folders, within their unattended permissions,
-  and beyond them when the local user approves. Grants limit where work starts, not what an agent can
+- A hub member can run agents in this machine's member folders, and a trusted peer with grants in its granted
+  folders, within their unattended permissions and beyond them when the local user approves. Member folders and
+  grants limit where work starts, not what an agent can
   reach.
 - Remote origin is a server-owned launch record bound to the tab's process and start time. Sessions
   descended from that process, found by ancestry, inherit it, and a session from a known remote launch
@@ -2937,17 +3149,21 @@ to that unattended scope.
 
 ### After a restart
 
-What persists: the certificate and key, `peers.json`, `policy.json` with every grant, pause and expiry,
-the `network` choice, and the login task. With `--at-login`, the listener starts at login and peers
-reconnect on their next request or inventory, with nothing for the user to run.
+What persists: the certificate and key, `peers.json`, `policy.json` with the hub, every member and every grant,
+pause and expiry, `net/hub.json` with the hub key and the retry queue, the `network` settings (including
+`discoverable`, `memberFolders` and `allowedNetworks`), and the login task. The login task starts the listener at
+login. Members reconnect at their remembered addresses and on the next beacon, with nothing for the user to run.
+A machine that was discoverable before the restart is discoverable after it.
 
 What doesn't: open tabs and their sessions end with the machine, as they do today (`resume_tab`
 reopens a closed session); reply grants are tied to a session generation, so a new session starts a new
 conversation; an action in flight follows D6 reconciliation.
 
-Addresses: a peer is reached at its recorded IP literal. In Tailscale mode addresses don't change. In LAN
-mode a new DHCP address stops that machine's listener until the person pairs again or runs `net lan on
---bind` and `net trust --address`; a DHCP reservation on the router avoids it.
+Addresses: a peer is reached at its recorded IP literal. In Tailscale mode addresses don't change. In LAN mode, when
+a member gets a new DHCP address, its beacon names the new address and the others update it after pinned mutual TLS
+matches (see Discovery). When this machine's own address changes, its listener stops until the person runs
+`net discoverable on --bind <new address>` or `net lan on --bind <new address>`; a DHCP reservation on the router
+avoids it.
 
 ### Outbound limits
 
@@ -2967,9 +3183,12 @@ the user can bypass them; the receiving machine's grants and limits are the enfo
   an uncertain action for reconciliation, never an automatic replay. Every process that can dispatch
   uses this authority.
 - The listener rebuilds its trust context and closes connections from a revoked peer.
-- `net off` stops inbound and outbound LAN work and the listener. Existing tabs stay unless `--close` is
-  given. `revoke --close` closes the tabs that peer opened. Revoking on one machine doesn't remove trust
-  on another.
+- `net off` stops inbound and outbound LAN work and the listener, sets `network.discoverable` to false, and removes
+  the login task and both firewall rules. Existing tabs stay unless `--close` is given. `revoke --close` closes the
+  tabs that peer opened.
+- Revoking a hub member also removes it on the other members and replaces the hub key (see Hub sync), so a removed
+  member's requests are refused everywhere once each member has the removal. Revoking a hand-trusted peer removes
+  trust on this machine only.
 
 ### Settings
 
@@ -2981,8 +3200,10 @@ prevents project overrides, not edits by code running as the user. D11's file pr
 Interfaces:
 
 - **The `agent-tabs net` commands** are the supported writer. Commands that widen access (`lan setup`,
-  `lan on`, `trust`, `grant`, `resume`) require typed confirmation in an interactive terminal. This
-  reduces accidental use. It doesn't prevent an agent following injected instructions from running
+  `lan on`, `trust`, `grant`, `resume`) require typed confirmation in an interactive terminal. The hub commands
+  (`discoverable on`, `hub create`, `hub join`, `folders add`, `networks add`) need no typed confirmation, because an
+  agent runs them in chat. They show a desktop notification where they turn the network on, write a line in
+  `net/cli.log`, and fall under the origin guard below. Typed confirmation, where it applies, reduces accidental use. It doesn't prevent an agent following injected instructions from running
   widening commands through its tools. Programs can create terminals and supply input, and code running as this OS
   user can edit user-owned policy or call local APIs directly, subject to any independently enforced
   sandbox. Version 1 accepts this risk under D10; a separate OS user is the containment option. On
@@ -2990,13 +3211,20 @@ Interfaces:
   With UAC enabled, a non-elevated caller normally needs user consent or credentials on the secure
   desktop. Already elevated processes need no new prompt. This isn't a universal barrier against agent
   execution. Each widening command also shows a desktop notification on that machine and
-  writes an audit line in the audit fields below, with no free text. Narrowing commands (`pause`, `revoke`, `off`) need no confirmation, and `status`
-  is read-only. Phase 0 checks whether Claude Code's `!` prefix gives a command an interactive terminal.
+  writes an audit line in the audit fields below, with no free text. Narrowing commands (`pause`, `revoke`, `off`, `folders remove`, `networks remove`,
+  `discoverable off`, `hub leave`) need no confirmation, and `status` is read-only. Phase 0 checks whether Claude Code's `!` prefix gives a command an interactive terminal.
 - **No MCP tool and no mod protocol line** sets `network` to `lan`, trusts a peer, adds a grant or
   resumes a peer. The one exception is `net lan start`, which starts the listener only within the
   standing choice (see Listener).
-- **A setup skill** walks the user through setup: it explains each step, shows the exact command to
-  run and checks the result. It never runs a widening command itself.
+- **Origin guard.** `net folders add|remove`, `net networks add|remove`, `net discoverable on|off`,
+  `net hub create|join|leave`, `net revoke` and `net grant` refuse to run when the calling process descends from a
+  session that another machine opened, found by the remote-origin ancestry check (see Trust boundary). The refusal
+  reads "refused: a session opened by another machine can't change this machine's network settings". `net off`,
+  `net lan stop`, `net rename` and the read-only commands don't check. `net lan on` and `net trust` still need a
+  typed confirmation.
+- **The `network` skill** runs the hub commands itself: `discoverable on`, `find`, `hub join` and `hub create`, then
+  `hub status`. It hands the commands that still need typed confirmation (`lan setup`, `lan on`, `trust`, `grant`
+  for a hand-trusted peer) to the user.
 - **The Agents pane** shows peer status and grants and offers Pause. For Resume it shows the
   `agent-tabs net resume <peer>` command for the user to run. It doesn't resume a peer or confirm
   widening operations in the mod.
@@ -3008,18 +3236,22 @@ Per machine, in the `network` section of `config.json`:
 |---|---|---|
 | `network` | `off` | `off`, `lan` or `tailscale` |
 | `bind` | none | The listener's address: a private LAN address, or in `tailscale` mode the machine's Tailscale address |
-| `deviceName` | host name | The name other machines see in invitations and pairing |
+| `deviceName` | host name | The name other machines see in announcements and joins |
 | `port` | `47829` | The listener's port |
 | `openssl` | none | The confirmed absolute path used by `net lan setup` |
-| `outboundFolders` | empty | Local folders whose sessions may send to peers |
+| `outboundFolders` | empty | Local folders whose sessions may send to peers. The hub commands set it when empty. |
 | `maxRemoteTabs` | `4` | Remote tabs on this machine across all peers |
+| `memberFolders` | empty | Absolute folders where hub members can open tabs on this machine. `net folders` changes it. |
+| `allowedNetworks` | empty | Network ids where this machine announces, listens and joins. `net networks` changes it. |
+| `discoverable` | `false` | Serve joins and send join announcements. `net discoverable on` or `off` changes it. |
 
 Version 1 adds no option to publish remote tabs through Remote Control. That belongs to the separate
 Remote Control review, which must define account and device access, prompt approval, opt-in scope and
 effective settings.
 
 Per peer, in `policy.json`, empty for a new peer: `label`, `address`, `folders`, `agents`, `models`,
-`send`, `maxTabs`, `opensPerHour`, `messagesPerMinute` and `approveEachOpen`. Team mode (later stage)
+`send`, `maxTabs`, `opensPerHour`, `messagesPerMinute`, `approveEachOpen` and `member`. A member peer needs a `hub`
+object (`id`, `name`) at the top level of the file. Team mode (later stage)
 adds `person`, and `expires` and `paused`, which `net trust --for`, `net pause` and `net resume` set.
 
 These are fixed, not settings: TLS 1.3 with mutual certificates and no unverified fallback, no wildcard
