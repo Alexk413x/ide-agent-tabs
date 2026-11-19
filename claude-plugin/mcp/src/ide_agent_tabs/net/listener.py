@@ -27,6 +27,7 @@ from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, SERVER_LAUNCHER, parse_port
 from ..version import PACKAGE_VERSION
 from . import ingress, pairing, tls, wire
+from .beaconsvc import BeaconService, BeaconSettings, BeaconState
 from .client import (
     IDLE_S,
     DeadlineSocket,
@@ -390,6 +391,7 @@ class Options:
     join_timeouts: pairing.Timeouts = pairing.DEFAULT_TIMEOUTS
     join_source_ok: Callable[[str], bool] = pairing.private_source
     notice: Callable[[str], object] = notify
+    beacons: BeaconSettings | None = None
 
 
 class Listener:
@@ -414,6 +416,8 @@ class Listener:
         self._join_thread: threading.Thread | None = None
         self._join_stop = threading.Event()
         self._join_retry_at = 0.0
+        self._address_epoch = 0
+        self._beacon_thread: threading.Thread | None = None
 
     def log(self, text: str) -> None:
         append_log(log_file(self._home), text)
@@ -481,10 +485,15 @@ class Listener:
             self._options.ready(port)
         monitor = threading.Thread(target=self._monitor, args=(config,), daemon=True)
         monitor.start()
+        if self._options.beacons is not None:
+            service = BeaconService(self._home, bind, self._beacon_state, self._stop, self.log, self._options.beacons)
+            self._beacon_thread = service.start()
         try:
             self._serve()
         finally:
             self._stop.set()
+            if self._beacon_thread is not None:
+                self._beacon_thread.join(2.0)
             self._stop_joins("the listener stopped")
             sock.close()
             info = read_listener(self._home)
@@ -518,6 +527,8 @@ class Listener:
                     self._halt("the network setting changed")
                     return
                 self._live = current
+            if self._watch.changed:
+                self._address_epoch += 1
             self._refresh_gate(force=self._watch.changed)
             self._sync_joins()
 
@@ -533,6 +544,11 @@ class Listener:
         if (state.allowed, state.reason) != (self._gate.allowed, self._gate.reason):
             self.log("this network is allowed" if state.allowed else f"network gate closed: {state.reason}")
         self._gate = state
+
+    def _beacon_state(self) -> BeaconState:
+        watch = self._watch
+        open_ = network_enabled(self._live) and self._gate.allowed and watch is not None and watch.allowed()
+        return BeaconState(open_, self._live.discoverable, self._address_epoch)
 
     def join_port(self) -> int | None:
         sock = self._join_sock
@@ -715,7 +731,7 @@ def main(argv: Sequence[str]) -> int:
     server_port = parse_port(os.environ.get(PORT_OPTION_ENV)) or SERVER_DEFAULT_PORT
     if len(argv) == 2 and argv[0] == "--server-port":
         server_port = parse_port(argv[1]) or server_port
-    options = Options(server_port=server_port)
+    options = Options(server_port=server_port, beacons=BeaconSettings())
     if sys.platform != "win32":
         signal.signal(signal.SIGTERM, lambda _signal, _frame: options.stop.set())
     return run_listener(agent_tabs_home(), options)

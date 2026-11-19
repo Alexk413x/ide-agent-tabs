@@ -617,7 +617,7 @@ class CliTest(unittest.TestCase):
         self.assertEqual(
             json.loads(err.getvalue()),
             {
-                "error": "list-ides takes no arguments. Usage: agent-tabs list-ides | jev <status|ask|choose|check|rank|route> | net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders|discoverable|networks> | server status|stop [--port <port>] | sync-ides <--hook|--status|--install|--agents|--register|--unregister> [<editor cli or agent>...]"
+                "error": "list-ides takes no arguments. Usage: agent-tabs list-ides | jev <status|ask|choose|check|rank|route> | net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders|discoverable|networks|find> | server status|stop [--port <port>] | sync-ides <--hook|--status|--install|--agents|--register|--unregister> [<editor cli or agent>...]"
             },
         )
         self.assertEqual(out.getvalue(), b"")

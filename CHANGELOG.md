@@ -16,6 +16,8 @@ Plugin and MCP server 0.14.0. Not released yet.
 - With `host` toward a hub member, `open_tab` takes an absolute folder path on that machine in `path`
   instead of a folder alias.
 - The `open_tab` tool text describes the member form of `path`.
+- `net hub join <device id>` and `net hub create --with <device id>` find the address through `net find` when no address
+  is given. `--address` and `<device id>@<address>` still work and skip the search.
 
 ### Added
 
@@ -51,6 +53,29 @@ Plugin and MCP server 0.14.0. Not released yet.
   `Agent Tabs LAN` rule, so one Windows prompt covers both. `net off` removes both.
 - `net folders add|remove`, `net networks add|remove`, `net discoverable on|off`, `net hub create|join|leave`,
   `net revoke` and `net grant` refuse when the calling process descends from a session that another machine opened.
+- The listener announces itself over UDP port 47831, once at start, on every address change and every 30 seconds. Each
+  announcement goes to the multicast group 239.255.47.31 (TTL 1, from the bind interface) and to the subnet broadcast
+  address. Receivers drop duplicates by a random 16-byte announcement id and read each datagram strictly: at most
+  1200 bytes, JSON, exact keys and a version field. A join announcement (`kind` `join`) goes out only while the machine is
+  discoverable and carries `v`, `kind`, `id`, `deviceName`, `deviceId`, `hubId`, `hubName`, `port` and `transport`. It
+  carries no token, path, session name or user name. A member beacon (`kind` `member`) goes out from every hub member and
+  carries `v`, `kind`, `id`, `hubId`, `deviceId`, `port`, `ts` and `mac`, an HMAC-SHA256 under the hub key. Receivers ignore a
+  beacon for another hub, with a bad MAC, with a `ts` more than 120 seconds from their clock, or older than the last one
+  accepted from that device. Nothing is sent or read while LAN mode is off or the current network is not in
+  `network.allowedNetworks`.
+- A member beacon that names a new address for a known member starts one pinned mutual TLS check per device and address
+  every 60 seconds. The address in `policy.json` and `net/hub.json` changes only after that check matches the member's
+  certificate.
+- At start the listener asks each member's last known address for an inventory, and `net hub status` shows each member as
+  online or offline from that result and from received beacons (`net/presence.json`).
+- `agent-tabs net find [--json] [--bind <address>]` lists the devices on the local network. It listens for announcements for
+  up to 10 seconds. When nothing is verified within 5 seconds it connects to TCP ports 47829 and 47830 on each address of the
+  /24 that holds the bind address (64 connections at a time, 300 ms each). It lists a device only after verification:
+  pinned mutual TLS on port 47829 for a hub member, and TLS on port 47830 with the certificate's device id matching the
+  announced one for a discoverable machine. Each row shows the device name, device id, address, hub name or `no hub`,
+  whether it is a member and the source (`multicast`, `broadcast`, `probe` or `remembered`). A warning line appears when
+  two rows share a name. When nothing is found, the message names the likely causes, says that Wi-Fi client isolation
+  blocks all traffic between devices, and points to Tailscale mode.
 - `net pair` still works until the hub flow replaces it.
 
 ## 0.13.0

@@ -348,8 +348,7 @@ class HubJoinTest(HubCliCase):
         self.assertEqual(self.h.run("hub", "join", device_of(self.b), "--address", PEER), 1)
         self.assertEqual(self.dialed, [])
 
-    def test_join_requires_an_address(self) -> None:
-        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 2)
+    def test_join_requires_a_device_id(self) -> None:
         self.assertEqual(self.h.run("hub", "join"), 2)
 
     def test_create_with_makes_the_hub_then_joins_each_device_and_reports_each(self) -> None:
@@ -393,8 +392,9 @@ class HubJoinTest(HubCliCase):
         self.assertEqual(self.h.run("hub", "create", "--name", "other", "--with", f"{device_of(self.b)}@{PEER}"), 1)
         self.assertIn("does not match", self.h.errors)
 
-    def test_create_with_needs_the_device_at_address_form(self) -> None:
-        self.assertEqual(self.h.run("hub", "create", "--with", device_of(self.b)), 2)
+    def test_create_with_rejects_an_empty_address(self) -> None:
+        self.assertEqual(self.h.run("hub", "create", "--with", f"{device_of(self.b)}@"), 2)
+        self.assertEqual(self.h.run("hub", "create", "--with", f"@{PEER}"), 2)
 
     def test_create_without_with_still_refuses_when_a_hub_exists(self) -> None:
         make_hub(self.a)

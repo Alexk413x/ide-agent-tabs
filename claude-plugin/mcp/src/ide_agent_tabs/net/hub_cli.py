@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
+from dataclasses import replace
 
 from . import ingress, pairing
+from .beacon import wire_for
 from .cli import (
     CliError,
     Services,
@@ -14,6 +17,7 @@ from .cli import (
     report_folders,
     set_network,
 )
+from .find import FindRequest, FindResult, device_lines, find_devices, not_found_text
 from .hubjoin import HubJoiner
 from .listener import live_listener
 from .netid import gate_state
@@ -57,11 +61,40 @@ def _setup_lan(svc: Services, prepared: Prepared, network_id: str, folder: str |
     return enable_lan(svc, prepared.bind, config.port, True)
 
 
-def _split_target(spec: str) -> tuple[str, str]:
+def _split_target(spec: str) -> tuple[str, str | None]:
     device, separator, address = spec.partition("@")
-    if not separator or not device or not address:
-        raise UsageError(f"agent-tabs net hub create --with: expected <device id>@<address>, got {spec!r}")
-    return device, address
+    if not device or (separator and not address):
+        raise UsageError(f"agent-tabs net hub create --with: expected <device id> or <device id>@<address>, got {spec!r}")
+    return device, address if separator else None
+
+
+def _find_request(svc: Services, prepared: Prepared) -> FindRequest:
+    return FindRequest(
+        svc.home,
+        prepared.identity,
+        prepared.device_id,
+        wire_for(prepared.bind, prepared.iface.prefix_len),
+        lambda text: svc.record("find", note=text),
+    )
+
+
+def run_find(svc: Services, prepared: Prepared) -> FindResult:
+    request = _find_request(svc, prepared)
+    result = (svc.find or find_devices)(request)
+    svc.record("find", found=len(result.devices), probed=int(result.probed), heard=result.heard)
+    return result
+
+
+def _resolve(svc: Services, prepared: Prepared, targets: Sequence[tuple[str, str | None]]) -> list[tuple[str, str | None]]:
+    if all(address is not None for _device, address in targets):
+        return list(targets)
+    result = run_find(svc, prepared)
+    for line in result.warnings:
+        svc.err(line)
+    found = {d.device_id: d.address for d in result.devices}
+    if not result.devices:
+        svc.err(not_found_text(result, _find_request(svc, prepared).wire))
+    return [(device, address if address is not None else found.get(device)) for device, address in targets]
 
 
 def _dial_one(svc: Services, deps: PairDeps, prepared: Prepared, device: str, address: str) -> PairResult:
@@ -78,12 +111,15 @@ def _dial_one(svc: Services, deps: PairDeps, prepared: Prepared, device: str, ad
     return deps.dial_join(target, PAIRING_PORT, peer_id, prepared.identity, handler, pairing.Limits(svc.home), timeouts=deps.timeouts)
 
 
-def _join_all(svc: Services, deps: PairDeps, targets: Sequence[tuple[str, str]], bind: str | None, folder: str | None) -> int:
+def _join_all(svc: Services, deps: PairDeps, targets: Sequence[tuple[str, str | None]], bind: str | None, folder: str | None) -> int:
     prepared = prepare(svc, deps, bind)
     network_id = _require_network_id(svc, prepared.bind)
     pairing.Limits(svc.home).check_locked()
     joined, complete = 0, True
-    for device, address in targets:
+    for device, address in _resolve(svc, prepared, targets):
+        if address is None:
+            svc.err(f"{device[:15]}: did not join: no verified device with that id was found. Nothing was saved on this machine for it.")
+            continue
         try:
             result = _dial_one(svc, deps, prepared, device, address)
         except pairing.PairingError as error:
@@ -108,7 +144,7 @@ def _join_all(svc: Services, deps: PairDeps, targets: Sequence[tuple[str, str]],
 def join(svc: Services, args: Sequence[str]) -> int:
     parser = make_parser("hub join")
     parser.add_argument("device_id")
-    parser.add_argument("--address", required=True)
+    parser.add_argument("--address")
     parser.add_argument("--bind")
     parser.add_argument("--folder")
     options = parser.parse_args(args)
@@ -215,4 +251,35 @@ def networks(svc: Services, args: Sequence[str]) -> int:
     svc.record("networks", action=options.action, count=len(allowed))
     svc.out(("Added " if options.action == "add" else "Removed ") + f"{subject}.")
     svc.out("allowed networks: " + (", ".join(allowed) if allowed else "none"))
+    return 0
+
+
+def find(svc: Services, args: Sequence[str]) -> int:
+    parser = make_parser("find")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--bind")
+    options = parser.parse_args(args)
+    deps = _deps(svc)
+    deps.refuse_if_elevated()
+    prepared = prepare(replace(svc, out=svc.err) if options.json else svc, deps, options.bind)
+    result = run_find(svc, prepared)
+    message = None if result.devices else not_found_text(result, _find_request(svc, prepared).wire)
+    if options.json:
+        body: dict[str, object] = {
+            "devices": [d.as_json() for d in result.devices],
+            "warnings": list(result.warnings),
+            "probed": result.probed,
+        }
+        if message is not None:
+            body["message"] = message
+        svc.out(json.dumps(body))
+        return 0 if result.devices else 1
+    if message is not None:
+        svc.err(message)
+        return 1
+    svc.out(f"found {len(result.devices)} device(s):")
+    for line in device_lines(result):
+        svc.out(f"  {line}")
+    for warning in result.warnings:
+        svc.out(warning)
     return 0

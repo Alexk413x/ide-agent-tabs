@@ -276,6 +276,13 @@ class PairResult:
 
 
 @dataclass(frozen=True)
+class JoinProbe:
+    name: str
+    device_id: str
+    hub: HubRef | None
+
+
+@dataclass(frozen=True)
 class HubRef:
     id: str
     name: str
@@ -685,6 +692,21 @@ class _Session:
     # The token never crosses the network: the hello carries its hash, and the consent proof inside TLS needs the
     # token itself, so a machine that only saw the network traffic can't complete the pairing.
     def _dial(self, peer_id: str) -> PairResult:
+        peer, secret, deadline = self._open(peer_id)
+        return self._finish(peer, secret, deadline)
+
+    def run_probe(self, peer_id: str | None) -> JoinProbe:
+        try:
+            peer, _secret, deadline = self._open(peer_id)
+            self._upgrade(peer, deadline)
+            hub = _hub_state(self._recv("state", ("hub",), deadline)["hub"])
+            return JoinProbe(peer.name, peer.device_id, hub)
+        except _EXPECTED as error:
+            raise PairingError(_describe(error)) from error
+        finally:
+            self.close()
+
+    def _open(self, peer_id: str | None) -> tuple[PeerInfo, bytes, float]:
         deadline = time.monotonic() + self.timeouts.handshake_s
         own = self.identity
         nonce_d = secrets.token_bytes(32)
@@ -702,7 +724,7 @@ class _Session:
         self._send(hello, deadline)
         reply = self._recv("hello", ("v", "name", "cert", "nonce"), deadline)
         name, der_l = _check_hello(reply, own.der)
-        if not hmac.compare_digest(device_id_of(der_l).encode("ascii"), peer_id.encode("ascii")):
+        if peer_id is not None and not hmac.compare_digest(device_id_of(der_l).encode("ascii"), peer_id.encode("ascii")):
             if self.join is not None:
                 raise PairingError(
                     "the machine at that address is not the device that was found: its certificate does not match the device id"
@@ -713,7 +735,7 @@ class _Session:
         self._send({"t": "reveal", "nonce": nonce_d.hex()}, deadline)
         self.committed = True
         peer = PeerInfo(name, self.address, device_id_of(der_l), der_l)
-        return self._finish(peer, session_secret(own.der, der_l, nonce_d, nonce_l), deadline)
+        return peer, session_secret(own.der, der_l, nonce_d, nonce_l), deadline
 
     def _listen(self, admit: Callable[[], bool]) -> PairResult:
         start = time.monotonic()
@@ -952,6 +974,37 @@ def dial_join(
     except OSError as error:
         return PairResult("failed", f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}")
     return _Session(conn, DIALER, target, identity, "", _no_save, limits, timeouts, handler).run_dialer(peer_id)
+
+
+class _ProbeHandler:
+    def hub(self) -> HubRef | None:
+        return None
+
+    def message(self, peer: PeerInfo) -> HubMessage:
+        raise PairingError("a probe holds no hub")
+
+    def save(self, peer: PeerInfo, received: HubMessage | None) -> None:
+        raise PairingError("a probe saves nothing")
+
+
+def probe_join(
+    address: str,
+    port: int,
+    peer_id: str | None,
+    identity: PairIdentity,
+    limits: Limits,
+    *,
+    timeouts: Timeouts = DEFAULT_TIMEOUTS,
+) -> JoinProbe:
+    target = str(_ipv4(address, "the address"))
+    _port(port)
+    if peer_id is not None:
+        full_device_id(peer_id)
+    try:
+        conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
+    except OSError as error:
+        raise PairingError(f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}") from error
+    return _Session(conn, DIALER, target, identity, "", _no_save, limits, timeouts, _ProbeHandler()).run_probe(peer_id)
 
 
 def _serve_join(

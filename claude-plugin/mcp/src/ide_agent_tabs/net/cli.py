@@ -63,26 +63,29 @@ from .policy import (
     policy_path,
     save_policy,
 )
+from .presence import read_presence
 from .private_files import ensure_private_dir
 from .secrets import SecretsError, new_passphrase, store_passphrase
 from .store import NetStore, NetStoreError, db_path
 from .transport import LanTransport, network_enabled
 
 if TYPE_CHECKING:
+    from .find import FindRequest, FindResult
     from .pair_cli import PairDeps
 
-USAGE = "net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders|discoverable|networks>"
+USAGE = "net <id|status|off|trust|grant|revoke|rename|pair|lan|hub|folders|discoverable|networks|find>"
 _GRAMMAR = (
     "agent-tabs net id | status | off | revoke <label> | rename <label> <new label>"
     " | pair --invite [--bind <address>] | pair --join <invitation> [--bind <address>]"
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
     " | grant <label> [--folder <alias>=<absolute path>] [--agent claude|codex] [--model <model>] [--send <session id>]"
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
-    " | hub create [--name <name>] [--folder <session folder>] [--with <device id>@<address> ...] [--bind <address>]"
-    " | hub join <device id> --address <IP> [--folder <session folder>] [--bind <address>] | hub status | hub leave"
+    " | hub create [--name <name>] [--folder <session folder>] [--with <device id>[@<address>] ...] [--bind <address>]"
+    " | hub join <device id> [--address <IP>] [--folder <session folder>] [--bind <address>] | hub status | hub leave"
     " | folders | folders add <absolute path> | folders remove <absolute path>"
     " | discoverable [on [--bind <address>] [--folder <session folder>] | off | status]"
     " | networks | networks add | networks remove <network id>"
+    " | find [--json] [--bind <address>]"
 )
 LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MAX_CERT_BYTES = 65536
@@ -168,6 +171,7 @@ class Services:
     interface_for: Callable[[str], InterfaceInfo] = interface_for
     unsupported_reason: Callable[[], str | None] = elevation.unsupported_reason
     pair: PairDeps | None = None
+    find: Callable[[FindRequest], FindResult] | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     user_home: str = field(default_factory=lambda: os.path.expanduser("~"))
     server_port: int = SERVER_DEFAULT_PORT
@@ -967,19 +971,28 @@ def _cmd_hub_create(svc: Services, args: Sequence[str]) -> int:
 
 
 def _member_state(svc: Services, peer: PeerGrant) -> str:
-    if not os.path.exists(db_path(svc.home)):
-        return "unknown"
-    try:
-        store = NetStore(svc.home)
+    seen = read_presence(svc.home).get(peer.device_id)
+    cached_at: int | None = None
+    if os.path.exists(db_path(svc.home)):
         try:
-            cached = store.get_inventory(peer.device_id)
-        finally:
-            store.close()
-    except (NetStoreError, sqlite3.Error, OSError):
+            store = NetStore(svc.home)
+            try:
+                cached = store.get_inventory(peer.device_id)
+            finally:
+                store.close()
+        except (NetStoreError, sqlite3.Error, OSError):
+            cached = None
+        cached_at = None if cached is None else cached[1]
+    if seen is not None and (cached_at is None or seen.at_ms >= cached_at):
+        if not seen.online:
+            return "offline"
+        if now_ms() - seen.at_ms <= OFFLINE_AFTER_MS:
+            return "online"
+        if cached_at is None:
+            return "unknown"
+    if cached_at is None:
         return "unknown"
-    if cached is None:
-        return "unknown"
-    return "online" if now_ms() - cached[1] <= OFFLINE_AFTER_MS else "offline"
+    return "online" if now_ms() - cached_at <= OFFLINE_AFTER_MS else "offline"
 
 
 def _cmd_hub_status(svc: Services, args: Sequence[str]) -> int:
@@ -1109,6 +1122,12 @@ def _cmd_networks(svc: Services, args: Sequence[str]) -> int:
     return hub_cli.networks(svc, args)
 
 
+def _cmd_find(svc: Services, args: Sequence[str]) -> int:
+    from . import hub_cli
+
+    return hub_cli.find(svc, args)
+
+
 def _cmd_pair(svc: Services, args: Sequence[str]) -> int:
     from . import pair_cli
 
@@ -1131,6 +1150,7 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         "folders": _cmd_folders,
         "discoverable": _cmd_discoverable,
         "networks": _cmd_networks,
+        "find": _cmd_find,
     }
     try:
         if not argv or argv[0] not in handlers:

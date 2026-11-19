@@ -6,6 +6,7 @@ from dataclasses import replace
 from ..files import file_lock, write_atomically
 from . import ingress
 from .client import peer_cert_path, peers_dir
+from .hubstate import hub_state_path, read_hub_state, write_hub_state
 from .policy import (
     MEMBER_MAX_TABS,
     MEMBER_MESSAGES_PER_MINUTE,
@@ -65,3 +66,21 @@ def save_peer(
             peers = tuple(result if p.device_id == device_id else p for p in policy.peers)
         save_policy(home, replace(policy, peers=peers))
     return result, current is None
+
+
+def update_address(home: str, device_id: str, address: str) -> bool:
+    with file_lock(policy_path(home)):
+        policy = load_policy(home)
+        current = grant_for(policy, device_id)
+        if current is None or current.address == address:
+            return False
+        save_policy(
+            home, replace(policy, peers=tuple(replace(p, address=address) if p.device_id == device_id else p for p in policy.peers))
+        )
+    path = str(hub_state_path(home))
+    with file_lock(path):
+        state = read_hub_state(home)
+        if state is not None and any(m.device_id == device_id for m in state.members):
+            members = tuple(replace(m, address=address) if m.device_id == device_id else m for m in state.members)
+            write_hub_state(home, replace(state, members=members))
+    return True
