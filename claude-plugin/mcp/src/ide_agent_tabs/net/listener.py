@@ -134,6 +134,14 @@ def request_stop(home: str) -> None:
     write_atomically(str(stop_file(home)), "stop\n")
 
 
+def _close_listening(sock: socket.socket) -> None:
+    # On Linux, close() leaves the socket listening while another thread waits in accept(); shutdown() wakes it.
+    with contextlib.suppress(OSError):
+        sock.shutdown(socket.SHUT_RDWR)
+    with contextlib.suppress(OSError):
+        sock.close()
+
+
 def _normalize(text: str) -> str | None:
     try:
         ip = ipaddress.ip_address(text.split("%", 1)[0])
@@ -584,7 +592,7 @@ class Listener:
                 self._beacon_thread.join(2.0)
             self._stop_joins("the listener stopped")
             if self._sock is not None:
-                self._sock.close()
+                _close_listening(self._sock)
             info = read_listener(self._home)
             if info is not None and info.pid == os.getpid():
                 with contextlib.suppress(OSError):
@@ -681,8 +689,7 @@ class Listener:
         previous, self._sock, self._bind = self._sock, sock, bind
         self._live = replace(self._live, bind=bind)
         if previous is not None:
-            with contextlib.suppress(OSError):
-                previous.close()
+            _close_listening(previous)
         assert self._watch is not None
         self._watch.retarget(bind)
         self._stop_joins("the bind address changed")

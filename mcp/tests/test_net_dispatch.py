@@ -1049,6 +1049,7 @@ class MemberNoticeTest(MemberCase):
         self.assertGenericNotice()
 
     def test_an_existing_folder_with_a_shell_character_gets_the_notice_without_the_path(self) -> None:
+        self.set_member(opens_per_hour=100)
         for index, char in enumerate(";$&%'`|<>"):
             folder = os.path.join(self.outside, f"a{char}b")
             try:
@@ -1056,8 +1057,9 @@ class MemberNoticeTest(MemberCase):
             except OSError:
                 continue
             with self.subTest(char):
+                self.clock.at += HOUR + 1
                 self.refuse(f"r{index}", folder)
-                self.assertNotIn("net folders add", " ".join(m["text"] for m in mail_to(self.home, "local-1")))
+                self.assertGenericNotice()
                 self.assertNotIn(f"a{char}b", " ".join(m["text"] for m in mail_to(self.home, "local-1")))
 
     def test_a_path_with_a_control_character_is_refused_by_the_wire_and_sends_no_notice(self) -> None:

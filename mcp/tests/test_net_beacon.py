@@ -522,6 +522,17 @@ class FakePathDiscoveryTest(unittest.TestCase):
         )
 
 
+def extra_loopback_addresses() -> bool:
+    for address in ("127.0.0.2", "127.0.0.3"):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+                probe.bind((address, 0))
+        except OSError:
+            return False
+    return True
+
+
+@unittest.skipUnless(extra_loopback_addresses(), "needs 127.0.0.2 and 127.0.0.3 on loopback; macOS assigns only 127.0.0.1")
 class RealSocketTest(unittest.TestCase):
     def test_the_two_copies_leave_from_different_ports_and_one_receiver_merges_them(self) -> None:
         port = free_udp_port()
