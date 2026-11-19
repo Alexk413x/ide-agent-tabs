@@ -30,6 +30,9 @@ NETWORK_OFF = "refused: the network is off on this machine, so nothing goes to a
 FOLDER_REFUSAL = "refused: this session's folder is not in network.outboundFolders, so it can't send to another machine"
 RATE_REFUSAL = f"refused: this session sent {RATE_LIMIT} requests to other machines in the last minute; try again later"
 PEER_REFUSED = "the peer refused the request"
+FOLDER_NOT_ALLOWED = (
+    "{label} refused: {path} is not in that machine's member folders. Its user can add it there with agent-tabs net folders add."
+)
 PEER_REPLY_INVALID = "the peer's reply was not valid, so the outcome is unknown"
 OPEN_REFUSED_FIELDS = ("args", "env", "ide", "via", "focus")
 
@@ -148,7 +151,7 @@ class Outbound:
         except NetClientError as e:
             raise OutboundError(str(e)) from e
         if reply.get("ok") is not True:
-            raise OutboundError(PEER_REFUSED)
+            raise OutboundError(_refusal_text(peer, reply, body))
         return reply
 
     def _nudge_poller(self, peer: PeerGrant) -> None:
@@ -271,6 +274,17 @@ class Outbound:
             offline = age > OFFLINE_AFTER_MS or poller.is_failed(self.home, peer.device_id)
             rows.extend(_row(peer.label, s, age, offline, folders) for s in sessions)
         return rows
+
+
+def _refusal_text(peer: PeerGrant, reply: Mapping[str, Any], body: Mapping[str, Any]) -> str:
+    try:
+        reason = wire.parse_reply(reply).reason
+    except wire.WireError:
+        return PEER_REFUSED
+    path = body.get("path")
+    if reason == "folder-not-allowed" and wire.valid_path(path):
+        return FOLDER_NOT_ALLOWED.format(label=peer.label, path=path)
+    return PEER_REFUSED
 
 
 def _row(label: str, session: wire.RemoteSession, age_ms: int, offline: bool, folders: list[str] | None = None) -> dict[str, Any]:

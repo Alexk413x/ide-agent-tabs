@@ -2816,8 +2816,12 @@ serves no join, and `net status` says why.
   sets `network.outboundFolders` when it is empty.
 - **Open request.** A member's `open` carries an absolute `path` instead of a folder alias. The receiver normalizes it
   and requires it inside a member folder, then checks that it exists and that no component is a link or reparse point
-  (`folder_problem`). A path outside the list gets the generic `refused` and the audit reason `folder-not-allowed`. The
-  requesting agent sees only that the peer refused. Every local session that no peer opened gets a message that
+  (`folder_problem`). A path outside the list gets `refused` with `"reason": "folder-not-allowed"` and the same audit
+  reason. The reply `reason` is optional and holds only a code from a fixed allow-list (`wire.REFUSAL_REASONS`); a
+  receiver drops any other value. Every other refusal stays the generic `refused`. The requesting machine shows its own
+  fixed text, never peer text: `<label> refused: <path> is not in that machine's member folders. Its user can add it
+  there with agent-tabs net folders add.` The path is the one the requester sent, escaped for display, and never part
+  of a command. A peer that sends no `reason` gives the generic "the peer refused the request". Every local session that no peer opened gets a message that
   names the folder and `agent-tabs net folders add "<path>"`, at most once an hour for each peer and path. The message
   omits the path and the command when the path isn't an existing folder or holds shell syntax or control characters.
 - **Inventory.** The reply to a member lists every live session and the machine's member folders (at most 64), so the

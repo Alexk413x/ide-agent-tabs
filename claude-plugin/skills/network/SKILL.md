@@ -123,7 +123,8 @@ When a join refuses, the command prints the reason and says nothing was saved:
 - When a member asks to open a tab outside the list, this machine refuses with `folder-not-allowed`. Each
   local session gets a message that names the folder and the command `agent-tabs net folders add "<path>"`,
   at most one such message per member per hour. Ask the user before you run it. The requesting agent sees
-  only "the peer refused the request". Its `list_sessions` rows for that machine carry a `folders` list, so it can pick a path inside one.
+  "<label> refused: <path> is not in that machine's member folders", and the user of that machine can add the folder. An older peer gives only
+  "the peer refused the request". Its `list_sessions` rows for that machine carry a `folders` list, so it can pick a path inside one.
 - `agent-tabs net networks` lists `network.allowedNetworks` and the current network id.
   `net networks add` adds the current network and replaces an entry in the older name-and-subnet form (the
   listener doesn't rewrite it, and that entry alone doesn't allow the network). `net networks remove <id>`

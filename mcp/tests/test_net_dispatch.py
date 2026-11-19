@@ -16,6 +16,7 @@ from ide_agent_tabs.net import dispatch, policy, wire
 from ide_agent_tabs.net.audit import audit_path
 from ide_agent_tabs.net.dispatch import NetDispatcher, folder_problem, session_generation
 from ide_agent_tabs.net.origin import Caller, OriginChecker
+from ide_agent_tabs.net.outbound import FOLDER_NOT_ALLOWED, PEER_REFUSED, Outbound, OutboundError
 from ide_agent_tabs.net.policy import FolderGrant, PeerGrant, Policy
 from ide_agent_tabs.net.remote_launch import FIRST_TURN
 from ide_agent_tabs.net.store import Launch, NetStore, Reservation
@@ -176,7 +177,10 @@ class DispatchCase(unittest.TestCase):
         return self.audit_lines()[-1]
 
     def assertRefused(self, reply: dict[str, Any], request_id: str, reason: str | None = None) -> None:
-        self.assertEqual(reply, {"re": request_id, "ok": False, "refused": True})
+        expected: dict[str, Any] = {"re": request_id, "ok": False, "refused": True}
+        if reason in wire.REFUSAL_REASONS:
+            expected["reason"] = reason
+        self.assertEqual(reply, expected)
         if reason is not None:
             self.assertEqual(self.last_audit()["reason"], reason)
 
@@ -760,6 +764,37 @@ class MemberCase(DispatchCase):
         return list(reply["body"]["sessions"])
 
 
+class MemberRefusalToRequesterTest(MemberCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.outside = os.path.join(self.home, "outside", "deep")
+        os.makedirs(self.outside)
+        write_config(self.home, network="lan", bind="192.168.1.10", memberFolders=[self.base], outboundFolders=[self.home])
+        self.outbound = Outbound(self.home, now_ms=self.clock, request=self.deliver, nudge=lambda home, peer: None)
+        self.addCleanup(self.outbound.close)
+
+    def deliver(self, home: str, peer: str, op: str, body: Mapping[str, Any], **_: Any) -> dict[str, Any]:
+        reply = self.handle({"id": "r1", "op": op, "body": dict(body)}, peer)
+        return json.loads(wire.encode(reply))
+
+    def open(self, path: str) -> dict[str, Any]:
+        return self.outbound.open(Caller("tab-a", self.home), {"host": "laptop", "path": path, "agent": "claude", "prompt": TASK})
+
+    def test_the_requester_gets_the_specific_text_for_a_folder_outside_the_list(self) -> None:
+        with self.assertRaises(OutboundError) as caught:
+            self.open(self.outside)
+        text = str(caught.exception)
+        self.assertEqual(text, FOLDER_NOT_ALLOWED.format(label="laptop", path=self.outside))
+        self.assertIn("agent-tabs net folders add.", text)
+        self.assertNotIn('net folders add "', text)
+        self.assertEqual(self.service.opened, [])
+
+    def test_any_other_refusal_stays_generic(self) -> None:
+        with self.assertRaises(OutboundError) as caught:
+            self.open(os.path.join(self.base, "gone"))
+        self.assertEqual(str(caught.exception), PEER_REFUSED)
+
+
 class MemberInventoryTest(MemberCase):
     def test_every_live_session_is_listed_with_no_send_grant(self) -> None:
         write_presence(self.home, "one", name="Planner")
@@ -889,6 +924,16 @@ class MemberOpenTest(MemberCase):
         self.assertRefused(self.handle(self.member_open(outside)), "r1", "folder-not-allowed")
         self.assertEqual(self.service.opened, [])
         self.assertEqual(self.last_audit()["decision"], "refused")
+
+    def test_only_a_folder_refusal_tells_the_requester_why(self) -> None:
+        outside = os.path.join(self.home, "outside")
+        os.makedirs(outside)
+        self.assertEqual(self.handle(self.member_open(outside))["reason"], "folder-not-allowed")
+        missing = self.handle(self.member_open(os.path.join(self.base, "gone"), "r2"))
+        self.assertEqual(missing, {"re": "r2", "ok": False, "refused": True})
+        self.assertEqual(self.last_audit()["reason"], "folder-missing")
+        bad = self.handle(self.member_open(self.inside, "r3", agent="agy"))
+        self.assertEqual(bad, {"re": "r3", "ok": False, "refused": True})
 
     def test_an_empty_member_folder_list_allows_nothing(self) -> None:
         self.set_member([])
