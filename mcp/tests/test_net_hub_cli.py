@@ -11,6 +11,7 @@ from unittest import mock
 from ide_agent_tabs.clock import now_ms
 from ide_agent_tabs.net import cli, hub_cli, pairing
 from ide_agent_tabs.net.client import peer_cert_path
+from ide_agent_tabs.net.find import FindRequest, FindResult, FoundDevice
 from ide_agent_tabs.net.hub_cli import PairDeps
 from ide_agent_tabs.net.hubstate import read_hub_state
 from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
@@ -65,6 +66,9 @@ class HubCliCase(unittest.TestCase):
         self.addresses = [BIND]
         self.dialed: list[tuple[str, int, str]] = []
         self.targets: dict[str, int] = {}
+        self.found: list[FoundDevice] = []
+        self.warnings: tuple[str, ...] = ()
+        self.requests: list[FindRequest] = []
         self.user_home = make_root(self, "iat-hub-user-")
         self.session = os.path.join(self.user_home, "code", "app")
         os.makedirs(self.session)
@@ -88,9 +92,22 @@ class HubCliCase(unittest.TestCase):
             "network_id": lambda _bind: self.network,
             "is_remote_origin": lambda _home: self.remote.value,
             "user_home": self.user_home,
+            "find": self.fake_find,
         }
         values.update(overrides)
         return Harness(self, home, **values)
+
+    def fake_find(self, request: FindRequest) -> FindResult:
+        self.requests.append(request)
+        return FindResult(tuple(self.found), self.warnings, probed=not self.found, heard=len(self.found))
+
+    def serve(self, home: str, address: str = PEER) -> JoinServer:
+        server = JoinServer(self, home)
+        self.targets[address] = server.port
+        return server
+
+    def announce(self, home: str, address: str = PEER, name: str = "bravo") -> None:
+        self.found.append(FoundDevice(device_of(home), name, address, None, False, "multicast"))
 
     def lan_ready(self, address: str, allow_virtual: bool) -> InterfaceInfo:
         if self.lan_error is not None:
@@ -327,15 +344,11 @@ class NetworksTest(HubCliCase):
 
 
 class HubJoinTest(HubCliCase):
-    def serve(self, home: str, address: str = PEER) -> JoinServer:
-        server = JoinServer(self, home)
-        self.targets[address] = server.port
-        return server
-
     def test_join_dials_the_open_join_and_sets_up_the_machine(self) -> None:
         make_hub(self.b)
         server = self.serve(self.b)
-        self.assertEqual(self.h.run("hub", "join", device_of(self.b), "--address", PEER), 0, self.h.errors)
+        self.announce(self.b)
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
         self.assertEqual(self.dialed, [(PEER, 47830, device_of(self.b))])
         (member,) = self.members(self.a)
         self.assertEqual((member.device_id, member.label), (device_of(self.b), "bravo"))
@@ -356,7 +369,8 @@ class HubJoinTest(HubCliCase):
     def test_join_with_the_wrong_device_id_saves_and_changes_nothing(self) -> None:
         make_hub(self.b)
         self.serve(self.b)
-        self.assertEqual(self.h.run("hub", "join", device_of(self.c), "--address", PEER), 1)
+        self.announce(self.c, name="charlie")
+        self.assertEqual(self.h.run("hub", "join", device_of(self.c)), 1)
         self.assertIn("does not match the device id", self.h.errors)
         self.assertIn("Nothing was saved", self.h.errors)
         self.assertEqual((load_policy(self.a).peers, load_policy(self.a).hub), ((), None))
@@ -368,36 +382,46 @@ class HubJoinTest(HubCliCase):
         make_hub(self.a, "fedcba9876543210fedcba9876543210", "office")
         make_hub(self.b)
         self.serve(self.b)
-        self.assertEqual(self.h.run("hub", "join", device_of(self.b), "--address", PEER), 1)
+        self.announce(self.b)
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 1)
         self.assertIn("already-in-another-hub", self.h.errors)
         self.assertEqual((self.members(self.a), self.members(self.b)), ([], []))
         self.assertConfigUntouched()
         self.assertEqual(self.h.spawned, [])
 
     def test_a_join_that_cannot_connect_changes_nothing(self) -> None:
-        self.assertEqual(self.h.run("hub", "join", device_of(self.b), "--address", PEER), 1)
+        self.announce(self.b)
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 1)
         self.assertIn("cannot connect", self.h.errors)
         self.assertConfigUntouched()
 
-    def test_an_address_off_the_subnet_and_a_bad_id_are_refused_before_dialing(self) -> None:
-        self.assertEqual(self.h.run("hub", "join", device_of(self.b), "--address", "10.1.2.3"), 1)
-        self.assertEqual(self.h.run("hub", "join", "not-an-id", "--address", PEER), 1)
-        self.assertEqual(self.h.run("hub", "join", device_of(self.a), "--address", PEER), 1)
+    def test_a_found_address_off_the_subnet_a_bad_id_and_this_machine_are_refused_before_dialing(self) -> None:
+        self.announce(self.b, "10.1.2.3")
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 1)
+        self.assertEqual(self.h.run("hub", "join", "not-an-id"), 1)
+        self.announce(self.a, name="alpha")
+        self.assertEqual(self.h.run("hub", "join", device_of(self.a)), 1)
         self.assertIn("own device id", self.h.errors)
+        self.assertEqual(self.dialed, [])
+
+    def test_join_takes_no_address_option(self) -> None:
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b), "--address", PEER), 2)
         self.assertEqual(self.dialed, [])
 
     def test_an_unreadable_network_stops_the_join_before_any_trust_is_saved(self) -> None:
         make_hub(self.b)
         self.serve(self.b)
+        self.announce(self.b)
         self.network = None
-        self.assertEqual(self.h.run("hub", "join", device_of(self.b), "--address", PEER), 1)
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 1)
         self.assertIn("can't be read", self.h.errors)
         self.assertEqual((self.dialed, self.members(self.a)), ([], []))
 
     def test_a_public_network_stops_the_join_before_dialing(self) -> None:
         self.lan_error = InterfaceError("Ethernet is a Public network.")
-        self.assertEqual(self.h.run("hub", "join", device_of(self.b), "--address", PEER), 1)
-        self.assertEqual(self.dialed, [])
+        self.announce(self.b)
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 1)
+        self.assertEqual((self.dialed, self.requests), ([], []))
 
     def test_join_requires_a_device_id(self) -> None:
         self.assertEqual(self.h.run("hub", "join"), 2)
@@ -405,9 +429,9 @@ class HubJoinTest(HubCliCase):
     def test_create_with_makes_the_hub_then_joins_each_device_and_reports_each(self) -> None:
         self.serve(self.b, PEER)
         self.serve(self.c, "192.168.50.21")
-        code = self.h.run(
-            "hub", "create", "--name", "home", "--with", f"{device_of(self.b)}@{PEER}", "--with", f"{device_of(self.c)}@192.168.50.21"
-        )
+        self.announce(self.b)
+        self.announce(self.c, "192.168.50.21", "charlie")
+        code = self.h.run("hub", "create", "--name", "home", "--with", device_of(self.b), "--with", device_of(self.c))
         self.assertEqual(code, 0, self.h.errors)
         self.assertEqual(load_policy(self.a).hub, Hub(HUB_ID, "home"))
         self.assertEqual(sorted(m.label for m in self.members(self.a)), ["bravo", "charlie"])
@@ -420,32 +444,36 @@ class HubJoinTest(HubCliCase):
         self.assertEqual(sum("joined the hub home as" in line for line in self.h.out), 2)
         config, _ = load_network_config(self.a)
         self.assertEqual((config.network, config.allowed_networks), ("lan", (NETWORK,)))
-        self.assertEqual(len(self.h.spawned), 1)
+        self.assertEqual((len(self.h.spawned), len(self.requests)), (1, 1))
 
     def test_create_with_reports_a_device_that_fails_and_still_sets_up_for_the_one_that_joined(self) -> None:
         self.serve(self.b, PEER)
-        code = self.h.run("hub", "create", "--with", f"{device_of(self.b)}@{PEER}", "--with", f"{device_of(self.c)}@192.168.50.21")
+        self.announce(self.b)
+        code = self.h.run("hub", "create", "--with", device_of(self.b), "--with", device_of(self.c))
         self.assertEqual(code, 1)
         self.assertEqual([m.label for m in self.members(self.a)], ["bravo"])
         self.assertIn("joined the hub", self.h.text)
-        self.assertIn(f"{device_of(self.c)[:15]}@192.168.50.21: did not join", self.h.errors)
+        self.assertIn(f"{device_of(self.c)[:15]}: did not join: no verified device with that id was found", self.h.errors)
         self.assertEqual(load_network_config(self.a)[0].network, "lan")
 
     def test_create_with_reuses_an_existing_hub(self) -> None:
         make_hub(self.a)
         self.serve(self.b)
-        self.assertEqual(self.h.run("hub", "create", "--with", f"{device_of(self.b)}@{PEER}"), 0, self.h.errors)
+        self.announce(self.b)
+        self.assertEqual(self.h.run("hub", "create", "--with", device_of(self.b)), 0, self.h.errors)
         self.assertIn("Using the hub home", self.h.text)
         self.assertEqual(load_policy(self.a).hub, Hub(HUB_ID, "home"))
 
     def test_create_with_a_different_name_for_an_existing_hub_is_refused(self) -> None:
         make_hub(self.a)
-        self.assertEqual(self.h.run("hub", "create", "--name", "other", "--with", f"{device_of(self.b)}@{PEER}"), 1)
+        self.assertEqual(self.h.run("hub", "create", "--name", "other", "--with", device_of(self.b)), 1)
         self.assertIn("does not match", self.h.errors)
 
-    def test_create_with_rejects_an_empty_address(self) -> None:
-        self.assertEqual(self.h.run("hub", "create", "--with", f"{device_of(self.b)}@"), 2)
-        self.assertEqual(self.h.run("hub", "create", "--with", f"@{PEER}"), 2)
+    def test_create_with_does_not_accept_a_device_id_with_an_address(self) -> None:
+        self.serve(self.b)
+        self.announce(self.b)
+        self.assertEqual(self.h.run("hub", "create", "--with", f"{device_of(self.b)}@{PEER}"), 1)
+        self.assertEqual(self.dialed, [])
 
     def test_create_without_with_still_refuses_when_a_hub_exists(self) -> None:
         make_hub(self.a)
@@ -472,8 +500,8 @@ GUARDED: list[tuple[str, ...]] = [
     ("discoverable", "on"),
     ("discoverable", "off"),
     ("hub", "create"),
-    ("hub", "join", "x", "--address", PEER),
-    ("hub", "create", "--with", f"x@{PEER}"),
+    ("hub", "join", "x"),
+    ("hub", "create", "--with", "x"),
     ("hub", "leave"),
     ("revoke", "laptop"),
     ("rename", "laptop", "renamed"),

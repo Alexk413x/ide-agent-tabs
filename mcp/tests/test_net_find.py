@@ -31,7 +31,7 @@ from net_support import FakeIngress, cert_of, create_home, device_of, make_root,
 from test_net_beacon import ALPHA, BRAVO, HUB_ID, KEY
 from test_net_beaconsvc import Script, ScriptedEndpoint
 from test_net_hub_cli import BIND, PEER, HubCliCase
-from test_net_join import FAST, NEEDS, JoinServer, make_hub, reset, set_name
+from test_net_join import FAST, NEEDS, make_hub, reset, set_name
 
 LOOPBACK_NET = ipaddress.IPv4Network("127.0.0.0/8")
 SCRIPT_WIRE = Wire("127.0.0.9", None, LOOPBACK_NET)
@@ -393,26 +393,8 @@ class MessageTest(unittest.TestCase):
         self.assertEqual(duplicate_name_warnings(rows[:1] + rows[2:]), ())
 
 
-class FindCliCase(HubCliCase):
-    def setUp(self) -> None:
-        super().setUp()
-        self.found: list[FoundDevice] = []
-        self.requests: list[FindRequest] = []
-        self.warnings: tuple[str, ...] = ()
-        self.h = self.harness(self.a, find=self.fake_find)
-
-    def serve(self, home: str, address: str = PEER) -> JoinServer:
-        server = JoinServer(self, home)
-        self.targets[address] = server.port
-        return server
-
-    def fake_find(self, request: FindRequest) -> FindResult:
-        self.requests.append(request)
-        return FindResult(tuple(self.found), self.warnings, probed=not self.found, heard=len(self.found))
-
-
 @NEEDS
-class FindCommandTest(FindCliCase):
+class FindCommandTest(HubCliCase):
     def test_find_lists_each_verified_device_on_one_row_with_every_column(self) -> None:
         self.found = [
             FoundDevice(device_of(self.b), "bravo", PEER, "home", True, "multicast+broadcast"),
@@ -488,7 +470,7 @@ class FindCommandTest(FindCliCase):
 
 
 @NEEDS
-class JoinResolveTest(FindCliCase):
+class JoinResolveTest(HubCliCase):
     def test_hub_join_with_only_a_device_id_resolves_the_address_through_find(self) -> None:
         make_hub(self.b)
         self.serve(self.b, PEER)
@@ -497,12 +479,6 @@ class JoinResolveTest(FindCliCase):
         self.assertEqual(self.dialed, [(PEER, 47830, device_of(self.b))])
         self.assertEqual(len(self.requests), 1)
         self.assertEqual([m.device_id for m in self.members(self.a)], [device_of(self.b)])
-
-    def test_hub_join_with_an_address_does_not_search(self) -> None:
-        make_hub(self.b)
-        self.serve(self.b, PEER)
-        self.assertEqual(self.h.run("hub", "join", device_of(self.b), "--address", PEER), 0, self.h.errors)
-        self.assertEqual(self.requests, [])
 
     def test_hub_join_for_a_device_that_find_cannot_verify_saves_nothing_and_says_so(self) -> None:
         self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 1)
@@ -516,20 +492,17 @@ class JoinResolveTest(FindCliCase):
         self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 1)
         self.assertEqual(self.dialed, [])
 
-    def test_create_with_mixes_a_bare_device_id_and_a_device_at_address(self) -> None:
+    def test_create_with_resolves_every_device_through_one_search(self) -> None:
         self.serve(self.b, PEER)
         self.serve(self.c, "192.168.50.21")
-        self.found = [FoundDevice(device_of(self.b), "bravo", PEER, None, False, "broadcast")]
-        code = self.h.run("hub", "create", "--name", "home", "--with", device_of(self.b), "--with", f"{device_of(self.c)}@192.168.50.21")
+        self.found = [
+            FoundDevice(device_of(self.b), "bravo", PEER, None, False, "broadcast"),
+            FoundDevice(device_of(self.c), "charlie", "192.168.50.21", None, False, "probe"),
+        ]
+        code = self.h.run("hub", "create", "--name", "home", "--with", device_of(self.b), "--with", device_of(self.c))
         self.assertEqual(code, 0, self.h.errors)
         self.assertEqual(sorted(m.label for m in self.members(self.a)), ["bravo", "charlie"])
         self.assertEqual(len(self.requests), 1)
-
-    def test_create_with_only_addresses_does_not_search(self) -> None:
-        self.serve(self.b, PEER)
-        code = self.h.run("hub", "create", "--with", f"{device_of(self.b)}@{PEER}")
-        self.assertEqual(code, 0, self.h.errors)
-        self.assertEqual(self.requests, [])
 
 
 class DefaultsTest(unittest.TestCase):
