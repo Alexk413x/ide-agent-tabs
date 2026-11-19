@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import json
-import shutil
-import tempfile
 import unittest
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -164,12 +161,27 @@ class WindowsGatewayTest(unittest.TestCase):
             self.assertEqual(found, fallback)
             self.assertIsNotNone(netid.fallback_of(found))
 
-    def test_an_old_format_entry_still_opens_the_gate_and_is_upgraded_in_place(self) -> None:
+    def test_an_old_format_entry_does_not_open_the_gate_when_the_gateway_mac_is_readable(self) -> None:
         found = windows_id(FakeRun(with_gateway()))
         legacy = netid.legacy_of(found)
         assert found is not None and legacy is not None
         self.assertFalse(netid.gate_state((), found).allowed)
-        self.assertTrue(netid.gate_state((legacy,), found).allowed)
+        closed = netid.gate_state((legacy,), found)
+        self.assertEqual((closed.allowed, closed.reason), (False, netid.LEGACY_ONLY))
+        self.assertIn("net networks add", netid.LEGACY_ONLY)
+        self.assertTrue(netid.gate_state((found,), found).allowed)
+        self.assertEqual(netid.gate_state(("other",), found).reason, netid.NOT_ALLOWED)
+
+    def test_an_old_format_entry_still_matches_the_fallback_id_it_was_built_for(self) -> None:
+        fallback = windows_id(FakeRun(windows_reply()))
+        assert fallback is not None
+        self.assertIsNone(netid.legacy_of(fallback))
+        self.assertTrue(netid.gate_state((str(fallback),), fallback).allowed)
+
+    def test_an_explicit_command_can_still_upgrade_an_old_format_entry(self) -> None:
+        found = windows_id(FakeRun(with_gateway()))
+        legacy = netid.legacy_of(found)
+        assert found is not None and legacy is not None
         self.assertEqual(netid.upgraded_allowed(("other", legacy), found), ("other", found))
         self.assertIsNone(netid.upgraded_allowed(("other", found), found))
         self.assertIsNone(netid.upgraded_allowed(("other",), found))
@@ -185,21 +197,6 @@ class WindowsGatewayTest(unittest.TestCase):
         stored = windows_id(FakeRun(with_gateway()))
         assert stored is not None
         self.assertFalse(netid.gate_state((stored,), windows_id(FakeRun(windows_reply()))).allowed)
-
-    def test_the_upgrade_rewrites_only_the_matching_entry_of_config_json(self) -> None:
-        home = tempfile.mkdtemp(prefix="iat-netid-")
-        self.addCleanup(shutil.rmtree, home, True)
-        path = Path(home, "config.json")
-        path.write_text(json.dumps({"jev": {"enabled": False}, "network": {"allowedNetworks": ["x", "old", "y"], "bind": BIND}}))
-        self.assertTrue(netid.store_upgraded_network(home, "old", "new"))
-        written = json.loads(path.read_text())
-        self.assertEqual(written["network"]["allowedNetworks"], ["x", "new", "y"])
-        self.assertEqual((written["jev"], written["network"]["bind"]), ({"enabled": False}, BIND))
-        self.assertFalse(netid.store_upgraded_network(home, "old", "new"))
-        self.assertFalse(netid.store_upgraded_network(home, "missing", "other"))
-        empty = tempfile.mkdtemp(prefix="iat-netid-")
-        self.addCleanup(shutil.rmtree, empty, True)
-        self.assertFalse(netid.store_upgraded_network(empty, "old", "new"))
 
 
 def route_json(gateway: str | None = "192.168.1.1", dev: str = "eth0") -> RunResult:

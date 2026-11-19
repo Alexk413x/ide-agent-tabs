@@ -122,13 +122,14 @@ When a join refuses, the command prints the reason and says nothing was saved:
   machine. `net folders add <absolute path>` and `net folders remove <absolute path>` change the list. The
   default is the top-level folder that holds the session that turned on discoverability or joined.
 - When a member asks to open a tab outside the list, this machine refuses with `folder-not-allowed`. Each
-  local session gets a message that names the folder and the command `agent-tabs net folders add "<path>"`.
-  Ask the user before you run it. The requesting agent sees only "the peer refused the request". Its
-  `list_sessions` rows for that machine carry a `folders` list, so it can pick a path inside one.
+  local session gets a message that names the folder and the command `agent-tabs net folders add "<path>"`,
+  at most one such message per member per hour. Ask the user before you run it. The requesting agent sees
+  only "the peer refused the request". Its `list_sessions` rows for that machine carry a `folders` list, so it can pick a path inside one.
 - `agent-tabs net networks` lists `network.allowedNetworks` and the current network id.
-  `net networks add` adds the current network. `net networks remove <id>` removes one. On a network that is
-  not listed, this machine sends no announcement, answers none, serves no joins and drops member
-  connections. `net status` says why. Removing the current network cuts this machine off from its members
+  `net networks add` adds the current network and replaces an entry in the older name-and-subnet form (the
+  listener doesn't rewrite it, and that entry alone doesn't allow the network). `net networks remove <id>`
+  removes one. On a network that is not listed, this machine sends no announcement, answers none, serves
+  no joins and drops member connections. `net status` says why. Removing the current network cuts this machine off from its members
   there, so remove it only when the user wants that. To use a second network, run `net networks add` while
   connected to it.
 - When the id of the current network can't be read, the network counts as not allowed. On macOS and Linux

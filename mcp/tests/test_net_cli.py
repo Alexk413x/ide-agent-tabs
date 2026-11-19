@@ -14,6 +14,7 @@ from typing import Any
 from unittest import mock
 
 from ide_agent_tabs import cli as top_cli
+from ide_agent_tabs.files import file_lock
 from ide_agent_tabs.net import cli, confirm, notify, tls
 from ide_agent_tabs.net.cli import Services
 from ide_agent_tabs.net.client import peer_cert_path
@@ -456,6 +457,13 @@ class RevokeAndOffTest(CliTestCase):
         self.assertTrue(peer_cert_path(self.a, self.b_id).exists())
         self.assertIn("marbles-xps", self.h.text)
 
+    def test_rename_refuses_a_session_that_another_machine_opened_and_changes_nothing(self) -> None:
+        self.trust_b()
+        remote = Harness(self, self.a, is_remote_origin=lambda _home: True)
+        self.assertEqual(remote.run("rename", "laptop", "marbles-xps"), 1)
+        self.assertEqual(remote.err, [f"error: {cli.NETWORK_SETTINGS_REFUSAL}"])
+        self.assertEqual(load_policy(self.a).peers[0].label, "laptop")
+
     def test_rename_refuses_a_bad_or_taken_label_and_an_unknown_peer(self) -> None:
         self.trust_b()
         for args in (("laptop", "Bad Label"), ("laptop", "x" * 33), ("nobody", "fine")):
@@ -682,12 +690,12 @@ class StatusAndDispatchTest(CliTestCase):
         self.assertIn("other addresses can still pair", self.h.text)
         self.assertIn("net trust", self.h.text)
 
-    def test_status_shows_an_open_pairing_window_and_changes_no_firewall_rule(self) -> None:
-        limits = Limits(self.a)
-        limits.open_window()
-        self.addCleanup(limits.close_window)
+    def test_status_reports_an_unreadable_pairing_file_and_changes_no_firewall_rule(self) -> None:
+        damaged = Path(self.a, "net", "pairing.json")
+        damaged.write_text("{not json", encoding="utf-8")
+        self.addCleanup(damaged.unlink, missing_ok=True)
         self.assertEqual(self.h.run("status"), 0)
-        self.assertIn("pairing busy", self.h.text)
+        self.assertRegex(self.h.text, r"pairing: unreadable \(")
         self.assertNotIn("firewall", self.h.events)
         self.assertEqual(self.h.firewall_removals, 0)
 
@@ -729,6 +737,48 @@ class StatusAndDispatchTest(CliTestCase):
         with mock.patch.dict(os.environ, {"IDE_AGENT_TABS_HOME": self.a}), contextlib.redirect_stdout(captured):
             self.assertEqual(top_cli.main(["net", "status"]), 0)
         self.assertIn("network: off", captured.getvalue())
+
+
+class SetNetworkTest(unittest.TestCase):
+    def test_a_change_waits_for_the_config_lock_and_keeps_what_another_writer_saved_meanwhile(self) -> None:
+        home = make_root(self)
+        path = os.path.join(home, "config.json")
+        Path(path).write_text(json.dumps({"network": {"bind": "10.0.0.5"}}), encoding="utf-8")
+        finished = threading.Event()
+        errors: list[BaseException] = []
+
+        def change() -> None:
+            try:
+                cli.set_network(home, {"discoverable": True})
+            except BaseException as error:  # noqa: BLE001 - reported to the test thread
+                errors.append(error)
+            finally:
+                finished.set()
+
+        with file_lock(path):
+            worker = threading.Thread(target=change, daemon=True)
+            worker.start()
+            self.assertFalse(finished.wait(0.5))
+            Path(path).write_text(json.dumps({"network": {"bind": "10.0.0.5", "memberFolders": ["/x"]}}), encoding="utf-8")
+        self.assertTrue(finished.wait(10))
+        worker.join(5)
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            json.loads(Path(path).read_text(encoding="utf-8"))["network"],
+            {"bind": "10.0.0.5", "memberFolders": ["/x"], "discoverable": True},
+        )
+
+    def test_a_config_that_is_not_json_is_a_cli_error(self) -> None:
+        home = make_root(self)
+        Path(home, "config.json").write_text("{not json", encoding="utf-8")
+        with self.assertRaisesRegex(cli.CliError, "is not valid JSON"):
+            cli.set_network(home, {"discoverable": True})
+
+    def test_a_network_section_that_is_not_an_object_is_a_cli_error(self) -> None:
+        home = make_root(self)
+        Path(home, "config.json").write_text(json.dumps({"network": []}), encoding="utf-8")
+        with self.assertRaisesRegex(cli.CliError, "must be an object"):
+            cli.set_network(home, {"discoverable": True})
 
 
 class DefaultLabelTest(unittest.TestCase):

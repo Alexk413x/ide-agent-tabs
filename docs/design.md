@@ -2638,8 +2638,9 @@ A hub is a set of machines that trust each other as equals.
   with the higher `(epoch, key)` after the first delivery over pinned mutual TLS. A machine that upgrades first can't
   deliver: a 0.13.0 peer refuses the unknown request and the queue drops the task. The machine that upgrades second
   delivers it, so the order of the upgrades doesn't matter. Machines paired in a chain, or a star whose centre doesn't
-  have the lowest device id, derive different hubs and refuse each other with `already-in-another-hub`. The person runs
-  `net hub leave` on one machine and joins the other.
+  have the lowest device id, derive different hubs. They stay peers of each other, but a hub request between them is
+  refused with `wrong-hub`, their beacons are ignored and a join stops with `already-in-another-hub`. To recover, the person
+  runs `net hub leave` on one machine and `net revoke` of it on the other, then joins.
 
 ### Joining a hub
 
@@ -2655,15 +2656,14 @@ proof and no approval on the listener.
    (the hub frame at the wire frame limit), read with exact-length `recv` and no buffering. Unknown fields,
    repeats, trailing data and out-of-order frames end the session. Each side parses the peer's certificate as one
    canonical DER certificate. Nonces come from the OS random generator. The frames, in order:
-   - D → L: `hello` with the version (2), `mode: join`, the dialer's device name and certificate, and
+   - D → L: `hello` with the version (2), `mode` (`join`, or `probe` for a `net find` check), the dialer's device name and certificate, and
      `C = H("atp2 commit", "dialer", cert_d, nonce_d)` with a fresh 32-byte nonce. The first frame must arrive
      within 5 s and the handshake must finish within 30 s;
    - L → D: `hello` with the listener's name, certificate and a fresh 32-byte `nonce_l`. The dialer checks that
      the device id of `cert_l` equals the pinned id, and stops otherwise;
    - D → L: `reveal` with `nonce_d`; L checks it against `C`.
 
-   `H(…)` is SHA-256 over the fields, each preceded by its length as 4 bytes big-endian. Both compute
-   `S = H("atp2 session", cert_d, cert_l, nonce_d, nonce_l)`.
+   `H(…)` is SHA-256 over the fields, each preceded by its length as 4 bytes big-endian.
 3. **Prove keys.** The listener sends a plaintext `tls` frame and becomes the TLS server; the dialer the client. The
    context follows the Transport rules (TLS 1.3, mutual certificates, no system CAs, no resumption,
    `num_tickets = 0`) and pins exactly the two certificates just exchanged. Each side checks that the peer's exact
@@ -2671,8 +2671,12 @@ proof and no approval on the listener.
    `session_reused` is false.
 4. **Hub state.** Inside TLS each side sends `state` with its hub (id and name) or none. Two machines with no hub stop
    with `no-hub`. Two different hubs stop with `already-in-another-hub`. The machine that is in a hub sends the
-   `hub` frame: the hub id and name, a random 32-byte `hubKey`, the key epoch, and the other members (device id,
-   label, address, port, certificate; at most 32). When both are in the same hub, the listener sends it.
+   `hub` frame: the hub id and name, a random 32-byte `hubKey`, the key epoch, the other members (device id,
+   label, address, port, certificate; at most 32) and the devices removed from the hub (device id and removal time; the
+   newest 64). The receiver drops a listed member that the removed list names and stores the list. When both are in the
+   same hub, the listener sends it.
+   A `probe` session ends after the `state` frame: the listener sends its `state` and closes, sends no `hub` frame and
+   records no outcome, and the dialer reads the state and closes.
 5. **Ready, save, saved.** Each side validates the hub frame and sends `ready` before either saves, so a side that
    rejects the frame leaves both unsaved. Then each side saves the other as a member and sends `saved`. The side that
    received the hub frame also pins and saves the listed members. A side that saves but gets no `saved` back says
@@ -2684,13 +2688,13 @@ proof and no approval on the listener.
 **Pairing locks.** Failure counts and locks are kept per remote address in `net/pairing.json`. Three failures from one
 address within an hour lock that address for an hour and leave every other address free. A join attempt that fails
 after the listener admitted it counts as a failure, except `already-in-another-hub`, `no-hub`, a local save error and a
-busy listener. The listener serves one join at a time and drops a second connection, with no hourly cap. The dialer
+busy listener. A `net find` probe is a separate session type that ends cleanly, so it never counts. The listener serves one join at a time and drops a second connection, with no hourly cap. The dialer
 refuses to dial a locked address. `net status` lists the locked addresses, and `net trust` still works during a lock.
 
 ### Discovery
 
-The beacon is how machines find each other, both to join and to stay connected. LAN discovery implements the
-`Discovery` interface (see The transport and discovery seam).
+The beacon is how machines find each other, both to join and to stay connected. `LanDiscovery` in `net/discovery.py`
+receives it (see The transport and discovery seam).
 
 - **Transport.** The plugin's own UDP port, 47831, with standard-library sockets only. It doesn't use mDNS on 5353,
   because Windows' mDNS service holds that port and the project has no Python dependencies.
@@ -2749,25 +2753,32 @@ goes to the audit log (`not-a-member`, `wrong-hub`).
 
 - **`introduce`.** After a join, the machine that took it sends the newcomer's id, label, address, port and
   certificate to every other member. A receiver saves it as a member when the certificate is valid and matches the id,
-  the address is private, the hub has fewer than 32 members, and the id isn't known. It never turns an existing
+  the address is private, the hub has fewer than 32 members, and the id isn't known. It refuses a device that the
+  receiver removed from the hub (`removed-member`). It never turns an existing
   non-member peer into a member (`not-a-member-peer`). A label clash gets a new label. The receiver posts a notice to
   its local sessions.
-- **`remove`.** Names a device. The receiver removes a member, raises the policy generation and posts a notice. It
-  refuses to remove itself, and a message that names the receiving device is refused, so a member can't be removed by
-  a message sent to itself. A request with `rotate` set, sent when a member leaves, makes the receiver replace the hub
-  key and send the removal and the new key to every other member.
+- **`remove`.** Names a device by its canonical device id. The receiver removes a member, raises the policy generation
+  and posts a notice. It refuses to remove itself, and a message that names the receiving device is refused, so a member
+  can't be removed by a message sent to itself. It records every removed device, known or not, in `removed` in
+  `net/hub.json` (the newest 256), so a late `introduce` or a lagging member's hub frame can't add the device again. A
+  join or a `net trust` by the user with that device clears its entry. A request with `rotate` set, sent when a member
+  leaves, is accepted only for a current member and makes the receiver replace the hub key and send the removal and the
+  new key to every other member. One worker handles these rotations in turn.
 - **`rekey`.** Carries the hub id, an epoch and a 32-byte key. A member accepts a key only when `(epoch, key)` is
   higher than its own and answers with the version it holds, so two members that replace the key at once end with the
-  same one. Beacons under an older key are ignored.
+  same one. It refuses an epoch more than 16 above its own (`epoch-too-far`), so one member can't push the epoch to
+  the maximum. Beacons under an older key are ignored.
 - **Revoke.** `net revoke <label>` on a member removes it here, sends `remove` to every other member, increments the key
   epoch with a new random key, and sends `rekey` to the remaining members.
 - **Leave.** `net hub leave` sends `remove` with `rotate` to the members in device-id order until one answers. That
   member removes the leaver, rotates the key and sends the removal and the new key to every other member. The leaver
   sends `remove` without `rotate` to the rest and clears local state. When no member answers, the command says the key
   isn't replaced yet, and the members keep trusting the machine until they revoke it.
-- **Retry queue.** An `introduce`, `remove` or `rekey` that can't reach a member goes into `net/hub.json`, which keeps the newest 256
-  entries. The listener retries every 60 s for up to 14 days, drops an entry whose target left the hub, and shows the
-  undelivered names in the command output.
+- **Retry queue.** An `introduce`, `remove` or `rekey` that can't reach a member goes into `net/hub.json`, which holds at
+  most 256 entries. A full queue refuses a new `introduce` or `rekey` and makes room for a `remove` by dropping the oldest
+  other entry, so a removal is never lost. A `rekey` entry carries its epoch: a newer one replaces an older one for the
+  same member, and a delivered key removes only the entries up to its own epoch. The listener retries every 60 s for up
+  to 14 days, drops an entry whose target left the hub, and shows the undelivered names in the command output.
 
 ### Network ids and allowed networks
 
@@ -2785,8 +2796,10 @@ serves no join, and `net status` says why.
     profile name and subnet get different ids only when their gateway MACs differ.
   - macOS and Linux: `<gateway MAC>_<subnet>`. The MAC comes from `ip -j neigh` on Linux, and `route`, `ifconfig`
     and `arp` on macOS. With no gateway MAC the id can't be built.
-  - A stored entry in the older name-and-subnet form on Windows still opens the gate. The listener,
-    `discoverable on`, `hub join` and `networks add` rewrite it to the new id in `config.json`.
+  - A stored entry in the older name-and-subnet form on Windows doesn't open the gate while the gateway MAC is
+    readable, because another network can share that name and subnet. `net networks` and the listener log say so.
+    `discoverable on`, `hub join` and `networks add` rewrite the entry to the new id in `config.json`. The listener
+    doesn't.
 - **Gate.** The listener reads the id at start, every 30 s and when the address set changes. When the id can't be read,
   the network counts as not allowed. The gate covers member connections, join service, announcements and
   beacon handling, and doesn't stop the listener.
@@ -2884,8 +2897,9 @@ this section is the design the seam in the next section prepares for.
 
 ### The transport and discovery seam
 
-The LAN code reaches the network through two interfaces, so Tailscale mode can replace the LAN parts without
-touching the hub, the member role or the join protocol. The code builds them; Tailscale implements neither yet.
+The LAN code reaches the network through one interface and one discovery class, so Tailscale mode can replace the LAN
+parts without touching the hub, the member role or the join protocol. The code builds the interface; Tailscale
+implements neither yet.
 
 - **`Transport`** (`net/transport.py`), chosen by `transport_for(config)`, which returns the LAN transport for `lan` and
   nothing for any other value. Methods: `allows_bind(address)`, `bind_address(config)`,
@@ -2893,9 +2907,9 @@ touching the hub, the member role or the join protocol. The code builds them; Ta
   the rebind), `check_destination(address, port, interface_address, prefix_len)`, `check_connection(address)` (a no-op for LAN; the
   `whois` owner check for Tailscale), `firewall_scope(info)` (the subnet for LAN, `100.64.0.0/10` on the Tailscale
   interface), `require_ready(address, allow_virtual)` and `wait_ready(address, timeout_s, ...)`.
-- **`Discovery`** (`net/discovery.py`), with `announce(hub_id, hub_name, device_name, port)` and `browse(timeout)`, which
-  returns candidates (device id and name, hub, address, port, kind and a verified flag). LAN uses UDP multicast and
-  broadcast. Tailscale would read `tailscale status --json`. A null implementation returns nothing.
+- **Discovery** (`net/discovery.py`). `LanDiscovery` receives announcements and member beacons over UDP multicast
+  and broadcast and yields each datagram once, with the paths that carried it. `net find` calls it directly. Tailscale
+  would read `tailscale status --json` instead. No interface type names this seam yet.
 - **Mode checks.** `network_enabled(config)` (the mode is in `ENABLED_MODES`, which holds `lan`) replaces every
   `network != "lan"` check in the outbound, dispatch, listener, poller and messaging code.
 - Join and beacon payloads carry a `transport` field (`lan`). A receiver refuses a join announcement with another value.

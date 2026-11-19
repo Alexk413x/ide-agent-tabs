@@ -4,7 +4,6 @@ import unittest
 from unittest import mock
 
 from ide_agent_tabs.net import transport
-from ide_agent_tabs.net.discovery import Candidate, NullDiscovery
 from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
 from ide_agent_tabs.net.pairing import PairingError
 from ide_agent_tabs.net.policy import NetworkConfig
@@ -107,18 +106,6 @@ class WaitReadyTest(unittest.TestCase):
         with patcher as ready, self.assertRaises(InterfaceError):
             self.wait(0.0)
         self.assertEqual((ready.call_count, self.sleeps), (1, []))
-
-
-class DiscoveryTest(unittest.TestCase):
-    def test_null_discovery_finds_nothing(self) -> None:
-        discovery = NullDiscovery()
-        self.assertIsNone(discovery.announce("hub", "Home", "pc", 47830))
-        self.assertEqual(discovery.browse(0.1), [])
-
-    def test_candidate_is_immutable(self) -> None:
-        candidate = Candidate("d", "pc", "h", "Home", "192.168.1.20", 47830, "join", False)
-        with self.assertRaises(AttributeError):
-            candidate.verified = True  # type: ignore[misc]
 
 
 if __name__ == "__main__":

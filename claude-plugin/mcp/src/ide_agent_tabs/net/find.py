@@ -216,7 +216,6 @@ class _Find:
                     settings.join_port,
                     expected,
                     self.request.identity,
-                    pairing.Limits(self.request.home),
                     timeouts=settings.timeouts,
                 )
             except _VERIFY_ERRORS as error:

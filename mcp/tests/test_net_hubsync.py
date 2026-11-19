@@ -18,21 +18,26 @@ from ide_agent_tabs.net.client import NetClientError, load_identity, peer_cert_p
 from ide_agent_tabs.net.dispatch import NetDispatcher
 from ide_agent_tabs.net.hubjoin import HubJoiner
 from ide_agent_tabs.net.hubstate import (
+    MAX_EPOCH_JUMP,
+    MAX_PENDING,
+    MAX_REMOVED,
     HubState,
     HubStateError,
     Pending,
     add_pending,
     adopt_key,
+    drop_pending,
     forget_member,
     hub_state_path,
     read_hub_state,
+    record_removed,
     rotate_key,
     write_hub_state,
 )
 from ide_agent_tabs.net.hubsync import HubRefusal, HubSync, announce_removal, flush_pending, introduce_member, leave_hub, push_key
 from ide_agent_tabs.net.identity import format_digest
 from ide_agent_tabs.net.listener import TrustCache
-from ide_agent_tabs.net.pairing import MemberRef, private_source
+from ide_agent_tabs.net.pairing import MemberRef, RemovedRef, private_source
 from ide_agent_tabs.net.peers import remove_peer, save_peer, update_address
 from ide_agent_tabs.net.policy import Hub, Policy, grant_for, load_policy, save_policy
 from ide_agent_tabs.net.store import NetStore
@@ -674,8 +679,14 @@ class StateTest(unittest.TestCase):
         write_hub_state(self.home, state)
         self.assertEqual(read_hub_state(self.home), state)
         self.assertEqual(
-            sorted(json.loads(hub_state_path(self.home).read_text(encoding="utf-8"))), ["epoch", "hub", "key", "members", "pending"]
+            sorted(json.loads(hub_state_path(self.home).read_text(encoding="utf-8"))),
+            ["epoch", "hub", "key", "members", "pending", "removed"],
         )
+
+    def test_the_removed_devices_and_the_epoch_of_a_key_change_round_trip(self) -> None:
+        state = HubState(HUB_ID, KEY, (), 4, (Pending(ID_1, "rekey", "", 6, 4),), (RemovedRef(ID_2, 9), RemovedRef(ID_3, 10)))
+        write_hub_state(self.home, state)
+        self.assertEqual(read_hub_state(self.home), state)
 
     def test_a_file_without_an_epoch_or_pending_changes_reads_with_defaults(self) -> None:
         write_hub_state(self.home, HubState(HUB_ID, KEY))
@@ -696,6 +707,13 @@ class StateTest(unittest.TestCase):
             {"pending": {}},
             {"pending": [{"to": "x"}]},
             {"pending": [{"to": ID_1, "op": "bogus", "device": "", "atMs": 1}]},
+            {"pending": [{"to": ID_1, "op": "remove", "device": "x", "atMs": 1}]},
+            {"pending": [{"to": "x", "op": "remove", "device": ID_2, "atMs": 1}]},
+            {"pending": [{"to": ID_1, "op": "rekey", "device": "", "atMs": 1, "epoch": 2**31}]},
+            {"removed": {}},
+            {"removed": [{"deviceId": "x", "atMs": 1}]},
+            {"removed": [{"deviceId": ID_1}]},
+            {"removed": [{"deviceId": ID_1, "atMs": 1}] * (MAX_REMOVED + 1)},
         ):
             path.write_text(json.dumps({**good, **changes}), encoding="utf-8")
             with self.assertRaises(HubStateError, msg=str(changes)):
@@ -726,7 +744,7 @@ class StateTest(unittest.TestCase):
 
 class WireTest(unittest.TestCase):
     MEMBER: ClassVar[dict[str, Any]] = {
-        "deviceId": "A" * 7,
+        "deviceId": ID_1,
         "label": "alpha",
         "address": "192.168.1.5",
         "port": 47829,
@@ -738,10 +756,8 @@ class WireTest(unittest.TestCase):
 
     def test_the_hub_requests_parse(self) -> None:
         introduce = self.parse("introduce", {"hub": HUB_ID, "member": self.MEMBER}).body
-        self.assertEqual(introduce, wire.IntroduceBody(HUB_ID, "A" * 7, "alpha", "192.168.1.5", 47829, "pem"))
-        self.assertEqual(
-            self.parse("remove", {"hub": HUB_ID, "device": "A" * 7, "rotate": True}).body, wire.RemoveBody(HUB_ID, "A" * 7, True)
-        )
+        self.assertEqual(introduce, wire.IntroduceBody(HUB_ID, ID_1, "alpha", "192.168.1.5", 47829, "pem"))
+        self.assertEqual(self.parse("remove", {"hub": HUB_ID, "device": ID_1, "rotate": True}).body, wire.RemoveBody(HUB_ID, ID_1, True))
         self.assertEqual(self.parse("rekey", {"hub": HUB_ID, "epoch": 3, "key": KEY}).body, wire.RekeyBody(HUB_ID, 3, KEY))
 
     def test_malformed_hub_requests_are_refused(self) -> None:
@@ -754,9 +770,15 @@ class WireTest(unittest.TestCase):
             ("introduce", {"hub": HUB_ID, "member": {**self.MEMBER, "port": 0}}),
             ("introduce", {"hub": HUB_ID, "member": {**self.MEMBER, "label": "Alpha"}}),
             ("introduce", {"hub": HUB_ID, "member": {**self.MEMBER, "certificatePem": "x" * 9000}}),
-            ("remove", {"hub": HUB_ID, "device": "A" * 7}),
-            ("remove", {"hub": HUB_ID, "device": "A" * 7, "rotate": 1}),
+            ("remove", {"hub": HUB_ID, "device": ID_1}),
+            ("remove", {"hub": HUB_ID, "device": ID_1, "rotate": 1}),
             ("remove", {"hub": HUB_ID, "device": "a b", "rotate": False}),
+            ("remove", {"hub": HUB_ID, "device": "x", "rotate": False}),
+            ("remove", {"hub": HUB_ID, "device": "x", "rotate": True}),
+            ("remove", {"hub": HUB_ID, "device": ID_1.lower(), "rotate": False}),
+            ("remove", {"hub": HUB_ID, "device": ID_1.replace("-", ""), "rotate": False}),
+            ("remove", {"hub": HUB_ID, "device": 7, "rotate": False}),
+            ("introduce", {"hub": HUB_ID, "member": {**self.MEMBER, "deviceId": "x"}}),
             ("rekey", {"hub": HUB_ID, "epoch": True, "key": KEY}),
             ("rekey", {"hub": HUB_ID, "epoch": -1, "key": KEY}),
             ("rekey", {"hub": HUB_ID, "epoch": 2**31, "key": KEY}),
@@ -766,6 +788,337 @@ class WireTest(unittest.TestCase):
         for op, body in bad:
             with self.assertRaises(wire.WireError, msg=f"{op} {body}"):
                 self.parse(op, body)
+
+
+def far_id(number: int) -> str:
+    return format_digest(number.to_bytes(32, "big"))
+
+
+class RemovalRecordTest(HubCase):
+    def introduce_d_body(self) -> wire.IntroduceBody:
+        return wire.IntroduceBody(HUB_ID, device_of(self.d), "delta", ADDRESSES["d"], 47829, cert_of(self.d).read_text(encoding="ascii"))
+
+    def handle(self, receiver: str, sender: str, body: wire.HubBody) -> dict[str, Any]:
+        grant = grant_for(load_policy(self.homes[receiver]), device_of(self.homes[sender]))
+        assert grant is not None
+        return self.mesh().sync(self.homes[receiver]).handle(grant, body)
+
+    def removed_on(self, home: str) -> list[str]:
+        state = read_hub_state(home)
+        assert state is not None
+        return [r.device_id for r in state.removed]
+
+    def test_a_removal_leaves_a_record_and_a_late_introduction_of_that_device_is_refused(self) -> None:
+        self.form_hub("a", "b", "d")
+        self.assertEqual(self.handle("b", "a", wire.RemoveBody(HUB_ID, device_of(self.d), False)), {"removed": True})
+        self.assertEqual(self.removed_on(self.b), [device_of(self.d)])
+        with self.assertRaises(HubRefusal) as caught:
+            self.handle("b", "a", self.introduce_d_body())
+        self.assertEqual(caught.exception.reason, "removed-member")
+        self.assertFalse(self.knows(self.b, "d"))
+
+    def test_a_removal_of_a_device_the_member_never_knew_still_leaves_a_record(self) -> None:
+        self.form_hub("a", "b")
+        self.assertEqual(self.handle("b", "a", wire.RemoveBody(HUB_ID, device_of(self.d), False)), {"removed": False})
+        self.assertEqual(self.removed_on(self.b), [device_of(self.d)])
+        with self.assertRaises(HubRefusal) as caught:
+            self.handle("b", "a", self.introduce_d_body())
+        self.assertEqual(caught.exception.reason, "removed-member")
+
+    def test_net_revoke_records_the_removal_on_the_revoker(self) -> None:
+        self.form_hub("a", "b", "d")
+        out: list[str] = []
+        services = Services(
+            home=self.a,
+            out=out.append,
+            err=out.append,
+            member_request=self.mesh().request_from(self.a),
+            is_remote_origin=lambda _home: False,
+        )
+        self.assertEqual(net_main(["revoke", "delta"], services), 0, out)
+        self.assertEqual(self.removed_on(self.a), [device_of(self.d)])
+        self.assertEqual(self.removed_on(self.b), [device_of(self.d)])
+
+    def test_an_explicit_join_with_the_device_clears_the_record(self) -> None:
+        self.form_hub("a")
+        record_removed(self.a, device_of(self.d))
+        server = JoinServer(self, self.a)
+        dialed = dial(server, self.d)
+        self.assertEqual((dialed.outcome, server.wait_result().outcome), ("paired", "paired"))
+        self.assertEqual(self.removed_on(self.a), [])
+        self.assertTrue(self.knows(self.a, "d"))
+
+    def test_the_hub_message_hands_the_record_to_the_joiner_and_the_joiner_drops_a_removed_member(self) -> None:
+        self.form_hub("a", "b", "d")
+        record_removed(self.a, device_of(self.d))
+        server = JoinServer(self, self.a)
+        dialed = dial(server, self.c)
+        self.assertEqual((dialed.outcome, server.wait_result().outcome), ("paired", "paired"))
+        self.assertEqual(self.labels(self.c), ["alpha", "bravo"])
+        self.assertFalse(self.knows(self.c, "d"))
+        self.assertEqual(self.removed_on(self.c), [device_of(self.d)])
+
+    def test_a_record_the_joiner_already_holds_also_drops_a_member_a_lagging_member_still_lists(self) -> None:
+        self.form_hub("a", "b", "d")
+        save_policy(self.c, Policy((), 0, Hub(HUB_ID, "home")))
+        write_hub_state(self.c, HubState(HUB_ID, KEY, (), 0, (), (RemovedRef(device_of(self.d), 1),)))
+        server = JoinServer(self, self.a)
+        dialed = dial(server, self.c)
+        self.assertEqual((dialed.outcome, server.wait_result().outcome), ("paired", "paired"))
+        self.assertEqual(self.labels(self.c), ["alpha", "bravo"])
+        self.assertEqual(self.removed_on(self.c), [device_of(self.d)])
+
+    def test_the_record_stays_bounded_and_keeps_the_newest_entries(self) -> None:
+        home = make_root(self)
+        write_hub_state(home, HubState(HUB_ID, KEY))
+        for number in range(1, MAX_REMOVED + 6):
+            record_removed(home, far_id(number))
+        state = read_hub_state(home)
+        assert state is not None
+        ids = [r.device_id for r in state.removed]
+        self.assertEqual(len(ids), MAX_REMOVED)
+        self.assertNotIn(far_id(1), ids)
+        self.assertEqual(ids[-1], far_id(MAX_REMOVED + 5))
+        record_removed(home, far_id(10))
+        again = read_hub_state(home)
+        assert again is not None
+        self.assertEqual([r.device_id for r in again.removed][-1], far_id(10))
+        self.assertEqual(len(again.removed), MAX_REMOVED)
+
+
+class DamagedHubFileTest(HubCase):
+    def damage(self, home: str, **changes: Any) -> None:
+        path = hub_state_path(home)
+        body = json.loads(path.read_text(encoding="utf-8"))
+        body.update(changes)
+        path.write_text(json.dumps(body), encoding="utf-8")
+
+    def test_a_queued_entry_with_an_id_the_wire_would_refuse_is_a_hub_state_error(self) -> None:
+        self.form_hub("a", "b")
+        self.damage(self.a, pending=[{"to": device_of(self.b), "op": "remove", "device": "x", "atMs": 1}])
+        with self.assertRaises(HubStateError):
+            read_hub_state(self.a)
+
+    def test_the_beacon_watch_reads_a_damaged_file_as_no_view_and_names_the_problem(self) -> None:
+        self.form_hub("a", "b")
+        self.damage(self.a, pending=[{"to": device_of(self.b), "op": "remove", "device": "x", "atMs": 1}])
+        watch = HubWatch(self.a)
+        self.assertIsNone(watch())
+        self.assertIsNotNone(watch.problem)
+        write_hub_state(self.a, HubState(HUB_ID, KEY))
+        view = watch()
+        assert view is not None
+        self.assertIsNone(watch.problem)
+
+    def test_flush_pending_reports_a_damaged_file_as_a_hub_state_error(self) -> None:
+        self.form_hub("a", "b")
+        self.damage(self.a, pending=[{"to": "x", "op": "remove", "device": "x", "atMs": 1}])
+        with self.assertRaises(HubStateError):
+            flush_pending(self.a, self.mesh().request_from(self.a))
+
+    def test_a_revoke_still_tells_the_members_when_the_hub_file_is_damaged(self) -> None:
+        self.form_hub("a", "b", "c", "d")
+        self.damage(self.a, pending=[{"to": device_of(self.b), "op": "remove", "device": "x", "atMs": 1}])
+        mesh = self.mesh()
+        out: list[str] = []
+        services = Services(
+            home=self.a, out=out.append, err=out.append, member_request=mesh.request_from(self.a), is_remote_origin=lambda _home: False
+        )
+        self.assertEqual(net_main(["revoke", "delta"], services), 0, out)
+        self.assertFalse(self.knows(self.a, "d"))
+        self.assertFalse(self.knows(self.b, "d"))
+        self.assertFalse(self.knows(self.c, "d"))
+        self.assertTrue(any("hub state file is not usable" in line for line in out), out)
+        self.assertFalse(any("hub key was replaced" in line for line in out), out)
+
+    def test_announcing_a_removal_with_a_damaged_file_still_sends_it_and_reports_the_problem(self) -> None:
+        self.form_hub("a", "b", "d")
+        self.damage(self.a, members=[{"deviceId": "x"}])
+        remove_peer(self.a, device_of(self.d))
+        report = announce_removal(self.a, device_of(self.d), self.mesh().request_from(self.a))
+        self.assertEqual(report.told, ["bravo"])
+        self.assertIsNotNone(report.state_problem)
+        self.assertFalse(self.knows(self.b, "d"))
+
+
+class RotationWorkerTest(HubCase):
+    def sync_on_b(self) -> tuple[HubSync, list[Any]]:
+        spawned: list[Any] = []
+        mesh = self.mesh()
+        sync = HubSync(
+            self.b,
+            lambda _text: None,
+            lambda _text: None,
+            lambda: None,
+            request=mesh.request_from(self.b),
+            spawn=spawned.append,
+            allow_address=lambda _address: True,
+        )
+        return sync, spawned
+
+    def from_a(self, sync: HubSync, body: wire.HubBody) -> dict[str, Any]:
+        grant = grant_for(load_policy(self.b), device_of(self.a))
+        assert grant is not None
+        return sync.handle(grant, body)
+
+    def test_rotating_removals_share_one_worker(self) -> None:
+        self.form_hub("a", "b", "c", "d")
+        sync, spawned = self.sync_on_b()
+        self.assertEqual(self.from_a(sync, wire.RemoveBody(HUB_ID, device_of(self.c), True)), {"removed": True})
+        self.assertEqual(self.from_a(sync, wire.RemoveBody(HUB_ID, device_of(self.d), True)), {"removed": True})
+        self.assertEqual(len(spawned), 1)
+        self.assertEqual(version_of(self.b)[0], 0)
+        spawned[0]()
+        self.assertEqual(version_of(self.b)[0], 2)
+
+    def test_a_removal_that_arrives_after_the_worker_finished_starts_the_next_one(self) -> None:
+        self.form_hub("a", "b", "c", "d")
+        sync, spawned = self.sync_on_b()
+        self.from_a(sync, wire.RemoveBody(HUB_ID, device_of(self.c), True))
+        spawned.pop()()
+        self.from_a(sync, wire.RemoveBody(HUB_ID, device_of(self.d), True))
+        self.assertEqual(len(spawned), 1)
+        spawned.pop()()
+        self.assertEqual(version_of(self.b)[0], 2)
+
+    def test_a_rotating_removal_of_a_device_that_is_not_a_member_is_refused_and_rotates_nothing(self) -> None:
+        self.form_hub("a", "b")
+        sync, spawned = self.sync_on_b()
+        with self.assertRaises(HubRefusal) as caught:
+            self.from_a(sync, wire.RemoveBody(HUB_ID, device_of(self.d), True))
+        self.assertEqual(caught.exception.reason, "unknown-member")
+        self.assertEqual(spawned, [])
+        self.assertEqual(version_of(self.b), (0, KEY))
+
+
+class PendingQueueTest(HubCase):
+    def fill(self, home: str, op: str, count: int) -> None:
+        recipients = [far_id(number) for number in range(1, 17)]
+        subjects = [far_id(number) for number in range(101, 117)]
+        tasks = [Pending(recipients[n // 16], op, subjects[n % 16], 1) for n in range(count)]
+        add_pending(home, tasks)
+
+    def pending_of(self, home: str) -> tuple[Pending, ...]:
+        state = read_hub_state(home)
+        assert state is not None
+        return state.pending
+
+    def test_a_removal_evicts_the_oldest_other_task_when_the_queue_is_full_and_is_never_evicted(self) -> None:
+        home = make_root(self)
+        write_hub_state(home, HubState(HUB_ID, KEY))
+        self.fill(home, "introduce", MAX_PENDING)
+        self.assertEqual(len(self.pending_of(home)), MAX_PENDING)
+        removal = Pending(far_id(40), "remove", far_id(41), 2)
+        add_pending(home, [removal])
+        queue = self.pending_of(home)
+        self.assertEqual(len(queue), MAX_PENDING)
+        self.assertIn(removal, queue)
+        self.assertEqual(sum(1 for task in queue if task.op == "introduce"), MAX_PENDING - 1)
+
+    def test_a_full_queue_refuses_a_new_task_that_is_not_a_removal(self) -> None:
+        home = make_root(self)
+        write_hub_state(home, HubState(HUB_ID, KEY))
+        self.fill(home, "remove", MAX_PENDING)
+        before = self.pending_of(home)
+        add_pending(home, [Pending(far_id(40), "introduce", far_id(41), 2), Pending(far_id(40), "rekey", "", 2, 1)])
+        self.assertEqual(self.pending_of(home), before)
+
+    def test_a_full_queue_of_removals_keeps_every_one_of_them(self) -> None:
+        home = make_root(self)
+        write_hub_state(home, HubState(HUB_ID, KEY))
+        self.fill(home, "remove", MAX_PENDING)
+        before = self.pending_of(home)
+        add_pending(home, [Pending(far_id(40), "remove", far_id(41), 2)])
+        self.assertEqual(self.pending_of(home), before)
+
+    def test_the_same_removal_is_queued_once(self) -> None:
+        home = make_root(self)
+        write_hub_state(home, HubState(HUB_ID, KEY))
+        add_pending(home, [Pending(ID_1, "remove", ID_2, 1), Pending(ID_1, "remove", ID_2, 2)])
+        self.assertEqual(len(self.pending_of(home)), 1)
+
+    def test_a_newer_key_change_replaces_an_older_one_for_the_same_member_and_an_older_one_is_ignored(self) -> None:
+        home = make_root(self)
+        write_hub_state(home, HubState(HUB_ID, KEY))
+        add_pending(home, [Pending(ID_1, "rekey", "", 1, 1)])
+        add_pending(home, [Pending(ID_1, "rekey", "", 2, 2), Pending(ID_2, "rekey", "", 2, 1)])
+        self.assertEqual([(p.to, p.epoch) for p in self.pending_of(home)], [(ID_1, 2), (ID_2, 1)])
+        add_pending(home, [Pending(ID_1, "rekey", "", 3, 1)])
+        self.assertEqual([(p.to, p.epoch) for p in self.pending_of(home)], [(ID_1, 2), (ID_2, 1)])
+
+    def test_dropping_a_sent_key_change_leaves_a_newer_queued_one(self) -> None:
+        home = make_root(self)
+        write_hub_state(home, HubState(HUB_ID, KEY))
+        add_pending(home, [Pending(ID_1, "rekey", "", 2, 2)])
+        drop_pending(home, [Pending(ID_1, "rekey", "", 0, 1)])
+        self.assertEqual([(p.to, p.epoch) for p in self.pending_of(home)], [(ID_1, 2)])
+        drop_pending(home, [Pending(ID_1, "rekey", "", 0, 2)])
+        self.assertEqual(self.pending_of(home), ())
+
+    def test_a_key_change_queued_while_another_is_being_sent_survives_the_flush(self) -> None:
+        self.form_hub("a", "b")
+        mesh = self.mesh()
+        add_pending(self.a, [Pending(device_of(self.b), "rekey", "", hubsync.now_ms(), 0)])
+        send = mesh.request_from(self.a)
+
+        def request(home: str, to: str, op: str, body: dict[str, Any], **options: Any) -> dict[str, Any]:
+            reply = send(home, to, op, body, **options)
+            add_pending(self.a, [Pending(device_of(self.b), "rekey", "", hubsync.now_ms(), 1)])
+            return reply
+
+        self.assertEqual(flush_pending(self.a, request), 1)
+        self.assertEqual([(p.op, p.epoch) for p in self.pending_of(self.a)], [("rekey", 1)])
+
+    def test_a_key_change_queued_while_the_key_is_pushed_survives_the_push(self) -> None:
+        self.form_hub("a", "b")
+        send = self.mesh().request_from(self.a)
+
+        def request(home: str, to: str, op: str, body: dict[str, Any], **options: Any) -> dict[str, Any]:
+            reply = send(home, to, op, body, **options)
+            add_pending(self.a, [Pending(device_of(self.b), "rekey", "", hubsync.now_ms(), 5)])
+            return reply
+
+        push_key(self.a, request)
+        self.assertEqual([(p.op, p.epoch) for p in self.pending_of(self.a)], [("rekey", 5)])
+
+
+class EpochBoundTest(HubCase):
+    def sync_and_sender(self) -> tuple[HubSync, Any]:
+        sender = grant_for(load_policy(self.b), device_of(self.a))
+        assert sender is not None
+        return self.mesh().sync(self.b), sender
+
+    def test_a_rekey_far_above_the_local_epoch_is_refused_and_the_epoch_can_still_advance(self) -> None:
+        self.form_hub("a", "b", epoch=3)
+        sync, sender = self.sync_and_sender()
+        with self.assertRaises(HubRefusal) as caught:
+            sync.handle(sender, wire.RekeyBody(HUB_ID, wire.MAX_EPOCH, "ee" * 32))
+        self.assertEqual(caught.exception.reason, "epoch-too-far")
+        with self.assertRaises(HubRefusal):
+            sync.handle(sender, wire.RekeyBody(HUB_ID, 3 + MAX_EPOCH_JUMP + 1, "ee" * 32))
+        self.assertEqual(version_of(self.b), (3, KEY))
+        self.assertEqual(
+            sync.handle(sender, wire.RekeyBody(HUB_ID, 3 + MAX_EPOCH_JUMP, "ee" * 32)), {"epoch": 3 + MAX_EPOCH_JUMP, "key": "ee" * 32}
+        )
+        rotated = rotate_key(self.b)
+        assert rotated is not None
+        self.assertEqual(rotated.epoch, 3 + MAX_EPOCH_JUMP + 1)
+
+    def test_a_member_cannot_raise_the_epoch_through_the_reply_to_a_key_push(self) -> None:
+        self.form_hub("a", "b")
+
+        def request(home: str, to: str, op: str, body: dict[str, Any], **_options: Any) -> dict[str, Any]:
+            return wire.ok_reply("r1", {"epoch": wire.MAX_EPOCH, "key": "ee" * 32})
+
+        push_key(self.a, request)
+        self.assertEqual(version_of(self.a), (0, KEY))
+        self.assertIsNone(adopt_key(self.d, HUB_ID, 1, KEY))
+        updated = adopt_key(self.a, HUB_ID, MAX_EPOCH_JUMP, "ee" * 32)
+        assert updated is not None
+        self.assertEqual(updated.epoch, MAX_EPOCH_JUMP)
+        ignored = adopt_key(self.a, HUB_ID, wire.MAX_EPOCH, "dd" * 32)
+        assert ignored is not None
+        self.assertEqual(ignored.epoch, MAX_EPOCH_JUMP)
 
 
 class ThreadSafetyTest(unittest.TestCase):

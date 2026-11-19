@@ -34,7 +34,7 @@ from net_support import HAS_OPENSSL, cert_of, create_home, device_of, make_root,
 
 HUB_ID = "0123456789abcdef0123456789abcdef"
 OTHER_HUB_ID = "fedcba9876543210fedcba9876543210"
-FAST = pairing.Timeouts(first_frame_s=2.0, handshake_s=10.0, consent_s=5.0, connect_s=2.0, window_s=20.0, min_interval_s=0.0)
+FAST = pairing.Timeouts(first_frame_s=2.0, handshake_s=10.0, consent_s=5.0, connect_s=2.0, min_interval_s=0.0)
 NEEDS = unittest.skipUnless(HAS_OPENSSL and tls.runtime_problem() is None, "needs an openssl and a TLS 1.3 Python")
 
 
@@ -207,7 +207,8 @@ class JoinTest(unittest.TestCase):
             sorted(capture.kinds), ["hello", "hello", "hub", "ready", "ready", "reveal", "saved", "saved", "state", "state", "tls"]
         )
         message = next(frame for frame in capture.frames if frame["t"] == "hub")
-        self.assertEqual(sorted(message), ["epoch", "hub", "hubKey", "members", "t"])
+        self.assertEqual(sorted(message), ["epoch", "hub", "hubKey", "members", "removed", "t"])
+        self.assertEqual(message["removed"], [])
         self.assertEqual(message["epoch"], 0)
         self.assertEqual(message["hub"], {"id": HUB_ID, "name": "home"})
         self.assertEqual(message["hubKey"], key)
@@ -243,7 +244,7 @@ class JoinTest(unittest.TestCase):
         message = next(frame for frame in capture.frames if frame["t"] == "hub")
         self.assertEqual(message["members"], [])
 
-    def test_no_token_and_no_consent_proof_cross_the_wire(self) -> None:
+    def test_the_dialer_hello_names_the_join_mode(self) -> None:
         make_hub(self.b)
         server = JoinServer(self, self.a)
         with captured_frames() as capture:
@@ -252,8 +253,6 @@ class JoinTest(unittest.TestCase):
         first = capture.frames[0]
         self.assertEqual(sorted(first), ["cert", "commit", "mode", "name", "t", "v"])
         self.assertEqual(first["mode"], "join")
-        self.assertNotIn("tag", first)
-        self.assertNotIn("consent", capture.kinds)
 
     def test_a_certificate_that_is_not_the_expected_device_stops_the_dialer_and_saves_nothing(self) -> None:
         make_hub(self.b)
@@ -351,56 +350,6 @@ class JoinTest(unittest.TestCase):
         self.assertIn("saving the trust entry failed", dialed.reason)
         self.assertEqual(server.wait_result().outcome, "incomplete")
 
-    def test_a_token_dial_to_a_join_server_is_dropped(self) -> None:
-        server = JoinServer(self, self.a)
-        token = pairing.new_invitation_token()
-        result = pairing.dial(
-            "127.0.0.1",
-            server.port,
-            token,
-            device_of(self.a),
-            local_pair_identity(self.b),
-            lambda _peer: None,
-            pairing.Limits(self.b),
-            timeouts=FAST,
-        )
-        self.assertEqual(result.outcome, "failed")
-        self.assertEqual(server.results, [])
-        self.assertEqual(load_policy(self.a).peers, ())
-
-    def test_a_join_dial_to_a_token_window_is_dropped(self) -> None:
-        token = pairing.new_invitation_token()
-        sock = socket.socket()
-        sock.bind(("127.0.0.1", 0))
-        sock.listen(4)
-        self.addCleanup(sock.close)
-        stop = threading.Event()
-        self.addCleanup(stop.set)
-        outcome: list[PairResult] = []
-        thread = threading.Thread(
-            target=lambda: outcome.append(
-                pairing.listen_once(
-                    sock, token, local_pair_identity(self.a), lambda _peer: None, pairing.Limits(self.a), timeouts=FAST, stop=stop
-                )
-            ),
-            daemon=True,
-        )
-        thread.start()
-        make_hub(self.b)
-        result = pairing.dial_join(
-            "127.0.0.1",
-            sock.getsockname()[1],
-            device_of(self.a),
-            local_pair_identity(self.b),
-            HubJoiner(self.b),
-            pairing.Limits(self.b),
-            timeouts=FAST,
-        )
-        self.assertEqual(result.outcome, "failed")
-        stop.set()
-        thread.join(5)
-        self.assertEqual(self.members(self.b), [])
-
     def test_sources_outside_the_private_ranges_are_dropped_by_default(self) -> None:
         self.assertTrue(pairing.private_source("192.168.1.5"))
         self.assertTrue(pairing.private_source("10.1.2.3"))
@@ -450,17 +399,75 @@ class JoinTest(unittest.TestCase):
         self.assertEqual((dialed.outcome, server.wait_result().outcome), ("paired", "paired"))
         self.assertEqual(list(limits.locked_addresses()), ["10.9.9.9"])
 
-    def test_hub_conflicts_and_a_busy_server_count_as_no_failure(self) -> None:
+    def recorded_failures(self, home: str) -> dict[str, Any]:
+        path = Path(home, "net", pairing.PAIRING_FILE)
+        return json.loads(path.read_text(encoding="utf-8"))["addresses"] if path.exists() else {}
+
+    def test_hub_conflicts_count_as_no_failure(self) -> None:
         make_hub(self.a, HUB_ID)
         make_hub(self.b, OTHER_HUB_ID, "other")
         server = JoinServer(self, self.a)
         for _ in range(4):
             self.assertEqual(dial(server, self.b).outcome, "failed")
-        limits = pairing.Limits(self.a)
-        self.assertEqual(limits.locked_addresses(), {})
-        path = Path(self.a, "net", pairing.PAIRING_FILE)
-        failures = json.loads(path.read_text(encoding="utf-8"))["addresses"] if path.exists() else {}
-        self.assertEqual(failures, {})
+        self.assertEqual(pairing.Limits(self.a).locked_addresses(), {})
+        self.assertEqual(self.recorded_failures(self.a), {})
+
+    def serve_one_join_hello(self, slot: threading.Lock) -> list[PairResult]:
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        self.addCleanup(listener.close)
+        client = socket.create_connection(listener.getsockname(), timeout=5)
+        self.addCleanup(client.close)
+        conn, _peer = listener.accept()
+        results: list[PairResult] = []
+        worker = threading.Thread(
+            target=pairing._serve_join,  # pyright: ignore[reportPrivateUsage]
+            args=(slot, conn, "127.0.0.1", local_pair_identity(self.a), HubJoiner(self.a), pairing.Limits(self.a), FAST, results.append),
+            daemon=True,
+        )
+        worker.start()
+        wire.write_frame(client, wire.encode({"t": "hello", "mode": "join"}))
+        worker.join(10)
+        self.assertFalse(worker.is_alive())
+        return results
+
+    def test_a_busy_server_drops_the_connection_and_counts_no_failure(self) -> None:
+        busy = threading.Lock()
+        busy.acquire()
+        self.assertEqual(self.serve_one_join_hello(busy), [])
+        self.assertEqual(self.recorded_failures(self.a), {})
+        self.assertTrue(busy.locked())
+
+    def test_the_same_hello_counts_as_a_failure_when_the_slot_is_free(self) -> None:
+        self.serve_one_join_hello(threading.Lock())
+        self.assertEqual(list(self.recorded_failures(self.a)), ["127.0.0.1"])
+
+    def probe(self, server: JoinServer) -> pairing.JoinProbe:
+        return pairing.probe_join("127.0.0.1", server.port, device_of(server.home), local_pair_identity(self.b), timeouts=FAST)
+
+    def test_a_probe_reads_the_hub_and_is_never_counted_as_a_failure(self) -> None:
+        make_hub(self.a)
+        server = JoinServer(self, self.a)
+        for _ in range(pairing.FAILURES_PER_HOUR + 1):
+            found = self.probe(server)
+            self.assertEqual((found.device_id, found.hub), (device_of(self.a), HubRef(HUB_ID, "home")))
+        self.assertTrue(wait_until(lambda: len(server.results) == pairing.FAILURES_PER_HOUR + 1))
+        self.assertEqual({r.outcome for r in server.results}, {"probed"})
+        self.assertEqual(pairing.Limits(self.a).locked_addresses(), {})
+        self.assertEqual(self.recorded_failures(self.a), {})
+        make_hub(self.b)
+        self.assertEqual(dial(server, self.b).outcome, "paired")
+
+    def test_a_probe_announces_itself_and_receives_no_hub_key(self) -> None:
+        make_hub(self.a)
+        server = JoinServer(self, self.a)
+        with captured_frames() as capture:
+            self.probe(server)
+            self.assertTrue(wait_until(lambda: len(server.results) == 1))
+        hello = next(frame for frame in capture.frames if frame["t"] == "hello" and "mode" in frame)
+        self.assertEqual(hello["mode"], pairing.PROBE_MODE)
+        self.assertEqual(capture.kinds, ["hello", "hello", "reveal", "tls", "state"])
 
     def test_only_failures_that_look_hostile_count(self) -> None:
         counts = pairing._counts_as_failure  # pyright: ignore[reportPrivateUsage]
@@ -499,14 +506,35 @@ class HubStateTest(unittest.TestCase):
 
 class HubMessageParseTest(unittest.TestCase):
     def frame(self, **changes: Any) -> dict[str, Any]:
-        value: dict[str, Any] = {"t": "hub", "hub": {"id": HUB_ID, "name": "home"}, "hubKey": "ab" * 32, "epoch": 0, "members": []}
+        value: dict[str, Any] = {
+            "t": "hub",
+            "hub": {"id": HUB_ID, "name": "home"},
+            "hubKey": "ab" * 32,
+            "epoch": 0,
+            "members": [],
+            "removed": [],
+        }
         value.update(changes)
         return value
 
     def test_a_good_message_parses(self) -> None:
         message = pairing.parse_hub_message(self.frame())
-        self.assertEqual((message.hub, message.key, message.members, message.epoch), (HubRef(HUB_ID, "home"), "ab" * 32, (), 0))
+        self.assertEqual(
+            (message.hub, message.key, message.members, message.epoch, message.removed), (HubRef(HUB_ID, "home"), "ab" * 32, (), 0, ())
+        )
         self.assertEqual(pairing.parse_hub_message(self.frame(epoch=7)).epoch, 7)
+
+    def test_removed_devices_parse_and_a_repeat_keeps_one_entry(self) -> None:
+        gone = format_digest(bytes(range(32)))
+        entries = [{"deviceId": gone, "atMs": 5}, {"deviceId": gone, "atMs": 9}]
+        message = pairing.parse_hub_message(self.frame(removed=entries))
+        self.assertEqual(message.removed, (pairing.RemovedRef(gone, 9),))
+
+    def test_a_message_without_the_removed_list_is_refused(self) -> None:
+        frame = self.frame()
+        del frame["removed"]
+        with self.assertRaises(pairing.PairingError):
+            pairing.parse_hub_message(frame)
 
     def test_refused_messages(self) -> None:
         for changes in (
@@ -523,6 +551,11 @@ class HubMessageParseTest(unittest.TestCase):
             {"epoch": "1"},
             {"epoch": 2**31},
             {"extra": 1},
+            {"removed": "none"},
+            {"removed": [{"deviceId": format_digest(bytes(range(32))), "atMs": 1}] * (pairing.MAX_JOIN_REMOVED + 1)},
+            {"removed": [{"deviceId": "x", "atMs": 1}]},
+            {"removed": [{"deviceId": format_digest(bytes(range(32))), "atMs": -1}]},
+            {"removed": [{"deviceId": format_digest(bytes(range(32)))}]},
         ):
             with self.assertRaises(pairing.PairingError, msg=str(changes)):
                 pairing.parse_hub_message(self.frame(**changes))

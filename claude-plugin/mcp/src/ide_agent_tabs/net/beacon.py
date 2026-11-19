@@ -231,6 +231,7 @@ class HubWatch:
         self._home = home
         self._signature: object = object()
         self._view: HubView | None = None
+        self.problem: str | None = None
 
     def _stamp(self) -> object:
         def stat_of(path: str) -> tuple[int, int, int] | None:
@@ -250,12 +251,14 @@ class HubWatch:
         return self._view
 
     def _read(self) -> HubView | None:
+        self.problem = None
         try:
             policy = load_policy(self._home)
             if policy.hub is None:
                 return None
             state = read_hub_state(self._home)
-        except (PolicyError, HubStateError, OSError):
+        except (PolicyError, HubStateError, OSError) as error:
+            self.problem = str(error)
             return None
         key = state.key if state is not None and state.hub_id == policy.hub.id else None
         members = {p.device_id: p.address for p in policy.peers if p.member}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ from .transport import LanTransport
 ANNOUNCE_INTERVAL_S = 30.0
 RECONNECT_WINDOW_S = 60.0
 NOTE_INTERVAL_S = 60.0
+REMOTE_NOTES_PER_INTERVAL = 10
 PENDING_INTERVAL_S = 60.0
 ONLINE_RECORD_S = 60.0
 MAX_ATTEMPTS = 256
@@ -184,6 +186,7 @@ class BeaconService:
         self._check = MemberCheck(self._watch, settings.clock)
         self._wire: Wire | None = None
         self._noted: dict[str, float] = {}
+        self._remote_notes: deque[float] = deque()
         self._flush_at = 0.0
         self._flushing = threading.Lock()
         self._next_bind: str | None = None
@@ -206,11 +209,17 @@ class BeaconService:
     def rebind(self, bind: str) -> None:
         self._next_bind = bind
 
-    def _note(self, key: str, text: str) -> None:
+    def _note(self, key: str, text: str, *, remote: bool = False) -> None:
         now = time.monotonic()
         last = self._noted.get(key)
         if last is not None and now - last < NOTE_INTERVAL_S:
             return
+        if remote:
+            while self._remote_notes and now - self._remote_notes[0] >= NOTE_INTERVAL_S:
+                self._remote_notes.popleft()
+            if len(self._remote_notes) >= REMOTE_NOTES_PER_INTERVAL:
+                return
+            self._remote_notes.append(now)
         if len(self._noted) >= MAX_ATTEMPTS:
             self._noted.clear()
         self._noted[key] = now
@@ -333,6 +342,8 @@ class BeaconService:
         if device_id is None:
             return
         view = self._watch()
+        if self._watch.problem is not None:
+            self._note("hub-files", f"member beacons are off until the hub files can be read: {self._watch.problem}")
         datagrams: list[bytes] = []
         if state.discoverable:
             hub_id, hub_name = (view.hub_id, view.hub_name) if view is not None else (None, None)
@@ -351,7 +362,7 @@ class BeaconService:
         beacon = heard.announcement
         verdict = self._check.check(beacon)
         if not verdict.ok:
-            self._note(f"reject:{beacon.device_id}:{verdict.reason}", f"ignored a member beacon from {heard.host}: {verdict.reason}")
+            self._note(f"reject:{heard.host}:{verdict.reason}", f"ignored a member beacon from {heard.host}: {verdict.reason}", remote=True)
             return
         if heard.host == verdict.stored_address:
             self._mark_online(beacon.device_id, heard.host)
@@ -367,7 +378,7 @@ class BeaconService:
         try:
             self._settings.check_destination(address, self._settings.member_port, wire.bind, wire.subnet.prefixlen)
         except (PairingError, ValueError, OSError) as error:
-            self._note(f"destination:{address}", f"a member beacon from {address} is not used: {error}")
+            self._note(f"destination:{address}", f"a member beacon from {address} is not used: {error}", remote=True)
             return False
         return True
 

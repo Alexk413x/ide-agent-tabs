@@ -290,7 +290,7 @@ class ProbeTest(FindCase):
         self.assertTrue(any("did not verify" in line for line in self.logs))
 
     def test_a_join_port_that_throttles_the_first_connection_is_retried(self) -> None:
-        slow = pairing.Timeouts(first_frame_s=2.0, handshake_s=10.0, consent_s=5.0, connect_s=2.0, window_s=20.0, min_interval_s=0.5)
+        slow = pairing.Timeouts(first_frame_s=2.0, handshake_s=10.0, consent_s=5.0, connect_s=2.0, min_interval_s=0.5)
         served = Served(self, self.b, timeouts=slow)
         result = self.run_find(served, udp=False, probe_retry_s=0.6)
         self.assertEqual([d.device_name for d in result.devices], ["bravo"])

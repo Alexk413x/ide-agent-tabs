@@ -1024,7 +1024,7 @@ class MemberNoticeTest(MemberCase):
             text = mail[0]["text"]
             self.assertIn(self.outside, text)
             self.assertIn(f'agent-tabs net folders add "{self.outside}"', text)
-            self.assertIn("laptop", text)
+            self.assertTrue(text.startswith(f"laptop asked to open a tab in {self.outside}"), text)
             self.assertIn("ask your user", text)
             self.assertEqual(mail[0]["from"]["agent"], "remote")
         self.assertNotIn("SENTINEL", json.dumps(mail_to(self.home, "local-1")))
@@ -1084,12 +1084,39 @@ class MemberNoticeTest(MemberCase):
             self.assertEqual(sent.call_count, 4)
         self.assertEqual(len(mail_to(self.home, "local-1")), 1)
 
-    def test_a_different_folder_gets_its_own_notice(self) -> None:
+    def test_refusals_for_different_folders_send_one_notice_per_peer_per_hour(self) -> None:
         self.refuse("r1")
         other = os.path.join(self.home, "outside", "second")
         os.makedirs(other)
         self.refuse("r2", other)
+        self.assertEqual(len(mail_to(self.home, "local-1")), 1)
+        self.clock.at += HOUR + 1
+        self.refuse("r3", other)
         self.assertEqual(len(mail_to(self.home, "local-1")), 2)
+
+    def test_a_flood_of_invented_paths_reaches_the_sessions_once_and_builds_no_further_text(self) -> None:
+        self.set_member(opens_per_hour=100)
+        with mock.patch.object(dispatch, "send_message", wraps=dispatch.send_message) as sent:
+            for number in range(40):
+                self.refuse(f"r{number}", os.path.join(self.outside, f"invented-{number}"))
+            self.assertEqual(sent.call_count, 2)
+        self.assertEqual(len(mail_to(self.home, "local-1")), 1)
+
+    def test_the_notice_limit_is_kept_per_peer(self) -> None:
+        self.refuse("r1")
+        self.dispatcher._notice_sessions = mock.Mock()  # type: ignore[method-assign]  # pyright: ignore[reportPrivateUsage]
+        self.dispatcher._notify_folder_refused(PeerGrant(device_id=OTHER, label="desk", address="192.168.1.21", member=True), self.outside)  # pyright: ignore[reportPrivateUsage]
+        self.dispatcher._notice_sessions.assert_called_once()  # pyright: ignore[reportPrivateUsage]
+
+    def test_refused_opens_count_against_the_peers_open_limit(self) -> None:
+        self.set_member(opens_per_hour=3)
+        for number in range(3):
+            self.refuse(f"r{number}", os.path.join(self.outside, f"invented-{number}"))
+        self.assertRefused(self.handle(self.member_open(self.outside, "r3")), "r3", "limit")
+        self.assertRefused(self.handle(self.member_open(self.inside, "r4")), "r4", "limit")
+        self.assertEqual(self.service.opened, [])
+        self.clock.at += HOUR + 1
+        self.assertTrue(self.handle(self.member_open(self.inside, "r5"))["ok"])
 
     def test_a_tab_a_peer_opened_gets_no_notice(self) -> None:
         tab = self.handle(self.member_open(self.inside, "r0"))["body"]["tab"]

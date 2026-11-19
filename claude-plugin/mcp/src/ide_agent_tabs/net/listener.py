@@ -44,7 +44,7 @@ from .identity import format_digest
 from .interfaces import InterfaceInfo, interface_for, local_addresses
 from .migration import ERRORS as MIGRATION_ERRORS
 from .migration import Migrator
-from .netid import GateState, current_network_id, fallback_of, gate_state, legacy_of, store_upgraded_network, upgraded_allowed
+from .netid import GateState, current_network_id, fallback_of, gate_state
 from .notify import notify, powershell_path
 from .policy import NetworkConfig, PolicyError, load_network_config, load_policy, policy_path, update_network_section
 from .transport import LanTransport, network_enabled
@@ -713,7 +713,6 @@ class Listener:
             except (OSError, ValueError):
                 self._network_id = None
         self._note_fallback()
-        self._upgrade_allowed()
         state = gate_state(self._live.allowed_networks, self._network_id)
         if (state.allowed, state.reason) != (self._gate.allowed, self._gate.reason):
             self.log("this network is allowed" if state.allowed else f"network gate closed: {state.reason}")
@@ -725,20 +724,6 @@ class Listener:
             self._fallback_noted = note
             if note is not None:
                 self.log(f"network id: {note}")
-
-    def _upgrade_allowed(self) -> None:
-        upgraded = upgraded_allowed(self._live.allowed_networks, self._network_id)
-        legacy = legacy_of(self._network_id)
-        if upgraded is None or legacy is None or self._network_id is None:
-            return
-        try:
-            stored = store_upgraded_network(self._home, legacy, self._network_id)
-        except (OSError, ValueError) as error:
-            self.log(f"the allowed network entry could not be upgraded to the id with the gateway MAC: {error}")
-            return
-        self._live = replace(self._live, allowed_networks=upgraded)
-        if stored:
-            self.log(f"network.allowedNetworks: {legacy} is now {self._network_id}")
 
     def _beacon_state(self) -> BeaconState:
         watch = self._watch
@@ -818,7 +803,7 @@ class Listener:
         threading.Thread(target=run, daemon=True).start()
 
     def _joined(self, result: pairing.PairResult) -> None:
-        if result.outcome not in ("paired", "incomplete"):
+        if result.outcome not in ("paired", "incomplete", "probed"):
             self.log(f"join refused: {result.reason}")
 
     def _serve(self) -> None:

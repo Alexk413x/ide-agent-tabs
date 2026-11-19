@@ -20,8 +20,9 @@ Plugin and MCP server 0.14.0. Not released yet.
   is given. `--address` and `<device id>@<address>` still work and skip the search.
 - Pairing failure counts and locks are kept per remote address in `net/pairing.json`. Three failures from one address lock
   that address for an hour and leave every other address free. A join attempt that fails after it was admitted counts as a
-  failure, except a hub mismatch, a local save error and a busy server. A join server takes one join at a time. The
-  minimum gap between connections is kept per address. `net status` lists the locked addresses.
+  failure, except a hub mismatch, a local save error and a busy server. A `net find` probe of a discoverable machine ends
+  cleanly and never counts, so repeated finds no longer lock the finder's address. A join server takes one join at a
+  time. The minimum gap between connections is kept per address. `net status` lists the locked addresses.
 
 ### Added
 
@@ -31,7 +32,8 @@ Plugin and MCP server 0.14.0. Not released yet.
   `network.memberFolders`. A path outside the list is refused with `folder-not-allowed`, and every local
   session that no peer opened gets a message that names the folder and `agent-tabs net folders add <path>`.
   The message omits the path and the command when the path is not an existing folder or holds shell
-  syntax or control characters.
+  syntax or control characters. A member gets at most one such message per hour, whatever path it names, and each
+  refused open counts against its `opensPerHour` limit.
   The tab keeps this machine's permission mode, and the request cannot name one.
 - The inventory reply to a hub member carries the machine's member folders in an optional `folders` list.
   The open request carries an optional `path` in place of `folder`.
@@ -50,8 +52,9 @@ Plugin and MCP server 0.14.0. Not released yet.
 - A network id is the profile name, the subnet and the default gateway's MAC address on Windows, and the gateway MAC
   address and subnet on macOS and Linux. On Windows the MAC comes from `Get-NetNeighbor`, with `arp -a` as the fallback.
   When neither returns it, the id uses the profile name and the subnet only, and the listener logs that. A stored entry
-  in the older name-and-subnet form still opens the gate, and the listener, `discoverable on`, `hub join` and
-  `networks add` rewrite it to the new id in `config.json`.
+  in the older name-and-subnet form no longer opens the gate while the gateway MAC is readable, because another network
+  can share that name and subnet. `net networks` says so, and `discoverable on`, `hub join` and `networks add` replace
+  the entry with the new id in `config.json`. The listener doesn't rewrite it.
 - `agent-tabs net hub join <device id> --address <IP>` and `net hub create --with <device id>@<IP>` join a discoverable
   machine over TLS pinned to the expected device id, with no token and no approval. Machines in different hubs refuse
   with `already-in-another-hub` and save nothing on either side. Both sides save each other as hub members with
@@ -90,8 +93,10 @@ Plugin and MCP server 0.14.0. Not released yet.
   accepted only from a pinned member of the same hub, only for a valid certificate that matches the device id and a private
   address, and never turns an existing non-member peer into a member.
 - `net revoke <label>` on a hub member also tells every other member to remove it, replaces the hub key and sends the new
-  key to the remaining members. After that, requests from the removed device are refused on every member. A message that
-  names the receiving device is refused, so a member cannot be removed by a message sent to itself.
+  key to the remaining members. After that, requests from the removed device are refused at once on every reachable
+  member, and on an offline member once the queued removal arrives. A message that names the receiving device is
+  refused, so a member cannot be removed by a message sent to itself. Each member remembers the removed device, so a
+  late introduction can't add it again.
 - The hub key has an epoch in `net/hub.json`. A member accepts a new key only when `(epoch, key)` is higher than its own, and
   answers with the version it holds, so two members that replace the key at the same time end with the same one. Beacons
   under an older key are ignored.

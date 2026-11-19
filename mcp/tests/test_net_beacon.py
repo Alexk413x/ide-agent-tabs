@@ -7,7 +7,9 @@ import os
 import queue
 import socket
 import threading
+import time
 import unittest
+from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
 from unittest import mock
@@ -20,6 +22,7 @@ from ide_agent_tabs.net.beacon import (
     BeaconError,
     Datagram,
     Endpoint,
+    Heard,
     HubView,
     HubWatch,
     Inbox,
@@ -33,7 +36,7 @@ from ide_agent_tabs.net.beacon import (
     parse_datagram,
     wire_for,
 )
-from ide_agent_tabs.net.discovery import LanDiscovery
+from ide_agent_tabs.net.discovery import LanDiscovery, source_label
 from ide_agent_tabs.net.hubstate import HubState, write_hub_state
 from ide_agent_tabs.net.identity import format_digest
 from ide_agent_tabs.net.policy import Hub, PeerGrant, Policy, save_policy
@@ -414,53 +417,86 @@ class EndpointOptionsTest(unittest.TestCase):
         self.assertTrue(any("joining the group" in note for note in endpoint.notes))
 
 
+def announce_join(
+    make_endpoint: Callable[[Wire], Endpoint],
+    wire: Wire,
+    device_id: str,
+    name: str,
+    hub_id: str | None = None,
+    hub_name: str | None = None,
+    port: int = 47830,
+) -> None:
+    endpoint = make_endpoint(wire)
+    try:
+        endpoint.send(build_join(name, device_id, hub_id, hub_name, port))
+    finally:
+        endpoint.close()
+
+
+def listen_for(receiver: LanDiscovery, seconds: float) -> list[Heard]:
+    deadline = time.monotonic() + seconds
+    return [heard for heard in receiver.listen(lambda: time.monotonic() >= deadline) if heard is not None]
+
+
 class FakePathDiscoveryTest(unittest.TestCase):
-    def browse(self, *, multicast: bool = True, broadcast: bool = True, dropped: tuple[str, ...] = ()) -> Any:
+    def listen(self, *, multicast: bool = True, broadcast: bool = True, dropped: tuple[str, ...] = ()) -> Any:
         network = FakeNetwork(WIRE)
         network.dropped.update(dropped)
-        found: list[Any] = []
+        found: list[tuple[str, str, str, str, str]] = []
+
+        def collect() -> None:
+            for heard in listen_for(receiver, 1.0):
+                announcement = heard.announcement
+                assert isinstance(announcement, JoinAnnouncement)
+                found.append(
+                    (
+                        announcement.device_id,
+                        heard.host,
+                        announcement.device_name,
+                        source_label(receiver.paths_for(announcement.id)),
+                        "join",
+                    )
+                )
+
         receiver = LanDiscovery(WIRE, ALPHA, make_endpoint=lambda wire: Endpoint(wire, make_socket=network.socket), poll_s=0.05)
-        thread = threading.Thread(target=lambda: found.extend(receiver.browse(1.0)), daemon=True)
+        thread = threading.Thread(target=collect, daemon=True)
         thread.start()
         self.assertTrue(wait_until(lambda: network.listening() == 1, 5))
-        sender = LanDiscovery(
+        announce_join(
+            lambda wire: Endpoint(wire, multicast=multicast, broadcast=broadcast, make_socket=network.socket),
             sender_wire(),
             BRAVO,
-            make_endpoint=lambda wire: Endpoint(wire, multicast=multicast, broadcast=broadcast, make_socket=network.socket),
+            "bravo",
         )
-        sender.announce("", "", "bravo", 47830)
         thread.join(10)
         return found, network
 
     def test_discovery_works_over_multicast_alone(self) -> None:
-        found, network = self.browse(broadcast=False)
-        self.assertEqual(
-            [(c.device_id, c.address, c.device_name, c.source, c.kind, c.verified) for c in found],
-            [(BRAVO, "192.168.1.20", "bravo", "multicast", "join", False)],
-        )
+        found, network = self.listen(broadcast=False)
+        self.assertEqual(found, [(BRAVO, "192.168.1.20", "bravo", "multicast", "join")])
         self.assertEqual([kind for kind, _data in network.sent], [MULTICAST])
 
     def test_discovery_works_over_broadcast_alone(self) -> None:
-        found, network = self.browse(multicast=False)
-        self.assertEqual([(c.device_id, c.source) for c in found], [(BRAVO, "broadcast")])
+        found, network = self.listen(multicast=False)
+        self.assertEqual([(device_id, source) for device_id, _host, _name, source, _kind in found], [(BRAVO, "broadcast")])
         self.assertEqual([kind for kind, _data in network.sent], [BROADCAST])
 
-    def test_both_paths_give_one_candidate_that_names_both(self) -> None:
-        found, network = self.browse()
-        self.assertEqual([(c.device_id, c.source) for c in found], [(BRAVO, "multicast+broadcast")])
+    def test_both_paths_give_one_row_that_names_both(self) -> None:
+        found, network = self.listen()
+        self.assertEqual([(device_id, source) for device_id, _host, _name, source, _kind in found], [(BRAVO, "multicast+broadcast")])
         self.assertEqual(sorted(kind for kind, _data in network.sent), [BROADCAST, MULTICAST])
         self.assertEqual(len({data for _kind, data in network.sent}), 1)
 
     def test_a_network_that_drops_multicast_still_delivers_the_broadcast_copy(self) -> None:
-        found, _network = self.browse(dropped=(MULTICAST,))
-        self.assertEqual([(c.device_id, c.source) for c in found], [(BRAVO, "broadcast")])
+        found, _network = self.listen(dropped=(MULTICAST,))
+        self.assertEqual([(device_id, source) for device_id, _host, _name, source, _kind in found], [(BRAVO, "broadcast")])
 
     def test_a_network_that_drops_broadcast_still_delivers_the_multicast_copy(self) -> None:
-        found, _network = self.browse(dropped=(BROADCAST,))
-        self.assertEqual([(c.device_id, c.source) for c in found], [(BRAVO, "multicast")])
+        found, _network = self.listen(dropped=(BROADCAST,))
+        self.assertEqual([(device_id, source) for device_id, _host, _name, source, _kind in found], [(BRAVO, "multicast")])
 
     def test_a_network_that_drops_both_delivers_nothing(self) -> None:
-        found, _network = self.browse(dropped=(MULTICAST, BROADCAST))
+        found, _network = self.listen(dropped=(MULTICAST, BROADCAST))
         self.assertEqual(found, [])
 
     def test_a_receiver_that_cannot_bind_reports_the_error_and_finds_nothing(self) -> None:
@@ -468,7 +504,7 @@ class FakePathDiscoveryTest(unittest.TestCase):
             raise OSError(10048, "address in use")
 
         receiver = LanDiscovery(WIRE, ALPHA, make_endpoint=refuse)
-        self.assertEqual(receiver.browse(0.2), [])
+        self.assertEqual(listen_for(receiver, 0.2), [])
         self.assertEqual(receiver.error, "address in use")
 
     def test_the_announcement_a_receiver_sees_is_the_join_announcement(self) -> None:
@@ -476,8 +512,7 @@ class FakePathDiscoveryTest(unittest.TestCase):
         seen: list[bytes] = []
         listener = Endpoint(WIRE, make_socket=network.socket)
         self.addCleanup(listener.close)
-        sender = LanDiscovery(sender_wire(), BRAVO, make_endpoint=lambda wire: Endpoint(wire, make_socket=network.socket))
-        sender.announce(HUB_ID, "home", "bravo", 47830)
+        announce_join(lambda wire: Endpoint(wire, make_socket=network.socket), sender_wire(), BRAVO, "bravo", HUB_ID, "home")
         datagram = listener.recv(1.0)
         assert datagram is not None
         seen.append(datagram.data)

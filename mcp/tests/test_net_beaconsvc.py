@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import queue
 import threading
@@ -24,9 +25,18 @@ from ide_agent_tabs.net.beacon import (
     build_member,
     parse_datagram,
 )
-from ide_agent_tabs.net.beaconsvc import ANNOUNCE_INTERVAL_S, BeaconService, BeaconSettings, BeaconState, Reconnector, check_remembered
+from ide_agent_tabs.net.beaconsvc import (
+    ANNOUNCE_INTERVAL_S,
+    REMOTE_NOTES_PER_INTERVAL,
+    BeaconService,
+    BeaconSettings,
+    BeaconState,
+    Reconnector,
+    check_remembered,
+)
 from ide_agent_tabs.net.client import NetClientError
-from ide_agent_tabs.net.hubstate import HubState, Pending, add_pending, read_hub_state, write_hub_state
+from ide_agent_tabs.net.hubstate import HubState, Pending, add_pending, hub_state_path, read_hub_state, write_hub_state
+from ide_agent_tabs.net.identity import format_digest
 from ide_agent_tabs.net.interfaces import InterfaceInfo
 from ide_agent_tabs.net.listener import Listener, Options
 from ide_agent_tabs.net.pairing import PAIRING_PORT
@@ -319,6 +329,38 @@ class ReceivingTest(PlainHomeCase):
         time.sleep(0.3)
         self.assertEqual(calls, [])
         self.assertIn("MAC", service.log)
+
+    def test_beacons_with_invented_device_ids_from_one_host_write_one_log_line(self) -> None:
+        self.in_hub()
+        service = self.run_service()
+        self.assertTrue(wait_until(lambda: self.script.opened == 1, 5))
+        for number in range(30):
+            self.script.incoming.put(member_datagram(device=format_digest(number.to_bytes(32, "big"))))
+        self.assertTrue(wait_until(lambda: self.script.incoming.empty(), 5))
+        time.sleep(0.3)
+        self.assertEqual(service.log.count("ignored a member beacon"), 1)
+
+    def test_rejected_beacons_from_many_hosts_write_a_bounded_number_of_log_lines(self) -> None:
+        self.in_hub()
+        service = self.run_service()
+        self.assertTrue(wait_until(lambda: self.script.opened == 1, 5))
+        for number in range(3, 60):
+            self.script.incoming.put(member_datagram(device=format_digest(number.to_bytes(32, "big")), host=f"192.168.1.{number + 100}"))
+        self.assertTrue(wait_until(lambda: self.script.incoming.empty(), 5))
+        time.sleep(0.3)
+        self.assertEqual(service.log.count("ignored a member beacon"), REMOTE_NOTES_PER_INTERVAL)
+
+    def test_a_damaged_hub_file_is_logged_once_and_the_service_keeps_sending_join_beacons(self) -> None:
+        self.in_hub()
+        path = hub_state_path(self.home)
+        body = json.loads(path.read_text(encoding="utf-8"))
+        body["pending"] = [{"to": BRAVO, "op": "remove", "device": "x", "atMs": 1}]
+        path.write_text(json.dumps(body), encoding="utf-8")
+        service = self.run_service(interval_s=0.05)
+        self.assertTrue(wait_until(lambda: len(self.script.sent) >= 3, 5), service.log)
+        self.assertEqual(service.log.count("member beacons are off until the hub files can be read"), 1)
+        self.assertTrue(service.thread.is_alive())
+        self.assertTrue(all(isinstance(announcement, JoinAnnouncement) for announcement in parsed(self.script)))
 
     def test_a_beacon_under_the_old_hub_key_is_ignored_after_the_key_changes(self) -> None:
         self.in_hub()

@@ -20,10 +20,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from ..clock import now_ms
-from ..files import file_lock, read_text_if_exists, remove_file, write_atomically
+from ..files import file_lock, remove_file
 from ..home import agent_tabs_home
 from ..jev.settings import CONFIG_FILE
-from ..jsjson import parse, stringify
+from ..jsjson import parse
 from ..liveness import pid_alive
 from ..messaging.sessions import SESSION_ID
 from ..processes import spawn_detached, terminal_environment
@@ -36,7 +36,7 @@ from .client import identity_dir, local_device_id, peer_cert_path, send_request
 from .confirm import ConfirmError, confirm
 from .firewall import FirewallError
 from .hub import default_member_folder
-from .hubstate import ensure_hub_key, remove_hub_state
+from .hubstate import HubStateError, clear_removed, ensure_hub_key, remove_hub_state
 from .identity import der_from_pem, format_digest, parse_device_id
 from .interfaces import InterfaceError, InterfaceInfo, interface_for
 from .listener import append_log, live_listener, log_file, read_listener, request_stop
@@ -48,7 +48,7 @@ from .netid import current_network_id, gate_state
 from .notify import notify
 from .origin import Caller, OriginChecker
 from .outbound import OFFLINE_AFTER_MS
-from .pairing import PAIRING_FILE, Busy, Limits, PairingError
+from .pairing import PAIRING_FILE, Limits, PairingError
 from .peers import LabelTaken, remove_peer, save_peer
 from .policy import (
     ALIAS,
@@ -64,6 +64,7 @@ from .policy import (
     load_policy,
     policy_path,
     save_policy,
+    update_network_section,
 )
 from .presence import read_presence
 from .private_files import ensure_private_dir
@@ -207,30 +208,13 @@ def net_dir_for(home: str) -> Path:
     return path
 
 
-def read_config(home: str) -> dict[str, Any]:
-    path = os.path.join(home, CONFIG_FILE)
-    text = read_text_if_exists(path)
-    if text is None or not text.strip():
-        return {}
-    try:
-        config = parse(text)
-    except ValueError as error:
-        raise CliError(f"{path} is not valid JSON: {error}") from error
-    if not isinstance(config, dict):
-        raise CliError(f"{path} must hold a JSON object")
-    return config  # pyright: ignore[reportUnknownVariableType]
-
-
 def set_network(home: str, updates: Mapping[str, Any]) -> None:
-    config = read_config(home)
-    section = config.get("network")
-    if section is None:
-        section = {}
-    if not isinstance(section, dict):
-        raise CliError(f'"network" in {os.path.join(home, CONFIG_FILE)} must be an object')
-    section.update(updates)  # pyright: ignore[reportUnknownMemberType]
-    config["network"] = section
-    write_atomically(os.path.join(home, CONFIG_FILE), stringify(config, 2) + "\n")
+    try:
+        update_network_section(home, dict(updates))
+    except PolicyError as error:
+        raise CliError(str(error)) from error
+    except ValueError as error:
+        raise CliError(f"{os.path.join(home, CONFIG_FILE)} is not valid JSON: {error}") from error
 
 
 def device_name(svc: Services) -> str:
@@ -368,10 +352,7 @@ def _pairing_state(svc: Services) -> str:
         return "available"
     limits = Limits(svc.home)
     try:
-        limits.check()
         locked = limits.locked_addresses()
-    except Busy as error:
-        return str(error)
     except PairingError as error:
         return f"unreadable ({error})"
     if not locked:
@@ -616,9 +597,12 @@ def store_peer(
     agents: Sequence[str] = (),
 ) -> tuple[PeerGrant, bool]:
     try:
-        return save_peer(svc.home, identity, pem, address, label, folders=folders, agents=agents)
+        saved = save_peer(svc.home, identity, pem, address, label, folders=folders, agents=agents)
     except LabelTaken as error:
         raise CliError(str(error)) from error
+    with contextlib.suppress(HubStateError):
+        clear_removed(svc.home, identity)
+    return saved
 
 
 def _cmd_trust(svc: Services, args: Sequence[str]) -> int:
@@ -887,7 +871,8 @@ def _cmd_revoke(svc: Services, args: Sequence[str]) -> int:
     if peer.member and policy.hub is not None:
         report = hubsync.announce_removal(svc.home, peer.device_id, svc.member_request or send_request)
         svc.record("hub-revoke", device=peer.device_id, told=len(report.told), queued=len(report.queued))
-        svc.out("The hub key was replaced, and the other members were sent the removal and the new key.")
+        if report.state_problem is None:
+            svc.out("The hub key was replaced, and the other members were sent the removal and the new key.")
         for line in report.lines():
             svc.out(line)
     return 0
@@ -898,6 +883,7 @@ def _cmd_rename(svc: Services, args: Sequence[str]) -> int:
     parser.add_argument("label")
     parser.add_argument("new_label")
     options = parser.parse_args(args)
+    refuse_remote_origin(svc)
     new_label: str = options.new_label
     if LABEL.fullmatch(new_label) is None:
         raise CliError("a label is 1 to 32 characters of a-z, 0-9 and -")

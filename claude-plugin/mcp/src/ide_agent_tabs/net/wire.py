@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, NoReturn, Union
 
 from ..messaging.sessions import SESSION_ID
+from .identity import format_digest, parse_device_id
 from .policy import ALIAS
 
 PROTOCOL_VERSION = 1
@@ -49,7 +50,6 @@ _MESSAGE_ID = re.compile(r"m-[0-9a-f]{16}")
 _MODEL = re.compile(r"[A-Za-z0-9._:/@+-]{1,200}")
 _HUB_ID = re.compile(r"[0-9a-f]{32}")
 _HUB_KEY = re.compile(r"[0-9a-f]{64}")
-_DEVICE_ID = re.compile(r"[A-Za-z0-9-]{1,96}")
 _MEMBER_LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _IPV4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
 _ABSOLUTE_PATH = re.compile(r"(?:[A-Za-z]:[\\/]|/(?![/\\])).*", re.DOTALL)
@@ -351,13 +351,25 @@ def _whole(value: object, field: str, low: int, high: int) -> int:
     return value
 
 
+def _device(value: object, field: str) -> str:
+    if not isinstance(value, str):
+        _fail(f"{field} must be a string")
+    try:
+        canonical = format_digest(parse_device_id(value))
+    except ValueError:
+        _fail(f"{field} is malformed")
+    if canonical != value:
+        _fail(f"{field} is not in canonical form")
+    return value
+
+
 def _parse_introduce(body: dict[str, Any]) -> IntroduceBody:
     _only(body, ("hub", "member"), (), "introduce body")
     member = _object(body["member"], "member")
     _only(member, ("deviceId", "label", "address", "port", "certificatePem"), (), "member")
     return IntroduceBody(
         hub=_text(body["hub"], "hub", _HUB_ID),
-        device_id=_text(member["deviceId"], "deviceId", _DEVICE_ID),
+        device_id=_device(member["deviceId"], "deviceId"),
         label=_text(member["label"], "label", _MEMBER_LABEL),
         address=_text(member["address"], "address", _IPV4),
         port=_whole(member["port"], "port", 1, 65535),
@@ -369,7 +381,7 @@ def _parse_remove(body: dict[str, Any]) -> RemoveBody:
     _only(body, ("hub", "device", "rotate"), (), "remove body")
     if not isinstance(body["rotate"], bool):
         _fail("rotate must be a boolean")
-    return RemoveBody(_text(body["hub"], "hub", _HUB_ID), _text(body["device"], "device", _DEVICE_ID), body["rotate"])
+    return RemoveBody(_text(body["hub"], "hub", _HUB_ID), _device(body["device"], "device"), body["rotate"])
 
 
 def _parse_rekey(body: dict[str, Any]) -> RekeyBody:

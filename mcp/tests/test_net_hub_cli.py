@@ -249,11 +249,12 @@ class GatewayMacTest(HubCliCase):
         self.assertIn("already allowed", self.h.text)
         self.assertEqual(load_network_config(self.a)[0].allowed_networks, (self.UPGRADED,))
 
-    def test_the_view_calls_the_old_format_entry_allowed(self) -> None:
+    def test_the_view_says_the_old_format_entry_does_not_allow_the_network_and_how_to_fix_it(self) -> None:
         Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": BIND, "allowedNetworks": [self.LEGACY]}}))
         self.network = tagged_network_id(self.UPGRADED, legacy=self.LEGACY)
         self.assertEqual(self.h.run("networks"), 0)
-        self.assertIn(f"current network: {self.UPGRADED} (allowed)", self.h.text)
+        self.assertIn(f"current network: {self.UPGRADED} (this network is listed only by its older id", self.h.text)
+        self.assertIn("net networks add", self.h.text)
 
     def test_a_fallback_id_prints_a_warning_when_it_is_added(self) -> None:
         self.network = tagged_network_id(
@@ -475,6 +476,7 @@ GUARDED: list[tuple[str, ...]] = [
     ("hub", "create", "--with", f"x@{PEER}"),
     ("hub", "leave"),
     ("revoke", "laptop"),
+    ("rename", "laptop", "renamed"),
     ("grant", "laptop", "--agent", "claude"),
 ]
 READ_ONLY: list[tuple[str, ...]] = [

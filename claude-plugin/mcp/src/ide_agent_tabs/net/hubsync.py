@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import ssl
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -11,6 +12,7 @@ from ..clock import now_ms
 from . import wire
 from .client import NetClientError, local_device_id, read_peer_pem, send_request
 from .hubstate import (
+    MAX_EPOCH_JUMP,
     HubState,
     HubStateError,
     Pending,
@@ -18,6 +20,7 @@ from .hubstate import (
     adopt_key,
     drop_pending,
     read_hub_state,
+    record_removed,
     remember_member,
     rotate_key,
 )
@@ -56,9 +59,15 @@ class Report:
     queued: list[str] = field(default_factory=list)
     refused: list[str] = field(default_factory=list)
     rotator: str | None = None
+    state_problem: str | None = None
 
     def lines(self, queued: str = QUEUED_TEXT) -> list[str]:
         found: list[str] = []
+        if self.state_problem:
+            found.append(
+                f"The hub state file is not usable ({self.state_problem}), so the key was not replaced and offline members "
+                "learn nothing later. Fix or delete hub.json after leaving the hub."
+            )
         if self.told:
             found.append(f"Told: {', '.join(sorted(self.told))}.")
         if self.queued:
@@ -95,6 +104,16 @@ def _deliver(home: str, request: Request, to: str, op: str, body: Mapping[str, A
     return Delivery("ok", found if isinstance(found, dict) else {})  # pyright: ignore[reportUnknownVariableType]
 
 
+def _queue(home: str, tasks: Sequence[Pending]) -> None:
+    with contextlib.suppress(HubStateError):
+        add_pending(home, tasks)
+
+
+def _unqueue(home: str, tasks: Sequence[Pending]) -> None:
+    with contextlib.suppress(HubStateError):
+        drop_pending(home, tasks)
+
+
 def _each(items: Sequence[T], work: Callable[[T], None]) -> None:
     if not items:
         return
@@ -126,9 +145,9 @@ def _push_once(home: str, request: Request, state: HubState) -> tuple[Report, li
         delivery = _deliver(home, request, peer.device_id, "rekey", body)
         _classify(report, peer, delivery)
         if delivery.outcome == "unreachable":
-            add_pending(home, [Pending(peer.device_id, "rekey", "", now_ms())])
+            _queue(home, [Pending(peer.device_id, "rekey", "", now_ms(), state.epoch)])
         elif delivery.outcome == "ok":
-            drop_pending(home, [Pending(peer.device_id, "rekey")])
+            _unqueue(home, [Pending(peer.device_id, "rekey", "", 0, state.epoch)])
             version = _version(delivery.body)
             if version is not None:
                 versions.append(version)
@@ -155,18 +174,25 @@ def announce_removal(home: str, removed: str, request: Request = send_request) -
     hub = load_policy(home).hub
     if hub is None:
         return Report()
-    rotate_key(home)
     report = Report()
+    try:
+        rotate_key(home)
+    except HubStateError as error:
+        report.state_problem = str(error)
     body = {"hub": hub.id, "device": removed, "rotate": False}
 
     def one(peer: PeerGrant) -> None:
         delivery = _deliver(home, request, peer.device_id, "remove", body)
         _classify(report, peer, delivery)
         if delivery.outcome == "unreachable":
-            add_pending(home, [Pending(peer.device_id, "remove", removed, now_ms())])
+            _queue(home, [Pending(peer.device_id, "remove", removed, now_ms())])
 
     _each(_members(home, removed), one)
-    keyed = push_key(home, request)
+    try:
+        keyed = push_key(home, request)
+    except HubStateError as error:
+        report.state_problem = report.state_problem or str(error)
+        return report
     report.queued.extend(label for label in keyed.queued if label not in report.queued)
     report.refused.extend(label for label in keyed.refused if label not in report.refused)
     return report
@@ -185,7 +211,7 @@ def introduce_member(home: str, device_id: str, request: Request = send_request)
         delivery = _deliver(home, request, peer.device_id, "introduce", body)
         _classify(report, peer, delivery)
         if delivery.outcome == "unreachable":
-            add_pending(home, [Pending(peer.device_id, "introduce", device_id, now_ms())])
+            _queue(home, [Pending(peer.device_id, "introduce", device_id, now_ms())])
 
     _each(_members(home, device_id), one)
     return report
@@ -228,7 +254,7 @@ def flush_pending(home: str, request: Request = send_request) -> int:
     now = now_ms()
     stale = [t for t in state.pending if now - t.at_ms > PENDING_MAX_AGE_MS]
     if stale:
-        drop_pending(home, stale)
+        _unqueue(home, stale)
     groups: dict[str, list[Pending]] = {}
     for task in state.pending:
         if task not in stale:
@@ -255,10 +281,11 @@ def flush_pending(home: str, request: Request = send_request) -> int:
             if prepared is None:
                 dropped.append(task)
                 continue
+            sent = replace(task, epoch=prepared[1]["epoch"]) if task.op == "rekey" else task
             delivery = _deliver(home, request, device, *prepared)
             if delivery.outcome == "unreachable":
                 return
-            (delivered if delivery.outcome == "ok" else dropped).append(task)
+            (delivered if delivery.outcome == "ok" else dropped).append(sent)
             if delivery.outcome == "ok" and task.op == "rekey":
                 version = _version(delivery.body)
                 if version is not None:
@@ -267,7 +294,7 @@ def flush_pending(home: str, request: Request = send_request) -> int:
     _each(list(groups), one)
     done = [*delivered, *dropped]
     if done:
-        drop_pending(home, done)
+        _unqueue(home, done)
     current = read_hub_state(home)
     if current is not None and any(v > current.version() for v in versions):
         adopt_key(home, hub_id, *max(versions))
@@ -297,6 +324,18 @@ class HubSync:
         self._request = request
         self._spawn = spawn
         self._allow_address = allow_address
+        self._rotation_lock = threading.Lock()
+        self._rotation_queue: list[str] = []
+        self._rotation_running = False
+
+    def _state(self) -> HubState:
+        try:
+            state = read_hub_state(self._home)
+        except HubStateError:
+            raise HubRefusal("hub-state-unusable") from None
+        if state is None:
+            raise HubRefusal("no-hub-state")
+        return state
 
     def handle(self, sender: PeerGrant, body: wire.HubBody) -> dict[str, Any]:
         hub = load_policy(self._home).hub
@@ -327,6 +366,8 @@ class HubSync:
             return {"added": False}
         if not self._allow_address(ref.address):
             raise HubRefusal("address-not-private")
+        if self._state().is_removed(ref.device_id):
+            raise HubRefusal("removed-member")
         policy = load_policy(self._home)
         known = grant_for(policy, ref.device_id)
         if known is not None:
@@ -352,21 +393,46 @@ class HubSync:
         if body.device == local_device_id(self._home):
             raise HubRefusal("self-removal")
         target = grant_for(load_policy(self._home), body.device)
-        removed = False
-        if target is not None:
-            if not target.member:
-                raise HubRefusal("not-a-member-peer")
-            remove_peer(self._home, target.device_id)
-            self._bump()
-            removed = True
-            if target.device_id == sender.device_id:
-                self._notice(f"The hub member {target.label} left the hub.")
-            else:
-                self._notice(f"The hub member {sender.label} removed {target.label} from the hub.")
+        if target is None:
+            if body.rotate:
+                raise HubRefusal("unknown-member")
+            with contextlib.suppress(HubStateError):
+                record_removed(self._home, body.device)
+            return {"removed": False}
+        if not target.member:
+            raise HubRefusal("not-a-member-peer")
+        remove_peer(self._home, target.device_id)
+        self._bump()
+        if target.device_id == sender.device_id:
+            self._notice(f"The hub member {target.label} left the hub.")
+        else:
+            self._notice(f"The hub member {sender.label} removed {target.label} from the hub.")
         if body.rotate:
-            device = body.device
-            self._spawn(lambda: self._rotate(device))
-        return {"removed": removed}
+            self._request_rotation(body.device)
+        return {"removed": True}
+
+    def _request_rotation(self, device: str) -> None:
+        with self._rotation_lock:
+            if device not in self._rotation_queue:
+                self._rotation_queue.append(device)
+            if self._rotation_running:
+                return
+            self._rotation_running = True
+        self._spawn(self._rotation_worker)
+
+    def _rotation_worker(self) -> None:
+        while True:
+            with self._rotation_lock:
+                if not self._rotation_queue:
+                    self._rotation_running = False
+                    return
+                device = self._rotation_queue.pop(0)
+            try:
+                self._rotate(device)
+            except BaseException:
+                with self._rotation_lock:
+                    self._rotation_running = False
+                raise
 
     def _rotate(self, removed: str) -> None:
         try:
@@ -377,7 +443,9 @@ class HubSync:
         self._log(f"net: rotated the hub key after {removed[:15]} left; {'; '.join(report.lines()) or 'no other member to tell'}")
 
     def _rekey(self, body: wire.RekeyBody) -> dict[str, Any]:
-        state: HubState | None = adopt_key(self._home, body.hub, body.epoch, body.key)
+        if body.epoch > self._state().epoch + MAX_EPOCH_JUMP:
+            raise HubRefusal("epoch-too-far")
+        state = adopt_key(self._home, body.hub, body.epoch, body.key)
         if state is None:
             raise HubRefusal("no-hub-state")
         return {"epoch": state.epoch, "key": state.key}

@@ -10,9 +10,6 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from ..files import file_lock, read_text_if_exists, write_atomically
-from ..jev.settings import CONFIG_FILE
-from ..jsjson import parse, stringify
 from ..processes import RunResult
 from ..processes import run as run_process
 from .interfaces import InterfaceError, InterfaceInfo, interface_for
@@ -22,6 +19,10 @@ from .policy import NETWORK_ID
 QUERY_TIMEOUT_S = 15.0
 NOT_ALLOWED = "this network is not in network.allowedNetworks"
 UNREADABLE = "the id of this network can't be read, so it counts as not allowed"
+LEGACY_ONLY = (
+    "this network is listed only by its older id (profile name and subnet), which another network can share; "
+    "run `agent-tabs net networks add` here to allow it by its id with the gateway MAC"
+)
 
 _ADDRESS_ENV = "AGENT_TABS_ADDRESS"
 _MAC = re.compile(r"(?:[0-9a-f]{1,2}:){5}[0-9a-f]{1,2}", re.IGNORECASE)
@@ -91,10 +92,10 @@ class GateState:
 def gate_state(allowed_networks: Sequence[str], network_id: str | None) -> GateState:
     if network_id is None:
         return GateState(False, None, UNREADABLE)
+    if network_id in allowed_networks:
+        return GateState(True, network_id)
     legacy = legacy_of(network_id)
-    if network_id not in allowed_networks and (legacy is None or legacy not in allowed_networks):
-        return GateState(False, network_id, NOT_ALLOWED)
-    return GateState(True, network_id)
+    return GateState(False, network_id, LEGACY_ONLY if legacy is not None and legacy in allowed_networks else NOT_ALLOWED)
 
 
 def upgraded_allowed(allowed_networks: Sequence[str], network_id: str | None) -> tuple[str, ...] | None:
@@ -102,22 +103,6 @@ def upgraded_allowed(allowed_networks: Sequence[str], network_id: str | None) ->
     if network_id is None or legacy is None or network_id in allowed_networks or legacy not in allowed_networks:
         return None
     return tuple(network_id if item == legacy else item for item in allowed_networks)
-
-
-def store_upgraded_network(home: str, legacy: str, network_id: str) -> bool:
-    path = os.path.join(home, CONFIG_FILE)
-    with file_lock(path):
-        text = read_text_if_exists(path)
-        config: Any = parse(text) if text and text.strip() else {}
-        section: Any = config.get("network") if isinstance(config, dict) else None  # pyright: ignore[reportUnknownMemberType]
-        if not isinstance(section, dict):
-            return False
-        listed: Any = section.get("allowedNetworks")  # pyright: ignore[reportUnknownMemberType]
-        if not isinstance(listed, list) or legacy not in listed or network_id in listed:
-            return False
-        section["allowedNetworks"] = [network_id if item == legacy else item for item in listed]  # pyright: ignore[reportUnknownVariableType]
-        write_atomically(path, stringify(config, 2) + "\n")
-    return True
 
 
 def check_network(allowed_networks: Sequence[str], bind: str, read: Callable[[str], str | None]) -> GateState:

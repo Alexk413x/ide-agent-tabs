@@ -158,7 +158,8 @@ class NetDispatcher:
         self._lock = threading.Lock()
         self._sent: dict[str, deque[int]] = {}
         self._seen: dict[str, OrderedDict[str, tuple[str, dict[str, Any]]]] = {}
-        self._noticed: OrderedDict[tuple[str, str], int] = OrderedDict()
+        self._noticed: OrderedDict[str, int] = OrderedDict()
+        self._refused_opens: dict[str, deque[int]] = {}
         self._hub_sync = hub_sync
 
     def handle(self, peer: str, request: object) -> dict[str, Any]:
@@ -300,9 +301,25 @@ class NetDispatcher:
             raise _Refusal(f"folder-{problem}")
         return folder
 
+    def _recent_refused_opens(self, grant: PeerGrant) -> deque[int]:
+        times = self._refused_opens.setdefault(grant.device_id, deque())
+        now = self._now_ms()
+        while times and now - times[0] >= HOUR_MS:
+            times.popleft()
+        return times
+
+    def _check_refused_open_budget(self, grant: PeerGrant) -> None:
+        with self._lock:
+            if len(self._recent_refused_opens(grant)) >= grant.opens_per_hour:
+                raise _Refusal("limit")
+
+    def _count_refused_open(self, grant: PeerGrant) -> None:
+        with self._lock:
+            self._recent_refused_opens(grant).append(self._now_ms())
+
     def _notify_folder_refused(self, grant: PeerGrant, path: str) -> None:
         now = self._now_ms()
-        key = (grant.device_id, os.path.normcase(path))
+        key = grant.device_id
         with self._lock:
             last = self._noticed.get(key)
             if last is not None and now - last < HOUR_MS:
@@ -314,7 +331,7 @@ class NetDispatcher:
         label = wire.escape_display(grant.label)
         if _shell_safe_folder(path):
             text = (
-                f"The hub member {label} asked to open a tab in {path}, which is outside network.memberFolders, "
+                f"{label} asked to open a tab in {path}, which is outside network.memberFolders, "
                 "so this machine refused. To allow it, ask your user, then run: "
                 f'agent-tabs net folders add "{path}"'
             )
@@ -352,7 +369,12 @@ class NetDispatcher:
         peer = trace.peer
         max_global = config.max_remote_tabs
         if grant.member:
-            folder = self._member_folder(grant, body, config.member_folders)
+            self._check_refused_open_budget(grant)
+            try:
+                folder = self._member_folder(grant, body, config.member_folders)
+            except _Refusal:
+                self._count_refused_open(grant)
+                raise
         else:
             folder = self._granted_folder(grant, body)
         try:

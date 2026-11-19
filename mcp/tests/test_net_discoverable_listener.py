@@ -180,17 +180,18 @@ class DiscoverableListenerTest(unittest.TestCase):
         self.assertEqual(body["member"]["label"], "bravo")
         self.assertTrue(wait_until(lambda: "introduced" in running.log(), 5))
 
-    def test_a_network_id_with_the_gateway_mac_upgrades_an_old_format_allowed_entry_in_place(self) -> None:
-        Path(self.a, "config.json").write_text(
-            json.dumps({"network": {"allowedNetworks": [HOME_NETWORK, OTHER_NETWORK]}}), encoding="utf-8"
-        )
+    def test_an_old_format_allowed_entry_does_not_open_the_gate_for_an_id_with_a_gateway_mac_and_is_not_rewritten(self) -> None:
+        original = json.dumps({"network": {"allowedNetworks": [HOME_NETWORK, OTHER_NETWORK]}})
+        Path(self.a, "config.json").write_text(original, encoding="utf-8")
         running, cell = self.start()
         self.assertTrue(wait_until(running.joins_on, 5))
         cell.network = tagged_network_id("new-" + HOME_NETWORK, legacy=HOME_NETWORK)
-        stored = lambda: json.loads(Path(self.a, "config.json").read_text(encoding="utf-8"))["network"]["allowedNetworks"]  # noqa: E731
-        self.assertTrue(wait_until(lambda: stored() == ["new-" + HOME_NETWORK, OTHER_NETWORK], 5), stored())
-        self.assertIn(f"network.allowedNetworks: {HOME_NETWORK} is now new-{HOME_NETWORK}", running.log())
-        self.assertTrue(running.joins_on())
+        self.assertTrue(wait_until(lambda: not running.joins_on(), 5), running.log())
+        self.assertIn("network gate closed: this network is listed only by its older id", running.log())
+        time.sleep(0.5)
+        self.assertEqual(Path(self.a, "config.json").read_text(encoding="utf-8"), original)
+        self.assertNotIn("is now", running.log())
+        self.assertFalse(running.joins_on())
 
     def test_a_network_id_that_fell_back_to_the_name_and_subnet_is_logged_once(self) -> None:
         running, cell = self.start()

@@ -101,5 +101,5 @@ def remove_peer(home: str, device_id: str) -> PeerGrant | None:
         save_policy(home, replace(policy, peers=tuple(p for p in policy.peers if p.device_id != current.device_id)))
     remove_file(str(peer_cert_path(home, current.device_id)))
     with contextlib.suppress(HubStateError):
-        forget_member(home, current.device_id)
+        forget_member(home, current.device_id, record=current.member)
     return current
