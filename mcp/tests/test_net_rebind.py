@@ -154,7 +154,7 @@ class RebindTest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: moves == [ALIAS], 10), running.log())
         self.assertTrue(wait_until(lambda: running.listener._join_sock is not old_join, 10), running.log())  # pyright: ignore[reportPrivateUsage]
         self.assertTrue(wait_until(lambda: running.listener.join_port() is not None, 10), running.log())
-        self.assertIn(f"serving joins on {ALIAS}", running.log())
+        self.assertTrue(wait_until(lambda: f"serving joins on {ALIAS}" in running.log(), 10), running.log())
 
     def test_the_listener_waits_for_an_address_and_stops_when_none_appears(self) -> None:
         self.machine.candidates = []
