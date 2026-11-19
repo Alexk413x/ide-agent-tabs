@@ -13,6 +13,7 @@ from ide_agent_tabs.net.client import NetClientError
 from ide_agent_tabs.net.dispatch import session_generation
 from ide_agent_tabs.net.origin import REMOTE_ORIGIN_REFUSAL, Caller
 from ide_agent_tabs.net.outbound import (
+    FOLDER_NOT_ALLOWED,
     FOLDER_REFUSAL,
     NETWORK_OFF,
     PEER_REFUSED,
@@ -454,6 +455,33 @@ class MemberOpenTest(NetCase):
             self.open()
         self.assertEqual(str(caught.exception), REMOTE_ORIGIN_REFUSAL)
         self.assertEqual(self.request.calls, [])
+
+    def refuse(self, **reply: Any) -> str:
+        self.request.reply = {"re": "r", "ok": False, "refused": True, **reply}
+        with self.assertRaises(OutboundError) as caught:
+            self.open()
+        return str(caught.exception)
+
+    def test_a_folder_refusal_gets_the_fixed_text_with_the_peer_label_and_the_requested_path(self) -> None:
+        text = self.refuse(reason="folder-not-allowed")
+        self.assertEqual(text, FOLDER_NOT_ALLOWED.format(label="laptop", path=self.path))
+        self.assertEqual(
+            text,
+            f"laptop refused: {self.path} is not in that machine's member folders. "
+            "Its user can add it there with agent-tabs net folders add.",
+        )
+        self.assertNotIn('net folders add "', text)
+        self.assertEqual(self.nudges, [])
+
+    def test_a_refusal_with_no_reason_or_an_unknown_one_is_generic(self) -> None:
+        self.assertEqual(self.refuse(), PEER_REFUSED)
+        for reason in ("folder-missing", "not-a-member", SENTINEL, "", 7, None):
+            with self.subTest(reason=reason):
+                self.assertEqual(self.refuse(reason=reason), PEER_REFUSED)
+
+    def test_peer_text_next_to_the_reason_never_appears(self) -> None:
+        text = self.refuse(reason="folder-not-allowed", message=SENTINEL)
+        self.assertNotIn(SENTINEL, text)
 
     def test_a_non_member_peer_still_gets_the_alias_form_and_refuses_a_path(self) -> None:
         write_member_policy(self.home, [peer_grant(OTHER, "desk", "192.168.1.10", member=True), peer_grant()])

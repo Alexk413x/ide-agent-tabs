@@ -176,7 +176,7 @@ class NetDispatcher:
             reply = wire.ok_reply(reply_id, self._process(trace, request))
         except _Refusal as r:
             reason, trace.outcome = r.reason, r.outcome
-            reply = wire.refused_reply(reply_id)
+            reply = wire.refused_reply(reply_id, r.reason)
         except Exception as e:  # noqa: BLE001 - any internal failure becomes the generic refusal
             self._log(f"net: {trace.op or 'request'} failed: {type(e).__name__}")
             reason, trace.outcome = "internal", "failed"

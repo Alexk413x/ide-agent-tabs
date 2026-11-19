@@ -2611,7 +2611,7 @@ A hub is a set of machines that trust each other as equals.
   at most 32 members.
 - **One hub per machine.** Machines in different hubs refuse each other with `already-in-another-hub` and save
   nothing. `net hub leave` clears the membership.
-- **Commands.** `net hub create [--name <name>] [--folder <session folder>] [--with <device id>[@<address>] ...]`
+- **Commands.** `net hub create [--name <name>] [--folder <session folder>] [--with <device id> ...]`
   makes the hub on this machine, and with `--with` joins each device. `net hub join <device id>` joins a
   discoverable device. `net hub status` lists the hub, the members with their state (`online`, `offline` or
   `unknown`), the member folders and the allowed networks. `net hub leave` leaves.
@@ -2646,9 +2646,9 @@ A hub is a set of machines that trust each other as equals.
 
 A join runs between a dialer (the machine that runs `net hub join`) and a listener (the discoverable machine).
 The listener serves joins on TCP port 47830 only while `network.discoverable` is true, LAN mode is on and the
-current network is in `network.allowedNetworks`. `net discoverable off` takes effect within a few seconds. The dialer pins the device id that `net find` verified, or that the user gave
-as `<device id>@<address>`. The user's choice of device carries the trust: the join has no token, no consent
-proof and no approval on the listener.
+current network is in `network.allowedNetworks`. `net discoverable off` takes effect within a few seconds. The dialer
+pins the device id that `net find` verified. The user's choice of device carries the trust: the join has no token,
+no consent proof and no approval on the listener.
 
 1. **Source check.** The listener accepts only connections from a private IPv4 source address, spaces them to one a
    second per address, and refuses addresses that are locked (see Pairing locks).
@@ -2742,8 +2742,7 @@ receives it (see The transport and discovery seam).
   share a name. When nothing is found, the message names the likely causes: the other machine isn't discoverable, a
   network is Public, the network isn't in `network.allowedNetworks` there, the UDP rule is missing on Windows, or the
   machines are on different subnets. It adds that Wi-Fi client isolation, common on guest networks, blocks all
-  traffic between devices, and points to Tailscale mode. There is no manual IP entry in the agent flow.
-  `net hub join <device id> --address <IP>` and `<device id>@<address>` skip the search for tests and diagnosis.
+  traffic between devices, and points to Tailscale mode. There is no manual IP entry.
 
 ### Hub sync
 
@@ -2817,8 +2816,12 @@ serves no join, and `net status` says why.
   sets `network.outboundFolders` when it is empty.
 - **Open request.** A member's `open` carries an absolute `path` instead of a folder alias. The receiver normalizes it
   and requires it inside a member folder, then checks that it exists and that no component is a link or reparse point
-  (`folder_problem`). A path outside the list gets the generic `refused` and the audit reason `folder-not-allowed`. The
-  requesting agent sees only that the peer refused. Every local session that no peer opened gets a message that
+  (`folder_problem`). A path outside the list gets `refused` with `"reason": "folder-not-allowed"` and the same audit
+  reason. The reply `reason` is optional and holds only a code from a fixed allow-list (`wire.REFUSAL_REASONS`); a
+  receiver drops any other value. Every other refusal stays the generic `refused`. The requesting machine shows its own
+  fixed text, never peer text: `<label> refused: <path> is not in that machine's member folders. Its user can add it
+  there with agent-tabs net folders add.` The path is the one the requester sent, escaped for display, and never part
+  of a command. A peer that sends no `reason` gives the generic "the peer refused the request". Every local session that no peer opened gets a message that
   names the folder and `agent-tabs net folders add "<path>"`, at most once an hour for each peer and path. The message
   omits the path and the command when the path isn't an existing folder or holds shell syntax or control characters.
 - **Inventory.** The reply to a member lists every live session and the machine's member folders (at most 64), so the

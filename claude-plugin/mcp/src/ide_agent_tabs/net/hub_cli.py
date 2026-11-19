@@ -176,13 +176,6 @@ def _setup_lan(svc: Services, prepared: Prepared, network_id: str, folder: str |
     return enable_lan(svc, prepared.bind, config.port, True)
 
 
-def _split_target(spec: str) -> tuple[str, str | None]:
-    device, separator, address = spec.partition("@")
-    if not device or (separator and not address):
-        raise UsageError(f"agent-tabs net hub create --with: expected <device id> or <device id>@<address>, got {spec!r}")
-    return device, address if separator else None
-
-
 def _find_request(svc: Services, prepared: Prepared) -> FindRequest:
     return FindRequest(
         svc.home,
@@ -200,16 +193,14 @@ def run_find(svc: Services, prepared: Prepared) -> FindResult:
     return result
 
 
-def _resolve(svc: Services, prepared: Prepared, targets: Sequence[tuple[str, str | None]]) -> list[tuple[str, str | None]]:
-    if all(address is not None for _device, address in targets):
-        return list(targets)
+def _resolve(svc: Services, prepared: Prepared, devices: Sequence[str]) -> list[tuple[str, str | None]]:
     result = run_find(svc, prepared)
     for line in result.warnings:
         svc.err(line)
     found = {d.device_id: d.address for d in result.devices}
     if not result.devices:
         svc.err(not_found_text(result, _find_request(svc, prepared).wire))
-    return [(device, address if address is not None else found.get(device)) for device, address in targets]
+    return [(device, found.get(device)) for device in devices]
 
 
 def _dial_one(svc: Services, deps: PairDeps, prepared: Prepared, device: str, address: str, introduced: list[str]) -> PairResult:
@@ -226,11 +217,11 @@ def _dial_one(svc: Services, deps: PairDeps, prepared: Prepared, device: str, ad
     return deps.dial_join(target, PAIRING_PORT, peer_id, prepared.identity, handler, pairing.Limits(svc.home), timeouts=deps.timeouts)
 
 
-def _join_all(svc: Services, deps: PairDeps, targets: Sequence[tuple[str, str | None]], bind: str | None, folder: str | None) -> int:
+def _join_all(svc: Services, deps: PairDeps, devices: Sequence[str], bind: str | None, folder: str | None) -> int:
     prepared = prepare(svc, deps, bind)
     network_id = _require_network_id(svc, prepared.bind)
     joined, complete = 0, True
-    for device, address in _resolve(svc, prepared, targets):
+    for device, address in _resolve(svc, prepared, devices):
         if address is None:
             svc.err(f"{device[:15]}: did not join: no verified device with that id was found. Nothing was saved on this machine for it.")
             continue
@@ -256,27 +247,25 @@ def _join_all(svc: Services, deps: PairDeps, targets: Sequence[tuple[str, str | 
     if joined == 0:
         return 1
     applied = _setup_lan(svc, prepared, network_id, folder, {})
-    return 0 if applied and complete and joined == len(targets) else 1
+    return 0 if applied and complete and joined == len(devices) else 1
 
 
 def join(svc: Services, args: Sequence[str]) -> int:
     parser = make_parser("hub join")
     parser.add_argument("device_id")
-    parser.add_argument("--address")
     parser.add_argument("--bind")
     parser.add_argument("--folder")
     options = parser.parse_args(args)
     refuse_remote_origin(svc)
     deps = _deps(svc)
     deps.refuse_if_elevated()
-    return _join_all(svc, deps, [(options.device_id, options.address)], options.bind, options.folder)
+    return _join_all(svc, deps, [options.device_id], options.bind, options.folder)
 
 
-def join_listed(svc: Services, specs: Sequence[str], bind: str | None, folder: str | None) -> int:
-    targets = [_split_target(spec) for spec in specs]
+def join_listed(svc: Services, devices: Sequence[str], bind: str | None, folder: str | None) -> int:
     deps = _deps(svc)
     deps.refuse_if_elevated()
-    return _join_all(svc, deps, targets, bind, folder)
+    return _join_all(svc, deps, devices, bind, folder)
 
 
 def _discoverable_status(svc: Services, config: NetworkConfig) -> int:

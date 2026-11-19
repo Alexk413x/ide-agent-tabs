@@ -27,6 +27,7 @@ OPS = ("open", "close", "send", "inventory", "introduce", "remove", "rekey")
 MAX_EPOCH = 2**31 - 1
 MAX_PEM_CHARS = 8192
 OPEN_AGENTS = ("claude", "codex")
+REFUSAL_REASONS = ("folder-not-allowed",)
 SESSION_AGENTS = (
     "claude",
     "codex",
@@ -128,6 +129,7 @@ class Reply:
     re: str
     ok: bool
     body: Mapping[str, Any] | None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -417,18 +419,24 @@ def parse_reply(obj: object) -> Reply:
     if frame["ok"]:
         _only(frame, ("re", "ok", "body"), (), "reply")
         return Reply(_text(frame["re"], "re", _REQUEST_ID), True, _object(frame["body"], "body"))
-    _only(frame, ("re", "ok", "refused"), (), "reply")
+    _only(frame, ("re", "ok", "refused"), ("reason",), "reply")
     if frame["refused"] is not True:
         _fail("refused must be true")
-    return Reply(_text(frame["re"], "re", _REQUEST_ID), False, None)
+    reason = frame.get("reason")
+    if reason is not None and not isinstance(reason, str):
+        _fail("reason must be a string")
+    return Reply(_text(frame["re"], "re", _REQUEST_ID), False, None, reason if reason in REFUSAL_REASONS else None)
 
 
 def ok_reply(request_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
     return {"re": request_id, "ok": True, "body": dict(body)}
 
 
-def refused_reply(request_id: str) -> dict[str, Any]:
-    return {"re": request_id, "ok": False, "refused": True}
+def refused_reply(request_id: str, reason: str | None = None) -> dict[str, Any]:
+    reply: dict[str, Any] = {"re": request_id, "ok": False, "refused": True}
+    if reason in REFUSAL_REASONS:
+        reply["reason"] = reason
+    return reply
 
 
 def _session_name(value: object) -> str:
