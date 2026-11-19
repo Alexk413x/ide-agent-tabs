@@ -22,7 +22,9 @@ MAX_PATH_CHARS = 1024
 MAX_FOLDERS = 64
 MAX_TASK_CHARS = 30000
 MAX_TEXT_CHARS = 32000
-OPS = ("open", "close", "send", "inventory")
+OPS = ("open", "close", "send", "inventory", "introduce", "remove", "rekey")
+MAX_EPOCH = 2**31 - 1
+MAX_PEM_CHARS = 8192
 OPEN_AGENTS = ("claude", "codex")
 SESSION_AGENTS = (
     "claude",
@@ -45,6 +47,11 @@ _SESSION_ID = SESSION_ID
 _TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _MESSAGE_ID = re.compile(r"m-[0-9a-f]{16}")
 _MODEL = re.compile(r"[A-Za-z0-9._:/@+-]{1,200}")
+_HUB_ID = re.compile(r"[0-9a-f]{32}")
+_HUB_KEY = re.compile(r"[0-9a-f]{64}")
+_DEVICE_ID = re.compile(r"[A-Za-z0-9-]{1,96}")
+_MEMBER_LABEL = re.compile(r"[a-z0-9-]{1,32}")
+_IPV4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
 _ABSOLUTE_PATH = re.compile(r"(?:[A-Za-z]:[\\/]|/(?![/\\])).*", re.DOTALL)
 _BAD_NAME_CATEGORIES = frozenset({"Cc", "Cs", "Zl", "Zp"})
 _ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
@@ -81,7 +88,32 @@ class InventoryBody:
     pass
 
 
-Body = Union[OpenBody, CloseBody, SendBody, InventoryBody]
+@dataclass(frozen=True)
+class IntroduceBody:
+    hub: str
+    device_id: str
+    label: str
+    address: str
+    port: int
+    pem: str
+
+
+@dataclass(frozen=True)
+class RemoveBody:
+    hub: str
+    device: str
+    rotate: bool
+
+
+@dataclass(frozen=True)
+class RekeyBody:
+    hub: str
+    epoch: int
+    key: str
+
+
+HubBody = Union[IntroduceBody, RemoveBody, RekeyBody]
+Body = Union[OpenBody, CloseBody, SendBody, InventoryBody, IntroduceBody, RemoveBody, RekeyBody]
 
 
 @dataclass(frozen=True)
@@ -313,6 +345,38 @@ def _parse_inventory_request(body: dict[str, Any]) -> InventoryBody:
     return InventoryBody()
 
 
+def _whole(value: object, field: str, low: int, high: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        _fail(f"{field} is malformed")
+    return value
+
+
+def _parse_introduce(body: dict[str, Any]) -> IntroduceBody:
+    _only(body, ("hub", "member"), (), "introduce body")
+    member = _object(body["member"], "member")
+    _only(member, ("deviceId", "label", "address", "port", "certificatePem"), (), "member")
+    return IntroduceBody(
+        hub=_text(body["hub"], "hub", _HUB_ID),
+        device_id=_text(member["deviceId"], "deviceId", _DEVICE_ID),
+        label=_text(member["label"], "label", _MEMBER_LABEL),
+        address=_text(member["address"], "address", _IPV4),
+        port=_whole(member["port"], "port", 1, 65535),
+        pem=_text(member["certificatePem"], "certificatePem", None, MAX_PEM_CHARS),
+    )
+
+
+def _parse_remove(body: dict[str, Any]) -> RemoveBody:
+    _only(body, ("hub", "device", "rotate"), (), "remove body")
+    if not isinstance(body["rotate"], bool):
+        _fail("rotate must be a boolean")
+    return RemoveBody(_text(body["hub"], "hub", _HUB_ID), _text(body["device"], "device", _DEVICE_ID), body["rotate"])
+
+
+def _parse_rekey(body: dict[str, Any]) -> RekeyBody:
+    _only(body, ("hub", "epoch", "key"), (), "rekey body")
+    return RekeyBody(_text(body["hub"], "hub", _HUB_ID), _whole(body["epoch"], "epoch", 0, MAX_EPOCH), _text(body["key"], "key", _HUB_KEY))
+
+
 def parse_request(obj: object) -> Request:
     frame = _object(obj, "request")
     _only(frame, ("id", "op", "body"), (), "request")
@@ -325,6 +389,12 @@ def parse_request(obj: object) -> Request:
         return Request(request_id, op, _parse_close(body))
     if op == "send":
         return Request(request_id, op, _parse_send(body))
+    if op == "introduce":
+        return Request(request_id, op, _parse_introduce(body))
+    if op == "remove":
+        return Request(request_id, op, _parse_remove(body))
+    if op == "rekey":
+        return Request(request_id, op, _parse_rekey(body))
     return Request(request_id, op, _parse_inventory_request(body))
 
 

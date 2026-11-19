@@ -394,6 +394,10 @@ class CertificateShapeTest(unittest.TestCase):
                 pairing.parse_certificate(text)
 
 
+X = "192.168.1.9"
+Y = "192.168.1.10"
+
+
 class LimitsTest(unittest.TestCase):
     def setUp(self) -> None:
         self.home = tempfile.mkdtemp(prefix="iat-pair-")
@@ -410,7 +414,7 @@ class LimitsTest(unittest.TestCase):
             second.open_window()
         with self.assertRaises(pairing.Busy):
             second.check()
-        second.check_locked()
+        second.check_locked("192.168.1.9")
         first.close_window()
         second.check()
         second.open_window()
@@ -459,49 +463,92 @@ class LimitsTest(unittest.TestCase):
         self.assertEqual(len(state["windows"]), 3)
         self.assertIsNone(state["open"])
 
-    def test_three_failures_lock_for_an_hour(self) -> None:
+    def test_three_failures_lock_that_address_for_an_hour(self) -> None:
         limits = self.limits()
-        self.assertFalse(limits.record_failure())
-        self.assertFalse(limits.record_failure())
-        limits.check()
-        self.assertTrue(limits.record_failure())
-        for action in (limits.check, limits.check_locked, limits.open_window):
-            with self.assertRaisesRegex(pairing.Locked, "net trust"):
-                action()
+        self.assertFalse(limits.record_failure(X))
+        self.assertFalse(limits.record_failure(X))
+        limits.check_locked(X)
+        self.assertTrue(limits.record_failure(X))
+        with self.assertRaisesRegex(pairing.Locked, "net trust"):
+            limits.check_locked(X)
         self.now[0] += 3599
         with self.assertRaises(pairing.Locked):
-            limits.check_locked()
+            limits.check_locked(X)
         self.now[0] += 2
+        limits.check_locked(X)
+
+    def test_a_locked_address_leaves_other_addresses_and_the_window_free(self) -> None:
+        limits = self.limits()
+        for _ in range(3):
+            limits.record_failure(X)
+        with self.assertRaises(pairing.Locked):
+            limits.check_locked(X)
+        limits.check_locked(Y)
         limits.check()
         limits.open_window()
+        self.assertEqual(list(limits.locked_addresses()), [X])
+
+    def test_failures_from_different_addresses_do_not_add_up(self) -> None:
+        limits = self.limits()
+        for address in (X, Y, X, Y):
+            self.assertFalse(limits.record_failure(address))
+        limits.check_locked(X)
+        limits.check_locked(Y)
+        self.assertTrue(limits.record_failure(X))
+        with self.assertRaises(pairing.Locked):
+            limits.check_locked(X)
+        limits.check_locked(Y)
 
     def test_failures_expire_after_an_hour(self) -> None:
         limits = self.limits()
-        limits.record_failure()
-        limits.record_failure()
+        limits.record_failure(X)
+        limits.record_failure(X)
         self.now[0] += 3601
-        self.assertFalse(limits.record_failure())
-        limits.check()
+        self.assertFalse(limits.record_failure(X))
+        limits.check_locked(X)
 
     def test_a_lock_clears_the_failure_count(self) -> None:
         limits = self.limits()
         for _ in range(3):
-            limits.record_failure()
+            limits.record_failure(X)
         self.now[0] += 3601
-        self.assertFalse(limits.record_failure())
-        self.assertFalse(limits.record_failure())
-        self.assertTrue(limits.record_failure())
+        self.assertFalse(limits.record_failure(X))
+        self.assertFalse(limits.record_failure(X))
+        self.assertTrue(limits.record_failure(X))
 
     def test_state_survives_a_new_instance(self) -> None:
         first = self.limits()
         first.open_window()
         for _ in range(3):
-            first.record_failure()
+            first.record_failure(X)
         again = self.limits(4003)
         with self.assertRaises(pairing.Locked):
-            again.check()
+            again.check_locked(X)
         self.now[0] += 3601
-        again.open_window()
+        again.check_locked(X)
+
+    def test_the_address_table_stays_bounded(self) -> None:
+        limits = self.limits()
+        for number in range(pairing.MAX_LIMIT_ADDRESSES + 20):
+            limits.record_failure(f"10.1.{number // 250}.{number % 250}")
+        state = json.loads((Path(self.home) / "net" / pairing.PAIRING_FILE).read_text(encoding="utf-8"))
+        self.assertEqual(len(state["addresses"]), pairing.MAX_LIMIT_ADDRESSES)
+
+    def test_a_file_from_the_global_lock_format_still_loads(self) -> None:
+        self.limits().open_window()
+        path = Path(self.home) / "net" / pairing.PAIRING_FILE
+        path.write_text('{"windows":[],"failures":[1],"lockedUntil":0,"open":null}', encoding="utf-8")
+        self.limits().check()
+        self.assertEqual(self.limits().locked_addresses(), {})
+
+    def test_spacing_is_per_address(self) -> None:
+        now = [0.0]
+        spacing = pairing.Spacing(1.0, lambda: now[0])
+        self.assertTrue(spacing.allow(X))
+        self.assertFalse(spacing.allow(X))
+        self.assertTrue(spacing.allow(Y))
+        now[0] += 1.5
+        self.assertTrue(spacing.allow(X))
 
     def test_windows_count_across_instances(self) -> None:
         for pid in (4001, 4002, 4003):
@@ -514,7 +561,7 @@ class LimitsTest(unittest.TestCase):
     def test_a_damaged_file_is_refused_with_a_hint(self) -> None:
         self.limits().open_window()
         path = Path(self.home) / "net" / pairing.PAIRING_FILE
-        for damaged in ("not json", "[]", '{"windows":[]}', '{"windows":"x","failures":[],"lockedUntil":0,"open":null}'):
+        for damaged in ("not json", "[]", '{"windows":[]}', '{"windows":"x","open":null}', '{"windows":[],"open":null,"addresses":[]}'):
             path.write_text(damaged, encoding="utf-8")
             with self.assertRaisesRegex(pairing.PairingError, "delete it"):
                 self.limits().check()
@@ -522,9 +569,9 @@ class LimitsTest(unittest.TestCase):
     def test_file_holds_no_secrets(self) -> None:
         limits = self.limits()
         limits.open_window()
-        limits.record_failure()
+        limits.record_failure(X)
         text = (Path(self.home) / "net" / pairing.PAIRING_FILE).read_text(encoding="utf-8")
-        self.assertEqual(set(json.loads(text)), {"windows", "failures", "lockedUntil", "open"})
+        self.assertEqual(set(json.loads(text)), {"windows", "addresses", "open"})
 
 
 class Side:
@@ -557,7 +604,9 @@ class Machine:
 
     def failures(self) -> int:
         path = Path(self.home) / "net" / pairing.PAIRING_FILE
-        return len(json.loads(path.read_text(encoding="utf-8"))["failures"]) if path.exists() else 0
+        if not path.exists():
+            return 0
+        return sum(len(entry["failures"]) for entry in json.loads(path.read_text(encoding="utf-8"))["addresses"].values())
 
 
 class Window:
@@ -921,26 +970,26 @@ class PairingSessionTest(unittest.TestCase):
 
     def test_a_third_failure_reports_the_lock(self) -> None:
         _lm, dm = self.machines()
-        dm.limits.record_failure()
-        dm.limits.record_failure()
+        dm.limits.record_failure("127.0.0.1")
+        dm.limits.record_failure("127.0.0.1")
         rogue = RogueListener(self, pair_identity(self.a, "alpha"), ssl.DER_cert_to_PEM_cert(dm.identity.der), OTHER_TOKEN)
         peer_id = device_id(rogue.identity.der)
         dialed = pairing.dial("127.0.0.1", rogue.port, TOKEN, peer_id, dm.identity, dm.side.save, dm.limits, timeouts=FAST)
         self.assertTrue(dialed.locked)
         with self.assertRaises(pairing.Locked):
-            dm.limits.check()
+            dm.limits.check_locked("127.0.0.1")
         with self.assertRaises(pairing.Locked):
             pairing.dial("127.0.0.1", rogue.port, TOKEN, peer_id, dm.identity, dm.side.save, dm.limits)
 
     def test_a_third_failure_locks_the_listener(self) -> None:
         lm, _dm = self.machines()
-        lm.limits.record_failure()
-        lm.limits.record_failure()
+        lm.limits.record_failure("127.0.0.1")
+        lm.limits.record_failure("127.0.0.1")
         window = Window(self, lm)
         impersonate_dialer(window.port, pair_identity(self.c, "mallory"), self.a.pem, tag_of=TOKEN, proof_of=OTHER_TOKEN)
         self.assertTrue(window.end().locked)
         with self.assertRaises(pairing.Locked):
-            lm.limits.check()
+            lm.limits.check_locked("127.0.0.1")
 
     def test_a_save_that_fails_is_not_reported_as_saved(self) -> None:
         _lm, dm, listened, dialed = self.run_pair(listener=Side(save_error=OSError("disk full")))

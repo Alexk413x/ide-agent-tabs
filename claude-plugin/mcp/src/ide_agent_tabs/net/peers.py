@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 from dataclasses import replace
 
-from ..files import file_lock, write_atomically
+from ..files import file_lock, remove_file, write_atomically
 from . import ingress
 from .client import peer_cert_path, peers_dir
-from .hubstate import hub_state_path, read_hub_state, write_hub_state
+from .hubstate import HubStateError, forget_member, hub_state_path, read_hub_state, write_hub_state
 from .policy import (
     MEMBER_MAX_TABS,
     MEMBER_MESSAGES_PER_MINUTE,
@@ -84,3 +85,16 @@ def update_address(home: str, device_id: str, address: str) -> bool:
             members = tuple(replace(m, address=address) if m.device_id == device_id else m for m in state.members)
             write_hub_state(home, replace(state, members=members))
     return True
+
+
+def remove_peer(home: str, device_id: str) -> PeerGrant | None:
+    with file_lock(policy_path(home)):
+        policy = load_policy(home)
+        current = grant_for(policy, device_id)
+        if current is None:
+            return None
+        save_policy(home, replace(policy, peers=tuple(p for p in policy.peers if p.device_id != current.device_id)))
+    remove_file(str(peer_cert_path(home, current.device_id)))
+    with contextlib.suppress(HubStateError):
+        forget_member(home, current.device_id)
+    return current

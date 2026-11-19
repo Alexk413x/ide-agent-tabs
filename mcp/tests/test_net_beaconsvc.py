@@ -26,7 +26,7 @@ from ide_agent_tabs.net.beacon import (
 )
 from ide_agent_tabs.net.beaconsvc import ANNOUNCE_INTERVAL_S, BeaconService, BeaconSettings, BeaconState, Reconnector, check_remembered
 from ide_agent_tabs.net.client import NetClientError
-from ide_agent_tabs.net.hubstate import HubState, read_hub_state, write_hub_state
+from ide_agent_tabs.net.hubstate import HubState, Pending, add_pending, read_hub_state, write_hub_state
 from ide_agent_tabs.net.interfaces import InterfaceInfo
 from ide_agent_tabs.net.listener import Listener, Options
 from ide_agent_tabs.net.pairing import PAIRING_PORT
@@ -457,6 +457,38 @@ class RememberedPeersTest(PlainHomeCase):
         lines: list[str] = []
         cli.main(["hub", "status"], cli.Services(home=self.home, out=lines.append, err=lines.append))
         self.assertRegex("\n".join(lines), r"peer-0 .*unknown")
+
+
+class PendingHubChangesTest(PlainHomeCase):
+    def test_queued_hub_changes_are_retried_on_the_interval_until_the_member_answers(self) -> None:
+        self.in_hub()
+        add_pending(self.home, [Pending(BRAVO, "rekey", "", int(time.time() * 1000))])
+        calls: list[tuple[str, str]] = []
+
+        def request(_home: str, device_id: str, op: str, _body: dict[str, Any], **_options: Any) -> dict[str, Any]:
+            calls.append((device_id, op))
+            if len(calls) < 3:
+                raise NetClientError("cannot reach the peer")
+            return {"ok": True, "body": {"epoch": 0, "key": KEY}}
+
+        self.run_service(request=request, flush_interval_s=0.05)
+        self.assertTrue(wait_until(lambda: len(calls) >= 3, 5), calls)
+        self.assertTrue(
+            wait_until(lambda: (read_hub_state(self.home) or HubState(HUB_ID, KEY, (), 0, (Pending(BRAVO, "rekey"),))).pending == (), 5)
+        )
+        self.assertEqual({call for call in calls if call[1] == "rekey"}, {(BRAVO, "rekey")})
+
+    def test_nothing_is_sent_while_the_network_gate_is_closed(self) -> None:
+        self.in_hub()
+        add_pending(self.home, [Pending(BRAVO, "rekey", "", int(time.time() * 1000))])
+        calls: list[str] = []
+        self.run_service(
+            lambda: BeaconState(False, False),
+            request=lambda *args, **_options: calls.append(args[2]) or {"ok": True},
+            flush_interval_s=0.02,
+        )
+        time.sleep(0.3)
+        self.assertEqual(calls, [])
 
 
 @NEEDS

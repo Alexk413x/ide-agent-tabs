@@ -492,17 +492,6 @@ class InviteTest(PairTestCase):
         self.assertEqual(machine.servers, [])
         self.assertFalse(pair_cli.invitation_path(self.a).exists())
 
-    def test_a_locked_machine_starts_nothing(self) -> None:
-        limits = pairing.Limits(self.a)
-        for _ in range(3):
-            limits.record_failure()
-        machine = self.machine()
-        self.assertEqual(machine.run("--invite"), 1)
-        self.assertIn("locked", machine.errors)
-        self.assertIn("net trust", machine.errors)
-        self.assertEqual(machine.rules_opened, [])
-        self.assertEqual(machine.servers, [])
-
     def test_an_open_window_starts_nothing(self) -> None:
         first = pairing.Limits(self.a)
         first.open_window()
@@ -611,18 +600,6 @@ class ServeTest(PairTestCase):
         self.assertEqual(result["outcome"], "failed")
         self.assertIn("pairing busy", result["reason"])
         self.assertTrue(machine.window_is_open())
-
-    def test_a_locked_machine_fails_and_records_why(self) -> None:
-        limits = pairing.Limits(self.a)
-        for _ in range(3):
-            limits.record_failure()
-        machine = self.machine()
-        self.assertEqual(machine.serve(), 1)
-        self.assertIn("locked", machine.errors)
-        self.assertNotIn("bind-socket", machine.events)
-        result = machine.result()
-        assert result is not None
-        self.assertIn("locked", result["reason"])
 
     def test_a_window_that_ends_without_a_peer_changes_nothing(self) -> None:
         machine = self.machine()
@@ -755,16 +732,16 @@ class JoinTest(PairTestCase):
             self.assertNotIn("dial", machine.events)
             self.assertEqual(session.calls, [])
 
-    def test_a_locked_machine_does_not_dial(self) -> None:
+    def test_a_locked_address_is_not_dialed(self) -> None:
         limits = pairing.Limits(self.a)
         for _ in range(3):
-            limits.record_failure()
+            limits.record_failure(PEER_ADDRESS)
         machine = self.machine()
         session = Session()
         machine.dial_impl = session.dial
         self.assertEqual(machine.run("--join", invitation_line()), 1)
         self.assertIn("locked", machine.errors)
-        self.assertNotIn("destination", machine.events)
+        self.assertNotIn("dial", machine.events)
         self.assertEqual(session.calls, [])
 
     def test_a_refused_pairing_says_nothing_was_saved(self) -> None:

@@ -23,6 +23,7 @@ from .beacon import (
 from .client import NetClientError, local_device_id, send_request, verify_pinned
 from .firewall import DISCOVERY_PORT
 from .hubstate import HubStateError
+from .hubsync import flush_pending
 from .interfaces import InterfaceError, InterfaceInfo, interface_for
 from .names import DeviceNameError, device_name_of
 from .pairing import PAIRING_PORT, PairingError
@@ -34,6 +35,7 @@ from .transport import LanTransport
 ANNOUNCE_INTERVAL_S = 30.0
 RECONNECT_WINDOW_S = 60.0
 NOTE_INTERVAL_S = 60.0
+PENDING_INTERVAL_S = 60.0
 ONLINE_RECORD_S = 60.0
 MAX_ATTEMPTS = 256
 MAX_INFLIGHT = 4
@@ -70,6 +72,7 @@ class BeaconSettings:
     clock: Callable[[], float] = time.time
     verify: Callable[..., str] = verify_pinned
     request: Callable[..., dict[str, Any]] = send_request
+    flush_interval_s: float = PENDING_INTERVAL_S
 
 
 class Reconnector:
@@ -181,6 +184,8 @@ class BeaconService:
         self._check = MemberCheck(self._watch, settings.clock)
         self._wire: Wire | None = None
         self._noted: dict[str, float] = {}
+        self._flush_at = 0.0
+        self._flushing = threading.Lock()
         self._recorded: dict[str, float] = {}
         self._reconnect = Reconnector(
             home,
@@ -264,6 +269,9 @@ class BeaconService:
                     settings.run(self._remembered)
                     next_send = 0.0
                 now = time.monotonic()
+                if now >= self._flush_at:
+                    self._flush_at = now + settings.flush_interval_s
+                    settings.run(self._flush_pending)
                 if state.epoch != epoch or now >= next_send:
                     epoch = state.epoch
                     self._send(endpoint, state)
@@ -281,6 +289,19 @@ class BeaconService:
         finally:
             if endpoint is not None:
                 endpoint.close()
+
+    def _flush_pending(self) -> None:
+        if not self._flushing.acquire(blocking=False):
+            return
+        try:
+            delivered = flush_pending(self._home, self._settings.request)
+        except _TASK_ERRORS as error:
+            self._note("pending", f"queued hub changes could not be sent: {type(error).__name__}: {error}")
+            return
+        finally:
+            self._flushing.release()
+        if delivered:
+            self._log(f"delivered {delivered} queued hub change(s) to members that were offline")
 
     def _remembered(self) -> None:
         check_remembered(

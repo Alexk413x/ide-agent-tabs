@@ -40,6 +40,8 @@ WINDOWS_PER_HOUR = 3
 FAILURES_PER_HOUR = 3
 HOUR_S = 3600
 LOCK_S = 3600
+MAX_LIMIT_ADDRESSES = 256
+MAX_SPACED_ADDRESSES = 1024
 OPEN_CAP_S = 1200
 MAX_JOIN_MEMBERS = 32
 MAX_HUB_FRAME = wire.MAX_FRAME
@@ -63,6 +65,8 @@ _INVITATION_KEYS = frozenset({"v", "name", "address", "port", "id", "token", "ex
 _HUB_ID = re.compile(r"[0-9a-f]{32}")
 _HUB_LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MEMBER_KEYS = frozenset({"deviceId", "label", "address", "port", "certificatePem"})
+_UNCOUNTED_REASONS = (ALREADY_IN_ANOTHER_HUB, NO_HUB, "saving the trust entry failed", "the join failed")
+_LIMIT_KEYS = frozenset({"windows", "open", "addresses", "failures", "lockedUntil"})
 
 T = TypeVar("T")
 Outcome = Literal["paired", "incomplete", "declined", "failed"]
@@ -302,6 +306,7 @@ class HubMessage:
     hub: HubRef
     key: str = field(repr=False)
     members: tuple[MemberRef, ...] = ()
+    epoch: int = 0
 
 
 class JoinHandler(Protocol):
@@ -326,10 +331,15 @@ DEFAULT_TIMEOUTS = Timeouts()
 
 
 @dataclass
+class _Failures:
+    times: list[int]
+    locked_until: int
+
+
+@dataclass
 class _State:
     windows: list[int]
-    failures: list[int]
-    locked_until: int
+    addresses: dict[str, _Failures]
     open_pid: int
     open_until: int
 
@@ -344,6 +354,37 @@ def _whole_list(value: object) -> list[int]:
     if not isinstance(value, list):
         raise TypeError("not a list")
     return [_whole(item) for item in value]
+
+
+def _addresses(value: object) -> dict[str, _Failures]:
+    if not isinstance(value, dict):
+        raise TypeError("addresses must be an object")
+    found: dict[str, _Failures] = {}
+    for address, entry in value.items():  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(address, str) or not isinstance(entry, dict) or set(entry) != {"failures", "lockedUntil"}:  # pyright: ignore[reportUnknownArgumentType]
+            raise ValueError("bad address entry")
+        found[address] = _Failures(_whole_list(entry["failures"]), _whole(entry["lockedUntil"]))
+    return found
+
+
+class Spacing:
+    def __init__(self, interval_s: float, clock: Callable[[], float] = time.monotonic, cap: int = MAX_SPACED_ADDRESSES) -> None:
+        self._interval_s = interval_s
+        self._clock = clock
+        self._cap = cap
+        self._last: dict[str, float] = {}
+
+    def allow(self, address: str) -> bool:
+        now = self._clock()
+        last = self._last.get(address)
+        if last is not None and now - last < self._interval_s:
+            return False
+        if len(self._last) >= self._cap:
+            self._last = {key: at for key, at in self._last.items() if now - at < self._interval_s}
+            if len(self._last) >= self._cap:
+                self._last.clear()
+        self._last[address] = now
+        return True
 
 
 class Limits:
@@ -365,13 +406,13 @@ class Limits:
         except OSError as error:
             raise PairingError(f"{self._path} cannot be read: {error}") from error
         if text is None:
-            return _State([], [], 0, 0, 0)
+            return _State([], {}, 0, 0)
         problems = check_private(self._path)
         if problems:
             raise PairingError(f"{self._path} is not private: {'; '.join(problems)}")
         try:
             value = json.loads(text)
-            if not isinstance(value, dict) or set(value) != {"windows", "failures", "lockedUntil", "open"}:
+            if not isinstance(value, dict) or not {"windows", "open"} <= set(value) <= _LIMIT_KEYS:  # pyright: ignore[reportUnknownArgumentType]
                 raise ValueError("unknown or missing fields")
             window = value["open"]
             if window is None:
@@ -380,13 +421,14 @@ class Limits:
                 pid, until = _whole(window["pid"]), _whole(window["until"])
             else:
                 raise ValueError("bad open window")
-            return _State(_whole_list(value["windows"]), _whole_list(value["failures"]), _whole(value["lockedUntil"]), pid, until)
+            return _State(_whole_list(value["windows"]), _addresses(value.get("addresses", {})), pid, until)
         except (ValueError, TypeError) as error:
             raise PairingError(f"{self._path} is not valid ({error}); delete it to reset the pairing limits") from error
 
     def _store(self, state: _State) -> None:
         window = {"pid": state.open_pid, "until": state.open_until} if state.open_pid else None
-        body = {"windows": state.windows, "failures": state.failures, "lockedUntil": state.locked_until, "open": window}
+        addresses = {a: {"failures": f.times, "lockedUntil": f.locked_until} for a, f in state.addresses.items()}
+        body = {"windows": state.windows, "addresses": addresses, "open": window}
         ensure_private_dir(self._path.parent)
         existed = self._path.exists()
         write_atomically(str(self._path), json.dumps(body, indent=2) + "\n")
@@ -399,7 +441,9 @@ class Limits:
         with file_lock(str(self._path)):
             state = self._load()
             state.windows = [t for t in state.windows if now - t < HOUR_S]
-            state.failures = [t for t in state.failures if now - t < HOUR_S]
+            for entry in state.addresses.values():
+                entry.times = [t for t in entry.times if now - t < HOUR_S]
+            state.addresses = {a: f for a, f in state.addresses.items() if f.times or now < f.locked_until}
             if state.open_pid and (now >= state.open_until or not self._alive(state.open_pid)):
                 state.open_pid, state.open_until = 0, 0
             result = change(state, now)
@@ -408,10 +452,14 @@ class Limits:
             return result
 
     @staticmethod
-    def _raise_if_locked(state: _State, now: int) -> None:
-        if now < state.locked_until:
-            minutes = -(-(state.locked_until - now) // 60)
-            raise Locked(f"pairing is locked for {minutes} more minutes after {FAILURES_PER_HOUR} failed attempts; `net trust` still works")
+    def _raise_if_locked(state: _State, address: str, now: int) -> None:
+        entry = state.addresses.get(address)
+        if entry is not None and now < entry.locked_until:
+            minutes = -(-(entry.locked_until - now) // 60)
+            raise Locked(
+                f"pairing is locked for {address} for {minutes} more minutes after {FAILURES_PER_HOUR} failed attempts; "
+                "other addresses can still pair, and `net trust` still works"
+            )
 
     @staticmethod
     def _raise_if_busy(state: _State, now: int) -> None:
@@ -421,19 +469,19 @@ class Limits:
             minutes = -(-(min(state.windows) + HOUR_S - now) // 60)
             raise Busy(f"pairing busy: {WINDOWS_PER_HOUR} windows opened in the last hour; try again in {minutes} minutes")
 
-    def check_locked(self) -> None:
-        self._update(lambda state, now: self._raise_if_locked(state, now), write=False)
+    def check_locked(self, address: str) -> None:
+        self._update(lambda state, now: self._raise_if_locked(state, address, now), write=False)
+
+    def locked_addresses(self) -> dict[str, int]:
+        return self._update(
+            lambda state, now: {a: f.locked_until - now for a, f in state.addresses.items() if now < f.locked_until}, write=False
+        )
 
     def check(self) -> None:
-        def change(state: _State, now: int) -> None:
-            self._raise_if_locked(state, now)
-            self._raise_if_busy(state, now)
-
-        self._update(change, write=False)
+        self._update(self._raise_if_busy, write=False)
 
     def open_window(self) -> None:
         def change(state: _State, now: int) -> None:
-            self._raise_if_locked(state, now)
             self._raise_if_busy(state, now)
             state.windows.append(now)
             state.open_pid, state.open_until = self._pid, now + OPEN_CAP_S
@@ -447,13 +495,19 @@ class Limits:
 
         self._update(change)
 
-    def record_failure(self) -> bool:
+    def record_failure(self, address: str) -> bool:
         def change(state: _State, now: int) -> bool:
-            state.failures.append(now)
-            if len(state.failures) >= FAILURES_PER_HOUR:
-                state.locked_until = now + LOCK_S
-                state.failures = []
-            return now < state.locked_until
+            entry = state.addresses.get(address)
+            if entry is None:
+                if len(state.addresses) >= MAX_LIMIT_ADDRESSES:
+                    oldest = min(state.addresses, key=lambda a: max(state.addresses[a].times, default=state.addresses[a].locked_until))
+                    del state.addresses[oldest]
+                entry = state.addresses[address] = _Failures([], 0)
+            entry.times.append(now)
+            if len(entry.times) >= FAILURES_PER_HOUR:
+                entry.locked_until = now + LOCK_S
+                entry.times = []
+            return now < entry.locked_until
 
         return self._update(change)
 
@@ -576,6 +630,7 @@ def hub_frame(message: HubMessage) -> dict[str, object]:
         "t": "hub",
         "hub": {"id": message.hub.id, "name": message.hub.name},
         "hubKey": message.key,
+        "epoch": message.epoch,
         "members": [
             {"deviceId": m.device_id, "label": m.label, "address": m.address, "port": m.port, "certificatePem": m.pem}
             for m in message.members[:MAX_JOIN_MEMBERS]
@@ -590,14 +645,17 @@ def _hub_ref(value: object) -> HubRef:
 
 
 def parse_hub_message(value: object) -> HubMessage:
-    frame = _expect(value, "hub", ("hub", "hubKey", "members"))
+    frame = _expect(value, "hub", ("hub", "hubKey", "epoch", "members"))
+    epoch = frame["epoch"]
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or not 0 <= epoch <= wire.MAX_EPOCH:
+        raise PairingError("the hub epoch is malformed")
     members = frame["members"]
     if not isinstance(members, list) or len(members) > MAX_JOIN_MEMBERS:  # pyright: ignore[reportUnknownArgumentType]
         raise PairingError("the member list is malformed or too long")
     refs = tuple(check_member_fields(m) for m in members)  # pyright: ignore[reportUnknownVariableType]
     if len({m.device_id for m in refs}) != len(refs):
         raise PairingError("the member list repeats a device")
-    return HubMessage(_hub_ref(frame["hub"]), check_hub_key(frame["hubKey"]), refs)
+    return HubMessage(_hub_ref(frame["hub"]), check_hub_key(frame["hubKey"]), refs, epoch)
 
 
 def _hub_state(value: object) -> HubRef | None:
@@ -668,7 +726,7 @@ class _Session:
             raise PairingError("the other machine sent data out of order")
 
     def _result(self, outcome: Outcome, reason: str, peer: PeerInfo | None = None, *, counted: bool = False) -> PairResult:
-        locked = self.limits.record_failure() if counted else False
+        locked = self.limits.record_failure(self.address) if counted else False
         return PairResult(outcome, reason, peer, locked)
 
     def run_dialer(self, peer_id: str) -> PairResult:
@@ -897,7 +955,7 @@ def listen_once(
     _invitation_token(token)
     window = _Window()
     end = clock() + timeouts.window_s
-    last = -timeouts.min_interval_s
+    spacing = Spacing(timeouts.min_interval_s, clock)
     listener.settimeout(0.1)
     while not window.done.is_set() and (stop is None or not stop.is_set()):
         if clock() >= end and not window.slot.locked():
@@ -908,13 +966,12 @@ def listen_once(
             continue
         except OSError:
             break
-        now = clock()
-        if now - last < timeouts.min_interval_s:
+        host = str(peer_address[0])
+        if not spacing.allow(host) or _is_locked(limits, host):
             conn.close()
             continue
-        last = now
         conn.settimeout(None)
-        args = (window, conn, str(peer_address[0]), token, identity, save, limits, timeouts)
+        args = (window, conn, host, token, identity, save, limits, timeouts)
         threading.Thread(target=_serve, args=args, daemon=True).start()
     if window.result is not None:
         return window.result
@@ -936,7 +993,7 @@ def dial(
     _port(port)
     _invitation_token(token)
     full_device_id(peer_id)
-    limits.check_locked()
+    limits.check_locked(target)
     try:
         conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
     except OSError as error:
@@ -968,7 +1025,7 @@ def dial_join(
     target = str(_ipv4(address, "the address"))
     _port(port)
     full_device_id(peer_id)
-    limits.check_locked()
+    limits.check_locked(target)
     try:
         conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
     except OSError as error:
@@ -1007,6 +1064,20 @@ def probe_join(
     return _Session(conn, DIALER, target, identity, "", _no_save, limits, timeouts, _ProbeHandler()).run_probe(peer_id)
 
 
+def _is_locked(limits: Limits, address: str) -> bool:
+    try:
+        limits.check_locked(address)
+    except PairingError:
+        return True
+    return False
+
+
+def _counts_as_failure(result: PairResult | None) -> bool:
+    if result is None:
+        return True
+    return result.outcome == "failed" and not result.reason.startswith(_UNCOUNTED_REASONS)
+
+
 def _serve_join(
     slot: threading.Lock,
     conn: socket.socket,
@@ -1032,6 +1103,9 @@ def _serve_join(
         result = PairResult("failed", f"the join failed ({type(error).__name__})") if session.committed else None
     if admitted:
         slot.release()
+        if _counts_as_failure(result):
+            with contextlib.suppress(PairingError):
+                limits.record_failure(address)
     if result is not None and on_result is not None:
         with contextlib.suppress(Exception):
             on_result(result)
@@ -1050,7 +1124,7 @@ def serve_joins(
     allow_source: Callable[[str], bool] = private_source,
 ) -> None:
     slot = threading.Lock()
-    last = -timeouts.min_interval_s
+    spacing = Spacing(timeouts.min_interval_s, clock)
     listener.settimeout(0.1)
     while not stop.is_set():
         try:
@@ -1060,14 +1134,7 @@ def serve_joins(
         except OSError:
             return
         host = str(peer_address[0])
-        now = clock()
-        if now - last < timeouts.min_interval_s or not allow_source(host):
-            conn.close()
-            continue
-        last = now
-        try:
-            limits.check_locked()
-        except PairingError:
+        if not allow_source(host) or not spacing.allow(host) or _is_locked(limits, host):
             conn.close()
             continue
         conn.settimeout(None)

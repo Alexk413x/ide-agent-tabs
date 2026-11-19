@@ -675,9 +675,10 @@ class StatusAndDispatchTest(CliTestCase):
     def test_status_shows_the_pairing_lockout(self) -> None:
         limits = Limits(self.a)
         for _ in range(3):
-            limits.record_failure()
+            limits.record_failure("192.168.1.77")
         self.assertEqual(self.h.run("status"), 0)
-        self.assertRegex(self.h.text, r"pairing: pairing is locked for \d+ more minutes")
+        self.assertRegex(self.h.text, r"pairing: available; locked for 192\.168\.1\.77 \(\d+ more minutes\)")
+        self.assertIn("other addresses can still pair", self.h.text)
         self.assertIn("net trust", self.h.text)
 
     def test_status_shows_an_open_pairing_window_and_changes_no_firewall_rule(self) -> None:

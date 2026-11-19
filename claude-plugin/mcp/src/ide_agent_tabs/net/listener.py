@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -36,10 +36,12 @@ from .client import (
     load_identity,
     peers_dir,
     read_peer_pem,
+    send_request,
 )
 from .hubjoin import HubJoiner, local_pair_identity
+from .hubsync import introduce_member
 from .identity import format_digest
-from .netid import GateState, current_network_id, gate_state
+from .netid import GateState, current_network_id, fallback_of, gate_state, legacy_of, store_upgraded_network, upgraded_allowed
 from .notify import notify, powershell_path
 from .policy import NetworkConfig, PolicyError, load_network_config, load_policy, policy_path
 from .transport import LanTransport, network_enabled
@@ -392,6 +394,7 @@ class Options:
     join_source_ok: Callable[[str], bool] = pairing.private_source
     notice: Callable[[str], object] = notify
     beacons: BeaconSettings | None = None
+    member_request: Callable[..., dict[str, Any]] | None = None
 
 
 class Listener:
@@ -411,6 +414,7 @@ class Listener:
         self._live = NetworkConfig()
         self._gate = GateState(False, None, "the network has not been checked yet")
         self._network_id: str | None = None
+        self._fallback_noted: str | None = None
         self._network_read_at = float("-inf")
         self._join_sock: socket.socket | None = None
         self._join_thread: threading.Thread | None = None
@@ -540,10 +544,33 @@ class Listener:
                 self._network_id = self._options.network_id(self._bind)
             except (OSError, ValueError):
                 self._network_id = None
+        self._note_fallback()
+        self._upgrade_allowed()
         state = gate_state(self._live.allowed_networks, self._network_id)
         if (state.allowed, state.reason) != (self._gate.allowed, self._gate.reason):
             self.log("this network is allowed" if state.allowed else f"network gate closed: {state.reason}")
         self._gate = state
+
+    def _note_fallback(self) -> None:
+        note = fallback_of(self._network_id)
+        if note != self._fallback_noted:
+            self._fallback_noted = note
+            if note is not None:
+                self.log(f"network id: {note}")
+
+    def _upgrade_allowed(self) -> None:
+        upgraded = upgraded_allowed(self._live.allowed_networks, self._network_id)
+        legacy = legacy_of(self._network_id)
+        if upgraded is None or legacy is None or self._network_id is None:
+            return
+        try:
+            stored = store_upgraded_network(self._home, legacy, self._network_id)
+        except (OSError, ValueError) as error:
+            self.log(f"the allowed network entry could not be upgraded to the id with the gateway MAC: {error}")
+            return
+        self._live = replace(self._live, allowed_networks=upgraded)
+        if stored:
+            self.log(f"network.allowedNetworks: {legacy} is now {self._network_id}")
 
     def _beacon_state(self) -> BeaconState:
         watch = self._watch
@@ -552,7 +579,12 @@ class Listener:
 
     def join_port(self) -> int | None:
         sock = self._join_sock
-        return None if sock is None else int(sock.getsockname()[1])
+        if sock is None:
+            return None
+        try:
+            return int(sock.getsockname()[1])
+        except OSError:
+            return None
 
     def _wants_joins(self) -> bool:
         return network_enabled(self._live) and self._live.discoverable and self._gate.allowed and ":" not in self._bind
@@ -575,7 +607,7 @@ class Listener:
             self.log(f"not serving joins: {error}")
             return
         stop = threading.Event()
-        handler = HubJoiner(self._home, self._saved)
+        handler = HubJoiner(self._home, self._saved, self._introduce)
         thread = threading.Thread(
             target=pairing.serve_joins,
             args=(sock, identity, handler, pairing.Limits(self._home), stop),
@@ -605,6 +637,17 @@ class Listener:
         self.log(f"a device joined the hub: {label} at {address}")
         with contextlib.suppress(Exception):
             self._options.notice(f"{label} at {address} joined this machine's hub")
+
+    def _introduce(self, device_id: str) -> None:
+        def run() -> None:
+            try:
+                report = introduce_member(self._home, device_id, self._options.member_request or send_request)
+            except (OSError, ValueError) as error:
+                self.log(f"introducing {device_id[:15]} to the other members failed: {type(error).__name__}: {error}")
+                return
+            self.log(f"introduced {device_id[:15]} to the other members; {'; '.join(report.lines()) or 'there was no other member'}")
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _joined(self, result: pairing.PairResult) -> None:
         if result.outcome not in ("paired", "incomplete"):

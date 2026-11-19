@@ -6,6 +6,8 @@ import ssl
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+_PARTIAL_CHAIN = 0x80000
+
 
 def runtime_problem() -> str | None:
     if not ssl.HAS_TLSv1_3:
@@ -22,6 +24,10 @@ def _configure(context: ssl.SSLContext, cert: Path, key: Path, password: Callabl
     context.minimum_version = ssl.TLSVersion.TLSv1_3
     context.verify_mode = ssl.CERT_REQUIRED
     context.load_verify_locations(cadata="\n".join(pem.strip() for pem in pems))
+    # Every device certificate has the subject CN=agent-tabs. With two pinned certificates OpenSSL finds the issuer
+    # by subject, picks the wrong one and rejects a valid peer. A partial chain trusts the exact certificate in the
+    # store instead. ssl.VERIFY_X509_PARTIAL_CHAIN exists from Python 3.10.
+    context.verify_flags |= getattr(ssl, "VERIFY_X509_PARTIAL_CHAIN", _PARTIAL_CHAIN)
     context.load_cert_chain(str(cert), str(key), password=password)
     context.options |= ssl.OP_NO_TICKET
     return context

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 import unittest
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -28,12 +31,20 @@ class FakeRun:
         return result
 
 
-def windows_reply(name: str = "Mauler's House 5", address: str = BIND, prefix: Any = 24) -> RunResult:
-    return RunResult(0, json.dumps({"name": name, "address": address, "prefix": prefix}) + "\r\n", "")
+def windows_reply(name: str = "Mauler's House 5", address: str = BIND, prefix: Any = 24, **extra: Any) -> RunResult:
+    return RunResult(0, json.dumps({"name": name, "address": address, "prefix": prefix, **extra}) + "\r\n", "")
 
 
-def windows_id(run: FakeRun, shell: str | None = SHELL) -> str | None:
-    return netid.current_network_id(BIND, platform="win32", run=run, shell=lambda: shell)
+ARP = r"C:\Windows\System32\arp.exe"
+ARP_TEXT_WINDOWS = """
+Interface: 192.168.1.35 --- 0x5
+  Internet Address      Physical Address      Type
+  192.168.1.1           aa-bb-cc-dd-ee-ff     dynamic
+"""
+
+
+def windows_id(run: FakeRun, shell: str | None = SHELL, arp: str | None = ARP) -> str | None:
+    return netid.current_network_id(BIND, platform="win32", run=run, shell=lambda: shell, arp=lambda: arp)
 
 
 def interface(prefix: int = 24, alias: str = "eth0") -> Any:
@@ -88,6 +99,107 @@ class WindowsTest(unittest.TestCase):
         run = FakeRun()
         self.assertIsNone(windows_id(run, shell=None))
         self.assertEqual(run.calls, [])
+
+
+def with_gateway(mac: str | None = "AA-BB-CC-DD-EE-FF", gateway: str = "192.168.1.1", **fields: Any) -> RunResult:
+    return windows_reply(gateway=gateway, mac=mac if mac is not None else "", **fields)
+
+
+class WindowsGatewayTest(unittest.TestCase):
+    def test_the_script_reads_the_default_route_and_the_neighbour_entry(self) -> None:
+        run = FakeRun(with_gateway())
+        windows_id(run)
+        script = run.calls[0][1][3]
+        for part in ("Get-NetRoute", "0.0.0.0/0", "Get-NetNeighbor", "LinkLayerAddress"):
+            self.assertIn(part, script)
+        self.assertNotIn(BIND, script)
+
+    def test_two_networks_with_the_same_name_and_subnet_but_different_gateway_macs_get_different_ids(self) -> None:
+        first = windows_id(FakeRun(with_gateway("AA-BB-CC-DD-EE-FF")))
+        second = windows_id(FakeRun(with_gateway("11-22-33-44-55-66")))
+        assert first is not None and second is not None
+        self.assertNotEqual(first, second)
+        self.assertRegex(first, r"^win:Mauler-s-House-5:192\.168\.1\.0_24:[0-9a-f]{12}$")
+        self.assertIsNotNone(NETWORK_ID.fullmatch(first))
+        self.assertIsNone(netid.fallback_of(first))
+
+    def test_the_id_is_stable_for_one_gateway_and_ignores_the_mac_notation(self) -> None:
+        first = windows_id(FakeRun(with_gateway("AA-BB-CC-DD-EE-FF")))
+        self.assertEqual(first, windows_id(FakeRun(with_gateway("aa:bb:cc:dd:ee:ff"))))
+        self.assertEqual(first, windows_id(FakeRun(with_gateway("AA-BB-CC-DD-EE-FF", gateway="192.168.1.254"))))
+
+    def test_the_id_carries_the_name_and_subnet_form_as_legacy(self) -> None:
+        found = windows_id(FakeRun(with_gateway()))
+        legacy = netid.windows_network_id("Mauler's House 5", "192.168.1.0/24")
+        self.assertEqual(netid.legacy_of(found), legacy)
+        self.assertNotEqual(found, legacy)
+
+    def test_without_a_gateway_mac_the_id_falls_back_to_the_name_and_subnet_and_says_so(self) -> None:
+        for reply in (windows_reply(), with_gateway(mac=None, gateway=""), with_gateway(mac="00-00-00-00-00-00", gateway="")):
+            found = windows_id(FakeRun(reply))
+            self.assertEqual(found, netid.windows_network_id("Mauler's House 5", "192.168.1.0/24"))
+            self.assertIn("MAC address of the default gateway", netid.fallback_of(found) or "")
+            self.assertIsNone(netid.legacy_of(found))
+
+    def test_arp_supplies_the_mac_when_the_neighbour_entry_is_missing(self) -> None:
+        run = FakeRun(with_gateway(mac=None), RunResult(0, ARP_TEXT_WINDOWS, ""))
+        found = windows_id(run)
+        self.assertEqual(found, windows_id(FakeRun(with_gateway("AA-BB-CC-DD-EE-FF"))))
+        self.assertEqual(run.calls[1][0], ARP)
+        self.assertEqual(run.calls[1][1], ["-a", "192.168.1.1", "-N", BIND])
+
+    def test_an_arp_that_cannot_help_gives_the_fallback_id(self) -> None:
+        fallback = netid.windows_network_id("Mauler's House 5", "192.168.1.0/24")
+        for results, arp in (
+            ((with_gateway(mac=None), RunResult(1, "", "")), ARP),
+            ((with_gateway(mac=None), RunResult(0, "No ARP Entries Found.", "")), ARP),
+            ((with_gateway(mac=None), RunResult(0, ARP_TEXT_WINDOWS.replace("192.168.1.1 ", "192.168.1.9 "), "")), ARP),
+            ((with_gateway(mac=None), RunResult(0, ARP_TEXT_WINDOWS.replace("aa-bb-cc-dd-ee-ff", "00-00-00-00-00-00"), "")), ARP),
+            ((with_gateway(mac=None), OSError("no arp")), ARP),
+            ((with_gateway(mac=None), TimeoutError("slow")), ARP),
+            ((with_gateway(mac=None),), None),
+            ((with_gateway(mac=None, gateway="not an address"),), ARP),
+        ):
+            found = windows_id(FakeRun(*results), arp=arp)
+            self.assertEqual(found, fallback)
+            self.assertIsNotNone(netid.fallback_of(found))
+
+    def test_an_old_format_entry_still_opens_the_gate_and_is_upgraded_in_place(self) -> None:
+        found = windows_id(FakeRun(with_gateway()))
+        legacy = netid.legacy_of(found)
+        assert found is not None and legacy is not None
+        self.assertFalse(netid.gate_state((), found).allowed)
+        self.assertTrue(netid.gate_state((legacy,), found).allowed)
+        self.assertEqual(netid.upgraded_allowed(("other", legacy), found), ("other", found))
+        self.assertIsNone(netid.upgraded_allowed(("other", found), found))
+        self.assertIsNone(netid.upgraded_allowed(("other",), found))
+        self.assertIsNone(netid.upgraded_allowed((legacy,), windows_id(FakeRun(windows_reply()))))
+
+    def test_a_new_format_entry_does_not_match_a_network_with_another_gateway(self) -> None:
+        mine = windows_id(FakeRun(with_gateway("AA-BB-CC-DD-EE-FF")))
+        other = windows_id(FakeRun(with_gateway("11-22-33-44-55-66")))
+        assert mine is not None
+        self.assertFalse(netid.gate_state((mine,), other).allowed)
+
+    def test_the_fallback_id_does_not_match_a_stored_new_format_entry(self) -> None:
+        stored = windows_id(FakeRun(with_gateway()))
+        assert stored is not None
+        self.assertFalse(netid.gate_state((stored,), windows_id(FakeRun(windows_reply()))).allowed)
+
+    def test_the_upgrade_rewrites_only_the_matching_entry_of_config_json(self) -> None:
+        home = tempfile.mkdtemp(prefix="iat-netid-")
+        self.addCleanup(shutil.rmtree, home, True)
+        path = Path(home, "config.json")
+        path.write_text(json.dumps({"jev": {"enabled": False}, "network": {"allowedNetworks": ["x", "old", "y"], "bind": BIND}}))
+        self.assertTrue(netid.store_upgraded_network(home, "old", "new"))
+        written = json.loads(path.read_text())
+        self.assertEqual(written["network"]["allowedNetworks"], ["x", "new", "y"])
+        self.assertEqual((written["jev"], written["network"]["bind"]), ({"enabled": False}, BIND))
+        self.assertFalse(netid.store_upgraded_network(home, "old", "new"))
+        self.assertFalse(netid.store_upgraded_network(home, "missing", "other"))
+        empty = tempfile.mkdtemp(prefix="iat-netid-")
+        self.addCleanup(shutil.rmtree, empty, True)
+        self.assertFalse(netid.store_upgraded_network(empty, "old", "new"))
 
 
 def route_json(gateway: str | None = "192.168.1.1", dev: str = "eth0") -> RunResult:

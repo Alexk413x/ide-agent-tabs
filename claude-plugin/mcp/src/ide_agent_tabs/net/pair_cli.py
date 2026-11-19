@@ -43,7 +43,7 @@ INVITATION_WAIT_S = 30.0
 INVITATION_POLL_S = 0.2
 INVITATION_LIFETIME_S = 300
 INVITATION_CLOCK_SLACK_S = 2.0
-LOCK_NOTICE = "Pairing is locked for an hour after repeated failed attempts. `net trust` still works."
+LOCK_NOTICE = "Pairing with that address is locked for an hour after repeated failed attempts. `net trust` still works."
 
 
 def find_openssl(
@@ -400,9 +400,9 @@ def _serve(svc: Services, deps: PairDeps, mode: Mode) -> int:
 def _join(svc: Services, deps: PairDeps, mode: Mode) -> int:
     prepared = prepare(svc, deps, mode.bind)
     limits = pairing.Limits(svc.home)
-    limits.check_locked()
     invitation = pairing.parse_invitation(mode.invitation, deps.clock())
     address = deps.check_destination(invitation.address, invitation.port, prepared.iface.address, prepared.iface.prefix_len)
+    limits.check_locked(address)
     svc.out(f"Pairing {prepared.name} {prepared.bind} with {invitation.name} at {address}.")
     saver = Saver(svc)
     result = deps.dial(address, invitation.port, invitation.token, invitation.id, prepared.identity, saver, limits, timeouts=deps.timeouts)

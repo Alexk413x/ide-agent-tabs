@@ -4,7 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import replace
 
-from . import ingress, pairing
+from . import hubsync, ingress, pairing
 from .beacon import wire_for
 from .cli import (
     CliError,
@@ -17,10 +17,11 @@ from .cli import (
     report_folders,
     set_network,
 )
+from .client import send_request
 from .find import FindRequest, FindResult, device_lines, find_devices, not_found_text
 from .hubjoin import HubJoiner
 from .listener import live_listener
-from .netid import gate_state
+from .netid import fallback_of, gate_state, upgraded_allowed
 from .pair_cli import PairDeps, Prepared, default_deps, prepare
 from .pairing import INCOMPLETE_TEXT, PAIRING_PORT, PairResult
 from .policy import NETWORK_ID, NetworkConfig, grant_for, load_network_config, load_policy
@@ -45,13 +46,19 @@ def _require_network_id(svc: Services, bind: str) -> str:
             f"The id of the network at {bind} can't be read, so it can't be added to network.allowedNetworks "
             "and the listener would drop every connection. Connect to the network and run the command again."
         )
+    note = fallback_of(found)
+    if note is not None:
+        svc.err(f"warning: {note}")
     return found
 
 
 def _setup_lan(svc: Services, prepared: Prepared, network_id: str, folder: str | None, extra: dict[str, object]) -> bool:
     config, _ = load_network_config(svc.home)
     allowed = list(config.allowed_networks)
-    if network_id not in allowed:
+    upgraded = upgraded_allowed(allowed, network_id)
+    if upgraded is not None:
+        allowed = list(upgraded)
+    elif network_id not in allowed:
         allowed.append(network_id)
     folders = folder_defaults(svc, config, folder)
     set_network(svc.home, {"network": "lan", "bind": prepared.bind, "allowedNetworks": allowed, **extra, **folders})
@@ -97,7 +104,7 @@ def _resolve(svc: Services, prepared: Prepared, targets: Sequence[tuple[str, str
     return [(device, address if address is not None else found.get(device)) for device, address in targets]
 
 
-def _dial_one(svc: Services, deps: PairDeps, prepared: Prepared, device: str, address: str) -> PairResult:
+def _dial_one(svc: Services, deps: PairDeps, prepared: Prepared, device: str, address: str, introduced: list[str]) -> PairResult:
     peer_id = pairing.full_device_id(device)
     if peer_id == prepared.device_id:
         return PairResult("failed", "that is this machine's own device id")
@@ -107,23 +114,26 @@ def _dial_one(svc: Services, deps: PairDeps, prepared: Prepared, device: str, ad
         svc.record("hub-join", device=peer_id, label=label, address=found)
         svc.notify(f"joined the hub with {label} at {found}")
 
-    handler = HubJoiner(svc.home, saved)
+    handler = HubJoiner(svc.home, saved, introduced.append)
     return deps.dial_join(target, PAIRING_PORT, peer_id, prepared.identity, handler, pairing.Limits(svc.home), timeouts=deps.timeouts)
 
 
 def _join_all(svc: Services, deps: PairDeps, targets: Sequence[tuple[str, str | None]], bind: str | None, folder: str | None) -> int:
     prepared = prepare(svc, deps, bind)
     network_id = _require_network_id(svc, prepared.bind)
-    pairing.Limits(svc.home).check_locked()
     joined, complete = 0, True
     for device, address in _resolve(svc, prepared, targets):
         if address is None:
             svc.err(f"{device[:15]}: did not join: no verified device with that id was found. Nothing was saved on this machine for it.")
             continue
+        introduced: list[str] = []
         try:
-            result = _dial_one(svc, deps, prepared, device, address)
+            result = _dial_one(svc, deps, prepared, device, address, introduced)
         except pairing.PairingError as error:
             result = PairResult("failed", str(error))
+        for newcomer in introduced:
+            report = hubsync.introduce_member(svc.home, newcomer, svc.member_request or send_request)
+            svc.record("hub-introduce", device=newcomer, told=len(report.told), queued=len(report.queued))
         where = f"{device[:15]}@{address}"
         if result.outcome in ("paired", "incomplete") and result.peer is not None:
             peer = grant_for(load_policy(svc.home), result.peer.device_id)
@@ -235,10 +245,11 @@ def networks(svc: Services, args: Sequence[str]) -> int:
         if config.bind is None:
             raise CliError("no bind address is set; run agent-tabs net discoverable on first")
         current = _require_network_id(svc, config.bind)
-        if current in allowed:
+        upgraded = upgraded_allowed(allowed, current)
+        if upgraded is None and current in allowed:
             svc.out(f"{current} is already allowed.")
             return 0
-        allowed.append(current)
+        allowed = list(upgraded) if upgraded is not None else [*allowed, current]
         subject = current
     else:
         subject = options.id

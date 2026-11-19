@@ -13,7 +13,7 @@ from typing import Any
 from unittest import mock
 
 from ide_agent_tabs.net import pairing, tls, wire
-from ide_agent_tabs.net.client import peer_cert_path, peers_dir, read_peer_pem
+from ide_agent_tabs.net.client import peers_dir, read_peer_pem
 from ide_agent_tabs.net.hubjoin import HubJoiner, local_pair_identity
 from ide_agent_tabs.net.hubstate import HubState, HubStateError, ensure_hub_key, hub_state_path, read_hub_state, write_hub_state
 from ide_agent_tabs.net.identity import format_digest
@@ -30,7 +30,7 @@ from ide_agent_tabs.net.policy import (
     load_policy,
     save_policy,
 )
-from net_support import HAS_OPENSSL, cert_of, create_home, device_of, make_root, pem_der
+from net_support import HAS_OPENSSL, cert_of, create_home, device_of, make_root, pem_der, wait_until
 
 HUB_ID = "0123456789abcdef0123456789abcdef"
 OTHER_HUB_ID = "fedcba9876543210fedcba9876543210"
@@ -207,7 +207,8 @@ class JoinTest(unittest.TestCase):
             sorted(capture.kinds), ["hello", "hello", "hub", "ready", "ready", "reveal", "saved", "saved", "state", "state", "tls"]
         )
         message = next(frame for frame in capture.frames if frame["t"] == "hub")
-        self.assertEqual(sorted(message), ["hub", "hubKey", "members", "t"])
+        self.assertEqual(sorted(message), ["epoch", "hub", "hubKey", "members", "t"])
+        self.assertEqual(message["epoch"], 0)
         self.assertEqual(message["hub"], {"id": HUB_ID, "name": "home"})
         self.assertEqual(message["hubKey"], key)
         self.assertRegex(message["hubKey"], r"^[0-9a-f]{64}$")
@@ -224,8 +225,12 @@ class JoinTest(unittest.TestCase):
             [(m.device_id, m.label, m.address, m.port) for m in state.members],
             [(device_of(self.c), "charlie", "192.168.1.30", DEFAULT_PORT)],
         )
-        self.assertFalse(peer_cert_path(self.b, device_of(self.c)).exists())
-        self.assertIsNone(grant_for(load_policy(self.b), device_of(self.c)))
+        pinned = grant_for(load_policy(self.b), device_of(self.c))
+        assert pinned is not None
+        self.assertEqual((pinned.label, pinned.address, pinned.member), ("charlie", "192.168.1.30", True))
+        saved_pem = read_peer_pem(self.b, device_of(self.c))
+        assert saved_pem is not None
+        self.assertEqual(saved_pem.replace("\r\n", "\n"), cert_of(self.c).read_text(encoding="ascii").replace("\r\n", "\n"))
 
     def test_the_hub_message_leaves_out_the_joining_machine_and_non_members(self) -> None:
         make_hub(self.a)
@@ -408,14 +413,69 @@ class JoinTest(unittest.TestCase):
         self.assertEqual(dialed.outcome, "failed")
         self.assertEqual(self.members(self.a), [])
 
-    def test_a_locked_machine_does_not_serve_or_dial(self) -> None:
+    def test_a_locked_address_is_not_dialed(self) -> None:
         make_hub(self.b)
         limits = pairing.Limits(self.b)
         for _ in range(3):
-            limits.record_failure()
+            limits.record_failure("127.0.0.1")
         server = JoinServer(self, self.a)
         with self.assertRaises(pairing.Locked):
             dial(server, self.b)
+
+    def junk_join(self, server: JoinServer) -> None:
+        with socket.create_connection(("127.0.0.1", server.port), timeout=5) as conn:
+            wire.write_frame(conn, wire.encode({"t": "hello", "mode": "join"}))
+            conn.settimeout(2)
+            with contextlib.suppress(OSError):
+                conn.recv(1)
+
+    def test_failed_join_handshakes_lock_only_the_address_they_came_from(self) -> None:
+        server = JoinServer(self, self.a)
+        limits = pairing.Limits(self.a)
+        for _ in range(3):
+            self.junk_join(server)
+        self.assertTrue(wait_until(lambda: "127.0.0.1" in limits.locked_addresses()))
+        self.assertEqual(list(limits.locked_addresses()), ["127.0.0.1"])
+        make_hub(self.b)
+        self.assertEqual(dial(server, self.b).outcome, "failed")
+        self.assertEqual(self.members(self.a), [])
+
+    def test_a_lock_on_one_address_does_not_stop_a_join_from_another(self) -> None:
+        limits = pairing.Limits(self.a)
+        for _ in range(3):
+            limits.record_failure("10.9.9.9")
+        make_hub(self.b)
+        server = JoinServer(self, self.a)
+        dialed = dial(server, self.b)
+        self.assertEqual((dialed.outcome, server.wait_result().outcome), ("paired", "paired"))
+        self.assertEqual(list(limits.locked_addresses()), ["10.9.9.9"])
+
+    def test_hub_conflicts_and_a_busy_server_count_as_no_failure(self) -> None:
+        make_hub(self.a, HUB_ID)
+        make_hub(self.b, OTHER_HUB_ID, "other")
+        server = JoinServer(self, self.a)
+        for _ in range(4):
+            self.assertEqual(dial(server, self.b).outcome, "failed")
+        limits = pairing.Limits(self.a)
+        self.assertEqual(limits.locked_addresses(), {})
+        path = Path(self.a, "net", pairing.PAIRING_FILE)
+        failures = json.loads(path.read_text(encoding="utf-8"))["addresses"] if path.exists() else {}
+        self.assertEqual(failures, {})
+
+    def test_only_failures_that_look_hostile_count(self) -> None:
+        counts = pairing._counts_as_failure  # pyright: ignore[reportPrivateUsage]
+        self.assertTrue(counts(None))
+        self.assertTrue(counts(PairResult("failed", "timed out")))
+        self.assertTrue(counts(PairResult("failed", "the TLS check failed: bad certificate")))
+        for reason in (
+            f"{pairing.ALREADY_IN_ANOTHER_HUB}: x",
+            f"{pairing.NO_HUB}: neither machine is in a hub",
+            "saving the trust entry failed: disk full",
+            "the join failed (OSError)",
+        ):
+            self.assertFalse(counts(PairResult("failed", reason)), reason)
+        self.assertFalse(counts(PairResult("paired", "paired")))
+        self.assertFalse(counts(PairResult("incomplete", "x")))
 
 
 class HubStateTest(unittest.TestCase):
@@ -439,13 +499,14 @@ class HubStateTest(unittest.TestCase):
 
 class HubMessageParseTest(unittest.TestCase):
     def frame(self, **changes: Any) -> dict[str, Any]:
-        value: dict[str, Any] = {"t": "hub", "hub": {"id": HUB_ID, "name": "home"}, "hubKey": "ab" * 32, "members": []}
+        value: dict[str, Any] = {"t": "hub", "hub": {"id": HUB_ID, "name": "home"}, "hubKey": "ab" * 32, "epoch": 0, "members": []}
         value.update(changes)
         return value
 
     def test_a_good_message_parses(self) -> None:
         message = pairing.parse_hub_message(self.frame())
-        self.assertEqual((message.hub, message.key, message.members), (HubRef(HUB_ID, "home"), "ab" * 32, ()))
+        self.assertEqual((message.hub, message.key, message.members, message.epoch), (HubRef(HUB_ID, "home"), "ab" * 32, (), 0))
+        self.assertEqual(pairing.parse_hub_message(self.frame(epoch=7)).epoch, 7)
 
     def test_refused_messages(self) -> None:
         for changes in (
@@ -457,6 +518,10 @@ class HubMessageParseTest(unittest.TestCase):
             {"members": "none"},
             {"members": [{"deviceId": "x"}]},
             {"members": [{}] * 33},
+            {"epoch": -1},
+            {"epoch": True},
+            {"epoch": "1"},
+            {"epoch": 2**31},
             {"extra": 1},
         ):
             with self.assertRaises(pairing.PairingError, msg=str(changes)):

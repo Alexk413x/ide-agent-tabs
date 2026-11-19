@@ -13,6 +13,7 @@ from ide_agent_tabs.net.client import peer_cert_path
 from ide_agent_tabs.net.hubstate import read_hub_state
 from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
 from ide_agent_tabs.net.listener import listener_file
+from ide_agent_tabs.net.netid import tagged_network_id
 from ide_agent_tabs.net.pair_cli import PairDeps
 from ide_agent_tabs.net.pairing import PairResult
 from ide_agent_tabs.net.policy import Hub, PeerGrant, Policy, load_network_config, load_policy, policy_path, save_policy
@@ -226,6 +227,40 @@ class DiscoverableTest(HubCliCase):
         config, warnings = load_network_config(self.a)
         self.assertEqual((config.network, config.discoverable), ("off", False))
         self.assertTrue(any("network.discoverable must be true or false" in w for w in warnings))
+
+
+class GatewayMacTest(HubCliCase):
+    LEGACY = "win:Home-Net:192.168.50.0_24:aaaaaaaaaaaa"
+    UPGRADED = "win:Home-Net:192.168.50.0_24:bbbbbbbbbbbb"
+
+    def test_discoverable_on_replaces_an_old_format_entry_instead_of_adding_a_second_one(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"allowedNetworks": [self.LEGACY, OTHER_NETWORK]}}))
+        self.network = tagged_network_id(self.UPGRADED, legacy=self.LEGACY)
+        self.assertEqual(self.h.run("discoverable", "on"), 0, self.h.errors)
+        self.assertEqual(load_network_config(self.a)[0].allowed_networks, (self.UPGRADED, OTHER_NETWORK))
+
+    def test_networks_add_replaces_an_old_format_entry_and_a_current_entry_is_left_alone(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": BIND, "allowedNetworks": [self.LEGACY]}}))
+        self.network = tagged_network_id(self.UPGRADED, legacy=self.LEGACY)
+        self.assertEqual(self.h.run("networks", "add"), 0, self.h.errors)
+        self.assertEqual(load_network_config(self.a)[0].allowed_networks, (self.UPGRADED,))
+        self.assertEqual(self.h.run("networks", "add"), 0)
+        self.assertIn("already allowed", self.h.text)
+        self.assertEqual(load_network_config(self.a)[0].allowed_networks, (self.UPGRADED,))
+
+    def test_the_view_calls_the_old_format_entry_allowed(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": BIND, "allowedNetworks": [self.LEGACY]}}))
+        self.network = tagged_network_id(self.UPGRADED, legacy=self.LEGACY)
+        self.assertEqual(self.h.run("networks"), 0)
+        self.assertIn(f"current network: {self.UPGRADED} (allowed)", self.h.text)
+
+    def test_a_fallback_id_prints_a_warning_when_it_is_added(self) -> None:
+        self.network = tagged_network_id(
+            NETWORK, fallback="the MAC address of the default gateway can't be read, so the id is built from less"
+        )
+        self.assertEqual(self.h.run("discoverable", "on"), 0, self.h.errors)
+        self.assertIn("warning: the MAC address of the default gateway can't be read", self.h.errors)
+        self.assertEqual(load_network_config(self.a)[0].allowed_networks, (NETWORK,))
 
 
 class NetworksTest(HubCliCase):

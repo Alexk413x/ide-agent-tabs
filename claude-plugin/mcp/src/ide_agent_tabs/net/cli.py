@@ -30,9 +30,9 @@ from ..processes import spawn_detached, terminal_environment
 from ..profiles import TAB_ID_ENV
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, parse_port
-from . import elevation, firewall, ingress, login_task, tls
+from . import elevation, firewall, hubsync, ingress, login_task, tls
 from .certgen import CertgenError, Identity, generate_identity
-from .client import identity_dir, local_device_id, peer_cert_path
+from .client import identity_dir, local_device_id, peer_cert_path, send_request
 from .confirm import ConfirmError, confirm
 from .firewall import FirewallError
 from .hub import default_member_folder
@@ -46,8 +46,8 @@ from .netid import current_network_id, gate_state
 from .notify import notify
 from .origin import Caller, OriginChecker
 from .outbound import OFFLINE_AFTER_MS
-from .pairing import PAIRING_FILE, Busy, Limits, Locked, PairingError
-from .peers import LabelTaken, save_peer
+from .pairing import PAIRING_FILE, Busy, Limits, PairingError
+from .peers import LabelTaken, remove_peer, save_peer
 from .policy import (
     ALIAS,
     SUPPORTED_AGENTS,
@@ -172,6 +172,7 @@ class Services:
     unsupported_reason: Callable[[], str | None] = elevation.unsupported_reason
     pair: PairDeps | None = None
     find: Callable[[FindRequest], FindResult] | None = None
+    member_request: Callable[..., dict[str, Any]] | None = None
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     user_home: str = field(default_factory=lambda: os.path.expanduser("~"))
     server_port: int = SERVER_DEFAULT_PORT
@@ -359,17 +360,20 @@ def _cmd_id(svc: Services, args: Sequence[str]) -> int:
 
 
 def _pairing_state(svc: Services) -> str:
-    state = "available"
-    if (ingress.net_dir(svc.home) / PAIRING_FILE).exists():
-        try:
-            Limits(svc.home).check()
-        except Busy as error:
-            return str(error)
-        except Locked as error:
-            state = str(error)
-        except PairingError as error:
-            return f"unreadable ({error})"
-    return state
+    if not (ingress.net_dir(svc.home) / PAIRING_FILE).exists():
+        return "available"
+    limits = Limits(svc.home)
+    try:
+        limits.check()
+        locked = limits.locked_addresses()
+    except Busy as error:
+        return str(error)
+    except PairingError as error:
+        return f"unreadable ({error})"
+    if not locked:
+        return "available"
+    where = ", ".join(f"{address} ({-(-left // 60)} more minutes)" for address, left in sorted(locked.items()))
+    return f"available; locked for {where} after failed attempts; other addresses can still pair, and `net trust` still works"
 
 
 def _read_network_id(svc: Services, bind: str) -> str | None:
@@ -870,11 +874,9 @@ def _cmd_revoke(svc: Services, args: Sequence[str]) -> int:
     options = parser.parse_args(args)
     refuse_remote_origin(svc)
     net_dir_for(svc.home)
-    with file_lock(policy_path(svc.home)):
-        policy = load_policy(svc.home)
-        peer = _peer_by_label(policy, options.label)
-        save_policy(svc.home, replace(policy, peers=tuple(p for p in policy.peers if p.device_id != peer.device_id)))
-    remove_file(str(peer_cert_path(svc.home, peer.device_id)))
+    policy = load_policy(svc.home)
+    peer = _peer_by_label(policy, options.label)
+    remove_peer(svc.home, peer.device_id)
     store = NetStore(svc.home)
     try:
         generation = store.bump_generation()
@@ -883,6 +885,12 @@ def _cmd_revoke(svc: Services, args: Sequence[str]) -> int:
     svc.record("revoke", device=peer.device_id, generation=generation)
     svc.out(f"Revoked {peer.label} ({peer.device_id}); the policy generation is {generation}.")
     svc.out("Requests already handed off to a local tab may still finish. Revoking here removes no trust on the other machine.")
+    if peer.member and policy.hub is not None:
+        report = hubsync.announce_removal(svc.home, peer.device_id, svc.member_request or send_request)
+        svc.record("hub-revoke", device=peer.device_id, told=len(report.told), queued=len(report.queued))
+        svc.out("The hub key was replaced, and the other members were sent the removal and the new key.")
+        for line in report.lines():
+            svc.out(line)
     return 0
 
 
@@ -1021,12 +1029,14 @@ def _cmd_hub_leave(svc: Services, args: Sequence[str]) -> int:
     make_parser("hub leave").parse_args(args)
     refuse_remote_origin(svc)
     net_dir_for(svc.home)
+    policy = load_policy(svc.home)
+    hub = policy.hub
+    if hub is None:
+        raise CliError("this machine is not in a hub")
+    members = [p for p in policy.peers if p.member]
+    report = hubsync.leave_hub(svc.home, svc.member_request or send_request)
     with file_lock(policy_path(svc.home)):
         policy = load_policy(svc.home)
-        hub = policy.hub
-        if hub is None:
-            raise CliError("this machine is not in a hub")
-        members = [p for p in policy.peers if p.member]
         save_policy(svc.home, replace(policy, peers=tuple(p for p in policy.peers if not p.member), hub=None))
     for peer in members:
         remove_file(str(peer_cert_path(svc.home, peer.device_id)))
@@ -1036,9 +1046,20 @@ def _cmd_hub_leave(svc: Services, args: Sequence[str]) -> int:
         generation = store.bump_generation()
     finally:
         store.close()
-    svc.record("hub-leave", hub=hub.id, members=len(members), generation=generation)
+    svc.record(
+        "hub-leave", hub=hub.id, members=len(members), generation=generation, told=len(report.told), rotator=report.rotator or "none"
+    )
     svc.out(f"Left the hub {hub.name} ({hub.id}); removed {len(members)} member(s); the policy generation is {generation}.")
-    svc.out("The other members are not told yet, and keep their trust of this machine until they revoke it.")
+    if report.rotator is not None:
+        for line in report.lines("Not told directly: {names}."):
+            svc.out(line)
+        svc.out(f"{report.rotator} replaces the hub key and sends the departure and the new key to every remaining member.")
+    elif members:
+        for line in report.lines("Not told: {names}."):
+            svc.out(line)
+        svc.out(
+            "No member accepted the key change, so the hub key is not replaced yet. The members keep trusting this machine until they revoke it."
+        )
     svc.out("Requests already handed off to a local tab may still finish.")
     return 0
 

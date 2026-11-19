@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import socket
 import threading
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -14,10 +16,13 @@ from ide_agent_tabs.net import listener, pairing
 from ide_agent_tabs.net.client import NetClientError, send_request
 from ide_agent_tabs.net.hubjoin import HubJoiner, local_pair_identity
 from ide_agent_tabs.net.listener import Listener, Options
+from ide_agent_tabs.net.netid import tagged_network_id
+from ide_agent_tabs.net.peers import save_peer
 from ide_agent_tabs.net.policy import Hub, NetworkConfig, Policy, grant_for, load_policy, save_policy
 from net_support import (
     LOOPBACK,
     FakeIngress,
+    cert_of,
     create_home,
     device_of,
     make_root,
@@ -25,7 +30,7 @@ from net_support import (
     trust_peer,
     wait_until,
 )
-from test_net_join import FAST, HUB_ID, NEEDS, reset, set_name
+from test_net_join import FAST, HUB_ID, NEEDS, make_hub, reset, set_name
 
 HOME_NETWORK = "home-network"
 OTHER_NETWORK = "other-network"
@@ -89,21 +94,25 @@ class Running:
 class DiscoverableListenerTest(unittest.TestCase):
     a: str
     b: str
+    c: str
 
     @classmethod
     def setUpClass(cls) -> None:
         root = make_root(cls)
-        cls.a, cls.b = (create_home(root, name) for name in ("a", "b"))
+        cls.a, cls.b, cls.c = (create_home(root, name) for name in ("a", "b", "c"))
         set_name(cls.a, "alpha")
         set_name(cls.b, "bravo")
+        set_name(cls.c, "charlie")
 
     def setUp(self) -> None:
         NOTICES.clear()
         with contextlib.suppress(OSError):
             os.remove(listener.log_file(self.a))
-        for home in (self.a, self.b):
+        for home in (self.a, self.b, self.c):
             reset(home)
             reset_peers(home)
+        with contextlib.suppress(OSError):
+            os.remove(os.path.join(self.a, "config.json"))
         self.ingress = FakeIngress(self.a)
         self.addCleanup(self.ingress.close)
         patch = mock.patch.multiple(listener, PROFILE_REFRESH_S=0.0, MONITOR_S=0.05, CONFIG_RECHECK_S=0.05, JOIN_RETRY_S=0.0)
@@ -148,6 +157,50 @@ class DiscoverableListenerTest(unittest.TestCase):
         self.assertEqual(load_policy(self.a).hub, Hub(HUB_ID, "home"))
         self.assertIn("a device joined the hub", running.log())
         self.assertTrue(any("joined this machine's hub" in notice for notice in NOTICES))
+
+    def test_a_join_introduces_the_new_member_to_the_other_members_over_the_member_request(self) -> None:
+        make_hub(self.a)
+        save_peer(self.a, device_of(self.c), cert_of(self.c).read_text(encoding="ascii"), "192.168.1.33", "charlie", member=True)
+        self.give_b_a_hub()
+        running, _cell = self.start()
+        sent: list[tuple[str, str, dict[str, Any]]] = []
+
+        def request(_home: str, device_id: str, op: str, body: dict[str, Any], **_options: Any) -> dict[str, Any]:
+            sent.append((device_id, op, body))
+            return {"ok": True, "body": {"added": True}}
+
+        running.options.member_request = request
+        self.assertTrue(wait_until(running.joins_on, 5))
+        self.assertEqual(self.join(running).outcome, "paired")
+        self.assertTrue(wait_until(lambda: len(sent) == 1, 5), running.log())
+        ((device_id, op, body),) = sent
+        self.assertEqual((device_id, op), (device_of(self.c), "introduce"))
+        self.assertEqual(body["hub"], HUB_ID)
+        self.assertEqual(body["member"]["deviceId"], device_of(self.b))
+        self.assertEqual(body["member"]["label"], "bravo")
+        self.assertTrue(wait_until(lambda: "introduced" in running.log(), 5))
+
+    def test_a_network_id_with_the_gateway_mac_upgrades_an_old_format_allowed_entry_in_place(self) -> None:
+        Path(self.a, "config.json").write_text(
+            json.dumps({"network": {"allowedNetworks": [HOME_NETWORK, OTHER_NETWORK]}}), encoding="utf-8"
+        )
+        running, cell = self.start()
+        self.assertTrue(wait_until(running.joins_on, 5))
+        cell.network = tagged_network_id("new-" + HOME_NETWORK, legacy=HOME_NETWORK)
+        stored = lambda: json.loads(Path(self.a, "config.json").read_text(encoding="utf-8"))["network"]["allowedNetworks"]  # noqa: E731
+        self.assertTrue(wait_until(lambda: stored() == ["new-" + HOME_NETWORK, OTHER_NETWORK], 5), stored())
+        self.assertIn(f"network.allowedNetworks: {HOME_NETWORK} is now new-{HOME_NETWORK}", running.log())
+        self.assertTrue(running.joins_on())
+
+    def test_a_network_id_that_fell_back_to_the_name_and_subnet_is_logged_once(self) -> None:
+        running, cell = self.start()
+        self.assertTrue(wait_until(running.joins_on, 5))
+        note = "the MAC address of the default gateway can't be read, so the network id is built from the profile name and the subnet only"
+        cell.network = tagged_network_id(HOME_NETWORK, fallback=note)
+        self.assertTrue(wait_until(lambda: f"network id: {note}" in running.log(), 5))
+        time.sleep(0.3)
+        self.assertEqual(running.log().count(f"network id: {note}"), 1)
+        self.assertTrue(running.joins_on())
 
     def test_it_serves_no_joins_while_discoverable_is_off(self) -> None:
         running, _cell = self.start(discoverable=False)

@@ -10,6 +10,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from ..files import file_lock, read_text_if_exists, write_atomically
+from ..jev.settings import CONFIG_FILE
+from ..jsjson import parse, stringify
 from ..processes import RunResult
 from ..processes import run as run_process
 from .interfaces import InterfaceError, InterfaceInfo, interface_for
@@ -31,18 +34,51 @@ _GATEWAY_LINE = re.compile(r"^\s*gateway:\s*(\S+)\s*$", re.MULTILINE)
 _INTERFACE_LINE = re.compile(r"^\s*interface:\s*(\S+)\s*$", re.MULTILINE)
 _INET_LINE = re.compile(r"\binet\s+(\d+\.\d+\.\d+\.\d+)\s+netmask\s+(0x[0-9a-f]{8})\b", re.IGNORECASE)
 _ARP_LINE = re.compile(r"\bat\s+((?:[0-9a-f]{1,2}:){5}[0-9a-f]{1,2})\b", re.IGNORECASE)
+_MAC_ANY = re.compile(r"(?:[0-9a-f]{1,2}[:-]){5}[0-9a-f]{1,2}", re.IGNORECASE)
+_GATEWAY_V4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
+NO_GATEWAY_MAC = (
+    "the MAC address of the default gateway can't be read, so the network id is built from the profile name and the subnet only"
+)
 
 # Get-NetConnectionProfile's InstanceID is the adapter's interface GUID, so it stays the same on every network the
 # adapter joins. The profile Name is what Windows keeps unique per network (it adds " 2" to a second network that
-# reuses a name), so the id is built from the Name and the subnet.
+# reuses a name), but two home networks can still share a Name and a subnet, so the id also holds the MAC address of
+# the default gateway.
 _WINDOWS_SCRIPT = (
     "$ErrorActionPreference = 'Stop'; "
     f"$a = @(Get-NetIPAddress -AddressFamily IPv4 -IPAddress $env:{_ADDRESS_ENV})[0]; "
     "$c = @(Get-NetConnectionProfile -InterfaceIndex $a.InterfaceIndex)[0]; "
-    "[pscustomobject]@{ name = [string]$c.Name; address = [string]$a.IPAddress; prefix = [int]$a.PrefixLength } | ConvertTo-Json -Compress"
+    "$r = @(Get-NetRoute -DestinationPrefix 0.0.0.0/0 -InterfaceIndex $a.InterfaceIndex -ErrorAction SilentlyContinue "
+    "| Sort-Object RouteMetric)[0]; "
+    "$g = if ($r) { [string]$r.NextHop } else { '' }; "
+    "$n = if ($g) { @(Get-NetNeighbor -IPAddress $g -InterfaceIndex $a.InterfaceIndex -ErrorAction SilentlyContinue "
+    "| Where-Object { $_.LinkLayerAddress })[0] } else { $null }; "
+    "$m = if ($n) { [string]$n.LinkLayerAddress } else { '' }; "
+    "[pscustomobject]@{ name = [string]$c.Name; address = [string]$a.IPAddress; prefix = [int]$a.PrefixLength; "
+    "gateway = $g; mac = $m } | ConvertTo-Json -Compress"
 )
 
 Run = Callable[..., RunResult]
+
+
+class NetworkId(str):
+    legacy: str | None = None
+    fallback: str | None = None
+
+
+def tagged_network_id(value: str, legacy: str | None = None, fallback: str | None = None) -> NetworkId:
+    found = NetworkId(value)
+    found.legacy = legacy
+    found.fallback = fallback
+    return found
+
+
+def legacy_of(network_id: str | None) -> str | None:
+    return network_id.legacy if isinstance(network_id, NetworkId) else None
+
+
+def fallback_of(network_id: str | None) -> str | None:
+    return network_id.fallback if isinstance(network_id, NetworkId) else None
 
 
 @dataclass(frozen=True)
@@ -55,9 +91,33 @@ class GateState:
 def gate_state(allowed_networks: Sequence[str], network_id: str | None) -> GateState:
     if network_id is None:
         return GateState(False, None, UNREADABLE)
-    if network_id not in allowed_networks:
+    legacy = legacy_of(network_id)
+    if network_id not in allowed_networks and (legacy is None or legacy not in allowed_networks):
         return GateState(False, network_id, NOT_ALLOWED)
     return GateState(True, network_id)
+
+
+def upgraded_allowed(allowed_networks: Sequence[str], network_id: str | None) -> tuple[str, ...] | None:
+    legacy = legacy_of(network_id)
+    if network_id is None or legacy is None or network_id in allowed_networks or legacy not in allowed_networks:
+        return None
+    return tuple(network_id if item == legacy else item for item in allowed_networks)
+
+
+def store_upgraded_network(home: str, legacy: str, network_id: str) -> bool:
+    path = os.path.join(home, CONFIG_FILE)
+    with file_lock(path):
+        text = read_text_if_exists(path)
+        config: Any = parse(text) if text and text.strip() else {}
+        section: Any = config.get("network") if isinstance(config, dict) else None  # pyright: ignore[reportUnknownMemberType]
+        if not isinstance(section, dict):
+            return False
+        listed: Any = section.get("allowedNetworks")  # pyright: ignore[reportUnknownMemberType]
+        if not isinstance(listed, list) or legacy not in listed or network_id in listed:
+            return False
+        section["allowedNetworks"] = [network_id if item == legacy else item for item in listed]  # pyright: ignore[reportUnknownVariableType]
+        write_atomically(path, stringify(config, 2) + "\n")
+    return True
 
 
 def check_network(allowed_networks: Sequence[str], bind: str, read: Callable[[str], str | None]) -> GateState:
@@ -72,10 +132,18 @@ def _checked(identifier: str) -> str | None:
     return identifier if NETWORK_ID.fullmatch(identifier) is not None else None
 
 
-def windows_network_id(name: str, subnet: str) -> str | None:
+def normalize_mac(text: object) -> str | None:
+    if not isinstance(text, str) or _MAC_ANY.fullmatch(text.strip()) is None:
+        return None
+    mac = ":".join(part.zfill(2) for part in text.strip().lower().replace("-", ":").split(":"))
+    return None if mac in ("00:00:00:00:00:00", "ff:ff:ff:ff:ff:ff") else mac
+
+
+def windows_network_id(name: str, subnet: str, gateway_mac: str | None = None) -> str | None:
     if not name.strip():
         return None
-    digest = hashlib.sha256(f"{name}\0{subnet}".encode()).hexdigest()[:12]
+    material = f"{name}\0{subnet}" if gateway_mac is None else f"{name}\0{subnet}\0{gateway_mac}"
+    digest = hashlib.sha256(material.encode()).hexdigest()[:12]
     readable = _UNSAFE.sub("-", name).strip("-")[:48] or "network"
     return _checked(f"win:{readable}:{subnet.replace('/', '_')}:{digest}")
 
@@ -89,7 +157,26 @@ def posix_network_id(gateway_mac: str, subnet: str) -> str | None:
     return _checked(f"{mac}_{subnet.replace('/', '_')}")
 
 
-def _windows(bind: str, run: Run, shell: str | None) -> str | None:
+def windows_arp_path() -> str | None:
+    root = os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR")
+    path = os.path.join(root, "System32", "arp.exe") if root else None
+    return path if path is not None and os.path.isfile(path) else None
+
+
+def _arp_mac(bind: str, gateway: str, run: Run, arp: str | None) -> str | None:
+    if arp is None or _GATEWAY_V4.fullmatch(gateway) is None:
+        return None
+    try:
+        result = run(arp, ["-a", gateway, "-N", bind], timeout=QUERY_TIMEOUT_S)
+    except (OSError, TimeoutError):
+        return None
+    if result.code != 0:
+        return None
+    row = re.search(rf"^\s*{re.escape(gateway)}\s+((?:[0-9a-f]{{2}}-){{5}}[0-9a-f]{{2}})\b", result.stdout, re.IGNORECASE | re.MULTILINE)
+    return normalize_mac(row.group(1)) if row is not None else None
+
+
+def _windows(bind: str, run: Run, shell: str | None, arp: Callable[[], str | None]) -> str | None:
     if shell is None:
         return None
     try:
@@ -113,7 +200,18 @@ def _windows(bind: str, run: Run, shell: str | None) -> str | None:
         name, prefix = data.get("name"), data.get("prefix")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         if not isinstance(name, str) or isinstance(prefix, bool) or not isinstance(prefix, int) or not 0 < prefix <= 32:
             return None
-        return windows_network_id(name, _subnet(bind, prefix))
+        subnet = _subnet(bind, prefix)
+        legacy = windows_network_id(name, subnet)
+        gateway = data.get("gateway")  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        mac = normalize_mac(data.get("mac"))  # pyright: ignore[reportUnknownMemberType]
+        if mac is None and isinstance(gateway, str):
+            mac = _arp_mac(bind, gateway, run, arp())
+        if legacy is None:
+            return None
+        if mac is None:
+            return tagged_network_id(legacy, fallback=NO_GATEWAY_MAC)
+        found = windows_network_id(name, subnet, mac)
+        return None if found is None else tagged_network_id(found, legacy=legacy)
     return None
 
 
@@ -187,9 +285,10 @@ def current_network_id(
     run: Run = run_process,
     shell: Callable[[], str | None] = powershell_path,
     interface: Callable[[str], InterfaceInfo] = interface_for,
+    arp: Callable[[], str | None] = windows_arp_path,
 ) -> str | None:
     if platform == "win32":
-        return _windows(bind_address, run, shell())
+        return _windows(bind_address, run, shell(), arp)
     if platform == "darwin":
         return _macos(bind_address, run)
     try:

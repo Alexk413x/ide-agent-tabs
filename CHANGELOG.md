@@ -18,6 +18,10 @@ Plugin and MCP server 0.14.0. Not released yet.
 - The `open_tab` tool text describes the member form of `path`.
 - `net hub join <device id>` and `net hub create --with <device id>` find the address through `net find` when no address
   is given. `--address` and `<device id>@<address>` still work and skip the search.
+- Pairing failure counts and locks are kept per remote address in `net/pairing.json`. Three failures from one address lock
+  that address for an hour and leave every other address free. A join attempt that fails after it was admitted counts as a
+  failure, except a hub mismatch, a local save error and a busy server. The one-at-a-time and three-per-hour window limits
+  stay global. The minimum gap between connections is kept per address. `net status` lists the locked addresses.
 
 ### Added
 
@@ -43,7 +47,11 @@ Plugin and MCP server 0.14.0. Not released yet.
   listed, and `net status` reports "this network is not in network.allowedNetworks". When the network id can't be read,
   the network counts as not allowed. `agent-tabs net networks`, `net networks add` and `net networks remove <id>` change
   the list. `discoverable on`, `hub join` and `hub create --with` add the current network.
-- A network id is the profile name and subnet on Windows, and the gateway MAC address and subnet on macOS and Linux.
+- A network id is the profile name, the subnet and the default gateway's MAC address on Windows, and the gateway MAC
+  address and subnet on macOS and Linux. On Windows the MAC comes from `Get-NetNeighbor`, with `arp -a` as the fallback.
+  When neither returns it, the id uses the profile name and the subnet only, and the listener logs that. A stored entry
+  in the older name-and-subnet form still opens the gate, and the listener, `discoverable on`, `hub join` and
+  `networks add` rewrite it to the new id in `config.json`.
 - `agent-tabs net hub join <device id> --address <IP>` and `net hub create --with <device id>@<IP>` join a discoverable
   machine over TLS pinned to the expected device id, with no token and no approval. Machines in different hubs refuse
   with `already-in-another-hub` and save nothing on either side. Both sides save each other as hub members with
@@ -76,7 +84,30 @@ Plugin and MCP server 0.14.0. Not released yet.
   whether it is a member and the source (`multicast`, `broadcast`, `probe` or `remembered`). A warning line appears when
   two rows share a name. When nothing is found, the message names the likely causes, says that Wi-Fi client isolation
   blocks all traffic between devices, and points to Tailscale mode.
+- A device that joins a hub through one member is introduced to every other member over pinned mutual TLS. Each member
+  saves it with the member role and posts "`<name>` joined from `<address>`" to its local sessions. The joining device
+  pins and saves the members from the hub message, and the hub message now carries the key epoch. An introduction is
+  accepted only from a pinned member of the same hub, only for a valid certificate that matches the device id and a private
+  address, and never turns an existing non-member peer into a member.
+- `net revoke <label>` on a hub member also tells every other member to remove it, replaces the hub key and sends the new
+  key to the remaining members. After that, requests from the removed device are refused on every member. A message that
+  names the receiving device is refused, so a member cannot be removed by a message sent to itself.
+- The hub key has an epoch in `net/hub.json`. A member accepts a new key only when `(epoch, key)` is higher than its own, and
+  answers with the version it holds, so two members that replace the key at the same time end with the same one. Beacons
+  under an older key are ignored.
+- `net hub leave` tells each member over mutual TLS before it clears local state. The member with the lowest device id
+  that answers removes the leaver, replaces the key, and sends the removal and the new key to every other member. When no
+  member answers, `net hub leave` says the key is not replaced yet.
+- A member that is offline during an introduction, a removal or a key change gets it later. The listener keeps the
+  undelivered changes in `net/hub.json` and retries every 60 seconds for up to 14 days.
+- Three new peer requests, `introduce`, `remove` and `rekey`, carry these changes. Only a pinned hub member can send them.
 - `net pair` still works until the hub flow replaces it.
+
+### Fixed
+
+- Mutual TLS with two or more pinned peers failed for one of them, because every device certificate has the subject
+  `CN=agent-tabs` and OpenSSL picked the wrong certificate as the issuer. The TLS contexts now accept the exact pinned
+  certificate as the trust anchor.
 
 ## 0.13.0
 

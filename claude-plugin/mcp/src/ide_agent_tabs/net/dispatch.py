@@ -20,6 +20,7 @@ from ..messaging.sessions import SESSIONS_DIR, Presence, is_session_id, live_ses
 from ..messaging.store import send_message
 from . import wire
 from .audit import ADMITTED, REFUSED, Audit, AuditError, AuditRecord
+from .hubsync import HubRefusal, HubSync
 from .outbound import is_inside
 from .policy import (
     FolderGrant,
@@ -143,6 +144,7 @@ class NetDispatcher:
         claude_help: Callable[[], str] = claude_help_text,
         alive: Callable[[int], bool] = pid_alive,
         audit: Audit | None = None,
+        hub_sync: HubSync | None = None,
     ) -> None:
         self.home = home
         self._service_factory = service_factory
@@ -157,6 +159,7 @@ class NetDispatcher:
         self._sent: dict[str, deque[int]] = {}
         self._seen: dict[str, OrderedDict[str, tuple[str, dict[str, Any]]]] = {}
         self._noticed: OrderedDict[tuple[str, str], int] = OrderedDict()
+        self._hub_sync = hub_sync
 
     def handle(self, peer: str, request: object) -> dict[str, Any]:
         trace = _Trace(peer if isinstance(peer, str) else "", raw_request_id(request))  # pyright: ignore[reportUnnecessaryIsInstance]
@@ -251,6 +254,8 @@ class NetDispatcher:
             raise _Refusal("bad-request") from None
         trace.op = parsed.op
         body = parsed.body
+        if isinstance(body, (wire.IntroduceBody, wire.RemoveBody, wire.RekeyBody)):
+            return self._hub(trace, grant, body)
         if isinstance(body, wire.OpenBody):
             return self._open(trace, policy, grant, parsed.id, request, body, config)
         if isinstance(body, wire.CloseBody):
@@ -318,14 +323,28 @@ class NetDispatcher:
                 f"{label} asked to open a tab outside network.memberFolders; this machine refused. "
                 "Run agent-tabs net folders to see the list."
             )
+        self._notice_sessions(text)
+
+    def _notice_sessions(self, text: str) -> None:
         try:
             store = self._open_store()
             for session in self._live_sessions():
                 if self._owner(store, session["id"]) is None:
                     with contextlib.suppress(_Refusal):
                         self._deliver("net-notice", session["id"], text, None, "notice-failed")
-        except Exception as e:  # noqa: BLE001 - the notice is best effort; the refusal stands either way
-            self._log(f"net: delivering a folder notice failed: {type(e).__name__}")
+        except Exception as e:  # noqa: BLE001 - a notice is best effort; the request outcome stands either way
+            self._log(f"net: delivering a notice failed: {type(e).__name__}")
+
+    def _hub(self, trace: _Trace, grant: PeerGrant, body: wire.HubBody) -> dict[str, Any]:
+        if self._hub_sync is None:
+            self._hub_sync = HubSync(self.home, self._log, self._notice_sessions, lambda: self._open_store().bump_generation())
+        try:
+            reply = self._hub_sync.handle(grant, body)
+        except HubRefusal as refusal:
+            raise _Refusal(refusal.reason) from None
+        trace.admitted = True
+        trace.effect = True
+        return reply
 
     def _open(
         self, trace: _Trace, policy: Policy, grant: PeerGrant, request_id: str, request: object, body: wire.OpenBody, config: NetworkConfig
