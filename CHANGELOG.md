@@ -5,7 +5,7 @@ bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
 ## 0.14.0
 
-Plugin and MCP server 0.14.0. Not released yet.
+Plugin and MCP server 0.14.0. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
 
 ### Changed
 
