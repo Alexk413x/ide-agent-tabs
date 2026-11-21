@@ -3,6 +3,15 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.14.2
+
+Plugin and MCP server 0.14.2. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Removed
+
+- `privacyPolicyUrl` from `claude-plugin/.claude-plugin/plugin.json`. The plugin schema has no such key,
+  so a marketplace sync stripped it and reported a warning. The README Privacy section stays.
+
 ## 0.14.1
 
 Plugin and MCP server 0.14.1. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
