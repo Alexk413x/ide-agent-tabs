@@ -946,7 +946,11 @@ class Listener:
             sock = as_socket(DeadlineSocket(tls_sock, time.monotonic() + REQUEST_TOTAL_S, IDLE_S))
             wire.check_hello(wire.parse_json(wire.read_frame(sock)))
             wire.write_frame(sock, wire.hello_frame())
-            reply = self._answer(peer, wire.parse_json(wire.read_frame(sock)))
+            try:
+                frame = wire.read_frame(sock)
+            except wire.ConnectionClosed:
+                return
+            reply = self._answer(peer, wire.parse_json(frame))
             if reply is not None:
                 wire.write_frame(sock, wire.encode(reply))
         except (OSError, wire.WireError, _Refused) as error:

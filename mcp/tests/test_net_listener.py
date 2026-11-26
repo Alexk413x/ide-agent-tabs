@@ -6,11 +6,12 @@ import ssl
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
 from ide_agent_tabs.net import listener, tls, wire
-from ide_agent_tabs.net.client import NetClientError, load_identity, read_peer_pem, send_request
+from ide_agent_tabs.net.client import NetClientError, load_identity, read_peer_pem, send_request, verify_pinned
 from ide_agent_tabs.net.listener import IngressForwarder, NetworkWatch, Options, read_listener, run_listener
 from ide_agent_tabs.net.policy import NetworkConfig
 from net_support import (
@@ -169,6 +170,23 @@ class ListenerTest(unittest.TestCase):
             sock.sendall((wire.MAX_FRAME + 1).to_bytes(4, "big"))
             self.assertIsNone(read_or_none(sock))
         self.assertEqual(self.ingress.seen, [])
+
+    def test_a_pinned_check_that_closes_after_the_hello_is_not_logged_as_a_refusal(self) -> None:
+        self.pair()
+        running = self.start()
+        log = Path(listener.log_file(self.a))
+        before = len(log.read_text(encoding="utf-8").splitlines()) if log.exists() else 0
+
+        def refusals() -> list[str]:
+            return [line for line in log.read_text(encoding="utf-8").splitlines()[before:] if "refused" in line]
+
+        self.assertEqual(verify_pinned(self.b, LOOPBACK, [self.a_id], port=running.port), self.a_id)
+        with raw_connect(self.b, self.a_id, running.port) as sock:
+            wire.write_frame(sock, wire.encode({"v": 2, "hello": wire.HELLO}))
+            self.assertIsNone(read_or_none(sock))
+        self.assertTrue(wait_until(lambda: bool(refusals()), 5))
+        self.assertEqual(len(refusals()), 1, refusals())
+        self.assertIn("WireError", refusals()[0])
 
     def test_a_bad_hello_is_refused(self) -> None:
         self.pair()

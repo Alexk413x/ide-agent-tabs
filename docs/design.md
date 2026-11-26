@@ -2716,10 +2716,16 @@ receives it (see The transport and discovery seam).
   by a random 16-byte announcement id (remembered for 300 s, at most 4096) and read each datagram strictly: at most
   1200 bytes, JSON, exact keys, a version field, no duplicate keys. They accept only a source address inside the bind
   interface's subnet that isn't their own.
-- **Schedule.** The listener announces once at start, on every change of the machine's address set, and every 30 s.
+- **Schedule.** The listener announces once at start, on every change of the machine's address set, every 30 s, and in
+  answer to a solicitation (below).
   Nothing is sent or read while LAN mode is off, the bind address is IPv6, or the current network is not in
-  `network.allowedNetworks`. The listener stops on a network Windows marks Public. `net find` listens for 10 s and an
-  announcement comes every 30 s, so a find can pass without hearing one. The probe covers that case.
+  `network.allowedNetworks`. The listener stops on a network Windows marks Public.
+- **Solicitation** (`kind` `solicit`). Fields: `v`, `kind` and `id`, nothing else, so it carries no identity or secret.
+  `net find` sends one on both paths when it starts listening and once more 2.5 s later. A listener that receives one from
+  another address answers at once with the announcements it would send on its schedule (the join announcement while
+  discoverable, the member beacon while it holds the hub key), at most once every 2 s however many solicitations arrive.
+  Without it a find listening 10 s against a 30 s interval heard the other machine in about one run of three on the test
+  machines. A listener of 0.14.3 or older counts a solicitation as invalid and doesn't answer; the probe covers that case.
 - **Join announcement** (`kind` `join`). Sent only while the machine is discoverable. Fields: `v`, `kind`, `id`,
   `deviceName`, `deviceId`, `hubId`, `hubName`, `port` (47830) and `transport` (`lan`).
 - **Member beacon** (`kind` `member`). Sent by every hub member that holds the hub key, discoverable or not. Fields:
@@ -2754,10 +2760,14 @@ receives it (see The transport and discovery seam).
      with `member: no`. A row says `member: yes` only after the pinned mutual TLS check succeeded.
   
   `net find` records what it heard in `net/cli.log`: `datagrams` is the number of UDP datagrams that reached its socket, and
-  `heard` is the number of announcements that passed the checks. A `find: udp:` line adds the group join result, the invalid
-  datagrams and the member beacons it ignored. A machine that is not in a hub ignores every member beacon, so it hears only
-  join announcements. A `datagrams` count of 0 while the listener's log shows beacons from the other machine points to the
-  find's socket, not to the network.
+  `heard` is the number of announcements that passed the checks. A `find: udp:` line adds the group join result, the
+  solicitations sent, the datagrams from this machine (its own listener's announcements, which a find drops), solicitations
+  from other finds, the invalid datagrams and the member beacons it ignored. A machine that is not in a hub ignores every
+  member beacon, so it hears only join announcements. A `datagrams` count of 0 while the listener's log shows beacons from
+  the other machine points to the find's socket, not to the network.
+
+  The pinned check of a remembered member exchanges hellos over mutual TLS and closes without a request. The member's
+  listener treats a connection that closes cleanly after the hello as such a check and logs nothing for it.
 
   Each row shows the device name, device id, address, hub name or `no hub`, whether it is a member, and the source
   (`remembered`, `multicast`, `broadcast`, `probe`, or several joined with `+`). A warning line appears when two rows

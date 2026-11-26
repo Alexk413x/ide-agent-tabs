@@ -29,9 +29,11 @@ from ide_agent_tabs.net.beacon import (
     JoinAnnouncement,
     MemberBeacon,
     MemberCheck,
+    Solicitation,
     Wire,
     build_join,
     build_member,
+    build_solicit,
     mac_is_valid,
     parse_datagram,
     wire_for,
@@ -193,7 +195,9 @@ class AnnouncementFormatTest(unittest.TestCase):
     def test_parse_reads_back_what_the_builders_wrote(self) -> None:
         join = parse_datagram(build_join("alpha", ALPHA, HUB_ID, "home", announcement_id="ab" * 16))
         self.assertEqual(join, JoinAnnouncement("ab" * 16, "alpha", ALPHA, HUB_ID, "home"))
-        self.assertEqual(parse_datagram(build_join("alpha", ALPHA, None, None)).device_id, ALPHA)
+        without_hub = parse_datagram(build_join("alpha", ALPHA, None, None))
+        assert isinstance(without_hub, JoinAnnouncement)
+        self.assertEqual(without_hub.device_id, ALPHA)
 
     def good(self, **changes: Any) -> bytes:
         fields = json.loads(build_join("alpha", ALPHA, HUB_ID, "home"))
@@ -332,6 +336,22 @@ class HubWatchTest(unittest.TestCase):
         self.assertIsNone(HubWatch(self.home)())
 
 
+class SolicitationFormatTest(unittest.TestCase):
+    def test_a_solicitation_carries_only_the_version_kind_and_id(self) -> None:
+        data = build_solicit("44" * 16)
+        self.assertEqual(json.loads(data), {"v": 1, "kind": "solicit", "id": "44" * 16})
+        self.assertEqual(parse_datagram(data), Solicitation("44" * 16))
+
+    def test_a_solicitation_with_another_field_or_a_bad_id_is_refused(self) -> None:
+        for value in (
+            {"v": 1, "kind": "solicit", "id": "44" * 16, "deviceId": BRAVO},
+            {"v": 1, "kind": "solicit", "id": "short"},
+            {"v": 1, "kind": "solicit"},
+        ):
+            with self.assertRaises(BeaconError, msg=value):
+                parse_datagram(json.dumps(value).encode())
+
+
 class InboxTest(unittest.TestCase):
     def datagram(self, data: bytes, host: str = "192.168.1.20", port: int = 50000) -> Datagram:
         return Datagram(data, host, port)
@@ -340,7 +360,7 @@ class InboxTest(unittest.TestCase):
         inbox = Inbox(WIRE, ALPHA)
         data = build_join("bravo", BRAVO, None, None, announcement_id="11" * 16)
         first = inbox.accept(self.datagram(data, port=WIRE.port))
-        assert first is not None
+        assert first is not None and isinstance(first.announcement, JoinAnnouncement)
         self.assertEqual((first.host, first.path, first.announcement.device_id), ("192.168.1.20", MULTICAST, BRAVO))
         self.assertIsNone(inbox.accept(self.datagram(data, port=50000)))
         self.assertEqual(inbox.paths_for("11" * 16), frozenset({MULTICAST, BROADCAST}))
@@ -354,6 +374,22 @@ class InboxTest(unittest.TestCase):
 
     def test_this_machines_own_device_id_is_dropped(self) -> None:
         self.assertIsNone(Inbox(WIRE, BRAVO).accept(self.datagram(build_join("bravo", BRAVO, None, None))))
+
+    def test_datagrams_from_this_machine_are_counted_apart_from_the_rest(self) -> None:
+        inbox = Inbox(WIRE, BRAVO)
+        inbox.accept(self.datagram(build_join("bravo", BRAVO, None, None)))
+        inbox.accept(self.datagram(build_join("charlie", CHARLIE, None, None), host=WIRE.bind))
+        inbox.accept(self.datagram(build_solicit(), host=WIRE.bind))
+        inbox.accept(self.datagram(build_join("charlie", CHARLIE, None, None), host="10.0.0.5"))
+        self.assertEqual((inbox.own, inbox.rejected), (3, 0))
+
+    def test_a_solicitation_from_another_machine_is_accepted_once_across_both_paths(self) -> None:
+        inbox = Inbox(WIRE, ALPHA)
+        data = build_solicit("33" * 16)
+        heard = inbox.accept(self.datagram(data, port=WIRE.port))
+        assert heard is not None
+        self.assertEqual(heard.announcement, Solicitation("33" * 16))
+        self.assertIsNone(inbox.accept(self.datagram(data)))
 
     def test_garbage_and_oversize_datagrams_are_counted_and_dropped(self) -> None:
         inbox = Inbox(WIRE, ALPHA)
@@ -433,6 +469,10 @@ def announce_join(
         endpoint.close()
 
 
+def announcements(network: Any) -> list[tuple[str, bytes]]:
+    return [(kind, data) for kind, data in network.sent if b'"solicit"' not in data]
+
+
 def listen_for(receiver: LanDiscovery, seconds: float) -> list[Heard]:
     deadline = time.monotonic() + seconds
     return [heard for heard in receiver.listen(lambda: time.monotonic() >= deadline) if heard is not None]
@@ -474,18 +514,18 @@ class FakePathDiscoveryTest(unittest.TestCase):
     def test_discovery_works_over_multicast_alone(self) -> None:
         found, network = self.listen(broadcast=False)
         self.assertEqual(found, [(BRAVO, "192.168.1.20", "bravo", "multicast", "join")])
-        self.assertEqual([kind for kind, _data in network.sent], [MULTICAST])
+        self.assertEqual([kind for kind, data in announcements(network)], [MULTICAST])
 
     def test_discovery_works_over_broadcast_alone(self) -> None:
         found, network = self.listen(multicast=False)
         self.assertEqual([(device_id, source) for device_id, _host, _name, source, _kind in found], [(BRAVO, "broadcast")])
-        self.assertEqual([kind for kind, _data in network.sent], [BROADCAST])
+        self.assertEqual([kind for kind, data in announcements(network)], [BROADCAST])
 
     def test_both_paths_give_one_row_that_names_both(self) -> None:
         found, network = self.listen()
         self.assertEqual([(device_id, source) for device_id, _host, _name, source, _kind in found], [(BRAVO, "multicast+broadcast")])
-        self.assertEqual(sorted(kind for kind, _data in network.sent), [BROADCAST, MULTICAST])
-        self.assertEqual(len({data for _kind, data in network.sent}), 1)
+        self.assertEqual(sorted(kind for kind, _data in announcements(network)), [BROADCAST, MULTICAST])
+        self.assertEqual(len({data for _kind, data in announcements(network)}), 1)
 
     def test_a_network_that_drops_multicast_still_delivers_the_broadcast_copy(self) -> None:
         found, _network = self.listen(dropped=(MULTICAST,))
@@ -494,6 +534,25 @@ class FakePathDiscoveryTest(unittest.TestCase):
     def test_a_network_that_drops_broadcast_still_delivers_the_multicast_copy(self) -> None:
         found, _network = self.listen(dropped=(BROADCAST,))
         self.assertEqual([(device_id, source) for device_id, _host, _name, source, _kind in found], [(BRAVO, "multicast")])
+
+    def test_a_find_solicits_at_start_and_once_more_and_yields_no_solicitation(self) -> None:
+        network = FakeNetwork(WIRE)
+        receiver = LanDiscovery(WIRE, ALPHA, make_endpoint=lambda wire: Endpoint(wire, make_socket=network.socket), poll_s=0.05)
+        deadline = [time.monotonic() + 0.5]
+        with mock.patch("ide_agent_tabs.net.discovery.SOLICIT_AGAIN_S", 0.2):
+            heard = [h for h in receiver.listen(lambda: time.monotonic() >= deadline[0]) if h is not None]
+        solicits = [parse_datagram(data) for _kind, data in network.sent if b'"solicit"' in data]
+        self.assertEqual(len(solicits), 4)
+        self.assertEqual(len({item.id for item in solicits if isinstance(item, Solicitation)}), 2)
+        self.assertEqual((receiver.solicits_sent, heard), (2, []))
+
+    def test_a_find_that_does_not_solicit_sends_nothing(self) -> None:
+        network = FakeNetwork(WIRE)
+        receiver = LanDiscovery(
+            WIRE, ALPHA, make_endpoint=lambda wire: Endpoint(wire, make_socket=network.socket), poll_s=0.05, solicit=False
+        )
+        listen_for(receiver, 0.3)
+        self.assertEqual((network.sent, receiver.solicits_sent), ([], 0))
 
     def test_a_network_that_drops_both_delivers_nothing(self) -> None:
         found, _network = self.listen(dropped=(MULTICAST, BROADCAST))

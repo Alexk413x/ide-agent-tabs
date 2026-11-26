@@ -65,8 +65,9 @@ PowerShell it stands for `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1"`.
    agent-tabs net find
    ```
 
-   It listens for announcements for up to 10 seconds. When nothing is verified within 5 seconds, it
-   also probes the local /24 on TCP ports 47829 and 47830. Each row shows the device name, device id,
+   It asks the machines on the network to announce themselves at once, and listens for announcements for
+   up to 10 seconds. Machines on 0.14.3 or older don't answer that request and announce only every 30
+   seconds. When nothing is verified within 5 seconds, it also probes the local /24 on TCP ports 47829 and 47830. Each row shows the device name, device id,
    address, hub name or `no hub`, whether it is a member and how it was found (`multicast`, `broadcast`,
    `probe` or `remembered`). A row appears only after the command verified the device's certificate.
 3. **Join.** Use the full device id from the row.

@@ -23,6 +23,7 @@ from ide_agent_tabs.net.beacon import (
     SendResult,
     Wire,
     build_member,
+    build_solicit,
     parse_datagram,
 )
 from ide_agent_tabs.net.beaconsvc import (
@@ -192,6 +193,28 @@ class SendingTest(PlainHomeCase):
         self.assertTrue(wait_until(lambda: self.script.opened == 1, 5))
         time.sleep(0.3)
         self.assertEqual(self.script.sent, [])
+
+    def test_a_solicitation_is_answered_at_once_and_at_most_once_per_answer_interval(self) -> None:
+        self.in_hub()
+        self.run_service(answer_interval_s=60.0)
+        self.assertTrue(wait_until(lambda: len(self.script.sent) >= 2, 5))
+        time.sleep(0.1)
+        self.assertEqual(len(self.script.sent), 2)
+        self.script.incoming.put(Datagram(build_solicit(), NEW, 47831))
+        self.assertTrue(wait_until(lambda: len(self.script.sent) >= 4, 5))
+        self.assertEqual([type(item) for item in parsed(self.script)[2:]], [JoinAnnouncement, MemberBeacon])
+        self.script.incoming.put(Datagram(build_solicit(), NEW, 47831))
+        self.script.incoming.put(Datagram(build_solicit(), "192.168.1.78", 47831))
+        time.sleep(0.3)
+        self.assertEqual(len(self.script.sent), 4)
+
+    def test_a_solicitation_from_this_machine_is_not_answered(self) -> None:
+        self.in_hub()
+        self.run_service(answer_interval_s=0.0)
+        self.assertTrue(wait_until(lambda: len(self.script.sent) >= 2, 5))
+        self.script.incoming.put(Datagram(build_solicit(), LAN.address, 47831))
+        time.sleep(0.3)
+        self.assertEqual(len(self.script.sent), 2)
 
     def test_it_repeats_on_the_interval(self) -> None:
         self.in_hub()

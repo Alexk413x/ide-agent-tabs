@@ -16,6 +16,7 @@ from .beacon import (
     Inbox,
     MemberBeacon,
     MemberCheck,
+    Solicitation,
     Wire,
     build_join,
     build_member,
@@ -34,6 +35,7 @@ from .presence import record_presence
 from .transport import LanTransport
 
 ANNOUNCE_INTERVAL_S = 30.0
+ANSWER_INTERVAL_S = 2.0
 RECONNECT_WINDOW_S = 60.0
 NOTE_INTERVAL_S = 60.0
 REMOTE_NOTES_PER_INTERVAL = 10
@@ -75,6 +77,7 @@ class BeaconSettings:
     verify: Callable[..., str] = verify_pinned
     request: Callable[..., dict[str, Any]] = send_request
     flush_interval_s: float = PENDING_INTERVAL_S
+    answer_interval_s: float = ANSWER_INTERVAL_S
 
 
 class Reconnector:
@@ -191,6 +194,8 @@ class BeaconService:
         self._flushing = threading.Lock()
         self._next_bind: str | None = None
         self._recorded: dict[str, float] = {}
+        self._solicited = False
+        self._answered_at: float | None = None
         self._reconnect = Reconnector(
             home,
             log,
@@ -296,6 +301,10 @@ class BeaconService:
                     epoch = state.epoch
                     self._send(endpoint, state)
                     next_send = now + settings.interval_s
+                elif self._solicited and (self._answered_at is None or now - self._answered_at >= settings.answer_interval_s):
+                    self._send(endpoint, state)
+                    self._answered_at = now
+                self._solicited = False
                 try:
                     datagram = endpoint.recv(settings.poll_s)
                 except OSError as error:
@@ -357,6 +366,9 @@ class BeaconService:
 
     def _receive(self, datagram: Datagram, inbox: Inbox) -> None:
         heard = inbox.accept(datagram)
+        if heard is not None and isinstance(heard.announcement, Solicitation):
+            self._solicited = True
+            return
         if heard is None or not isinstance(heard.announcement, MemberBeacon):
             return
         beacon = heard.announcement
