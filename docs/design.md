@@ -2218,13 +2218,16 @@ in `vscode/package.json`.
 ### Versions and releases
 
 - Claude Code updates an installed plugin only when `version` in `claude-plugin/.claude-plugin/plugin.json`
-  changes, so every change under `claude-plugin/`, including `dist/`, needs a new version. The server
+  changes, so a change under `claude-plugin/`, including `dist/`, reaches users only with a new version. The server
   reads its version from that file, or from `version.json` in a server copy, and uses it as the server
   version and the User-Agent.
 - Each release adds a `## <version>` entry to `CHANGELOG.md` and gets a tag,
   `ide-agent-tabs--v<version>`, made on `main` with `claude plugin tag claude-plugin --push`.
-- `node scripts/check-plugin-version.mjs` fails when `claude-plugin/` changed since the last tag while the
-  version stayed the same, or when the CHANGELOG lacks the entry.
+- A merge to `main` that keeps the version releases nothing: `main` then holds changes that ship with
+  the next version. The release workflow tags the version and rebuilds the `release` branch only when
+  `main` carries a version that has no tag, after CI passes. To release, merge a version bump.
+- `node scripts/check-plugin-version.mjs` reports whether `claude-plugin/` changed since the last tag,
+  and fails when the version is new and the CHANGELOG lacks its entry.
   CI runs it too; run it locally before you push.
 
 ### What updates from where
