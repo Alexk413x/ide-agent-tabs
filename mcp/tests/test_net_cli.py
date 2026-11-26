@@ -877,6 +877,34 @@ class SetNetworkTest(unittest.TestCase):
             cli.set_network(home, {"discoverable": True})
 
 
+class LauncherSyncTest(unittest.TestCase):
+    def test_every_command_brings_the_login_launcher_up_to_the_installed_plugin(self) -> None:
+        home = make_root(self)
+        homes: list[str] = []
+
+        def sync(target: str) -> str | None:
+            homes.append(target)
+            return "The login task's launcher now starts version 0.14.3."
+
+        harness = Harness(self, home, sync_launcher=sync)
+        self.assertEqual(harness.run("status"), 0)
+        self.assertEqual(homes, [home])
+        self.assertIn("The login task's launcher now starts version 0.14.3.", harness.errors)
+        self.assertNotIn("launcher now", harness.text)
+        self.assertIn("launcher ok=1", Path(log_file(home, "cli.log")).read_text(encoding="utf-8"))
+
+    def test_a_refused_rewrite_warns_and_the_command_still_runs(self) -> None:
+        home = make_root(self)
+
+        def refuse(_home: str) -> str | None:
+            raise LoginTaskError("the launcher was not updated because other users could change the installed plugin")
+
+        harness = Harness(self, home, sync_launcher=refuse)
+        self.assertEqual(harness.run("status"), 0)
+        self.assertIn("warning: the launcher was not updated", harness.errors)
+        self.assertIn("network: off", harness.text)
+
+
 class DefaultLabelTest(unittest.TestCase):
     def test_the_default_label_is_lowercased_made_safe_and_unique(self) -> None:
         def policy(*labels: str) -> Policy:

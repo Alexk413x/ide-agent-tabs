@@ -179,6 +179,7 @@ class Services:
     register_login: Callable[[str], str] = login_task.register
     remove_login: Callable[[str], str] = login_task.remove
     login_status: Callable[[str], str] = login_task.status
+    sync_launcher: Callable[[str], str | None] = login_task.sync_launcher
     apply_firewall: Callable[[str, str, str], str] = firewall.apply_listener_rule
     remove_firewall: Callable[[], str] = firewall.remove_listener_rule
     interface_for: Callable[[str], InterfaceInfo] = interface_for
@@ -1178,6 +1179,18 @@ def _cmd_find(svc: Services, args: Sequence[str]) -> int:
     return hub_cli.find(svc, args)
 
 
+def _sync_launcher(svc: Services) -> None:
+    try:
+        changed = svc.sync_launcher(svc.home)
+    except (LoginTaskError, OSError) as error:
+        svc.record("launcher", ok=0)
+        svc.err(f"warning: {error}")
+        return
+    if changed is not None:
+        svc.record("launcher", ok=1)
+        svc.err(changed)
+
+
 def main(argv: Sequence[str], services: Services | None = None) -> int:
     svc = services or default_services()
     if svc.migrator is not None:
@@ -1185,6 +1198,7 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
             svc.migrator.start(svc.home, svc.cwd())
         except MIGRATION_ERRORS as error:
             svc.record("migrate-failed", error=type(error).__name__)
+    _sync_launcher(svc)
     handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
         "id": _cmd_id,
         "status": _cmd_status,

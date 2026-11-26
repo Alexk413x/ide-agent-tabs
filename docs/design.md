@@ -3079,8 +3079,12 @@ LAN mode stays the minimal option for one home or office network, with nothing e
   This is a widening command. The task runs as the logged-in user without elevation, never SYSTEM or
   root, only when the user is logged on, with no stored password. It uses absolute interpreter and
   launcher paths with `-I -S`, scheduler-native argument encoding, no shell and no PATH lookup. The
-  launcher is a file in the D11-protected `net/` folder that names the current install; each plugin
-  update rewrites it. Registration verifies that the task definition, interpreter, launcher and their
+  launcher is a file in the D11-protected `net/` folder that names the install and its version. Every `net`
+  command and Claude Code's SessionStart hook rewrite it to the running install when it names an older
+  version, records no version, or names a script that no longer exists, so the task starts the updated
+  listener after a plugin update. They leave a launcher of the same or a newer version in place, and they
+  refuse to rewrite it when other users can change the install folder. A `net` command prints the change
+  on stderr and logs `launcher` in `net/cli.log`; the hook is silent. Registration verifies that the task definition, interpreter, launcher and their
   parent folders can't be changed by other unprivileged users, and refuses otherwise. The task uses a
   fixed private working folder and a receiver-built environment.
 - The task invokes `net lan start`, which rechecks current policy and the D5 startup checks; it never
