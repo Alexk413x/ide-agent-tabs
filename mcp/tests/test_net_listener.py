@@ -104,6 +104,7 @@ class ListenerTest(unittest.TestCase):
         self.assertEqual(running.code, 0)
 
     def test_a_listener_file_without_a_build_reads_as_an_older_listener_that_serves_no_joins(self) -> None:
+        self.addCleanup(listener.listener_file(self.a).unlink, missing_ok=True)
         listener.listener_file(self.a).write_text('{"pid": 1, "startedMs": 2, "bind": "10.0.0.5", "port": 3}', encoding="utf-8")
         info = read_listener(self.a)
         assert info is not None
