@@ -175,6 +175,23 @@ class DiscoverableListenerTest(unittest.TestCase):
             self.assertTrue(wait_until(lambda: "join connection from 127.0.0.1 refused" in running.log(), 5))
         self.assertIn("join connection from 127.0.0.1 refused: the address is not a private address", running.log())
 
+    def reported_joins(self) -> bool | None:
+        info = listener.read_listener(self.a)
+        return None if info is None else info.serving_joins
+
+    def test_the_listener_records_its_build_and_whether_it_serves_joins(self) -> None:
+        running, cell = self.start()
+        self.assertTrue(wait_until(lambda: self.reported_joins() is True, 5))
+        info = listener.read_listener(self.a)
+        assert info is not None
+        build = listener.installed_build()
+        self.assertEqual((info.version, info.build), (build.version, build.id))
+        cell.config = replace(cell.config, discoverable=False)
+        self.assertTrue(wait_until(lambda: self.reported_joins() is False, 5))
+        self.assertFalse(running.joins_on())
+        cell.config = replace(cell.config, discoverable=True)
+        self.assertTrue(wait_until(lambda: self.reported_joins() is True, 5))
+
     def test_a_join_introduces_the_new_member_to_the_other_members_over_the_member_request(self) -> None:
         make_hub(self.a)
         save_peer(self.a, device_of(self.c), cert_of(self.c).read_text(encoding="ascii"), "192.168.1.33", "charlie", member=True)

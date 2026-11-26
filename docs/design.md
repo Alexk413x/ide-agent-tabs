@@ -3055,6 +3055,15 @@ LAN mode stays the minimal option for one home or office network, with nothing e
   off against agents, use `net off` (which sets the choice to `off`, after which `start` refuses) or
   `net pause`. On a network that reuses the home LAN's addresses, pinned mutual TLS remains the
   guarantee, as D5 says.
+- The listener writes its plugin version, its build id and whether it serves joins to `net/listener.json`. The build id is
+  the version plus a digest of the plugin's Python source, the name the server copy uses for its builds. Every command that
+  starts the listener (`net lan start`, which the login task runs, `net lan on`, `net discoverable on`, `net hub join` and
+  `net hub create --with`) compares the running listener with the installed build. It stops a listener that records no
+  build or another build of an older version, starts the installed build and says so. It leaves a listener of a newer
+  version running, so two installs on one machine don't replace each other in turn. `net status` and `net discoverable
+  status` print the listener's build and say plainly when it differs. They print `serving joins: yes` only when the
+  running listener reports that it serves joins, and not from the configuration. The restart changes no setting, and
+  `net discoverable on`, `net hub join` and `net hub create` still refuse a session that another machine opened.
 - `net lan on --at-login` registers a Scheduled Task, LaunchAgent or systemd user unit for the listener.
   This is a widening command. The task runs as the logged-in user without elevation, never SYSTEM or
   root, only when the user is logged on, with no stored password. It uses absolute interpreter and

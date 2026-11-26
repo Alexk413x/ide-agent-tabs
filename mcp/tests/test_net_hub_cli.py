@@ -215,15 +215,52 @@ class DiscoverableTest(HubCliCase):
         for part in ("discoverable: on", f"current network: {NETWORK}", "network gate: open", "listener: running", "serving joins: yes"):
             self.assertIn(part, self.h.text)
         self.network = OTHER_NETWORK
+        self.h.write_listener_file(self.a, joins=False)
         self.h.out.clear()
         self.h.run("discoverable", "status")
         self.assertIn("network gate: this network is not in network.allowedNetworks", self.h.text)
         self.assertIn("serving joins: no", self.h.text)
+        self.assertNotIn("although discoverable is on", self.h.text)
         self.network = None
         self.h.out.clear()
         self.h.run("discoverable", "status")
         self.assertIn("current network: unreadable", self.h.text)
         self.assertIn("can't be read", self.h.text)
+
+    def test_status_does_not_claim_joins_that_the_running_listener_does_not_serve(self) -> None:
+        self.h.run("discoverable", "on")
+        self.h.write_listener_file(self.a, joins=False)
+        self.h.out.clear()
+        self.assertEqual(self.h.run("discoverable", "status"), 0)
+        self.assertIn("network gate: open", self.h.text)
+        self.assertNotIn("serving joins: yes", self.h.text)
+        self.assertIn("serving joins: no (the running listener reports that it serves no joins, although discoverable is on)", self.h.text)
+
+    def test_status_names_a_listener_of_another_build_and_how_to_restart_it(self) -> None:
+        self.h.run("discoverable", "on")
+        self.h.write_listener_file(self.a, version="0.11.0", build="0.11.0-bbbbbbbbbbbb", joins=None)
+        self.h.out.clear()
+        self.assertEqual(self.h.run("discoverable", "status"), 0)
+        self.assertIn(
+            f"listener build: 0.11.0-bbbbbbbbbbbb, not the installed build {self.h.build.id}. `agent-tabs net lan start` restarts it.",
+            self.h.text,
+        )
+        self.assertNotIn("serving joins: yes", self.h.text)
+
+    def test_on_restarts_a_listener_of_another_build_and_says_so(self) -> None:
+        self.h.write_listener_file(self.a, version=None, build=None, joins=None)
+        thread = self.h.answer_stop()
+        self.assertEqual(self.h.run("discoverable", "on"), 0, self.h.errors)
+        thread.join(5)
+        self.assertIn("records no build, so an older plugin version started it. Restarting it.", self.h.text)
+        self.assertEqual(len(self.h.spawned), 1)
+
+    def test_a_remote_session_cannot_restart_the_listener_through_discoverable_on(self) -> None:
+        self.h.write_listener_file(self.a, version=None, build=None, joins=None)
+        self.remote.value = True
+        self.assertEqual(self.h.run("discoverable", "on"), 1)
+        self.assertIn("can't change this machine's network settings", self.h.errors)
+        self.assertEqual(self.h.spawned, [])
 
     def test_net_status_shows_discoverable_and_the_allowed_networks(self) -> None:
         self.h.run("discoverable", "on")

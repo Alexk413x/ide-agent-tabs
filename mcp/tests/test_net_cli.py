@@ -21,7 +21,7 @@ from ide_agent_tabs.net.client import peer_cert_path
 from ide_agent_tabs.net.firewall import FirewallError
 from ide_agent_tabs.net.identity import format_digest, parse_device_id
 from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
-from ide_agent_tabs.net.listener import listener_file, log_file, read_listener, stop_file, write_atomically
+from ide_agent_tabs.net.listener import Build, listener_file, log_file, read_listener, stop_file, write_atomically
 from ide_agent_tabs.net.login_task import LoginTaskError
 from ide_agent_tabs.net.names import default_label
 from ide_agent_tabs.net.pairing import Limits
@@ -49,6 +49,8 @@ class Harness:
         self.login_error: Exception | None = None
         self.firewall_error: Exception | None = None
         self.firewall_removals = 0
+        self.build = Build("0.14.2", "0.14.2-aaaaaaaaaaaa")
+        self.listener_joins = True
         self.user_home = make_root(test, "iat-net-user-")
         values: dict[str, Any] = {
             "home": home,
@@ -57,6 +59,7 @@ class Harness:
             "confirm": self._confirm,
             "notify": self.notices.append,
             "spawn": self._spawn,
+            "build": lambda: self.build,
             "bind_available": lambda _address: True,
             "register_login": self._register_login,
             "remove_login": self._remove_login,
@@ -79,8 +82,31 @@ class Harness:
 
     def _spawn(self, home: str, server_port: int) -> int | None:
         self.spawned.append((home, server_port))
-        write_atomically(str(listener_file(home)), json.dumps({"pid": os.getpid(), "startedMs": 1, "bind": "10.0.0.5", "port": 47829}))
+        self.write_listener_file(home)
         return os.getpid()
+
+    def write_listener_file(self, home: str, **changes: Any) -> None:
+        info: dict[str, Any] = {
+            "pid": os.getpid(),
+            "startedMs": 1,
+            "bind": "10.0.0.5",
+            "port": 47829,
+            "version": self.build.version,
+            "build": self.build.id,
+            "joins": self.listener_joins,
+        }
+        info.update(changes)
+        write_atomically(str(listener_file(home)), json.dumps({key: value for key, value in info.items() if value is not None}))
+
+    def answer_stop(self) -> threading.Thread:
+        def consume() -> None:
+            while not stop_file(self.home).exists():
+                threading.Event().wait(0.02)
+            os.remove(listener_file(self.home))
+
+        thread = threading.Thread(target=consume, daemon=True)
+        thread.start()
+        return thread
 
     def _register_login(self, home: str) -> str:
         self.events.append("register-login")
@@ -639,6 +665,61 @@ class LanTest(CliTestCase):
         self.assertEqual(len(harness.spawned), 1)
         self.assertIn("already runs", harness.text)
 
+    def lan_config(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5"}}))
+
+    def test_start_restarts_a_listener_that_records_no_build(self) -> None:
+        self.lan_config()
+        self.h.write_listener_file(self.a, version=None, build=None, joins=None)
+        thread = self.h.answer_stop()
+        self.assertEqual(self.h.run("lan", "start"), 0, self.h.errors)
+        thread.join(5)
+        self.assertIn(
+            f"The listener (pid {os.getpid()}) records no build, so an older plugin version started it. Restarting it.", self.h.text
+        )
+        self.assertEqual(len(self.h.spawned), 1)
+        info = read_listener(self.a)
+        assert info is not None
+        self.assertEqual((info.version, info.build), (self.h.build.version, self.h.build.id))
+
+    def test_start_restarts_a_listener_from_another_build_of_an_older_version(self) -> None:
+        self.lan_config()
+        self.h.write_listener_file(self.a, version="0.11.0", build="0.11.0-bbbbbbbbbbbb")
+        thread = self.h.answer_stop()
+        self.assertEqual(self.h.run("lan", "start"), 0, self.h.errors)
+        thread.join(5)
+        self.assertIn("runs build 0.11.0-bbbbbbbbbbbb, not the installed build 0.14.2-aaaaaaaaaaaa. Restarting it.", self.h.text)
+        self.assertEqual(len(self.h.spawned), 1)
+
+    def test_start_keeps_a_listener_of_the_installed_build(self) -> None:
+        self.lan_config()
+        self.h.write_listener_file(self.a)
+        self.assertEqual(self.h.run("lan", "start"), 0, self.h.errors)
+        self.assertIn("already runs", self.h.text)
+        self.assertEqual(self.h.spawned, [])
+
+    def test_start_keeps_a_listener_from_a_newer_version(self) -> None:
+        self.lan_config()
+        self.h.write_listener_file(self.a, version="9.0.0", build="9.0.0-cccccccccccc")
+        self.assertEqual(self.h.run("lan", "start"), 0, self.h.errors)
+        self.assertIn("already runs", self.h.text)
+        self.assertEqual(self.h.spawned, [])
+
+    def test_start_starts_nothing_when_the_old_listener_does_not_stop(self) -> None:
+        self.lan_config()
+        self.h.write_listener_file(self.a, build=None)
+        self.assertEqual(self.h.run("lan", "start"), 1)
+        self.assertIn("did not stop", self.h.errors)
+        self.assertEqual(self.h.spawned, [])
+
+    def test_on_restarts_an_old_listener_too(self) -> None:
+        self.h.write_listener_file(self.a, build=None, version=None)
+        thread = self.h.answer_stop()
+        self.assertEqual(self.h.run("lan", "on", "--bind", "10.0.0.5"), 0, self.h.errors)
+        thread.join(5)
+        self.assertIn("Restarting it.", self.h.text)
+        self.assertEqual(len(self.h.spawned), 1)
+
     def test_stop_asks_the_listener_to_stop_and_keeps_the_config(self) -> None:
         Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5"}}))
         self.assertEqual(self.h.run("lan", "stop"), 0)
@@ -712,6 +793,21 @@ class StatusAndDispatchTest(CliTestCase):
         self.assertIn("bind: 10.0.0.5", self.h.text)
         self.assertIn("port: 5000", self.h.text)
         self.assertIn(f"running (pid {os.getpid()}", self.h.text)
+
+    def test_status_shows_the_build_of_the_running_listener_and_whether_it_serves_joins(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5"}}))
+        self.h.write_listener_file(self.a)
+        self.assertEqual(self.h.run("status"), 0)
+        self.assertIn(f"listener build: {self.h.build.id}", self.h.text)
+        self.assertIn("serving joins: yes", self.h.text)
+
+    def test_status_names_a_listener_that_records_no_build_and_does_not_claim_it_serves_joins(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"network": {"network": "lan", "bind": "10.0.0.5", "discoverable": True}}))
+        self.h.write_listener_file(self.a, version=None, build=None, joins=None)
+        self.assertEqual(self.h.run("status"), 0)
+        self.assertIn("listener build: not recorded", self.h.text)
+        self.assertIn("`agent-tabs net lan start` restarts it", self.h.text)
+        self.assertNotIn("serving joins: yes", self.h.text)
 
     def test_status_reports_an_unreadable_policy(self) -> None:
         Path(policy_path(self.a)).write_text("{not json")

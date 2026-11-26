@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import ipaddress
 import os
 import select
@@ -25,7 +26,7 @@ from ..shared.client import ensure_server, probe, server_command, verified_state
 from ..shared.client import request as http_request
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, SERVER_LAUNCHER, parse_port
-from ..version import PACKAGE_VERSION
+from ..version import PACKAGE_VERSION, compare_versions
 from . import ingress, pairing, tls, wire
 from .beaconsvc import BeaconService, BeaconSettings, BeaconState
 from .client import (
@@ -106,6 +107,30 @@ class ListenerInfo:
     started_ms: int
     bind: str
     port: int
+    version: str | None = None
+    build: str | None = None
+    serving_joins: bool = False
+
+
+@dataclass(frozen=True)
+class Build:
+    version: str
+    id: str
+
+
+@functools.lru_cache(maxsize=1)
+def installed_build() -> Build:
+    from ..server_copy import bundled_build, plugin_source
+
+    return Build(PACKAGE_VERSION, bundled_build(plugin_source()))
+
+
+def stale_reason(info: ListenerInfo, installed: Build) -> str | None:
+    if info.build is None or info.version is None:
+        return "records no build, so an older plugin version started it"
+    if info.build == installed.id or compare_versions(info.version, installed.version) > 0:
+        return None
+    return f"runs build {info.build}, not the installed build {installed.id}"
 
 
 def _whole(value: object) -> int | None:
@@ -122,7 +147,16 @@ def read_listener(home: str) -> ListenerInfo | None:
     pid, started, bind, port = _whole(data.get("pid")), _whole(data.get("startedMs")), data.get("bind"), _whole(data.get("port"))
     if pid is None or started is None or port is None or not isinstance(bind, str):
         return None
-    return ListenerInfo(pid, started, bind, port)
+    version, build = data.get("version"), data.get("build")
+    return ListenerInfo(
+        pid,
+        started,
+        bind,
+        port,
+        version if isinstance(version, str) else None,
+        build if isinstance(build, str) else None,
+        data.get("joins") is True,
+    )
 
 
 def live_listener(home: str) -> ListenerInfo | None:
@@ -424,6 +458,7 @@ class Options:
     candidates: Callable[[], list[InterfaceInfo]] | None = None
     rebind_wait_s: float = REBIND_WAIT_S
     migration: Migrator | None = None
+    build: Build | None = None
 
 
 class Listener:
@@ -454,6 +489,8 @@ class Listener:
         self._beacons: BeaconService | None = None
         self._started = NetworkConfig()
         self._started_ms = now_ms()
+        self._port = 0
+        self._info_lock = threading.Lock()
         self._rebind_at = 0.0
         self._rebind_note = ""
         self._migration_at = 0.0
@@ -569,13 +606,10 @@ class Listener:
         self._refresh_gate(force=True)
         self._trust = TrustCache(self._home, identity.cert, identity.key, identity.passphrase, self.log)
         self._forwarder = self._options.forwarder or IngressForwarder(self._home, self._options.server_port, self.log)
-        port = sock.getsockname()[1]
+        port = self._port = sock.getsockname()[1]
         with contextlib.suppress(OSError):
             remove_file(str(stop_file(self._home)))
-        write_atomically(
-            str(listener_file(self._home)),
-            stringify({"pid": os.getpid(), "startedMs": self._started_ms, "bind": bind, "port": port}, 2) + "\n",
-        )
+        self._write_info()
         self.log(f"listening on {bind} port {port} (pid {os.getpid()})")
         if self._options.ready is not None:
             self._options.ready(port)
@@ -599,6 +633,24 @@ class Listener:
                     remove_file(str(listener_file(self._home)))
             self.log("stopped")
         return 0
+
+    def _write_info(self) -> None:
+        build = self._options.build or installed_build()
+        body = {
+            "pid": os.getpid(),
+            "startedMs": self._started_ms,
+            "bind": self._bind,
+            "port": self._port,
+            "version": build.version,
+            "build": build.id,
+            "joins": self._join_sock is not None,
+        }
+        with self._info_lock:
+            write_atomically(str(listener_file(self._home)), stringify(body, 2) + "\n")
+
+    def _write_info_quietly(self) -> None:
+        with contextlib.suppress(OSError):
+            self._write_info()
 
     def _halt(self, reason: str) -> None:
         self.log(f"stopping: {reason}")
@@ -696,11 +748,8 @@ class Listener:
         self._join_retry_at = 0.0
         self._network_read_at = float("-inf")
         self._address_epoch += 1
-        port = sock.getsockname()[1]
-        write_atomically(
-            str(listener_file(self._home)),
-            stringify({"pid": os.getpid(), "startedMs": self._started_ms, "bind": bind, "port": port}, 2) + "\n",
-        )
+        port = self._port = sock.getsockname()[1]
+        self._write_info()
         self._refresh_gate(force=True)
         if self._beacons is not None:
             self._beacons.rebind(bind)
@@ -781,6 +830,7 @@ class Listener:
         )
         self._join_sock, self._join_stop, self._join_thread = sock, stop, thread
         thread.start()
+        self._write_info_quietly()
         self.log(f"serving joins on {self._bind} port {sock.getsockname()[1]}")
 
     def _stop_joins(self, reason: str) -> None:
@@ -792,6 +842,7 @@ class Listener:
             thread.join(2.0)
         sock.close()
         self._join_sock, self._join_thread = None, None
+        self._write_info_quietly()
         self.log(f"stopped serving joins: {reason}")
 
     def _saved(self, label: str, address: str) -> None:

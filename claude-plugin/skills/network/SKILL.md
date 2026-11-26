@@ -97,7 +97,8 @@ PowerShell it stands for `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1"`.
 `net find` ends with the likely causes. Work through them on the other machine:
 
 - It is not discoverable and not a member. Run `agent-tabs net discoverable status`. Expect
-  `serving joins: yes`.
+  `serving joins: yes`. When `listener build:` says the listener is not the installed build or records none, an
+  older plugin version started it. Run `agent-tabs net lan start`: it restarts the listener and says so.
 - A network is Public. LAN mode accepts Private networks only, on both machines.
 - The current network is not in `network.allowedNetworks` there. `agent-tabs net networks` lists it.
 - The UDP rule for port 47831 is missing on a Windows machine. `net discoverable on` creates it.
