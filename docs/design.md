@@ -2743,7 +2743,10 @@ receives it (see The transport and discovery seam).
   4. **Verify before listing.** UDP announcements prove nothing. For a member, the command opens mutual TLS on 47829
      pinned to the stored key. For a discoverable device, it opens TLS on 47830 and checks that the certificate hash
      equals the announced device id, then reads the device's hub state. A candidate that fails is dropped, and the
-     attempt is logged.
+     attempt is logged. A device that this machine lists as a member gets the discoverable-device check as well when the
+     pinned check fails, at its remembered address and at an announced address, so a member that lost its hub or no
+     longer trusts this machine still appears. Its row shows the device as it answers: the hub it reports, or `no hub`,
+     with `member: no`. A row says `member: yes` only after the pinned mutual TLS check succeeded.
   
   Each row shows the device name, device id, address, hub name or `no hub`, whether it is a member, and the source
   (`remembered`, `multicast`, `broadcast`, `probe`, or several joined with `+`). A warning line appears when two rows

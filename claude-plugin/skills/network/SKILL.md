@@ -74,6 +74,9 @@ PowerShell it stands for `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1"`.
    - Neither machine is in a hub (`no hub` in the row, and `net hub status` says `hub: none`):
      `agent-tabs net hub create --with <device id>`. Repeat `--with` for more devices. `--name <name>` names
      the hub. Without it the hub takes this machine's device name.
+   - A row says `member: no` for a device that `net hub status` lists as a member: that device lost its hub or
+     does not trust this machine. `agent-tabs net hub join <device id>` joins it again, keeps its label and repairs the
+     membership.
    - The two machines are in different hubs: the join refuses with `already-in-another-hub` and saves
      nothing. Run `agent-tabs net hub leave` on the machine that should switch, then join again.
 

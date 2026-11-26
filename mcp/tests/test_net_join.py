@@ -319,6 +319,25 @@ class JoinTest(unittest.TestCase):
         assert state is not None
         self.assertEqual(state.key, key)
 
+    def test_a_rejoin_repairs_a_member_that_lost_its_hub_and_keeps_the_label_and_the_key(self) -> None:
+        key = make_hub(self.b)
+        server = JoinServer(self, self.a)
+        dial(server, self.b)
+        server.wait_result()
+        server.results.clear()
+        reset(self.a)
+        dialed = dial(server, self.b)
+        self.assertEqual((dialed.outcome, server.wait_result().outcome), ("paired", "paired"))
+        (on_b,) = self.members(self.b)
+        self.assertEqual((on_b.device_id, on_b.label), (device_of(self.a), "alpha"))
+        self.assertEqual(load_policy(self.a).hub, Hub(HUB_ID, "home"))
+        (on_a,) = self.members(self.a)
+        self.assertEqual(on_a.device_id, device_of(self.b))
+        for home in (self.a, self.b):
+            state = read_hub_state(home)
+            assert state is not None
+            self.assertEqual(state.key, key)
+
     def test_a_hub_message_the_receiver_rejects_leaves_both_sides_unsaved(self) -> None:
         make_hub(self.b)
         outer = self
