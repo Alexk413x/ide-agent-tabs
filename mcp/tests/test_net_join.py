@@ -378,11 +378,20 @@ class JoinTest(unittest.TestCase):
             with contextlib.suppress(OSError):
                 conn.recv(1)
 
+    def failure_count(self) -> int:
+        path = os.path.join(self.a, "net", pairing.PAIRING_FILE)
+        if not os.path.exists(path):
+            return 0
+        with open(path, encoding="utf-8") as handle:
+            return sum(len(entry["failures"]) for entry in json.load(handle)["addresses"].values())
+
     def test_failed_join_handshakes_lock_only_the_address_they_came_from(self) -> None:
         server = JoinServer(self, self.a)
         limits = pairing.Limits(self.a)
-        for _ in range(3):
+        for count in range(1, 3):
             self.junk_join(server)
+            self.assertTrue(wait_until(lambda expected=count: self.failure_count() == expected))
+        self.junk_join(server)
         self.assertTrue(wait_until(lambda: "127.0.0.1" in limits.locked_addresses()))
         self.assertEqual(list(limits.locked_addresses()), ["127.0.0.1"])
         make_hub(self.b)
