@@ -2224,8 +2224,9 @@ in `vscode/package.json`.
 - Each release adds a `## <version>` entry to `CHANGELOG.md` and gets a tag,
   `ide-agent-tabs--v<version>`, made on `main` with `claude plugin tag claude-plugin --push`.
 - A merge to `main` that keeps the version releases nothing: `main` then holds changes that ship with
-  the next version. The release workflow tags the version and rebuilds the `release` branch only when
-  `main` carries a version that has no tag, after CI passes. To release, merge a version bump.
+  the next version. After CI passes, the release workflow tags the version when its tag is missing,
+  and rebuilds the `release` branch only when that branch holds another version than `main`. To
+  release, merge a version bump.
 - `node scripts/check-plugin-version.mjs` reports whether `claude-plugin/` changed since the last tag,
   and fails when the version is new and the CHANGELOG lacks its entry.
   CI runs it too; run it locally before you push.
