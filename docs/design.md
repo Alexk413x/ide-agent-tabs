@@ -2218,13 +2218,16 @@ in `vscode/package.json`.
 ### Versions and releases
 
 - Claude Code updates an installed plugin only when `version` in `claude-plugin/.claude-plugin/plugin.json`
-  changes, so every change under `claude-plugin/`, including `dist/`, needs a new version. The server
+  changes, so a change under `claude-plugin/`, including `dist/`, reaches users only with a new version. The server
   reads its version from that file, or from `version.json` in a server copy, and uses it as the server
   version and the User-Agent.
 - Each release adds a `## <version>` entry to `CHANGELOG.md` and gets a tag,
   `ide-agent-tabs--v<version>`, made on `main` with `claude plugin tag claude-plugin --push`.
-- `node scripts/check-plugin-version.mjs` fails when `claude-plugin/` changed since the last tag while the
-  version stayed the same, or when the CHANGELOG lacks the entry.
+- A merge to `main` that keeps the version releases nothing: `main` then holds changes that ship with
+  the next version. The release workflow tags the version and rebuilds the `release` branch only when
+  `main` carries a version that has no tag, after CI passes. To release, merge a version bump.
+- `node scripts/check-plugin-version.mjs` reports whether `claude-plugin/` changed since the last tag,
+  and fails when the version is new and the CHANGELOG lacks its entry.
   CI runs it too; run it locally before you push.
 
 ### What updates from where
@@ -2689,7 +2692,15 @@ no consent proof and no approval on the listener.
 address within an hour lock that address for an hour and leave every other address free. A join attempt that fails
 after the listener admitted it counts as a failure, except `already-in-another-hub`, `no-hub`, a local save error and a
 busy listener. A `net find` probe is a separate session type that ends cleanly, so it never counts. The listener serves one join at a time and drops a second connection, with no hourly cap. The dialer
-refuses to dial a locked address. `net status` lists the locked addresses, and `net trust` still works during a lock.
+refuses to dial a locked address. A `net find` check of the same device counts as a connection from that address, so the join that follows
+it can arrive inside the one-second spacing. When the listener closes a join connection before its first reply, the dialer waits the
+spacing interval and dials once more, and then reports that the other machine closed the connection and may be limiting how often a
+machine can connect. `net status` lists the locked addresses, and `net trust` still works during a lock.
+
+The listener logs each join connection it refuses or drops in `net/listener.log`, with the source address and the reason: not
+a private address, too soon after the last connection, the address is locked, another join was running, or no usable first frame. It
+writes at most one line a minute per address, which counts the repeats it left out, and at most 20 lines a minute in all, so a port
+scan can't fill the log.
 
 ### Discovery
 
@@ -2706,7 +2717,8 @@ receives it (see The transport and discovery seam).
   interface's subnet that isn't their own.
 - **Schedule.** The listener announces once at start, on every change of the machine's address set, and every 30 s.
   Nothing is sent or read while LAN mode is off, the bind address is IPv6, or the current network is not in
-  `network.allowedNetworks`. The listener stops on a network Windows marks Public.
+  `network.allowedNetworks`. The listener stops on a network Windows marks Public. `net find` listens for 10 s and an
+  announcement comes every 30 s, so a find can pass without hearing one. The probe covers that case.
 - **Join announcement** (`kind` `join`). Sent only while the machine is discoverable. Fields: `v`, `kind`, `id`,
   `deviceName`, `deviceId`, `hubId`, `hubName`, `port` (47830) and `transport` (`lan`).
 - **Member beacon** (`kind` `member`). Sent by every hub member that holds the hub key, discoverable or not. Fields:
@@ -2735,8 +2747,17 @@ receives it (see The transport and discovery seam).
   4. **Verify before listing.** UDP announcements prove nothing. For a member, the command opens mutual TLS on 47829
      pinned to the stored key. For a discoverable device, it opens TLS on 47830 and checks that the certificate hash
      equals the announced device id, then reads the device's hub state. A candidate that fails is dropped, and the
-     attempt is logged.
+     attempt is logged. A device that this machine lists as a member gets the discoverable-device check as well when the
+     pinned check fails, at its remembered address and at an announced address, so a member that lost its hub or no
+     longer trusts this machine still appears. Its row shows the device as it answers: the hub it reports, or `no hub`,
+     with `member: no`. A row says `member: yes` only after the pinned mutual TLS check succeeded.
   
+  `net find` records what it heard in `net/cli.log`: `datagrams` is the number of UDP datagrams that reached its socket, and
+  `heard` is the number of announcements that passed the checks. A `find: udp:` line adds the group join result, the invalid
+  datagrams and the member beacons it ignored. A machine that is not in a hub ignores every member beacon, so it hears only
+  join announcements. A `datagrams` count of 0 while the listener's log shows beacons from the other machine points to the
+  find's socket, not to the network.
+
   Each row shows the device name, device id, address, hub name or `no hub`, whether it is a member, and the source
   (`remembered`, `multicast`, `broadcast`, `probe`, or several joined with `+`). A warning line appears when two rows
   share a name. When nothing is found, the message names the likely causes: the other machine isn't discoverable, a
@@ -3044,6 +3065,15 @@ LAN mode stays the minimal option for one home or office network, with nothing e
   off against agents, use `net off` (which sets the choice to `off`, after which `start` refuses) or
   `net pause`. On a network that reuses the home LAN's addresses, pinned mutual TLS remains the
   guarantee, as D5 says.
+- The listener writes its plugin version, its build id and whether it serves joins to `net/listener.json`. The build id is
+  the version plus a digest of the plugin's Python source, the name the server copy uses for its builds. Every command that
+  starts the listener (`net lan start`, which the login task runs, `net lan on`, `net discoverable on`, `net hub join` and
+  `net hub create --with`) compares the running listener with the installed build. It stops a listener that records no
+  build or another build of an older version, starts the installed build and says so. It leaves a listener of a newer
+  version running, so two installs on one machine don't replace each other in turn. `net status` and `net discoverable
+  status` print the listener's build and say plainly when it differs. They print `serving joins: yes` only when the
+  running listener reports that it serves joins, and not from the configuration. The restart changes no setting, and
+  `net discoverable on`, `net hub join` and `net hub create` still refuse a session that another machine opened.
 - `net lan on --at-login` registers a Scheduled Task, LaunchAgent or systemd user unit for the listener.
   This is a widening command. The task runs as the logged-in user without elevation, never SYSTEM or
   root, only when the user is logged on, with no stored password. It uses absolute interpreter and

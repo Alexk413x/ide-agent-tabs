@@ -30,7 +30,7 @@ from ide_agent_tabs.net.policy import (
     load_policy,
     save_policy,
 )
-from net_support import HAS_OPENSSL, cert_of, create_home, device_of, make_root, pem_der, wait_until
+from net_support import HAS_OPENSSL, cert_of, create_home, device_of, lock_recorded, make_root, pem_der, wait_until
 
 HUB_ID = "0123456789abcdef0123456789abcdef"
 OTHER_HUB_ID = "fedcba9876543210fedcba9876543210"
@@ -319,6 +319,25 @@ class JoinTest(unittest.TestCase):
         assert state is not None
         self.assertEqual(state.key, key)
 
+    def test_a_rejoin_repairs_a_member_that_lost_its_hub_and_keeps_the_label_and_the_key(self) -> None:
+        key = make_hub(self.b)
+        server = JoinServer(self, self.a)
+        dial(server, self.b)
+        server.wait_result()
+        server.results.clear()
+        reset(self.a)
+        dialed = dial(server, self.b)
+        self.assertEqual((dialed.outcome, server.wait_result().outcome), ("paired", "paired"))
+        (on_b,) = self.members(self.b)
+        self.assertEqual((on_b.device_id, on_b.label), (device_of(self.a), "alpha"))
+        self.assertEqual(load_policy(self.a).hub, Hub(HUB_ID, "home"))
+        (on_a,) = self.members(self.a)
+        self.assertEqual(on_a.device_id, device_of(self.b))
+        for home in (self.a, self.b):
+            state = read_hub_state(home)
+            assert state is not None
+            self.assertEqual(state.key, key)
+
     def test_a_hub_message_the_receiver_rejects_leaves_both_sides_unsaved(self) -> None:
         make_hub(self.b)
         outer = self
@@ -378,12 +397,21 @@ class JoinTest(unittest.TestCase):
             with contextlib.suppress(OSError):
                 conn.recv(1)
 
+    def failure_count(self) -> int:
+        path = os.path.join(self.a, "net", pairing.PAIRING_FILE)
+        if not os.path.exists(path):
+            return 0
+        with open(path, encoding="utf-8") as handle:
+            return sum(len(entry["failures"]) for entry in json.load(handle)["addresses"].values())
+
     def test_failed_join_handshakes_lock_only_the_address_they_came_from(self) -> None:
         server = JoinServer(self, self.a)
         limits = pairing.Limits(self.a)
-        for _ in range(3):
+        for count in range(1, 3):
             self.junk_join(server)
-        self.assertTrue(wait_until(lambda: "127.0.0.1" in limits.locked_addresses()))
+            self.assertTrue(wait_until(lambda expected=count: self.failure_count() == expected))
+        self.junk_join(server)
+        self.assertTrue(wait_until(lambda: lock_recorded(self.a, "127.0.0.1")))
         self.assertEqual(list(limits.locked_addresses()), ["127.0.0.1"])
         make_hub(self.b)
         self.assertEqual(dial(server, self.b).outcome, "failed")

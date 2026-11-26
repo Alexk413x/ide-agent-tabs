@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 import unittest
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -157,6 +158,18 @@ class AnnouncementTest(FindCase):
         self.assertFalse(result.probed)
         self.assertEqual(result.heard, 1)
 
+    def test_find_counts_what_arrived_on_udp_and_logs_the_counts(self) -> None:
+        served = Served(self, self.b)
+        self.announce(self.b)
+        self.script.incoming.put(Datagram(b"not json", "127.0.0.1", 47831))
+        self.script.incoming.put(Datagram(build_member(KEY, HUB_ID, device_of(self.c), int(time.time())), "127.0.0.1", 47831))
+        result = self.run_find(served)
+        self.assertEqual((result.datagrams, result.heard), (3, 1))
+        self.assertIn(
+            "find: udp: joined the group yes; 3 datagram(s) received, 1 invalid, 1 member beacon(s) ignored, 1 announcement(s) accepted",
+            self.logs,
+        )
+
     def test_both_copies_of_one_announcement_name_both_paths_and_list_one_row(self) -> None:
         served = Served(self, self.b)
         data = build_join("bravo", device_of(self.b), None, None, announcement_id="aa" * 16)
@@ -217,6 +230,50 @@ class AnnouncementTest(FindCase):
         (row,) = result.devices
         self.assertEqual(row.address, "127.0.0.1")
         self.assertEqual(load_policy(self.a).peers[0].address, STALE)
+
+
+@NEEDS
+class StaleMemberTest(FindCase):
+    def lose_hub(self) -> Served:
+        form_hub(self.a, self.b)
+        reset(self.b)
+        return Served(self, self.b)
+
+    def test_a_listed_member_that_lost_its_hub_is_found_by_its_announcement(self) -> None:
+        served = self.lose_hub()
+        self.announce(self.b)
+        result = self.run_find(served)
+        self.assertEqual(result.devices, (FoundDevice(device_of(self.b), "bravo", "127.0.0.1", None, False, "remembered+multicast"),))
+        self.assertTrue(any("did not verify as a member" in line for line in self.logs), self.logs)
+
+    def test_a_listed_member_that_lost_its_hub_is_found_at_its_remembered_address(self) -> None:
+        served = self.lose_hub()
+        result = self.run_find(served, udp=False)
+        self.assertEqual(result.devices, (FoundDevice(device_of(self.b), "bravo", "127.0.0.1", None, False, "remembered"),))
+
+    def test_a_listed_member_that_lost_its_hub_and_moved_is_found_by_the_probe(self) -> None:
+        form_hub(self.a, self.b, address_of_b=STALE)
+        reset(self.b)
+        served = Served(self, self.b)
+        result = self.run_find(served, udp=False)
+        self.assertEqual(result.devices, (FoundDevice(device_of(self.b), "bravo", "127.0.0.1", None, False, "probe"),))
+        self.assertTrue(result.probed)
+
+    def test_a_listed_member_that_answers_in_another_hub_shows_that_hub_and_is_not_a_member(self) -> None:
+        form_hub(self.a, self.b)
+        reset(self.b)
+        make_hub(self.b, "fedcba9876543210fedcba9876543210", "other")
+        served = Served(self, self.b)
+        result = self.run_find(served, udp=False)
+        self.assertEqual(result.devices, (FoundDevice(device_of(self.b), "bravo", "127.0.0.1", "other", False, "remembered"),))
+
+    def test_a_healthy_member_that_announces_itself_is_still_a_member_and_needs_no_probe(self) -> None:
+        form_hub(self.a, self.b)
+        served = Served(self, self.b)
+        self.announce(self.b, hub=(HUB_ID, "home"))
+        result = self.run_find(served)
+        self.assertEqual(result.devices, (FoundDevice(device_of(self.b), "peer", "127.0.0.1", "home", True, "remembered+multicast"),))
+        self.assertFalse(result.probed)
 
 
 @NEEDS
@@ -410,6 +467,12 @@ class FindCommandTest(HubCliCase):
         self.assertEqual(self.h.run("find"), 0)
         (request,) = self.requests
         self.assertEqual((request.device_id, request.wire.bind, str(request.wire.subnet)), (device_of(self.a), BIND, "192.168.50.0/24"))
+
+    def test_find_records_how_many_datagrams_arrived_in_the_cli_log(self) -> None:
+        self.found = [FoundDevice(device_of(self.b), "bravo", PEER, None, False, "probe")]
+        self.datagrams = 7
+        self.assertEqual(self.h.run("find"), 0)
+        self.assertIn("find found=1 probed=0 heard=1 datagrams=7", Path(listener.log_file(self.a, "cli.log")).read_text(encoding="utf-8"))
 
     def test_find_json_prints_one_object_for_agents(self) -> None:
         self.found = [FoundDevice(device_of(self.b), "bravo", PEER, "home", True, "remembered")]

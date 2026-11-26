@@ -17,6 +17,7 @@ from .cli import (
     device_name,
     enable_lan,
     folder_defaults,
+    listener_lines,
     make_parser,
     refuse_remote_origin,
     report_folders,
@@ -189,7 +190,7 @@ def _find_request(svc: Services, prepared: Prepared) -> FindRequest:
 def run_find(svc: Services, prepared: Prepared) -> FindResult:
     request = _find_request(svc, prepared)
     result = (svc.find or find_devices)(request)
-    svc.record("find", found=len(result.devices), probed=int(result.probed), heard=result.heard)
+    svc.record("find", found=len(result.devices), probed=int(result.probed), heard=result.heard, datagrams=result.datagrams)
     return result
 
 
@@ -273,15 +274,14 @@ def _discoverable_status(svc: Services, config: NetworkConfig) -> int:
     svc.out(f"network: {config.network}")
     svc.out(f"bind: {config.bind or 'none'}")
     svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
-    serving = False
+    expects_joins = False
     if network_enabled(config) and config.bind is not None:
         gate = gate_state(config.allowed_networks, _read_network_id(svc, config.bind))
         svc.out(f"current network: {gate.network_id or 'unreadable'}")
         svc.out(f"network gate: {'open' if gate.allowed else gate.reason}")
-        serving = gate.allowed and config.discoverable
-    info = live_listener(svc.home)
-    svc.out("listener: " + (f"running (pid {info.pid}, {info.bind} port {info.port})" if info is not None else "not running"))
-    svc.out(f"serving joins: {'yes' if serving and info is not None else 'no'}")
+        expects_joins = gate.allowed and config.discoverable
+    for line in listener_lines(svc, live_listener(svc.home), expects_joins):
+        svc.out(line)
     return 0
 
 

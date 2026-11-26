@@ -15,6 +15,7 @@ from .sessions import (
     is_model,
     is_session_id,
     read_presence,
+    session_owned_by,
     update_presence,
     with_state,
 )
@@ -204,6 +205,20 @@ def _unread_for(action: Action, home: str, session_id: str, at: float) -> list[d
         return []
 
 
+# A fork of a tab's session inherits IDE_AGENT_TABS_ID, so its hooks name the tab, while read_messages reads the
+# mailbox of the id its own server registered. Its hooks belong to that id: a turn end held open for the tab's
+# mail could never be answered.
+def _own_session(home: str, tab: str, data: Mapping[str, Any], at: float) -> str:
+    session = _agent_session(data)
+    if session is None:
+        return tab
+    try:
+        own = session_owned_by(home, session, tab, now=at)
+    except OSError:
+        return tab
+    return tab if own is None else own["id"]
+
+
 class _PresenceChange:
     def __init__(
         self,
@@ -310,6 +325,7 @@ def run_hook(
     if action is None:
         return None
     at = now_ms() if now is None else now
+    session_id = _own_session(home, session_id, data, at)
     before = read_presence(home, session_id)
     if before is not None and is_mod_driven(before, at):
         return None

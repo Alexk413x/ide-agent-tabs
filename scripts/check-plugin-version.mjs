@@ -17,14 +17,12 @@ try {
 }
 const released = tag.replace(/^ide-agent-tabs--v/, '');
 const changed = git('diff', '--name-only', tag, '--', 'claude-plugin').split('\n').filter(Boolean);
-if (changed.length && plugin === released) {
-  console.error(`claude-plugin/ changed since ${tag}, but its version is still ${plugin}. Bump the version with`);
-  console.error('node scripts/bump.mjs and add a CHANGELOG entry. Changed:');
-  for (const file of changed) console.error(`  ${file}`);
-  process.exit(1);
+if (plugin === released) {
+  console.log(changed.length ? `claude-plugin/ changed since ${tag}; version ${plugin} is released, so these changes ship with the next version.` : `claude-plugin/ is unchanged since ${tag}.`);
+  process.exit(0);
 }
-if (changed.length && !readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').includes(`## ${plugin}`)) {
+if (!readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').includes(`## ${plugin}`)) {
   console.error(`CHANGELOG.md has no "## ${plugin}" entry.`);
   process.exit(1);
 }
-console.log(changed.length ? `claude-plugin/ changed since ${tag}; version ${plugin} is new.` : `claude-plugin/ is unchanged since ${tag}.`);
+console.log(`Version ${plugin} is new since ${tag}; merging it to main releases it.`);

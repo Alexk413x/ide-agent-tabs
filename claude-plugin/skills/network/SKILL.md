@@ -74,6 +74,9 @@ PowerShell it stands for `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1"`.
    - Neither machine is in a hub (`no hub` in the row, and `net hub status` says `hub: none`):
      `agent-tabs net hub create --with <device id>`. Repeat `--with` for more devices. `--name <name>` names
      the hub. Without it the hub takes this machine's device name.
+   - A row says `member: no` for a device that `net hub status` lists as a member: that device lost its hub or
+     does not trust this machine. `agent-tabs net hub join <device id>` joins it again, keeps its label and repairs the
+     membership.
    - The two machines are in different hubs: the join refuses with `already-in-another-hub` and saves
      nothing. Run `agent-tabs net hub leave` on the machine that should switch, then join again.
 
@@ -94,7 +97,8 @@ PowerShell it stands for `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1"`.
 `net find` ends with the likely causes. Work through them on the other machine:
 
 - It is not discoverable and not a member. Run `agent-tabs net discoverable status`. Expect
-  `serving joins: yes`.
+  `serving joins: yes`. When `listener build:` says the listener is not the installed build or records none, an
+  older plugin version started it. Run `agent-tabs net lan start`: it restarts the listener and says so.
 - A network is Public. LAN mode accepts Private networks only, on both machines.
 - The current network is not in `network.allowedNetworks` there. `agent-tabs net networks` lists it.
 - The UDP rule for port 47831 is missing on a Windows machine. `net discoverable on` creates it.
@@ -112,7 +116,11 @@ When a join refuses, the command prints the reason and says nothing was saved:
 - The certificate does not match the device id: another machine answers at that address. Run `net find`
   again and check the device id.
 - A join already runs on that machine, or the connection timed out. Wait a moment and run the join again.
+- The other machine closed the connection before it replied. It may be limiting how often one machine connects.
+  The command already retried once. Wait a few seconds and run the join again.
 - The plugin versions differ. Update both machines.
+- The joining machine only reports that the connection closed. The listening machine's `net/listener.log`, in the
+  Agent Tabs home folder, names each refused join connection with the source address and the reason.
 - The network is not allowed. `net discoverable status` and `net networks` show the gate.
 
 ## Folders, networks and members

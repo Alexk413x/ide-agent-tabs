@@ -103,6 +103,32 @@ class ListenerTest(unittest.TestCase):
         self.assertIsNone(read_listener(self.a))
         self.assertEqual(running.code, 0)
 
+    def test_a_listener_file_without_a_build_reads_as_an_older_listener_that_serves_no_joins(self) -> None:
+        self.addCleanup(listener.listener_file(self.a).unlink, missing_ok=True)
+        listener.listener_file(self.a).write_text('{"pid": 1, "startedMs": 2, "bind": "10.0.0.5", "port": 3}', encoding="utf-8")
+        info = read_listener(self.a)
+        assert info is not None
+        self.assertEqual((info.version, info.build, info.serving_joins), (None, None, False))
+        self.assertIsNotNone(listener.stale_reason(info, listener.Build("0.14.2", "0.14.2-aaaa")))
+
+    def test_the_installed_build_names_the_version_and_a_digest_of_the_source(self) -> None:
+        build = listener.installed_build()
+        self.assertRegex(build.id, r"^[0-9A-Za-z._+-]+-[0-9a-f]{12}$")
+        self.assertTrue(build.id.startswith(build.version.replace(" ", "_")))
+
+    def test_only_an_older_or_unrecorded_build_is_stale(self) -> None:
+        installed = listener.Build("0.14.2", "0.14.2-aaaaaaaaaaaa")
+
+        def info(version: str | None, build: str | None) -> listener.ListenerInfo:
+            return listener.ListenerInfo(1, 2, "10.0.0.5", 3, version, build, True)
+
+        self.assertIsNone(listener.stale_reason(info("0.14.2", "0.14.2-aaaaaaaaaaaa"), installed))
+        self.assertIsNone(listener.stale_reason(info("0.15.0", "0.15.0-bbbbbbbbbbbb"), installed))
+        self.assertIsNotNone(listener.stale_reason(info("0.14.2", "0.14.2-bbbbbbbbbbbb"), installed))
+        self.assertIsNotNone(listener.stale_reason(info("0.11.0", "0.11.0-bbbbbbbbbbbb"), installed))
+        self.assertIsNotNone(listener.stale_reason(info(None, None), installed))
+        self.assertIsNotNone(listener.stale_reason(info("0.14.2", None), installed))
+
     def test_stop_file_ends_the_listener(self) -> None:
         self.pair()
         running = self.start()

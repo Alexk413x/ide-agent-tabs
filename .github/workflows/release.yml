@@ -24,19 +24,23 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
       - name: Tag the plugin version
+        id: version
         run: |
           version=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' claude-plugin/.claude-plugin/plugin.json | head -n 1)
           test -n "$version"
           tag="ide-agent-tabs--v$version"
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
-            echo "$tag exists."
+            echo "$tag exists, so main holds changes that are not released. Bump the version to release them."
+            echo "release=false" >> "$GITHUB_OUTPUT"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "$tag" -m "ide-agent-tabs $version" "$TESTED_SHA"
             git push origin "refs/tags/$tag"
+            echo "release=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Build the release branch from the plugin folder
+        if: steps.version.outputs.release == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

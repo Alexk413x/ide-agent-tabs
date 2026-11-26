@@ -39,7 +39,17 @@ from .hub import default_member_folder
 from .hubstate import HubStateError, clear_removed, ensure_hub_key, remove_hub_state
 from .identity import der_from_pem, format_digest, parse_device_id
 from .interfaces import InterfaceError, InterfaceInfo, interface_for
-from .listener import append_log, live_listener, log_file, read_listener, request_stop
+from .listener import (
+    Build,
+    ListenerInfo,
+    append_log,
+    installed_build,
+    live_listener,
+    log_file,
+    read_listener,
+    request_stop,
+    stale_reason,
+)
 from .login_task import LoginTaskError
 from .migration import ERRORS as MIGRATION_ERRORS
 from .migration import Migrator
@@ -164,6 +174,7 @@ class Services:
     confirm: Callable[[Sequence[str]], bool] = confirm
     notify: Callable[[str], object] = notify
     spawn: Callable[[str, int], int | None] = _spawn_listener
+    build: Callable[[], Build] = installed_build
     bind_available: Callable[[str], bool] = _bind_available
     register_login: Callable[[str], str] = login_task.register
     remove_login: Callable[[str], str] = login_task.remove
@@ -269,8 +280,13 @@ def _wait_for(condition: Callable[[], bool], seconds: float) -> bool:
 def start_listener(svc: Services) -> bool:
     info = live_listener(svc.home)
     if info is not None:
-        svc.out(f"The listener already runs (pid {info.pid}).")
-        return True
+        stale = stale_reason(info, svc.build())
+        if stale is None:
+            svc.out(f"The listener already runs (pid {info.pid}).")
+            return True
+        svc.out(f"The listener (pid {info.pid}) {stale}. Restarting it.")
+        if not _stop_listener(svc):
+            return False
     pid = svc.spawn(svc.home, svc.server_port)
     if pid is None:
         svc.err("error: the listener could not be started")
@@ -368,6 +384,31 @@ def _read_network_id(svc: Services, bind: str) -> str | None:
         return None
 
 
+def listener_lines(svc: Services, info: ListenerInfo | None, expects_joins: bool) -> list[str]:
+    if info is None:
+        return ["listener: not running", "serving joins: no"]
+    installed = svc.build()
+    lines = [f"listener: running (pid {info.pid}, {info.bind} port {info.port})"]
+    if info.build is None:
+        lines.append(
+            f"listener build: not recorded (an older plugin version started it; the installed build is {installed.id}). "
+            "`agent-tabs net lan start` restarts it."
+        )
+    elif stale_reason(info, installed) is not None:
+        lines.append(f"listener build: {info.build}, not the installed build {installed.id}. `agent-tabs net lan start` restarts it.")
+    elif info.build != installed.id:
+        lines.append(f"listener build: {info.build}, newer than the installed {installed.id}")
+    else:
+        lines.append(f"listener build: {info.build}")
+    if info.serving_joins:
+        lines.append("serving joins: yes")
+    elif expects_joins:
+        lines.append("serving joins: no (the running listener reports that it serves no joins, although discoverable is on)")
+    else:
+        lines.append("serving joins: no")
+    return lines
+
+
 def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     make_parser("status").parse_args(args)
     unsupported = svc.unsupported_reason()
@@ -380,8 +421,11 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     svc.out(f"bind: {config.bind or 'none'}")
     svc.out(f"port: {config.port}")
     svc.out(f"openssl: {config.openssl or 'none'}")
-    info = live_listener(svc.home)
-    svc.out("listener: " + (f"running (pid {info.pid}, {info.bind} port {info.port})" if info is not None else "not running"))
+    gate_open = False
+    if network_enabled(config) and config.bind is not None:
+        gate_open = gate_state(config.allowed_networks, _read_network_id(svc, config.bind)).allowed
+    for line in listener_lines(svc, live_listener(svc.home), config.discoverable and gate_open):
+        svc.out(line)
     svc.out(f"login task: {svc.login_status(svc.home)}")
     svc.out(f"identity: {local_device_id(svc.home) or 'none'}")
     svc.out(f"pairing: {_pairing_state(svc)}")

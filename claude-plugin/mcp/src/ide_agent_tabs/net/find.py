@@ -46,6 +46,7 @@ class FindResult:
     probed: bool = False
     heard: int = 0
     udp_error: str | None = None
+    datagrams: int = 0
 
 
 @dataclass(frozen=True)
@@ -176,6 +177,8 @@ class _Find:
         self.pending: list[Future[object]] = []
         self.lock = threading.Lock()
         self.tried: set[str] = set()
+        self.probes: dict[str, JoinProbe] = {}
+        self.address_locks: dict[str, threading.Lock] = {}
         self.announced: set[tuple[str, str]] = set()
         self.discovery = LanDiscovery(
             request.wire,
@@ -208,10 +211,31 @@ class _Find:
     def verify_join(
         self, address: str, expected: str | None, source: str | None, announcement: str | None = None, attempts: int = 1
     ) -> bool:
+        with self.address_lock(address):
+            known = self.probes.get(address)
+            if known is not None and (expected is None or known.device_id == expected):
+                self.add_probed(known, address, source, announcement)
+                return True
+            found = self.probe_device(address, expected, attempts)
+            if found is None:
+                return False
+            self.probes[address] = found
+            self.add_probed(found, address, source, announcement)
+            return True
+
+    def address_lock(self, address: str) -> threading.Lock:
+        with self.lock:
+            return self.address_locks.setdefault(address, threading.Lock())
+
+    def add_probed(self, found: JoinProbe, address: str, source: str | None, announcement: str | None) -> None:
+        hub = found.hub.name if found.hub is not None else None
+        self.rows.add(found.device_id, found.name, address, hub, False, source, announcement)
+
+    def probe_device(self, address: str, expected: str | None, attempts: int) -> JoinProbe | None:
         settings = self.settings
         for attempt in range(attempts):
             try:
-                found = settings.probe_join(
+                return settings.probe_join(
                     address,
                     settings.join_port,
                     expected,
@@ -223,27 +247,27 @@ class _Find:
                     settings.sleep(settings.probe_retry_s)
                     continue
                 self.log(f"{address} did not verify as a discoverable device: {error}")
-                return False
-            hub = found.hub.name if found.hub is not None else None
-            self.rows.add(found.device_id, found.name, address, hub, found.device_id in self.members, source, announcement)
-            return True
-        return False
+        return None
 
     def announced_device(self, announcement: Announcement, host: str) -> None:
-        device_id, identifier = announcement.device_id, announcement.id
-        if (host, device_id) in self.announced:
+        key = (host, announcement.device_id)
+        if key in self.announced:
             return
-        self.announced.add((host, device_id))
+        self.announced.add(key)
         self.tried.add(host)
-        if device_id in self.members:
-            self.submit(lambda: self.verify_member(host, [device_id], None, identifier))
-        elif isinstance(announcement, JoinAnnouncement):
-            self.submit(lambda: self.verify_join(host, device_id, None, identifier))
+        join_ok = isinstance(announcement, JoinAnnouncement)
+        self.submit(lambda: self.verify_known(host, announcement.device_id, None, announcement.id, join_ok))
 
     def remember(self) -> None:
         for peer in self.members.values():
             self.tried.add(peer.address)
-            self.submit(lambda p=peer: self.verify_member(p.address, [p.device_id], REMEMBERED))
+            self.submit(lambda p=peer: self.verify_known(p.address, p.device_id, REMEMBERED))
+
+    def verify_known(self, address: str, device_id: str, source: str | None, announcement: str | None = None, join_ok: bool = True) -> None:
+        if device_id in self.members and self.verify_member(address, [device_id], source, announcement):
+            return
+        if join_ok:
+            self.verify_join(address, device_id, source, announcement)
 
     def probe(self, hard_stop: float) -> None:
         settings = self.settings
@@ -300,6 +324,7 @@ class _Find:
                 self.heard += 1
                 self.announced_device(heard.announcement, heard.host)
         stream.close()
+        self.log_udp()
         grace_end = settings.clock() + settings.grace_s
         if probe_thread is not None:
             probe_thread.join(max(0.0, grace_end - settings.clock()))
@@ -310,7 +335,20 @@ class _Find:
                 self.log("a verification did not finish in time, so that candidate is not listed")
         self.pool.shutdown(wait=False, cancel_futures=True)
         devices = self.rows.final(self.discovery.paths_for)
-        return FindResult(devices, duplicate_name_warnings(devices), probe_thread is not None, self.heard, self.discovery.error)
+        return FindResult(
+            devices, duplicate_name_warnings(devices), probe_thread is not None, self.heard, self.discovery.error, self.discovery.datagrams
+        )
+
+    def log_udp(self) -> None:
+        discovery = self.discovery
+        if discovery.error is not None:
+            return
+        joined = {True: "yes", False: "no", None: "unknown"}[discovery.group_joined]
+        self.log(
+            f"udp: joined the group {joined}; {discovery.datagrams} datagram(s) received, {discovery.invalid} invalid, "
+            f"{discovery.ignored_beacons} member beacon(s) ignored, {self.heard} announcement(s) accepted"
+            + "".join(f"; {note}" for note in discovery.setup_notes)
+        )
 
 
 def find_devices(request: FindRequest, settings: FindSettings | None = None) -> FindResult:

@@ -194,6 +194,16 @@ def wait_until(condition: Callable[[], bool], seconds: float = 5.0) -> bool:
     return condition()
 
 
+def lock_recorded(home: str, address: str) -> bool:
+    # Reads pairing.json without its file lock: a poll that takes the lock starves the writer it waits for.
+    try:
+        data = json.loads(Path(home, "net", "pairing.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    entry = data.get("addresses", {}).get(address)
+    return entry is not None and entry.get("lockedUntil", 0) > 0
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind((LOOPBACK, 0))

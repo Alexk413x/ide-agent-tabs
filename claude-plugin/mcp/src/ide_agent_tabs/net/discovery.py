@@ -38,6 +38,11 @@ class LanDiscovery:
         self.wire = wire
         self.device_id = device_id
         self.error: str | None = None
+        self.datagrams = 0
+        self.invalid = 0
+        self.ignored_beacons = 0
+        self.group_joined: bool | None = None
+        self.setup_notes: tuple[str, ...] = ()
         self._hub_view = hub_view
         self._make_endpoint = make_endpoint
         self._clock = clock
@@ -53,18 +58,24 @@ class LanDiscovery:
         except OSError as error:
             self.error = str(error.strerror or error)
             return
+        self.group_joined = endpoint.joined
+        self.setup_notes = tuple(endpoint.notes)
         inbox = Inbox(self.wire, self.device_id)
         self._inbox = inbox
         check = MemberCheck(self._hub_view, self._clock) if self._hub_view is not None else None
         try:
             while not until():
                 datagram = endpoint.recv(self._poll_s)
+                if datagram is not None:
+                    self.datagrams += 1
                 heard = inbox.accept(datagram) if datagram is not None else None
+                self.invalid = inbox.rejected
                 if (
                     heard is not None
                     and isinstance(heard.announcement, MemberBeacon)
                     and (check is None or not check.check(heard.announcement).ok)
                 ):
+                    self.ignored_beacons += 1
                     heard = None
                 yield heard
         finally:
