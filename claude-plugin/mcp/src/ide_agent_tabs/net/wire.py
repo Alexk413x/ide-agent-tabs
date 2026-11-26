@@ -63,6 +63,10 @@ class WireError(Exception):
     pass
 
 
+class ConnectionClosed(WireError):
+    pass
+
+
 @dataclass(frozen=True)
 class OpenBody:
     agent: str
@@ -150,7 +154,7 @@ def _read_exact(sock: socket.socket, count: int) -> bytes:
     while remaining > 0:
         chunk = sock.recv(min(remaining, 16384))
         if not chunk:
-            _fail("connection closed mid-frame")
+            raise ConnectionClosed("connection closed mid-frame")
         chunks.append(chunk)
         remaining -= len(chunk)
     return b"".join(chunks)

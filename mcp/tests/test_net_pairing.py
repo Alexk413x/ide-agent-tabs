@@ -824,12 +824,50 @@ class PairingSessionTest(unittest.TestCase):
         slow = dataclasses.replace(FAST, min_interval_s=1.0)
         lm, dm = self.machines()
         listening = Listener(self, lm, timeouts=slow)
-        rogue = Rogue(listening.port)
-        self.addCleanup(rogue.close)
-        self.assertEqual(listening.dial(dm).outcome, "failed")
+        first = Rogue(listening.port)
+        self.addCleanup(first.close)
+        second = Rogue(listening.port)
+        self.addCleanup(second.close)
+        self.assertTrue(second.closed())
         time.sleep(1.2)
         self.assertEqual(listening.dial(dm).outcome, "paired")
         listening.wait_result()
+
+    def test_a_join_right_after_a_probe_waits_out_the_spacing(self) -> None:
+        slow = dataclasses.replace(FAST, min_interval_s=1.0)
+        lm, dm = self.machines()
+        listening = Listener(self, lm, timeouts=slow)
+        found = pairing.probe_join("127.0.0.1", listening.port, lm.device_id, dm.identity, timeouts=slow)
+        self.assertEqual(found.device_id, lm.device_id)
+        self.assertEqual(listening.dial(dm).outcome, "paired")
+        self.assertTrue(wait_until(lambda: [r.outcome for r in listening.results] == ["probed", "paired"], 30))
+        self.assertEqual(lm.failures(), 0)
+
+    def test_a_connection_that_closes_before_the_reply_is_tried_once_more_and_then_explained(self) -> None:
+        lm, dm = self.machines()
+        refuser = socket.socket()
+        self.addCleanup(refuser.close)
+        refuser.bind(("127.0.0.1", 0))
+        refuser.listen(4)
+        accepted: list[int] = []
+
+        def close_every_connection() -> None:
+            refuser.settimeout(5)
+            while len(accepted) < 2:
+                try:
+                    conn, _ = refuser.accept()
+                except OSError:
+                    return
+                accepted.append(1)
+                conn.close()
+
+        thread = threading.Thread(target=close_every_connection, daemon=True)
+        thread.start()
+        result = pairing.dial_join("127.0.0.1", refuser.getsockname()[1], lm.device_id, dm.identity, dm.side, dm.limits, timeouts=FAST)
+        thread.join(10)
+        self.assertEqual((result.outcome, result.reason), ("failed", pairing.CLOSED_EARLY_TEXT))
+        self.assertEqual(len(accepted), 2)
+        self.assertEqual(dm.side.saved, [])
 
     def test_the_first_frame_must_arrive_in_time(self) -> None:
         quick = dataclasses.replace(FAST, first_frame_s=0.3)

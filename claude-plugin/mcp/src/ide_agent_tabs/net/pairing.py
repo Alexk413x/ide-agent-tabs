@@ -43,6 +43,11 @@ JOIN_MODE = "join"
 PROBE_MODE = "probe"
 ALREADY_IN_ANOTHER_HUB = "already-in-another-hub"
 NO_HUB = "no-hub"
+CLOSED_EARLY_TEXT = (
+    "the other machine closed the connection before it replied; "
+    "it may be limiting how often a machine can connect, so wait a few seconds and try again"
+)
+RETRY_MARGIN_S = 0.1
 INCOMPLETE_TEXT = "Pairing may be incomplete on the other machine. Run `net status` there, or `net revoke <label>` here."
 
 DIALER = "dialer"
@@ -570,6 +575,7 @@ class _Session:
         self.join = join
         self.probing = join is None and role == DIALER
         self.committed = False
+        self.closed_early = False
 
     def close(self) -> None:
         with contextlib.suppress(OSError):
@@ -640,8 +646,12 @@ class _Session:
             "commit": commitment(own.der, nonce_d).hex(),
             "mode": PROBE_MODE if self.probing else JOIN_MODE,
         }
-        self._send(hello, deadline)
-        reply = self._recv("hello", ("v", "name", "cert", "nonce"), deadline)
+        try:
+            self._send(hello, deadline)
+            reply = self._recv("hello", ("v", "name", "cert", "nonce"), deadline)
+        except (ConnectionError, wire.ConnectionClosed) as error:
+            self.closed_early = True
+            raise PairingError(CLOSED_EARLY_TEXT) from error
         name, der_l = _check_hello(reply, own.der)
         if peer_id is not None and not hmac.compare_digest(device_id_of(der_l).encode("ascii"), peer_id.encode("ascii")):
             raise PairingError("the machine at that address is not the device that was found: its certificate does not match the device id")
@@ -754,6 +764,17 @@ def private_source(address: str) -> bool:
         return False
 
 
+def _dial_once(
+    target: str, port: int, peer_id: str, identity: PairIdentity, handler: JoinHandler, timeouts: Timeouts
+) -> tuple[PairResult, bool]:
+    try:
+        conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
+    except OSError as error:
+        return PairResult("failed", f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}"), False
+    session = _Session(conn, DIALER, target, identity, timeouts, handler)
+    return session.run_dialer(peer_id), session.closed_early
+
+
 def dial_join(
     address: str,
     port: int,
@@ -768,11 +789,12 @@ def dial_join(
     _port(port)
     full_device_id(peer_id)
     limits.check_locked(target)
-    try:
-        conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
-    except OSError as error:
-        return PairResult("failed", f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}")
-    return _Session(conn, DIALER, target, identity, timeouts, handler).run_dialer(peer_id)
+    result, closed_early = _dial_once(target, port, peer_id, identity, handler, timeouts)
+    if closed_early:
+        # The listener spaces connections from one address, and a `net find` check just before a join counts as one.
+        time.sleep(timeouts.min_interval_s + RETRY_MARGIN_S)
+        result, _ = _dial_once(target, port, peer_id, identity, handler, timeouts)
+    return result
 
 
 def probe_join(

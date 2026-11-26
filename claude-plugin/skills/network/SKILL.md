@@ -112,6 +112,8 @@ When a join refuses, the command prints the reason and says nothing was saved:
 - The certificate does not match the device id: another machine answers at that address. Run `net find`
   again and check the device id.
 - A join already runs on that machine, or the connection timed out. Wait a moment and run the join again.
+- The other machine closed the connection before it replied. It may be limiting how often one machine connects.
+  The command already retried once. Wait a few seconds and run the join again.
 - The plugin versions differ. Update both machines.
 - The network is not allowed. `net discoverable status` and `net networks` show the gate.
 

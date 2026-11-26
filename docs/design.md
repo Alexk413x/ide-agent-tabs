@@ -2689,7 +2689,10 @@ no consent proof and no approval on the listener.
 address within an hour lock that address for an hour and leave every other address free. A join attempt that fails
 after the listener admitted it counts as a failure, except `already-in-another-hub`, `no-hub`, a local save error and a
 busy listener. A `net find` probe is a separate session type that ends cleanly, so it never counts. The listener serves one join at a time and drops a second connection, with no hourly cap. The dialer
-refuses to dial a locked address. `net status` lists the locked addresses, and `net trust` still works during a lock.
+refuses to dial a locked address. A `net find` check of the same device counts as a connection from that address, so the join that follows
+it can arrive inside the one-second spacing. When the listener closes a join connection before its first reply, the dialer waits the
+spacing interval and dials once more, and then reports that the other machine closed the connection and may be limiting how often a
+machine can connect. `net status` lists the locked addresses, and `net trust` still works during a lock.
 
 ### Discovery
 
