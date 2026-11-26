@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 import unittest
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
@@ -156,6 +157,18 @@ class AnnouncementTest(FindCase):
         self.assertEqual(result.devices, (FoundDevice(device_of(self.b), "bravo", "127.0.0.1", None, False, "multicast"),))
         self.assertFalse(result.probed)
         self.assertEqual(result.heard, 1)
+
+    def test_find_counts_what_arrived_on_udp_and_logs_the_counts(self) -> None:
+        served = Served(self, self.b)
+        self.announce(self.b)
+        self.script.incoming.put(Datagram(b"not json", "127.0.0.1", 47831))
+        self.script.incoming.put(Datagram(build_member(KEY, HUB_ID, device_of(self.c), int(time.time())), "127.0.0.1", 47831))
+        result = self.run_find(served)
+        self.assertEqual((result.datagrams, result.heard), (3, 1))
+        self.assertIn(
+            "find: udp: joined the group yes; 3 datagram(s) received, 1 invalid, 1 member beacon(s) ignored, 1 announcement(s) accepted",
+            self.logs,
+        )
 
     def test_both_copies_of_one_announcement_name_both_paths_and_list_one_row(self) -> None:
         served = Served(self, self.b)
@@ -454,6 +467,12 @@ class FindCommandTest(HubCliCase):
         self.assertEqual(self.h.run("find"), 0)
         (request,) = self.requests
         self.assertEqual((request.device_id, request.wire.bind, str(request.wire.subnet)), (device_of(self.a), BIND, "192.168.50.0/24"))
+
+    def test_find_records_how_many_datagrams_arrived_in_the_cli_log(self) -> None:
+        self.found = [FoundDevice(device_of(self.b), "bravo", PEER, None, False, "probe")]
+        self.datagrams = 7
+        self.assertEqual(self.h.run("find"), 0)
+        self.assertIn("find found=1 probed=0 heard=1 datagrams=7", Path(listener.log_file(self.a, "cli.log")).read_text(encoding="utf-8"))
 
     def test_find_json_prints_one_object_for_agents(self) -> None:
         self.found = [FoundDevice(device_of(self.b), "bravo", PEER, "home", True, "remembered")]

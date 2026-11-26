@@ -46,6 +46,7 @@ class FindResult:
     probed: bool = False
     heard: int = 0
     udp_error: str | None = None
+    datagrams: int = 0
 
 
 @dataclass(frozen=True)
@@ -323,6 +324,7 @@ class _Find:
                 self.heard += 1
                 self.announced_device(heard.announcement, heard.host)
         stream.close()
+        self.log_udp()
         grace_end = settings.clock() + settings.grace_s
         if probe_thread is not None:
             probe_thread.join(max(0.0, grace_end - settings.clock()))
@@ -333,7 +335,20 @@ class _Find:
                 self.log("a verification did not finish in time, so that candidate is not listed")
         self.pool.shutdown(wait=False, cancel_futures=True)
         devices = self.rows.final(self.discovery.paths_for)
-        return FindResult(devices, duplicate_name_warnings(devices), probe_thread is not None, self.heard, self.discovery.error)
+        return FindResult(
+            devices, duplicate_name_warnings(devices), probe_thread is not None, self.heard, self.discovery.error, self.discovery.datagrams
+        )
+
+    def log_udp(self) -> None:
+        discovery = self.discovery
+        if discovery.error is not None:
+            return
+        joined = {True: "yes", False: "no", None: "unknown"}[discovery.group_joined]
+        self.log(
+            f"udp: joined the group {joined}; {discovery.datagrams} datagram(s) received, {discovery.invalid} invalid, "
+            f"{discovery.ignored_beacons} member beacon(s) ignored, {self.heard} announcement(s) accepted"
+            + "".join(f"; {note}" for note in discovery.setup_notes)
+        )
 
 
 def find_devices(request: FindRequest, settings: FindSettings | None = None) -> FindResult:

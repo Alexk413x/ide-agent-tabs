@@ -2714,7 +2714,8 @@ receives it (see The transport and discovery seam).
   interface's subnet that isn't their own.
 - **Schedule.** The listener announces once at start, on every change of the machine's address set, and every 30 s.
   Nothing is sent or read while LAN mode is off, the bind address is IPv6, or the current network is not in
-  `network.allowedNetworks`. The listener stops on a network Windows marks Public.
+  `network.allowedNetworks`. The listener stops on a network Windows marks Public. `net find` listens for 10 s and an
+  announcement comes every 30 s, so a find can pass without hearing one. The probe covers that case.
 - **Join announcement** (`kind` `join`). Sent only while the machine is discoverable. Fields: `v`, `kind`, `id`,
   `deviceName`, `deviceId`, `hubId`, `hubName`, `port` (47830) and `transport` (`lan`).
 - **Member beacon** (`kind` `member`). Sent by every hub member that holds the hub key, discoverable or not. Fields:
@@ -2748,6 +2749,12 @@ receives it (see The transport and discovery seam).
      longer trusts this machine still appears. Its row shows the device as it answers: the hub it reports, or `no hub`,
      with `member: no`. A row says `member: yes` only after the pinned mutual TLS check succeeded.
   
+  `net find` records what it heard in `net/cli.log`: `datagrams` is the number of UDP datagrams that reached its socket, and
+  `heard` is the number of announcements that passed the checks. A `find: udp:` line adds the group join result, the invalid
+  datagrams and the member beacons it ignored. A machine that is not in a hub ignores every member beacon, so it hears only
+  join announcements. A `datagrams` count of 0 while the listener's log shows beacons from the other machine points to the
+  find's socket, not to the network.
+
   Each row shows the device name, device id, address, hub name or `no hub`, whether it is a member, and the source
   (`remembered`, `multicast`, `broadcast`, `probe`, or several joined with `+`). A warning line appears when two rows
   share a name. When nothing is found, the message names the likely causes: the other machine isn't discoverable, a

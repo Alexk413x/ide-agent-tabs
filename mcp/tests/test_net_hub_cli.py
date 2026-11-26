@@ -68,6 +68,7 @@ class HubCliCase(unittest.TestCase):
         self.targets: dict[str, int] = {}
         self.found: list[FoundDevice] = []
         self.warnings: tuple[str, ...] = ()
+        self.datagrams = 0
         self.requests: list[FindRequest] = []
         self.user_home = make_root(self, "iat-hub-user-")
         self.session = os.path.join(self.user_home, "code", "app")
@@ -99,7 +100,7 @@ class HubCliCase(unittest.TestCase):
 
     def fake_find(self, request: FindRequest) -> FindResult:
         self.requests.append(request)
-        return FindResult(tuple(self.found), self.warnings, probed=not self.found, heard=len(self.found))
+        return FindResult(tuple(self.found), self.warnings, probed=not self.found, heard=len(self.found), datagrams=self.datagrams)
 
     def serve(self, home: str, address: str = PEER) -> JoinServer:
         server = JoinServer(self, home)

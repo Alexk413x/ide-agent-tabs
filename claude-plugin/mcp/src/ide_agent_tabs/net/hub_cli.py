@@ -190,7 +190,7 @@ def _find_request(svc: Services, prepared: Prepared) -> FindRequest:
 def run_find(svc: Services, prepared: Prepared) -> FindResult:
     request = _find_request(svc, prepared)
     result = (svc.find or find_devices)(request)
-    svc.record("find", found=len(result.devices), probed=int(result.probed), heard=result.heard)
+    svc.record("find", found=len(result.devices), probed=int(result.probed), heard=result.heard, datagrams=result.datagrams)
     return result
 
 
