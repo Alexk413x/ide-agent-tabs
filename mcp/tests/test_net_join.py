@@ -30,7 +30,7 @@ from ide_agent_tabs.net.policy import (
     load_policy,
     save_policy,
 )
-from net_support import HAS_OPENSSL, cert_of, create_home, device_of, make_root, pem_der, wait_until
+from net_support import HAS_OPENSSL, cert_of, create_home, device_of, lock_recorded, make_root, pem_der, wait_until
 
 HUB_ID = "0123456789abcdef0123456789abcdef"
 OTHER_HUB_ID = "fedcba9876543210fedcba9876543210"
@@ -392,7 +392,7 @@ class JoinTest(unittest.TestCase):
             self.junk_join(server)
             self.assertTrue(wait_until(lambda expected=count: self.failure_count() == expected))
         self.junk_join(server)
-        self.assertTrue(wait_until(lambda: "127.0.0.1" in limits.locked_addresses()))
+        self.assertTrue(wait_until(lambda: lock_recorded(self.a, "127.0.0.1")))
         self.assertEqual(list(limits.locked_addresses()), ["127.0.0.1"])
         make_hub(self.b)
         self.assertEqual(dial(server, self.b).outcome, "failed")

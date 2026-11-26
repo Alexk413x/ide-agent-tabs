@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,14 @@ class Cell:
 
 
 class Running:
-    def __init__(self, test: unittest.TestCase, home: str, cell: Cell, ingress_port: int) -> None:
+    def __init__(
+        self,
+        test: unittest.TestCase,
+        home: str,
+        cell: Cell,
+        ingress_port: int,
+        source_ok: Callable[[str], bool] = lambda _address: True,
+    ) -> None:
         self.home = home
         self.ready = threading.Event()
         self.options = Options(
@@ -59,7 +67,7 @@ class Running:
             network_id=cell.network_id,
             join_port=0,
             join_timeouts=FAST,
-            join_source_ok=lambda _address: True,
+            join_source_ok=source_ok,
             notice=NOTICES.append,
             server_port=ingress_port,
             ready=lambda _port: self.ready.set(),
@@ -119,7 +127,7 @@ class DiscoverableListenerTest(unittest.TestCase):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def start(self, **changes: Any) -> tuple[Running, Cell]:
+    def start(self, source_ok: Callable[[str], bool] = lambda _address: True, **changes: Any) -> tuple[Running, Cell]:
         values: dict[str, Any] = {
             "network": "lan",
             "bind": LOOPBACK,
@@ -132,7 +140,7 @@ class DiscoverableListenerTest(unittest.TestCase):
         loader = mock.patch.object(listener, "load_network_config", cell.load)
         loader.start()
         self.addCleanup(loader.stop)
-        return Running(self, self.a, cell, self.ingress.port), cell
+        return Running(self, self.a, cell, self.ingress.port, source_ok), cell
 
     def join(self, running: Running) -> pairing.PairResult:
         port = running.listener.join_port()
@@ -157,6 +165,15 @@ class DiscoverableListenerTest(unittest.TestCase):
         self.assertEqual(load_policy(self.a).hub, Hub(HUB_ID, "home"))
         self.assertIn("a device joined the hub", running.log())
         self.assertTrue(any("joined this machine's hub" in notice for notice in NOTICES))
+
+    def test_a_refused_join_connection_is_logged_with_its_address_and_reason(self) -> None:
+        running, _cell = self.start(source_ok=lambda _address: False)
+        self.assertTrue(wait_until(running.joins_on, 5))
+        port = running.listener.join_port()
+        assert port is not None
+        with socket.create_connection((LOOPBACK, port), timeout=5):
+            self.assertTrue(wait_until(lambda: "join connection from 127.0.0.1 refused" in running.log(), 5))
+        self.assertIn("join connection from 127.0.0.1 refused: the address is not a private address", running.log())
 
     def test_a_join_introduces_the_new_member_to_the_other_members_over_the_member_request(self) -> None:
         make_hub(self.a)

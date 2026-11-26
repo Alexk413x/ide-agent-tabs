@@ -115,6 +115,8 @@ When a join refuses, the command prints the reason and says nothing was saved:
 - The other machine closed the connection before it replied. It may be limiting how often one machine connects.
   The command already retried once. Wait a few seconds and run the join again.
 - The plugin versions differ. Update both machines.
+- The joining machine only reports that the connection closed. The listening machine's `net/listener.log`, in the
+  Agent Tabs home folder, names each refused join connection with the source address and the reason.
 - The network is not allowed. `net discoverable status` and `net networks` show the gate.
 
 ## Folders, networks and members

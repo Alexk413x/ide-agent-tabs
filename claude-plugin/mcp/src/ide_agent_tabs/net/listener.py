@@ -775,6 +775,7 @@ class Listener:
                 "timeouts": self._options.join_timeouts,
                 "on_result": self._joined,
                 "allow_source": self._options.join_source_ok,
+                "log": self.log,
             },
             daemon=True,
         )

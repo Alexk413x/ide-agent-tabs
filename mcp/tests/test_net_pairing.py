@@ -20,7 +20,7 @@ from unittest import mock
 
 from ide_agent_tabs.net import pairing, tls, wire
 from ide_agent_tabs.net.identity import device_id, format_digest
-from net_support import wait_until
+from net_support import lock_recorded, wait_until
 from test_net_tls import OPENSSL, Identity, make_identity
 
 NOW = 1_700_000_000
@@ -304,6 +304,44 @@ class LimitsTest(unittest.TestCase):
         now[0] += 1.5
         self.assertTrue(spacing.allow(X))
 
+    def test_a_refusal_is_logged_once_per_address_and_interval(self) -> None:
+        now = [0.0]
+        lines: list[str] = []
+        refused = pairing.RefusalLog(lines.append, lambda: now[0], interval_s=60.0)
+        for _ in range(5):
+            refused(X, "too soon")
+        refused(Y, "too soon")
+        self.assertEqual(lines, [f"join connection from {X} refused: too soon", f"join connection from {Y} refused: too soon"])
+        now[0] += 61.0
+        refused(X, "too soon")
+        self.assertEqual(lines[-1], f"join connection from {X} refused: too soon; 4 more from that address were not logged")
+        now[0] += 61.0
+        refused(X, "locked")
+        self.assertEqual(lines[-1], f"join connection from {X} refused: locked")
+
+    def test_refusals_from_many_addresses_stay_inside_the_budget_and_are_counted_once_later(self) -> None:
+        now = [0.0]
+        lines: list[str] = []
+        refused = pairing.RefusalLog(lines.append, lambda: now[0], interval_s=60.0, budget=3)
+        for index in range(10):
+            refused(f"10.0.0.{index}", "not private")
+        self.assertEqual(len(lines), 3)
+        now[0] += 61.0
+        refused("10.0.1.1", "not private")
+        self.assertEqual(len(lines), 4)
+        self.assertTrue(lines[-1].endswith("; 7 refusals from other addresses were not logged"), lines[-1])
+
+    def test_the_refusal_table_stays_bounded(self) -> None:
+        lines: list[str] = []
+        refused = pairing.RefusalLog(lines.append, lambda: 0.0, budget=10_000, cap=8)
+        for index in range(100):
+            refused(f"10.0.0.{index}", "not private")
+        self.assertEqual(len(lines), 100)
+        self.assertLessEqual(len(refused._last), 8)  # pyright: ignore[reportPrivateUsage]
+
+    def test_no_log_function_means_no_output_and_no_error(self) -> None:
+        pairing.RefusalLog(None)(X, "too soon")
+
     def test_a_damaged_file_is_refused_with_a_hint(self) -> None:
         self.limits().record_failure(X)
         for damaged in ("not json", "[]", '{"addresses":[]}', '{"extra":1}', '{"addresses":{"a":1}}'):
@@ -368,8 +406,17 @@ class Machine:
 
 
 class Listener:
-    def __init__(self, test: unittest.TestCase, machine: Machine, timeouts: pairing.Timeouts = FAST) -> None:
+    def __init__(
+        self,
+        test: unittest.TestCase,
+        machine: Machine,
+        timeouts: pairing.Timeouts = FAST,
+        *,
+        allow_source: Callable[[str], bool] = lambda _address: True,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self.machine = machine
+        self.lines: list[str] = []
         self.timeouts = timeouts
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
@@ -380,7 +427,13 @@ class Listener:
         self.thread = threading.Thread(
             target=pairing.serve_joins,
             args=(self.sock, machine.identity, machine.side, machine.limits, self.stop),
-            kwargs={"timeouts": timeouts, "on_result": self.results.append, "allow_source": lambda _address: True},
+            kwargs={
+                "timeouts": timeouts,
+                "on_result": self.results.append,
+                "allow_source": allow_source,
+                "log": self.lines.append,
+                "clock": clock,
+            },
             daemon=True,
         )
         self.thread.start()
@@ -594,7 +647,7 @@ class PairingSessionTest(unittest.TestCase):
         rogue = Rogue(listening.port)
         rogue.send(dialer_hello(dm.identity, bytes(32), extra=1))
         self.assertTrue(rogue.closed())
-        self.assertTrue(wait_until(lambda: "127.0.0.1" in lm.limits.locked_addresses()))
+        self.assertTrue(wait_until(lambda: lock_recorded(lm.home, "127.0.0.1")))
         with self.assertRaises(pairing.Locked):
             lm.limits.check_locked("127.0.0.1")
         self.assertEqual(listening.dial(dm).outcome, "failed")
@@ -832,6 +885,86 @@ class PairingSessionTest(unittest.TestCase):
         time.sleep(1.2)
         self.assertEqual(listening.dial(dm).outcome, "paired")
         listening.wait_result()
+
+    def test_a_source_that_is_not_private_is_refused_and_logged_with_its_address(self) -> None:
+        lm, _dm = self.machines()
+        listening = Listener(self, lm, allow_source=pairing.private_source)
+        rogue = Rogue(listening.port)
+        self.addCleanup(rogue.close)
+        self.assertTrue(rogue.closed())
+        self.assertTrue(wait_until(lambda: bool(listening.lines)))
+        self.assertEqual(listening.lines, ["join connection from 127.0.0.1 refused: the address is not a private address"])
+        self.assertEqual(lm.failures(), 0)
+
+    def test_a_connection_that_comes_too_soon_is_logged_once(self) -> None:
+        slow = dataclasses.replace(FAST, min_interval_s=30.0)
+        lm, _dm = self.machines()
+        listening = Listener(self, lm, timeouts=slow)
+        first = Rogue(listening.port)
+        self.addCleanup(first.close)
+        for _ in range(3):
+            rogue = Rogue(listening.port)
+            self.addCleanup(rogue.close)
+            self.assertTrue(rogue.closed())
+        self.assertTrue(wait_until(lambda: bool(listening.lines)))
+        self.assertEqual(
+            listening.lines, ["join connection from 127.0.0.1 refused: it came too soon after the last connection from that address"]
+        )
+
+    def test_a_locked_address_is_logged(self) -> None:
+        lm, _dm = self.machines()
+        for _ in range(3):
+            lm.limits.record_failure("127.0.0.1")
+        listening = Listener(self, lm)
+        rogue = Rogue(listening.port)
+        self.addCleanup(rogue.close)
+        self.assertTrue(rogue.closed())
+        self.assertTrue(wait_until(lambda: bool(listening.lines)))
+        self.assertEqual(
+            listening.lines, ["join connection from 127.0.0.1 refused: pairing is locked for that address after repeated failed attempts"]
+        )
+
+    def test_a_session_dropped_while_another_join_runs_is_logged(self) -> None:
+        gate = threading.Event()
+        lm, dm = self.machines(listener=Side(hub=HUB, gate=gate))
+        intruder = Machine(self, pair_identity(self.c, "charlie"), Side())
+        listening = Listener(self, lm)
+        first: list[pairing.PairResult] = []
+        thread = threading.Thread(target=lambda: first.append(listening.dial(dm)), daemon=True)
+        thread.start()
+        self.assertTrue(lm.side.saving.wait(10))
+        self.assertEqual(listening.dial(intruder).outcome, "failed")
+        gate.set()
+        thread.join(30)
+        self.assertTrue(wait_until(lambda: bool(listening.lines)))
+        self.assertEqual(listening.lines[0], "join connection from 127.0.0.1 refused: another join was running")
+
+    def test_a_first_frame_without_a_mode_is_logged_as_dropped(self) -> None:
+        lm, _dm = self.machines()
+        listening = Listener(self, lm)
+        rogue = Rogue(listening.port)
+        self.addCleanup(rogue.close)
+        rogue.send({"t": "hello"})
+        self.assertTrue(rogue.closed())
+        self.assertTrue(wait_until(lambda: bool(listening.lines)))
+        self.assertEqual(listening.lines, ["join connection from 127.0.0.1 refused: the first frame named no known mode"])
+
+    def test_a_connection_that_sends_nothing_is_logged_when_it_times_out(self) -> None:
+        quick = dataclasses.replace(FAST, first_frame_s=0.3)
+        lm, _dm = self.machines()
+        listening = Listener(self, lm, timeouts=quick)
+        rogue = Rogue(listening.port)
+        self.addCleanup(rogue.close)
+        self.assertTrue(rogue.closed())
+        self.assertTrue(wait_until(lambda: bool(listening.lines)))
+        self.assertEqual(listening.lines, ["join connection from 127.0.0.1 refused: no usable first frame arrived (timed out)"])
+
+    def test_a_good_join_logs_nothing(self) -> None:
+        lm, dm = self.machines()
+        listening = Listener(self, lm)
+        self.assertEqual(listening.dial(dm).outcome, "paired")
+        listening.wait_result()
+        self.assertEqual(listening.lines, [])
 
     def test_a_join_right_after_a_probe_waits_out_the_spacing(self) -> None:
         slow = dataclasses.replace(FAST, min_interval_s=1.0)

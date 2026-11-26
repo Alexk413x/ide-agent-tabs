@@ -36,6 +36,9 @@ HOUR_S = 3600
 LOCK_S = 3600
 MAX_LIMIT_ADDRESSES = 256
 MAX_SPACED_ADDRESSES = 1024
+REFUSAL_LOG_INTERVAL_S = 60.0
+REFUSAL_LOG_BUDGET = 20
+MAX_LOGGED_ADDRESSES = 256
 MAX_JOIN_MEMBERS = 32
 MAX_JOIN_REMOVED = 64
 MAX_HUB_FRAME = wire.MAX_FRAME
@@ -294,6 +297,54 @@ class Spacing:
                 self._last.clear()
         self._last[address] = now
         return True
+
+
+class RefusalLog:
+    def __init__(
+        self,
+        log: Callable[[str], None] | None,
+        clock: Callable[[], float] = time.monotonic,
+        interval_s: float = REFUSAL_LOG_INTERVAL_S,
+        budget: int = REFUSAL_LOG_BUDGET,
+        cap: int = MAX_LOGGED_ADDRESSES,
+    ) -> None:
+        self._log = log
+        self._clock = clock
+        self._interval_s = interval_s
+        self._budget = budget
+        self._cap = cap
+        self._lock = threading.Lock()
+        self._last: dict[str, tuple[float, int]] = {}
+        self._window_start = clock()
+        self._window_count = 0
+        self._over_budget = 0
+
+    def __call__(self, address: str, reason: str) -> None:
+        if self._log is None:
+            return
+        now = self._clock()
+        with self._lock:
+            known = self._last.get(address)
+            if known is not None and now - known[0] < self._interval_s:
+                self._last[address] = (known[0], known[1] + 1)
+                return
+            if now - self._window_start >= self._interval_s:
+                self._window_start, self._window_count = now, 0
+            if self._window_count >= self._budget:
+                self._over_budget += 1
+                return
+            self._window_count += 1
+            if len(self._last) >= self._cap:
+                self._last.clear()
+            self._last[address] = (now, 0)
+            repeats = known[1] if known is not None else 0
+            skipped, self._over_budget = self._over_budget, 0
+        text = f"join connection from {address} refused: {reason}"
+        if repeats:
+            text += f"; {repeats} more from that address were not logged"
+        if skipped:
+            text += f"; {skipped} refusals from other addresses were not logged"
+        self._log(text)
 
 
 class Limits:
@@ -576,6 +627,7 @@ class _Session:
         self.probing = join is None and role == DIALER
         self.committed = False
         self.closed_early = False
+        self.dropped: str | None = None
 
     def close(self) -> None:
         with contextlib.suppress(OSError):
@@ -612,10 +664,14 @@ class _Session:
     def run_listener(self, admit: Callable[[], bool]) -> PairResult | None:
         try:
             return self._listen(admit)
-        except _Dropped:
+        except _Dropped as dropped:
+            self.dropped = str(dropped)
             return None
         except _EXPECTED as error:
-            return PairResult("failed", _describe(error)) if self.committed else None
+            if self.committed:
+                return PairResult("failed", _describe(error))
+            self.dropped = f"the exchange ended before the key proof ({_describe(error)})"
+            return None
         finally:
             self.close()
 
@@ -667,10 +723,12 @@ class _Session:
         try:
             first = self._recv_raw(start + self.timeouts.first_frame_s)
         except _EXPECTED as error:
-            raise _Dropped from error
+            raise _Dropped(f"no usable first frame arrived ({_describe(error)})") from error
         mode = first.get("mode") if isinstance(first, dict) else None
-        if mode not in (JOIN_MODE, PROBE_MODE) or not admit():
-            raise _Dropped
+        if mode not in (JOIN_MODE, PROBE_MODE):
+            raise _Dropped("the first frame named no known mode")
+        if not admit():
+            raise _Dropped("another join was running")
         self.probing = mode == PROBE_MODE
         deadline = start + self.timeouts.handshake_s
         frame = _expect(first, "hello", ("v", "mode", "name", "cert", "commit"))
@@ -816,12 +874,14 @@ def probe_join(
     return _Session(conn, DIALER, target, identity, timeouts, None).run_probe(peer_id)
 
 
-def _is_locked(limits: Limits, address: str) -> bool:
+def _lock_reason(limits: Limits, address: str) -> str | None:
     try:
         limits.check_locked(address)
-    except PairingError:
-        return True
-    return False
+    except Locked:
+        return "pairing is locked for that address after repeated failed attempts"
+    except PairingError as error:
+        return f"the pairing limits cannot be used ({error})"
+    return None
 
 
 def _counts_as_failure(result: PairResult | None) -> bool:
@@ -839,6 +899,7 @@ def _serve_join(
     limits: Limits,
     timeouts: Timeouts,
     on_result: Callable[[PairResult], None] | None,
+    refused: RefusalLog | None = None,
 ) -> None:
     admitted = False
 
@@ -853,6 +914,10 @@ def _serve_join(
         result = session.run_listener(admit)
     except Exception as error:  # noqa: BLE001 - a save bug must not leave the slot stuck
         result = PairResult("failed", f"the join failed ({type(error).__name__})") if session.committed else None
+        if result is None:
+            session.dropped = f"the join failed ({type(error).__name__})"
+    if result is None and session.dropped is not None and refused is not None:
+        refused(address, session.dropped)
     if admitted:
         slot.release()
         if _counts_as_failure(result):
@@ -861,6 +926,14 @@ def _serve_join(
     if result is not None and on_result is not None:
         with contextlib.suppress(Exception):
             on_result(result)
+
+
+def _refusal_reason(host: str, allow_source: Callable[[str], bool], spacing: Spacing, limits: Limits) -> str | None:
+    if not allow_source(host):
+        return "the address is not a private address"
+    if not spacing.allow(host):
+        return "it came too soon after the last connection from that address"
+    return _lock_reason(limits, host)
 
 
 def serve_joins(
@@ -874,9 +947,11 @@ def serve_joins(
     clock: Callable[[], float] = time.monotonic,
     on_result: Callable[[PairResult], None] | None = None,
     allow_source: Callable[[str], bool] = private_source,
+    log: Callable[[str], None] | None = None,
 ) -> None:
     slot = threading.Lock()
     spacing = Spacing(timeouts.min_interval_s, clock)
+    refused = RefusalLog(log, clock)
     listener.settimeout(0.1)
     while not stop.is_set():
         try:
@@ -886,9 +961,11 @@ def serve_joins(
         except OSError:
             return
         host = str(peer_address[0])
-        if not allow_source(host) or not spacing.allow(host) or _is_locked(limits, host):
+        reason = _refusal_reason(host, allow_source, spacing, limits)
+        if reason is not None:
             conn.close()
+            refused(host, reason)
             continue
         conn.settimeout(None)
-        args = (slot, conn, host, identity, handler, limits, timeouts, on_result)
+        args = (slot, conn, host, identity, handler, limits, timeouts, on_result, refused)
         threading.Thread(target=_serve_join, args=args, daemon=True).start()

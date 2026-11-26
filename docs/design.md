@@ -2694,6 +2694,11 @@ it can arrive inside the one-second spacing. When the listener closes a join con
 spacing interval and dials once more, and then reports that the other machine closed the connection and may be limiting how often a
 machine can connect. `net status` lists the locked addresses, and `net trust` still works during a lock.
 
+The listener logs each join connection it refuses or drops in `net/listener.log`, with the source address and the reason: not
+a private address, too soon after the last connection, the address is locked, another join was running, or no usable first frame. It
+writes at most one line a minute per address, which counts the repeats it left out, and at most 20 lines a minute in all, so a port
+scan can't fill the log.
+
 ### Discovery
 
 The beacon is how machines find each other, both to join and to stay connected. `LanDiscovery` in `net/discovery.py`
