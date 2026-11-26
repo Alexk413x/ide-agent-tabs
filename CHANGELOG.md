@@ -3,6 +3,36 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.14.3
+
+Plugin and MCP server 0.14.3. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Fixed
+
+- `net hub join` and `net hub create --with` join a device that `net find` verified by probe. The
+  listener spaces connections from one address by 1 second, and the join dialed inside that interval
+  and failed with "the connection failed". The dialer waits and dials once more.
+- `net find` lists a device that this machine still holds as a hub member when that device lost its
+  own hub record. The member check failed and the join check never ran. `member: yes` now means the
+  pinned mutual TLS check passed.
+- A listener started by an older plugin version is restarted by `net lan start`, `net lan on`,
+  `net discoverable on`, `net hub join` and `net hub create --with`. `net status` and
+  `net discoverable status` print the listener's build and print `serving joins: yes` only when the
+  running listener serves joins.
+- A session forked from a tab, or started headless from it, gets its hook messages in its own mailbox,
+  not the tab's.
+
+### Added
+
+- The join service logs each refused connection with its address and the reason, at most one line a
+  minute per address.
+- `net find` records the UDP datagrams it receives in `cli.log`.
+
+### Changed
+
+- Releases: a merge to `main` that keeps the version releases nothing. The release workflow tags the
+  version and rebuilds the `release` branch only when `main` carries a version that has no tag.
+
 ## 0.14.2
 
 Plugin and MCP server 0.14.2. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
