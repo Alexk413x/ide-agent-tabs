@@ -791,7 +791,7 @@ async function boot($: EngineInterface): Promise<AgentTabsSelf | null> {
     ...(SESSION_ID.test(fallback) ? { session: fallback } : {}),
   })) as PresenceReply
   Object.assign(reported, info)
-  const me: AgentTabsSelf = { server, id: reply.id, name: name ?? fallback, isDriver: reply.driver }
+  const me: AgentTabsSelf = { server, id: reply.id, name: name ?? fallback, isDriver: reply.driver, inTab }
   await $.state.set(selfRef, me)
   await $.state.set(activityRef, 'idle')
   return me
@@ -825,7 +825,7 @@ let timers: { cancel: () => void }[] = []
 
 async function poll($: EngineInterface) {
   const me = await self($)
-  if (!me?.isDriver) return
+  if (!me?.inTab) return
   const unread = (await callMod($, me.server, { op: 'unread' }).catch(quiet($, 'unread', undefined))) as UnreadReply | undefined
   if (unread === undefined) return
   const { count } = unread
@@ -839,7 +839,7 @@ async function poll($: EngineInterface) {
     inbox.unread = count
     await $.state.set(inboxRef, count ? { count, senders: from, newest: unread.newest ?? null } : null)
   }
-  if (!count || inbox.delivering) return
+  if (!me.isDriver || !count || inbox.delivering) return
   const { value: state = 'idle' } = await $.state.get(activityRef)
   if (state !== 'idle' || (await $.clock.now()) < inbox.retryAt) return
   inbox.delivering = true
@@ -871,10 +871,8 @@ async function begin($: EngineInterface, cwd: string | undefined): Promise<Agent
   }
   const configured = ((await $.settings.read().catch(quiet($, 'settings.read', {}))) as { agent?: unknown }).agent
   await noteAgent($, agentNoted.pending ?? configured, sessionCwd.current)
-  if (me.isDriver) {
-    timers.push($.clock.every(BEAT_MS, () => void beat($)))
-    timers.push($.clock.every(POLL_MS, () => void poll($).catch(quiet($, 'poll', undefined))))
-  }
+  if (me.isDriver) timers.push($.clock.every(BEAT_MS, () => void beat($)))
+  if (me.inTab) timers.push($.clock.every(POLL_MS, () => void poll($).catch(quiet($, 'poll', undefined))))
   await $.command
     .register({ name: PANE_COMMAND, description: 'Show or hide the Agent Tabs Messages pane: agents, and the messages each sent or received' })
     .catch(quiet($, 'command.register', undefined))

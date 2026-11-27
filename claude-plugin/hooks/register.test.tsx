@@ -177,6 +177,7 @@ type WorldOptions = {
   files?: Record<string, string>
   configDir?: string
   unplaced?: boolean
+  forked?: boolean
 }
 
 function world(on: On, options: WorldOptions = {}) {
@@ -298,6 +299,7 @@ function world(on: On, options: WorldOptions = {}) {
     switch (e.args.op) {
       case 'presence':
         if (e.args.driver === true) claim.lost = false
+        if (options.forked) return ok({ id: 's-000000000002', tab: false, driver: false })
         return ok({ id: options.tab ?? 's-000000000001', tab: options.tab !== undefined, driver: options.tab !== undefined && e.args.driver !== false && !claim.lost })
       case 'unread':
         return ok({ count: mail.unread.length, senders: unreadSenders(), ...(options.newest !== undefined && mail.unread.length ? { newest: options.newest } : {}), ...(options.senderNames !== undefined ? { names: options.senderNames } : {}) })
@@ -1611,6 +1613,19 @@ describe('opening the pane from a message', () => {
       expect((await band.find({ type: 'Text' }))?.text).toBe('engine band')
       await band.unmount()
     }
+  })
+
+  test('a fork that shares the tab id shows the notice for its own mailbox and leaves delivery to the driver', async ($, on) => {
+    engineBand(on)
+    const w = world(on, { tab: 'tab-c', forked: true, mailFrom: FROM })
+    await start($)
+    w.mail.unread.push('1-m-0000000000000001.json')
+    await w.clock.advance(2_000)
+    const band = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    expect((await band.findAll({ type: 'Text' })).some(t => t.text === '1 new')).toBe(true)
+    expect(w.ops('take')).toEqual([])
+    expect(w.ops('presence').some(c => c.args.state !== undefined && c.args.driver === undefined)).toBe(false)
+    await band.unmount()
   })
 
   test('the band draws the envelope in the theme colour and each sender in its agent colour', async ($, on) => {

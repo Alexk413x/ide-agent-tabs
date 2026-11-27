@@ -5,6 +5,7 @@ export type AgentTabsSelf = {
   id: string
   name: string
   isDriver: boolean
+  inTab?: boolean
 }
 
 export type AgentTabsView = 'agents' | 'messages' | 'detail'
