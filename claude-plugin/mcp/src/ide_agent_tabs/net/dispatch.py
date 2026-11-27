@@ -21,7 +21,7 @@ from ..messaging.store import send_message
 from . import wire
 from .audit import ADMITTED, REFUSED, Audit, AuditError, AuditRecord
 from .hubsync import HubRefusal, HubSync
-from .outbound import is_inside
+from .outbound import is_inside, shell_safe_folder
 from .policy import (
     FolderGrant,
     NetworkConfig,
@@ -45,7 +45,6 @@ HOUR_MS = 3_600_000
 MAX_NOTICES = 256
 _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _BAD_NAME_CATEGORIES = frozenset({"Cc", "Cs", "Zl", "Zp"})
-_SHELL_UNSAFE = frozenset("\"'`$;|&<>%")
 
 
 class TabService(Protocol):
@@ -119,10 +118,6 @@ def folder_problem(folder: FolderGrant) -> str | None:
     if any(_unsafe_component(part) for part in _ancestry(path)):
         return "link"
     return None
-
-
-def _shell_safe_folder(path: str) -> bool:
-    return path.isprintable() and not any(char in _SHELL_UNSAFE for char in path) and os.path.isdir(path)
 
 
 def _digest(request: object) -> str:
@@ -329,7 +324,7 @@ class NetDispatcher:
             while len(self._noticed) > MAX_NOTICES:
                 self._noticed.popitem(last=False)
         label = wire.escape_display(grant.label)
-        if _shell_safe_folder(path):
+        if shell_safe_folder(path):
             text = (
                 f"{label} asked to open a tab in {path}, which is outside network.memberFolders, "
                 "so this machine refused. To allow it, ask your user, then run: "

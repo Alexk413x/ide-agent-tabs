@@ -94,7 +94,7 @@ _GRAMMAR = (
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
     " | hub create [--name <name>] [--folder <session folder>] [--with <device id> ...] [--bind <address>]"
     " | hub join <device id> [--folder <session folder>] [--bind <address>] | hub status | hub leave"
-    " | folders | folders add <absolute path> | folders remove <absolute path>"
+    " | folders [--outbound] | folders add <absolute path> [--outbound] | folders remove <absolute path> [--outbound]"
     " | discoverable [on [--bind <address>] [--folder <session folder>] | off | status]"
     " | networks | networks add | networks remove <network id>"
     " | find [--json] [--bind <address>]"
@@ -1116,36 +1116,43 @@ def _cmd_folders(svc: Services, args: Sequence[str]) -> int:
     parser = make_parser("folders")
     parser.add_argument("action", nargs="?", choices=("add", "remove"))
     parser.add_argument("path", nargs="?")
+    parser.add_argument("--outbound", action="store_true")
     options = parser.parse_args(args)
     if options.action is not None:
         refuse_remote_origin(svc)
     config, warnings = load_network_config(svc.home)
     for warning in warnings:
         svc.err(f"warning: {warning}")
-    folders = list(config.member_folders)
+    kind, key = ("outbound folder", "outboundFolders") if options.outbound else ("member folder", "memberFolders")
+    folders = list(config.outbound_folders if options.outbound else config.member_folders)
     if options.action is None:
-        svc.out("member folders: " + (", ".join(folders) if folders else "none"))
+        if options.outbound:
+            svc.out("outbound folders: " + (", ".join(folders) or "none"))
+        else:
+            svc.out("member folders: " + (", ".join(config.member_folders) or "none"))
+            svc.out("outbound folders: " + (", ".join(config.outbound_folders) or "none"))
         return 0
     path: str | None = options.path
     if path is None:
         raise UsageError(f"agent-tabs net folders {options.action}: expected an absolute path")
     if options.action == "add":
-        real = _local_folder(path, "member folder")
+        real = _local_folder(path, kind)
         if any(_folder_key(f) == _folder_key(real) for f in folders):
-            svc.out(f"{real} is already a member folder.")
+            svc.out(f"{real} is already an {kind}." if options.outbound else f"{real} is already a {kind}.")
             return 0
         folders.append(real)
     else:
         if not os.path.isabs(path):
-            raise CliError("member folder: the path must be an absolute path")
+            raise CliError(f"{kind}: the path must be an absolute path")
         wanted = {_folder_key(path), _folder_key(os.path.realpath(path))}
         kept = [f for f in folders if _folder_key(f) not in wanted]
         if len(kept) == len(folders):
-            raise CliError(f"{path} is not a member folder; agent-tabs net folders lists them")
+            flag = " --outbound" if options.outbound else ""
+            raise CliError(f"{path} is not {'an' if options.outbound else 'a'} {kind}; agent-tabs net folders{flag} lists them")
         folders = kept
-    set_network(svc.home, {"memberFolders": folders})
-    svc.record("folders", action=options.action, count=len(folders))
-    svc.out("member folders: " + (", ".join(folders) if folders else "none"))
+    set_network(svc.home, {key: folders})
+    svc.record("folders", action=options.action, count=len(folders), **({"kind": "outbound"} if options.outbound else {}))
+    svc.out(f"{kind}s: " + (", ".join(folders) if folders else "none"))
     return 0
 
 

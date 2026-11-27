@@ -607,7 +607,11 @@ class Messaging:
         rows.sort(key=lambda r: locale_key(r["startedAt"]))
         rows.sort(key=lambda r: locale_key(r["agent"]))
         rows.sort(key=lambda r: _agent_rank(r["agent"]))
-        return {"sessions": rows + self._remote_rows(), **self._warnings()}
+        remote, notes = self._remote_rows()
+        result: dict[str, Any] = {"sessions": rows + remote, **self._warnings()}
+        if notes:
+            result["warnings"] = [*result.get("warnings", []), *notes]
+        return result
 
     def caller(self) -> Caller:
         own = read_presence(self.deps.home, self._session_id) or {}
@@ -619,18 +623,19 @@ class Messaging:
             self.deps.pid_start,
         )
 
-    def _remote_rows(self) -> list[dict[str, Any]]:
+    def _remote_rows(self) -> tuple[list[dict[str, Any]], list[str]]:
         try:
-            from ..net.outbound import remote_session_rows
+            from ..net.outbound import outbound_warning, remote_session_rows
             from ..net.transport import network_enabled
 
             if not network_enabled(load_network_config(self.deps.home)[0]):
-                return []
-
-            return remote_session_rows(self.deps.home, self.caller(), int(self._now()))
+                return [], []
+            caller = self.caller()
+            warning = outbound_warning(self.deps.home, caller)
+            return remote_session_rows(self.deps.home, caller, int(self._now())), [] if warning is None else [warning]
         except Exception as e:  # noqa: BLE001 - a failure in the network layer must not hide the local sessions
             self._failed("listing the sessions on other machines", e)
-            return []
+            return [], []
 
     def send(self, given: Mapping[str, Any]) -> dict[str, Any]:
         to = given["to"]

@@ -2977,7 +2977,7 @@ LAN mode stays the minimal option for one home or office network, with nothing e
   `net hub create --with <device id>`) on the other. The skill keeps the manual `net trust` path as a fallback.
 - Command summary: `net id | status | off | revoke <label> | rename <label> <new label>`;
   `net discoverable [on | off | status]`; `net find`; `net hub create | join | status | leave`;
-  `net folders [add | remove]`; `net networks [add | remove]`; and, for hand-trusted peers, `net trust`, `net grant`,
+  `net folders [add | remove] [--outbound]`; `net networks [add | remove]`; and, for hand-trusted peers, `net trust`, `net grant`,
   `net lan setup | on | start | stop`.
 
 ### Certificates and keys
@@ -3257,8 +3257,13 @@ allowed network and sends a member beacon (see Running the command).
 
 ### Outbound limits
 
-A local folder list decides which sessions the plugin lets send to peers, and each session may send at
-most 10 requests a minute. Both guard against a prompt-injected session using the tools. Code running as
+A local folder list, `network.outboundFolders`, decides which sessions the plugin lets see and send to peers,
+and each session may send at most 10 requests a minute. `net folders` shows it beside the member folders, and
+`net folders add <absolute path> --outbound` and `net folders remove <absolute path> --outbound` change it, with the
+origin guard of the member folder commands. When this machine has hub members and the calling session's folder is
+outside the list, `list_sessions` returns a warning that names `network.outboundFolders` and the `--outbound` command;
+the warning leaves out the path and the command's path when the path holds shell syntax. A session that another
+machine opened gets no such warning, as it gets no remote rows. Both guard against a prompt-injected session using the tools. Code running as
 the user can bypass them; the receiving machine's grants and limits are the enforced boundary.
 
 ### Revoke and off
@@ -3329,7 +3334,7 @@ Per machine, in the `network` section of `config.json`:
 | `deviceName` | host name | The name other machines see in announcements and joins |
 | `port` | `47829` | The listener's port |
 | `openssl` | none | The confirmed absolute path used by `net lan setup` |
-| `outboundFolders` | empty | Local folders whose sessions may send to peers. The hub commands set it when empty. |
+| `outboundFolders` | empty | Local folders whose sessions may see and send to peers. The hub commands set it when empty. `net folders --outbound` changes it. |
 | `maxRemoteTabs` | `4` | Remote tabs on this machine across all peers |
 | `memberFolders` | empty | Absolute folders where hub members can open tabs on this machine. `net folders` changes it. |
 | `allowedNetworks` | empty | Network ids where this machine announces, listens and joins. `net networks` changes it. |

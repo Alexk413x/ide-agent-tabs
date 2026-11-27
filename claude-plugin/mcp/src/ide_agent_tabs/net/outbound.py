@@ -33,6 +33,14 @@ PEER_REFUSED = "the peer refused the request"
 FOLDER_NOT_ALLOWED = (
     "{label} refused: {path} is not in that machine's member folders. Its user can add it there with agent-tabs net folders add."
 )
+OUTSIDE_OUTBOUND = (
+    "this session's folder {path} is outside network.outboundFolders, so it sees and messages no session on another "
+    'machine. To allow it, ask your user, then run: agent-tabs net folders add --outbound "{path}"'
+)
+OUTSIDE_OUTBOUND_PLAIN = (
+    "this session's folder is outside network.outboundFolders, so it sees and messages no session on another machine. "
+    "To allow it, ask your user to add the folder with agent-tabs net folders add --outbound."
+)
 PEER_REPLY_INVALID = "the peer's reply was not valid, so the outcome is unknown"
 OPEN_REFUSED_FIELDS = ("args", "env", "ide", "via", "focus")
 
@@ -40,6 +48,7 @@ _TARGET = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]{0,127})@([a-z0-9-]{1,32})")
 _LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MESSAGE_ID = re.compile(r"m-[0-9a-f]{16}")
 _TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+_SHELL_UNSAFE = frozenset("\"'`$;|&<>%")
 
 
 class OutboundError(Exception):
@@ -49,6 +58,10 @@ class OutboundError(Exception):
 def parse_remote_target(to: object) -> tuple[str, str] | None:
     found = _TARGET.fullmatch(to) if isinstance(to, str) else None
     return None if found is None else (found.group(1), found.group(2))
+
+
+def shell_safe_folder(path: str) -> bool:
+    return path.isprintable() and not any(char in _SHELL_UNSAFE for char in path) and os.path.isdir(path)
 
 
 def is_inside(path: str, folder: str) -> bool:
@@ -245,6 +258,18 @@ class Outbound:
             raise OutboundError("; ".join(problems or lines) or "the listener did not start")
         return {"started": True, "status": " ".join(lines)}
 
+    def outbound_warning(self, caller: Caller) -> str | None:
+        config, _ = load_network_config(self.home)
+        if not network_enabled(config) or any(is_inside(caller.path, folder) for folder in config.outbound_folders):
+            return None
+        try:
+            has_members = any(peer.member for peer in load_policy(self.home).peers)
+        except PolicyError:
+            return None
+        if not has_members or self._origin.is_remote(caller):
+            return None
+        return OUTSIDE_OUTBOUND.format(path=caller.path) if shell_safe_folder(caller.path) else OUTSIDE_OUTBOUND_PLAIN
+
     def remote_rows(self, caller: Caller, now_ms: int | None = None) -> list[dict[str, Any]]:
         config, _ = load_network_config(self.home)
         if not network_enabled(config) or not any(is_inside(caller.path, folder) for folder in config.outbound_folders):
@@ -357,3 +382,7 @@ class SessionNet:
 
 def remote_session_rows(home: str, caller: Caller, now_ms: int) -> list[dict[str, Any]]:
     return outbound_for(home).remote_rows(caller, now_ms)
+
+
+def outbound_warning(home: str, caller: Caller) -> str | None:
+    return outbound_for(home).outbound_warning(caller)

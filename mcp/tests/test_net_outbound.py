@@ -25,6 +25,7 @@ from ide_agent_tabs.net.outbound import (
 )
 from ide_agent_tabs.net.policy import load_policy
 from outbound_support import MESSAGE_ID, OTHER, PEER, NetCase, peer_grant, write_config, write_member_policy, write_policy
+from support import session
 
 SENTINEL = "PEER-TEXT-SENTINEL"
 
@@ -530,6 +531,38 @@ class MemberRowsTest(NetCase):
         self.seed({"sessions": [wire_row("tab-r")], "folders": []})
         self.enable(outboundFolders=[])
         self.assertEqual(self.remote_rows(), [])
+
+    def test_a_session_outside_the_outbound_folders_gets_a_warning_that_names_the_setting(self) -> None:
+        self.seed({"sessions": [wire_row("tab-r")], "folders": []})
+        self.assertNotIn("warnings", self.messaging.list_sessions())
+        self.enable(outboundFolders=[os.path.join(self.home, "elsewhere")])
+        listed = self.messaging.list_sessions()
+        self.assertEqual([r for r in listed["sessions"] if r["route"] == "remote"], [])
+        (warning,) = listed["warnings"]
+        self.assertIn("network.outboundFolders", warning)
+        self.assertIn(f'agent-tabs net folders add --outbound "{self.folder}"', warning)
+        failed, text = self.call("list_sessions")
+        self.assertFalse(failed, text)
+        self.assertEqual(json.loads(text)["warnings"], [warning])
+
+    def test_the_warning_leaves_out_a_path_with_shell_syntax(self) -> None:
+        folder = os.path.join(self.home, "a$b")
+        os.makedirs(folder)
+        self.enable(outboundFolders=[self.folder])
+        (warning,) = session(self, self.home, "tab-q", "claude", 2, cwd=folder).list_sessions()["warnings"]
+        self.assertNotIn("a$b", warning)
+        self.assertIn("agent-tabs net folders add --outbound", warning)
+
+    def test_no_warning_without_members_with_the_network_off_or_for_a_remote_origin_session(self) -> None:
+        self.enable(outboundFolders=[])
+        write_member_policy(self.home, [peer_grant()])
+        self.assertNotIn("warnings", self.messaging.list_sessions())
+        write_member_policy(self.home, [peer_grant(member=True)])
+        self.assertIn("warnings", self.messaging.list_sessions())
+        self.record_remote_tab("tab-a")
+        self.assertNotIn("warnings", self.messaging.list_sessions())
+        write_config(self.home, network="off")
+        self.assertNotIn("warnings", self.make_session("tab-b", 3).list_sessions())
 
     def test_an_inventory_with_bad_folders_is_skipped(self) -> None:
         self.seed({"sessions": [wire_row("tab-r")], "folders": ["relative"]})

@@ -366,11 +366,39 @@ class FoldersTest(HubCase):
 
     def test_the_view_lists_the_folders_or_none(self) -> None:
         self.assertEqual(self.h.run("folders"), 0)
-        self.assertEqual(self.h.out, ["member folders: none"])
+        self.assertEqual(self.h.out, ["member folders: none", "outbound folders: none"])
         self.h.out.clear()
-        self.write_config(memberFolders=[self.code, self.root])
+        self.write_config(memberFolders=[self.code, self.root], outboundFolders=[self.session])
         self.assertEqual(self.h.run("folders"), 0)
-        self.assertEqual(self.h.out, [f"member folders: {self.code}, {self.root}"])
+        self.assertEqual(self.h.out, [f"member folders: {self.code}, {self.root}", f"outbound folders: {self.session}"])
+        self.h.out.clear()
+        self.assertEqual(self.h.run("folders", "--outbound"), 0)
+        self.assertEqual(self.h.out, [f"outbound folders: {self.session}"])
+
+    def test_outbound_add_and_remove_change_only_the_outbound_folders(self) -> None:
+        first, second = self.make("a"), self.make("b")
+        self.write_config(memberFolders=[first], outboundFolders=[first])
+        self.assertEqual(self.h.run("folders", "add", second, "--outbound"), 0, self.h.errors)
+        config = load_network_config(self.home)[0]
+        self.assertEqual((config.member_folders, config.outbound_folders), ((first,), (first, second)))
+        self.assertEqual(self.h.out[-1], f"outbound folders: {first}, {second}")
+        self.assertEqual(self.h.run("folders", "--outbound", "add", second), 0)
+        self.assertIn("already an outbound folder", self.h.out[-1])
+        self.assertEqual(self.h.run("folders", "remove", first, "--outbound"), 0, self.h.errors)
+        config = load_network_config(self.home)[0]
+        self.assertEqual((config.member_folders, config.outbound_folders), ((first,), (second,)))
+        self.assertEqual(self.h.run("folders", "remove", self.make("c"), "--outbound"), 1)
+        self.assertIn("is not an outbound folder", self.h.errors)
+        self.assertIn("folders action=remove count=1 kind=outbound", Path(log_file(self.home, "cli.log")).read_text(encoding="utf-8"))
+
+    def test_a_session_opened_by_another_machine_cannot_change_the_outbound_folders(self) -> None:
+        folder = self.make("a")
+        remote = self.harness(is_remote_origin=lambda _home: True)
+        for args in (("add", folder, "--outbound"), ("remove", folder, "--outbound")):
+            self.assertEqual(remote.run("folders", *args), 1)
+        self.assertIn(cli.NETWORK_SETTINGS_REFUSAL, remote.errors)
+        self.assertFalse(os.path.exists(os.path.join(self.home, "config.json")))
+        self.assertEqual(remote.run("folders", "--outbound"), 0)
 
     def test_add_stores_the_real_path_and_keeps_the_other_keys(self) -> None:
         first, second = self.make("a"), self.make("b")

@@ -129,6 +129,11 @@ When a join refuses, the command prints the reason and says nothing was saved:
 - `agent-tabs net folders` lists `network.memberFolders`: the folders where members can open tabs on this
   machine. `net folders add <absolute path>` and `net folders remove <absolute path>` change the list. The
   default is the top-level folder that holds the session that turned on discoverability or joined.
+- The same command also lists `network.outboundFolders`: the folders whose sessions on this machine see and
+  message sessions on other machines. `net folders add <absolute path> --outbound` and
+  `net folders remove <absolute path> --outbound` change that list. A session outside it gets no rows for
+  other machines, and `list_sessions` returns a warning that names the setting and the command. Ask the user
+  before you run it.
 - When a member asks to open a tab outside the list, this machine refuses with `folder-not-allowed`. Each
   local session gets a message that names the folder and the command `agent-tabs net folders add "<path>"`,
   at most one such message per member per hour. Ask the user before you run it. The requesting agent sees
