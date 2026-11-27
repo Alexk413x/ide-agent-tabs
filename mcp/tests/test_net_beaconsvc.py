@@ -685,7 +685,7 @@ class ListenerBeaconTest(unittest.TestCase):
         reset(self.a)
         self.ingress = FakeIngress(self.a)
         self.addCleanup(self.ingress.close)
-        patch = mock.patch.multiple(listener, PROFILE_REFRESH_S=0.0, MONITOR_S=0.05, CONFIG_RECHECK_S=0.05)
+        patch = mock.patch.multiple(listener, PROFILE_REFRESH_S=0.0, MONITOR_S=0.05, CONFIG_RECHECK_S=0.05, NETWORK_ID_GRACE_S=0.0)
         patch.start()
         self.addCleanup(patch.stop)
         write_hub_state(self.a, HubState(HUB_ID, KEY))

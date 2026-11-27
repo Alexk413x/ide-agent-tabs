@@ -179,7 +179,8 @@ version or the command. Change the switch only when the user asks.
   no joins and drops member connections. `net status` says why. Removing the current network cuts this machine off from its members
   there, so remove it only when the user wants that. To use a second network, run `net networks add` while
   connected to it.
-- When the id of the current network can't be read, the network counts as not allowed. On macOS and Linux
+- When the id of the current network can't be read, the network counts as not allowed. A running listener keeps
+  the last id for up to 120 s first, and logs both the failed read and the next good one. On macOS and Linux
   the id needs the gateway's MAC address.
 - `agent-tabs net hub status` lists the hub and each member's address and state.
 - To rename a member's label, run `agent-tabs net rename <label> <new label>`. Labels come from device

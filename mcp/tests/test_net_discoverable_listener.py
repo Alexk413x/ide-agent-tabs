@@ -128,7 +128,9 @@ class DiscoverableListenerTest(unittest.TestCase):
         self.ingress = FakeIngress(self.a)
         self.addCleanup(self.ingress.close)
         self.listener_options: dict[str, Any] = {}
-        patch = mock.patch.multiple(listener, PROFILE_REFRESH_S=0.0, MONITOR_S=0.05, CONFIG_RECHECK_S=0.05, JOIN_RETRY_S=0.0)
+        patch = mock.patch.multiple(
+            listener, PROFILE_REFRESH_S=0.0, MONITOR_S=0.05, CONFIG_RECHECK_S=0.05, JOIN_RETRY_S=0.0, NETWORK_ID_GRACE_S=0.0
+        )
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -341,6 +343,43 @@ class DiscoverableListenerTest(unittest.TestCase):
         self.assertIn("can't be read", running.log())
         with self.assertRaises(NetClientError):
             send_request(self.b, device_of(self.a), "inventory", {}, timeout=10, port=running.port)
+
+    def test_a_network_id_that_briefly_can_not_be_read_keeps_the_gate_open(self) -> None:
+        trust_peer(self.a, self.b, "laptop")
+        trust_peer(self.b, self.a, "desktop")
+        with mock.patch.object(listener, "NETWORK_ID_GRACE_S", 60.0):
+            running, cell = self.start()
+            self.assertTrue(wait_until(running.joins_on, 5))
+            cell.network = None
+            self.assertTrue(wait_until(lambda: "the gate keeps the last id for up to 60 s" in running.log(), 5))
+            time.sleep(0.5)
+            self.assertTrue(running.joins_on())
+            self.assertTrue(send_request(self.b, device_of(self.a), "inventory", {}, timeout=10, port=running.port)["ok"])
+            cell.network = HOME_NETWORK
+            self.assertTrue(wait_until(lambda: "the id of this network can be read again" in running.log(), 5))
+        self.assertNotIn("network gate closed", running.log())
+        self.assertNotIn("stopped serving joins", running.log())
+
+    def test_a_network_id_that_stays_unreadable_past_the_grace_period_closes_the_gate(self) -> None:
+        with mock.patch.object(listener, "NETWORK_ID_GRACE_S", 0.5):
+            running, cell = self.start()
+            self.assertTrue(wait_until(running.joins_on, 5))
+            cell.network = None
+            self.assertTrue(wait_until(lambda: not running.joins_on(), 5))
+        log = running.log()
+        self.assertLess(log.index("the gate keeps the last id"), log.index("network gate closed: the id of this network can't be read"))
+
+    def test_a_changed_address_never_keeps_the_last_network_id(self) -> None:
+        cell = Cell(NetworkConfig(network="lan", bind=LOOPBACK, allowed_networks=(HOME_NETWORK,)))
+        gate = Listener(self.a, Options(network_id=cell.network_id))
+        gate._live = cell.config  # pyright: ignore[reportPrivateUsage]
+        gate._refresh_gate(force=True)  # pyright: ignore[reportPrivateUsage]
+        self.assertTrue(gate._gate.allowed)  # pyright: ignore[reportPrivateUsage]
+        cell.network = None
+        with mock.patch.object(listener, "NETWORK_ID_GRACE_S", 60.0):
+            gate._refresh_gate(force=True)  # pyright: ignore[reportPrivateUsage]
+        self.assertFalse(gate._gate.allowed)  # pyright: ignore[reportPrivateUsage]
+        self.assertNotIn("the gate keeps the last id", Path(listener.log_file(self.a)).read_text(encoding="utf-8"))
 
     def test_removing_the_network_from_the_allowed_list_closes_the_gate_at_once(self) -> None:
         running, cell = self.start()

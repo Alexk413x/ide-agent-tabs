@@ -59,6 +59,7 @@ SERVER_START_WAIT_MS = 3_000
 SERVER_START_INTERVAL_S = 10.0
 PROFILE_REFRESH_S = 30.0
 PROFILE_TIMEOUT_S = 15
+NETWORK_ID_GRACE_S = 120.0
 MONITOR_S = 1.0
 CONFIG_RECHECK_S = 5.0
 FAILURE_LOG_INTERVAL_S = 60.0
@@ -482,6 +483,7 @@ class Listener:
         self._network_id: str | None = None
         self._fallback_noted: str | None = None
         self._network_read_at = float("-inf")
+        self._unread_since: float | None = None
         self._join_sock: socket.socket | None = None
         self._join_thread: threading.Thread | None = None
         self._join_stop = threading.Event()
@@ -767,14 +769,30 @@ class Listener:
         if force or now - self._network_read_at >= PROFILE_REFRESH_S:
             self._network_read_at = now
             try:
-                self._network_id = self._options.network_id(self._bind)
+                found = self._options.network_id(self._bind)
             except (OSError, ValueError):
-                self._network_id = None
+                found = None
+            self._network_id = self._kept_network_id(found, now, force)
         self._note_fallback()
         state = gate_state(self._live.allowed_networks, self._network_id)
         if (state.allowed, state.reason) != (self._gate.allowed, self._gate.reason):
             self.log("this network is allowed" if state.allowed else f"network gate closed: {state.reason}")
         self._gate = state
+
+    def _kept_network_id(self, found: str | None, now: float, force: bool) -> str | None:
+        # A forced read follows a start or an address change, which can mean another network, so it never keeps the last id.
+        if found is not None or force or self._network_id is None:
+            if found is not None and self._unread_since is not None:
+                self.log("the id of this network can be read again")
+            self._unread_since = None
+            return found
+        if self._unread_since is None:
+            self._unread_since = now
+            self.log(f"the id of this network can't be read; the gate keeps the last id for up to {NETWORK_ID_GRACE_S:g} s")
+        if now - self._unread_since < NETWORK_ID_GRACE_S:
+            return self._network_id
+        self._unread_since = None
+        return None
 
     def _note_fallback(self) -> None:
         note = fallback_of(self._network_id)

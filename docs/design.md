@@ -2926,7 +2926,9 @@ serves no join, and `net status` says why.
     `discoverable on`, `hub join` and `networks add` rewrite the entry to the new id in `config.json`. The listener
     doesn't.
 - **Gate.** The listener reads the id at start, every 30 s and when the address set changes. When the id can't be read,
-  the network counts as not allowed. The gate covers member connections, join service, announcements and
+  the network counts as not allowed. A read every 30 s that fails after one that succeeded keeps the last id for up to
+  120 s, because the Windows query can pass its 15 s timeout on a loaded machine and close the gate on a network that
+  did not change. A read at start or after an address change never keeps the last id. The gate covers member connections, join service, announcements and
   beacon handling, and doesn't stop the listener.
 
 ### Member folders
