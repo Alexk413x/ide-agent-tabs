@@ -46,9 +46,9 @@ export type AgentTabsPaneFolder = { path: string | null; heading: string | null;
 
 export type AgentTabsPaneHost = { heading: string; folders: AgentTabsPaneFolder[] }
 
-export type AgentTabsSender = { id: string; name: string }
+export type AgentTabsSender = { id: string; name: string; agent: string | null }
 
-export type AgentTabsInbox = { count: number; senders: AgentTabsSender[] }
+export type AgentTabsInbox = { count: number; senders: AgentTabsSender[]; newest: string | null }
 
 export type AgentTabsParty = { id?: string; name?: string; agent?: string; path?: string }
 

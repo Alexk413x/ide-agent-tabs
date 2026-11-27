@@ -158,7 +158,7 @@ type ModelInfo = { model?: string; effort?: string }
 
 type PresenceReply = { id: string; tab: boolean; driver: boolean }
 
-type UnreadReply = { count: number; senders: string[] }
+type UnreadReply = { count: number; senders: string[]; newest?: string }
 
 const agentLabel = (agent: string) => AGENT_LABELS[agent] ?? agent
 
@@ -814,7 +814,10 @@ async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> 
 async function senders($: EngineInterface, server: string, ids: readonly string[]): Promise<AgentTabsSender[]> {
   if (!ids.length) return []
   const rows = await sessions($, server)
-  return ids.map(id => ({ id, name: rows.find(r => r.id === id)?.name ?? id }))
+  return ids.map(id => {
+    const row = rows.find(r => r.id === id)
+    return { id, name: row?.name ?? id, agent: row?.agent ?? null }
+  })
 }
 
 const inbox = { delivering: false, retryAt: 0, shown: '', unread: 0 }
@@ -826,7 +829,7 @@ async function poll($: EngineInterface) {
   const unread = (await callMod($, me.server, { op: 'unread' }).catch(quiet($, 'unread', undefined))) as UnreadReply | undefined
   if (unread === undefined) return
   const { count } = unread
-  const key = `${count}|${unread.senders.join('|')}`
+  const key = `${count}|${unread.newest ?? ''}|${unread.senders.join('|')}`
   if (key !== inbox.shown) {
     inbox.shown = key
     const from = count ? await senders($, me.server, unread.senders) : []
@@ -834,7 +837,7 @@ async function poll($: EngineInterface) {
     $.ui.status(count ? `✉ ${count}${sender !== undefined ? ` · ${sender}` : ''}` : undefined)
     if (count > inbox.unread) $.ui.toast(`✉ Agent Tabs message${sender !== undefined ? ` from ${sender}` : ''} · /agent-messages to view`)
     inbox.unread = count
-    await $.state.set(inboxRef, count ? { count, senders: from } : null)
+    await $.state.set(inboxRef, count ? { count, senders: from, newest: unread.newest ?? null } : null)
   }
   if (!count || inbox.delivering) return
   const { value: state = 'idle' } = await $.state.get(activityRef)
@@ -1237,7 +1240,7 @@ async function goUp($: EngineInterface) {
 
 function senderPick(rows: readonly SessionRow[], name: string, id?: string): AgentTabsPick {
   const r = rows.find(one => !one.self && one.route !== 'remote' && ((id !== undefined && one.id === id) || one.name === name || one.id === name || one.shortName === name || one.legacyName === name))
-  if (r === undefined) return { key: `name:${name}`, name, id: null, names: [name] }
+  if (r === undefined) return id !== undefined ? { key: `id:${id}`, name, id, names: distinct(name, id) } : { key: `name:${name}`, name, id: null, names: [name] }
   return { key: `id:${r.id}`, name, id: r.id, names: distinct(name, r.name, r.nativeName, r.shortName, r.legacyName, r.id) }
 }
 
@@ -1991,15 +1994,27 @@ export const register: Register = on => {
     const { value: open = false } = await $.state.get(paneOpenRef)
     if (e.props.hasSurvey || open || !unread?.count) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
-    const names = unread.senders.map(s => s.name)
-    const from = names.length ? ` from ${names.slice(0, BAND_NAMES).join(', ')}${names.length > BAND_NAMES ? ', …' : ''}` : ''
+    const shown = unread.senders.slice(0, BAND_NAMES)
     const newest = unread.senders[0]
     return (
       <Box flexDirection="row" gap={2}>
         <Text wrap="truncate-end">
-          ✉ {unread.count} new{from}
+          <Text color="suggestion">✉</Text> <Text bold>{unread.count} new</Text>
+          {shown.length ? ' from ' : ''}
+          {shown.map((s, i) => (
+            <Text key={s.id}>
+              {i ? ', ' : ''}
+              <Text color={(AGENT_GLYPHS[s.agent ?? ''] ?? OTHER_GLYPH).color}>{s.name}</Text>
+            </Text>
+          ))}
+          {unread.senders.length > BAND_NAMES ? ', …' : ''}
         </Text>
-        <Button key="open-inbox" label="Open" hotkey="o" onPress={() => (newest ? openSender($, newest.name, newest.id, null) : openPaneOn($, { view: 'agents', agent: null, message: null }))} />
+        <Button
+          key="open-inbox"
+          label="Open"
+          hotkey="o"
+          onPress={() => (newest ? openSender($, newest.name, newest.id, unread.newest ?? null) : openPaneOn($, { view: 'agents', agent: null, message: null }))}
+        />
       </Box>
     )
   })

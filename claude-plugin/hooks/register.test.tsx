@@ -172,6 +172,7 @@ type WorldOptions = {
   uname?: string
   dirs?: string[]
   mailFrom?: Record<string, string>
+  newest?: string
   files?: Record<string, string>
   configDir?: string
   unplaced?: boolean
@@ -298,7 +299,7 @@ function world(on: On, options: WorldOptions = {}) {
         if (e.args.driver === true) claim.lost = false
         return ok({ id: options.tab ?? 's-000000000001', tab: options.tab !== undefined, driver: options.tab !== undefined && e.args.driver !== false && !claim.lost })
       case 'unread':
-        return ok({ count: mail.unread.length, senders: unreadSenders() })
+        return ok({ count: mail.unread.length, senders: unreadSenders(), ...(options.newest !== undefined && mail.unread.length ? { newest: options.newest } : {}) })
       case 'sessions':
         return ok({ sessions: options.rows ?? ROWS })
       case 'send':
@@ -1597,6 +1598,42 @@ describe('opening the pane from a message', () => {
       expect((await band.find({ type: 'Text' }))?.text).toBe('engine band')
       await band.unmount()
     }
+  })
+
+  test('the band draws the envelope in the theme colour and each sender in its agent colour', async ($, on) => {
+    engineBand(on)
+    const w = world(on, { tab: 'tab-c', mailFrom: FROM })
+    await start($)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    w.mail.unread.push('1-m-0000000000000001.json')
+    await w.clock.advance(2_000)
+    const band = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    const exact = async (text: string) => (await band.findAll({ type: 'Text' })).filter(t => t.text === text).map(t => t.props.color ?? (t.props.bold ? 'bold' : 'plain'))
+    expect(await exact('✉')).toEqual(['suggestion'])
+    expect(await exact('1 new')).toEqual(['bold'])
+    expect(await exact('w-1a')).toContain('#10a37f')
+    await band.unmount()
+  })
+
+  test("the band's Open shows the message that raised the notice, from a sender on another machine, after it was read", async ($, on) => {
+    engineBand(on)
+    const remote = { ...CARD_MESSAGE, id: 'm-0000000000000009', from: { id: 'marbles-pc-remote', agent: 'remote', path: '' }, peer: { id: 'marbles-pc-remote' } }
+    const w = world(on, { tab: 'tab-c', history: [remote], mailFrom: { '9-m-0000000000000009.json': 'marbles-pc-remote' }, newest: 'm-0000000000000009' })
+    await start($)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    w.mail.unread.push('9-m-0000000000000009.json')
+    await w.clock.advance(2_000)
+    const band = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    expect(await band.find({ type: 'Text', text: '✉ 1 new from marbles-pc-remote' })).toBeDefined()
+    await band.press({ key: 'open-inbox' })
+    await band.unmount()
+    w.mail.read.push(...w.mail.unread.splice(0))
+    const pane = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'desktop', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await w.clock.settle()
+    const asked = w.ops('message').at(-1)!.args
+    expect([asked.id, asked.session]).toEqual(['m-0000000000000009', 'marbles-pc-remote'])
+    expect(await textIn(pane, 'Please review x.ts')).toBeDefined()
+    await pane.unmount()
   })
 
   test('one unread message from one sender reads as one line', async ($, on) => {

@@ -396,7 +396,16 @@ def unread_summary(home: str, session_id: str, now: float | None = None) -> dict
             if n
             else []
         )
-        return {"count": n, "senders": senders}
+        newest = (
+            db.one(
+                f"SELECT id FROM messages WHERE route = 'agent-tabs' AND to_id = ? AND {_PENDING} ORDER BY seq DESC LIMIT 1",
+                _bind(session_id),
+                *_pending_args(at),
+            )
+            if n
+            else None
+        )
+        return {"count": n, "senders": senders, **({"newest": str(newest["id"])} if newest is not None else {})}
 
     return query(home, work)
 

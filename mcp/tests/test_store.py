@@ -236,9 +236,9 @@ class ReadTest(unittest.TestCase):
         self.assertEqual(store.unread_summary(home, "tab-c", T0), {"count": 0, "senders": []})
         store.send_message(home, out("tab-c", "1", "tab-a"), T0)
         store.send_message(home, out("tab-c", "2", "tab-b"), T0 + 1)
-        store.send_message(home, out("tab-c", "3", "tab-a"), T0 + 2)
+        newest = store.send_message(home, out("tab-c", "3", "tab-a"), T0 + 2)
         store.send_message(home, out("tab-x", "other", "tab-d"), T0 + 3)
-        self.assertEqual(store.unread_summary(home, "tab-c", T0 + 4), {"count": 3, "senders": ["tab-a", "tab-b"]})
+        self.assertEqual(store.unread_summary(home, "tab-c", T0 + 4), {"count": 3, "senders": ["tab-a", "tab-b"], "newest": newest["id"]})
 
 
 class HistoryTest(unittest.TestCase):
