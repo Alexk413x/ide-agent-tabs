@@ -1932,12 +1932,15 @@ describe('sessions on other machines', () => {
     expect(sent.reason).toContain('studio is offline')
   })
 
-  test('the agents pane leaves remote groups out', async ($, on) => {
-    world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!, ROWS[3]!, remoteRow('studio', 'w-1a')] })
+  test('the agents pane lists the sessions of each other machine under its label, with their message counts and thread', async ($, on) => {
+    const w = world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!, ROWS[3]!, remoteRow('studio', 'w-1a')] })
     await start($)
     await openPane($)
     const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-    expect(await ui.find({ type: 'Text', text: 'studio (remote)' })).toBeUndefined()
+    expect((await drawnLines(ui)).some(l => l.includes('studio (remote)'))).toBe(true)
+    expect(w.ops('counts').at(-1)?.args.agents).toContainEqual({ session: 'w-1a@studio', names: ['w-1a@studio'] })
+    await click(ui, 'agent:id:w-1a@studio')
+    expect(w.ops('history').at(-1)?.args).toMatchObject({ session: 'w-1a@studio' })
     await ui.unmount()
   })
 

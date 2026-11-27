@@ -449,7 +449,7 @@ function lanEntry(r: SessionRow): Entry | undefined {
     folder: null,
     lan: { label: lan.label, offline: lan.offline },
     id: r.id,
-    names: [r.name, r.id],
+    names: distinct(r.name, r.id),
   }
 }
 
@@ -942,8 +942,7 @@ const paneRow = (e: Entry): AgentTabsPaneRow => ({
 
 function paneHosts(listing: string | undefined, rows: readonly SessionRow[], now?: number): AgentTabsPaneHost[] {
   const merged = mergeEntries(listing, rows, now)
-  const { ownFolder, ownHost } = merged
-  const entries = merged.entries.filter(e => e.lan === undefined)
+  const { ownFolder, ownHost, entries } = merged
   return hostGroups(entries, ownFolder, ownHost).map(h => ({
     heading: h.heading,
     folders: h.folders.map((f): AgentTabsPaneFolder => ({ path: f.path, heading: f.heading, rows: f.entries.map(paneRow) })),

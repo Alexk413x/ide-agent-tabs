@@ -1870,7 +1870,8 @@ request for the keys only.
   the `ListAgents` groups and order, this session included. Each IDE or terminal group is a Box with
   `borderStyle: "round"` and `paddingX: 1`, stacked with no gap and as wide as the pane. The API draws
   no border title, so the host name is the bold first line inside the box. Folders follow, with one
-  blank line between folders inside a box.
+  blank line between folders inside a box. The sessions of each other machine follow in one box under
+  `<label> (remote)`, with no folders. Each one's count and thread go by its address `<id>@<label>`.
 - On the terminal and desktop the boxes and rows below the title are one `Client`, `hooks/list.tsx`,
   so no Button inverts under the pointer or the focus. The mod hands it groups of lines, each part with
   its text, style and the item it belongs to, and an `acts` table from item to action. The module
