@@ -30,6 +30,7 @@ from ide_agent_tabs.net.policy import (
     load_policy,
     save_policy,
 )
+from ide_agent_tabs.version import PACKAGE_VERSION
 from net_support import HAS_OPENSSL, cert_of, create_home, device_of, lock_recorded, make_root, pem_der, wait_until
 
 HUB_ID = "0123456789abcdef0123456789abcdef"
@@ -88,6 +89,7 @@ class JoinServer:
         *,
         handler: HubJoiner | None = None,
         allow_source: Callable[[str], bool] = lambda _address: True,
+        plugin_version: str = PACKAGE_VERSION,
     ) -> None:
         self.home = home
         self.results: list[PairResult] = []
@@ -101,7 +103,7 @@ class JoinServer:
         self.thread = threading.Thread(
             target=pairing.serve_joins,
             args=(self.sock, local_pair_identity(home), self.handler, pairing.Limits(home), self.stop),
-            kwargs={"timeouts": FAST, "on_result": self.results.append, "allow_source": allow_source},
+            kwargs={"timeouts": FAST, "on_result": self.results.append, "allow_source": allow_source, "plugin_version": plugin_version},
             daemon=True,
         )
         self.thread.start()
@@ -244,15 +246,15 @@ class JoinTest(unittest.TestCase):
         message = next(frame for frame in capture.frames if frame["t"] == "hub")
         self.assertEqual(message["members"], [])
 
-    def test_the_dialer_hello_names_the_join_mode(self) -> None:
+    def test_the_dialer_hello_names_the_join_pv_mode_and_carries_the_plugin_version(self) -> None:
         make_hub(self.b)
         server = JoinServer(self, self.a)
         with captured_frames() as capture:
             dial(server, self.b)
             server.wait_result()
         first = capture.frames[0]
-        self.assertEqual(sorted(first), ["cert", "commit", "mode", "name", "t", "v"])
-        self.assertEqual(first["mode"], "join")
+        self.assertEqual(sorted(first), ["cert", "commit", "mode", "name", "pv", "t", "v"])
+        self.assertEqual((first["mode"], first["pv"]), ("join-pv", PACKAGE_VERSION))
 
     def test_a_certificate_that_is_not_the_expected_device_stops_the_dialer_and_saves_nothing(self) -> None:
         make_hub(self.b)

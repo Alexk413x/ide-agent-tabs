@@ -312,6 +312,10 @@ def writable_by_others(entries: Sequence[AclEntry] | None) -> list[str]:
     return [f"{name} can change it" for name in names]
 
 
+def install_folder_problems(folder: str, env: Environment | None = None) -> list[str]:
+    return _folder_problems(folder, env or Environment())
+
+
 def _folder_problems(folder: str, env: Environment) -> list[str]:
     problems: list[str] = []
     try:

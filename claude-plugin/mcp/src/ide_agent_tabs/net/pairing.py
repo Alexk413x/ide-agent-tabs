@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar
 
 from ..files import file_lock, read_text_if_exists, write_atomically
+from ..version import PACKAGE_VERSION
 from . import tls, wire
 from .client import DeadlineSocket, as_socket
 from .identity import device_id as device_id_of
@@ -44,6 +45,7 @@ MAX_JOIN_REMOVED = 64
 MAX_HUB_FRAME = wire.MAX_FRAME
 JOIN_MODE = "join"
 PROBE_MODE = "probe"
+JOIN_PV_MODE = "join-pv"
 ALREADY_IN_ANOTHER_HUB = "already-in-another-hub"
 NO_HUB = "no-hub"
 CLOSED_EARLY_TEXT = (
@@ -63,6 +65,8 @@ _IPV4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
 _HEX32 = re.compile(r"[0-9a-f]{64}")
 _RFC1918 = tuple(ipaddress.IPv4Network(block) for block in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
 _HUB_ID = re.compile(r"[0-9a-f]{32}")
+_PLUGIN_VERSION = re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}")
+_HELLO_KEYS = ("v", "mode", "name", "cert", "commit")
 _HUB_LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MEMBER_KEYS = frozenset({"deviceId", "label", "address", "port", "certificatePem"})
 _UNCOUNTED_REASONS = (ALREADY_IN_ANOTHER_HUB, NO_HUB, "saving the trust entry failed", "the join failed")
@@ -174,6 +178,7 @@ class PeerInfo:
     address: str
     device_id: str
     der: bytes = field(repr=False)
+    plugin_version: str | None = None
 
     @property
     def pem(self) -> str:
@@ -472,6 +477,16 @@ def _hex32(value: object, what: str) -> bytes:
     return bytes.fromhex(value)
 
 
+def advertised_version(version: str) -> str | None:
+    return version if _PLUGIN_VERSION.fullmatch(version) is not None else None
+
+
+def _plugin_version(value: object) -> str:
+    if not isinstance(value, str) or _PLUGIN_VERSION.fullmatch(value) is None:
+        raise PairingError("the other machine's plugin version is malformed")
+    return value
+
+
 def _expect(value: object, kind: str, keys: tuple[str, ...]) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise PairingError("a frame is not an object")
@@ -606,6 +621,7 @@ def _describe(error: BaseException) -> str:
 
 
 _EXPECTED = (PairingError, wire.WireError, OSError, ValueError)
+_LISTEN_MODES = (JOIN_MODE, PROBE_MODE, JOIN_PV_MODE)
 
 
 class _Session:
@@ -617,6 +633,7 @@ class _Session:
         identity: PairIdentity,
         timeouts: Timeouts,
         join: JoinHandler | None,
+        plugin_version: str | None = None,
     ) -> None:
         self.conn = conn
         self.role = role
@@ -624,10 +641,12 @@ class _Session:
         self.identity = identity
         self.timeouts = timeouts
         self.join = join
+        self.plugin_version = plugin_version
         self.probing = join is None and role == DIALER
         self.committed = False
         self.closed_early = False
         self.dropped: str | None = None
+        self.peer: PeerInfo | None = None
 
     def close(self) -> None:
         with contextlib.suppress(OSError):
@@ -657,7 +676,7 @@ class _Session:
         try:
             return self._dial(peer_id)
         except _EXPECTED as error:
-            return PairResult("failed", _describe(error))
+            return PairResult("failed", _describe(error), self.peer)
         finally:
             self.close()
 
@@ -669,7 +688,7 @@ class _Session:
             return None
         except _EXPECTED as error:
             if self.committed:
-                return PairResult("failed", _describe(error))
+                return PairResult("failed", _describe(error), self.peer)
             self.dropped = f"the exchange ended before the key proof ({_describe(error)})"
             return None
         finally:
@@ -694,28 +713,33 @@ class _Session:
         deadline = time.monotonic() + self.timeouts.handshake_s
         own = self.identity
         nonce_d = secrets.token_bytes(32)
+        versioned = self.plugin_version is not None and not self.probing
         hello: dict[str, object] = {
             "t": "hello",
             "v": VERSION,
             "name": own.name,
             "cert": base64.b64encode(own.der).decode("ascii"),
             "commit": commitment(own.der, nonce_d).hex(),
-            "mode": PROBE_MODE if self.probing else JOIN_MODE,
+            "mode": PROBE_MODE if self.probing else JOIN_PV_MODE if versioned else JOIN_MODE,
         }
+        if versioned:
+            hello["pv"] = self.plugin_version
         try:
             self._send(hello, deadline)
-            reply = self._recv("hello", ("v", "name", "cert", "nonce"), deadline)
+            reply = self._recv("hello", ("v", "name", "cert", "nonce", *(("pv",) if versioned else ())), deadline)
         except (ConnectionError, wire.ConnectionClosed) as error:
             self.closed_early = True
             raise PairingError(CLOSED_EARLY_TEXT) from error
         name, der_l = _check_hello(reply, own.der)
         if peer_id is not None and not hmac.compare_digest(device_id_of(der_l).encode("ascii"), peer_id.encode("ascii")):
             raise PairingError("the machine at that address is not the device that was found: its certificate does not match the device id")
+        peer = PeerInfo(name, self.address, device_id_of(der_l), der_l, _plugin_version(reply["pv"]) if versioned else None)
+        self.peer = peer
         _hex32(reply["nonce"], "the listener's nonce")
         self._no_pending()
         self._send({"t": "reveal", "nonce": nonce_d.hex()}, deadline)
         self.committed = True
-        return PeerInfo(name, self.address, device_id_of(der_l), der_l), deadline
+        return peer, deadline
 
     def _listen(self, admit: Callable[[], bool]) -> PairResult:
         start = time.monotonic()
@@ -725,30 +749,35 @@ class _Session:
         except _EXPECTED as error:
             raise _Dropped(f"no usable first frame arrived ({_describe(error)})") from error
         mode = first.get("mode") if isinstance(first, dict) else None
-        if mode not in (JOIN_MODE, PROBE_MODE):
+        if mode not in _LISTEN_MODES or (mode == JOIN_PV_MODE and self.plugin_version is None):
             raise _Dropped("the first frame named no known mode")
         if not admit():
             raise _Dropped("another join was running")
         self.probing = mode == PROBE_MODE
+        versioned = mode == JOIN_PV_MODE
         deadline = start + self.timeouts.handshake_s
-        frame = _expect(first, "hello", ("v", "mode", "name", "cert", "commit"))
+        frame = _expect(first, "hello", (*_HELLO_KEYS, *(("pv",) if versioned else ())))
         name, der_d = _check_hello(frame, own.der)
+        dialer_version = _plugin_version(frame["pv"]) if versioned else None
         commit = _hex32(frame["commit"], "the dialer's commitment")
         self._no_pending()
         nonce_l = secrets.token_bytes(32)
-        reply = {
+        reply: dict[str, object] = {
             "t": "hello",
             "v": VERSION,
             "name": own.name,
             "cert": base64.b64encode(own.der).decode("ascii"),
             "nonce": nonce_l.hex(),
         }
+        if versioned:
+            reply["pv"] = self.plugin_version
         self._send(reply, deadline)
         nonce_d = _hex32(self._recv("reveal", ("nonce",), deadline)["nonce"], "the dialer's nonce")
         if not hmac.compare_digest(commitment(der_d, nonce_d), commit):
             raise PairingError("the dialer's reveal does not match its commitment")
+        peer = PeerInfo(name, self.address, device_id_of(der_d), der_d, dialer_version)
+        self.peer = peer
         self.committed = True
-        peer = PeerInfo(name, self.address, device_id_of(der_d), der_d)
         return self._finish(peer, deadline)
 
     def _finish(self, peer: PeerInfo, deadline: float) -> PairResult:
@@ -823,13 +852,19 @@ def private_source(address: str) -> bool:
 
 
 def _dial_once(
-    target: str, port: int, peer_id: str, identity: PairIdentity, handler: JoinHandler, timeouts: Timeouts
+    target: str,
+    port: int,
+    peer_id: str,
+    identity: PairIdentity,
+    handler: JoinHandler,
+    timeouts: Timeouts,
+    plugin_version: str | None,
 ) -> tuple[PairResult, bool]:
     try:
         conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
     except OSError as error:
         return PairResult("failed", f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}"), False
-    session = _Session(conn, DIALER, target, identity, timeouts, handler)
+    session = _Session(conn, DIALER, target, identity, timeouts, handler, plugin_version)
     return session.run_dialer(peer_id), session.closed_early
 
 
@@ -842,16 +877,23 @@ def dial_join(
     limits: Limits,
     *,
     timeouts: Timeouts = DEFAULT_TIMEOUTS,
+    plugin_version: str = PACKAGE_VERSION,
 ) -> PairResult:
     target = str(_ipv4(address, "the address"))
     _port(port)
     full_device_id(peer_id)
     limits.check_locked(target)
-    result, closed_early = _dial_once(target, port, peer_id, identity, handler, timeouts)
-    if closed_early:
+    own = advertised_version(plugin_version)
+    tries = (own, own, None) if own is not None else (None,)
+    result, closed_early = _dial_once(target, port, peer_id, identity, handler, timeouts, tries[0])
+    for version in tries[1:]:
+        if not closed_early:
+            break
         # The listener spaces connections from one address, and a `net find` check just before a join counts as one.
+        # A listener that predates join-pv closes that hello unanswered too, so a second join-pv try tells the two
+        # apart before the dialer falls back to the legacy hello.
         time.sleep(timeouts.min_interval_s + RETRY_MARGIN_S)
-        result, _ = _dial_once(target, port, peer_id, identity, handler, timeouts)
+        result, closed_early = _dial_once(target, port, peer_id, identity, handler, timeouts, version)
     return result
 
 
@@ -900,6 +942,7 @@ def _serve_join(
     timeouts: Timeouts,
     on_result: Callable[[PairResult], None] | None,
     refused: RefusalLog | None = None,
+    plugin_version: str | None = None,
 ) -> None:
     admitted = False
 
@@ -908,12 +951,12 @@ def _serve_join(
         admitted = slot.acquire(blocking=False)
         return admitted
 
-    session = _Session(conn, LISTENER, address, identity, timeouts, handler)
+    session = _Session(conn, LISTENER, address, identity, timeouts, handler, plugin_version)
     result: PairResult | None
     try:
         result = session.run_listener(admit)
     except Exception as error:  # noqa: BLE001 - a save bug must not leave the slot stuck
-        result = PairResult("failed", f"the join failed ({type(error).__name__})") if session.committed else None
+        result = PairResult("failed", f"the join failed ({type(error).__name__})", session.peer) if session.committed else None
         if result is None:
             session.dropped = f"the join failed ({type(error).__name__})"
     if result is None and session.dropped is not None and refused is not None:
@@ -948,8 +991,10 @@ def serve_joins(
     on_result: Callable[[PairResult], None] | None = None,
     allow_source: Callable[[str], bool] = private_source,
     log: Callable[[str], None] | None = None,
+    plugin_version: str = PACKAGE_VERSION,
 ) -> None:
     slot = threading.Lock()
+    advertised = advertised_version(plugin_version)
     spacing = Spacing(timeouts.min_interval_s, clock)
     refused = RefusalLog(log, clock)
     listener.settimeout(0.1)
@@ -967,5 +1012,5 @@ def serve_joins(
             refused(host, reason)
             continue
         conn.settimeout(None)
-        args = (slot, conn, host, identity, handler, limits, timeouts, on_result, refused)
+        args = (slot, conn, host, identity, handler, limits, timeouts, on_result, refused, advertised)
         threading.Thread(target=_serve_join, args=args, daemon=True).start()

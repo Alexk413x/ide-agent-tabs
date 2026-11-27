@@ -2534,6 +2534,9 @@ These hold for every install, because every user gets this code:
   discoverability (`net discoverable on`), joins a hub (`net hub join`, `net hub create --with`), or runs the
   manual `net lan setup`, `net trust` and `net lan on`. An install that never does so behaves as before. An
   update never turns it on.
+- **The unattended update is narrow.** A join from a machine on a newer version can update this machine's plugin from
+  the marketplace it installed from, at most once an hour for each machine, and `network.autoUpdate` turns it off (see
+  Updating during a join). A peer never names a source, a version or a command.
 - **One private address.** The listener binds one address: an RFC 1918 IPv4 address of a physical
   interface in LAN mode, or the machine's Tailscale address in Tailscale mode. Never `0.0.0.0`, `::` or a
   public address. No UPnP, relay or port mapping.
@@ -2666,10 +2669,12 @@ no consent proof and no approval on the listener.
    (the hub frame at the wire frame limit), read with exact-length `recv` and no buffering. Unknown fields,
    repeats, trailing data and out-of-order frames end the session. Each side parses the peer's certificate as one
    canonical DER certificate. Nonces come from the OS random generator. The frames, in order:
-   - D → L: `hello` with the version (2), `mode` (`join`, or `probe` for a `net find` check), the dialer's device name and certificate, and
-     `C = H("atp2 commit", "dialer", cert_d, nonce_d)` with a fresh 32-byte nonce. The first frame must arrive
+   - D → L: `hello` with the version (2), `mode` (`join-pv`, `join`, or `probe` for a `net find` check), the dialer's device name and certificate, and
+     `C = H("atp2 commit", "dialer", cert_d, nonce_d)` with a fresh 32-byte nonce. In `join-pv` mode the hello also
+     carries `pv`, the dialer's plugin version (see Updating during a join). The first frame must arrive
      within 5 s and the handshake must finish within 30 s;
-   - L → D: `hello` with the listener's name, certificate and a fresh 32-byte `nonce_l`. The dialer checks that
+   - L → D: `hello` with the listener's name, certificate and a fresh 32-byte `nonce_l`, and in `join-pv` mode the
+     listener's own `pv`. The dialer checks that
      the device id of `cert_l` equals the pinned id, and stops otherwise;
    - D → L: `reveal` with `nonce_d`; L checks it against `C`.
 
@@ -2701,13 +2706,96 @@ after the listener admitted it counts as a failure, except `already-in-another-h
 busy listener. A `net find` probe is a separate session type that ends cleanly, so it never counts. The listener serves one join at a time and drops a second connection, with no hourly cap. The dialer
 refuses to dial a locked address. A `net find` check of the same device counts as a connection from that address, so the join that follows
 it can arrive inside the one-second spacing. When the listener closes a join connection before its first reply, the dialer waits the
-spacing interval and dials once more, and then reports that the other machine closed the connection and may be limiting how often a
-machine can connect. `net status` lists the locked addresses, and `net trust` still works during a lock.
+spacing interval and dials again, twice at most, and then reports that the other machine closed the connection and may be limiting how often a
+machine can connect. The attempts are two `join-pv` hellos, then a legacy `join` hello (see Updating during a join). `net status` lists the locked addresses, and `net trust` still works during a lock.
 
 The listener logs each join connection it refuses or drops in `net/listener.log`, with the source address and the reason: not
 a private address, too soon after the last connection, the address is locked, another join was running, or no usable first frame. It
 writes at most one line a minute per address, which counts the repeats it left out, and at most 20 lines a minute in all, so a port
 scan can't fill the log.
+
+### Updating during a join
+
+A machine on an older ide-agent-tabs than the machine it joins can update itself and then join. The join hello carries
+the plugin version for this. A peer's version is used only to compare versions.
+
+**The version in the hello.** A dialer sends `mode` `join-pv` and a `pv` field: its plugin version as three numbers of
+at most 4, 4 and 6 digits, such as `0.14.4`. The listener answers with its own `pv` in its `hello`. Only a `join-pv`
+hello and its reply carry `pv`. A `pv` in a `join` or `probe` hello is an unknown field and ends the session. The listener
+checks `pv` against that pattern, and a bad value counts as a failed attempt, like any other bad hello field. A `join-pv`
+session joins exactly like a `join` session. Each side keeps the other's version in `PeerInfo.plugin_version`, which is
+none in a legacy session. A `net find` probe stays on `probe`.
+
+**The fallback.** A listener of 0.14.3 or older drops an unknown `mode` before it admits the session, so the attempt
+counts no failure, and it closes the connection. A listener that refuses a connection for coming too soon looks the same to
+the dialer. The dialer therefore waits the spacing interval and sends `join-pv` once more, then waits again and sends a
+legacy `join` hello with no `pv`. Both sides then report no version for the other side.
+
+**On the joining machine.** `net hub join` and `net hub create --with` compare the other machine's version with their
+own after the dial. A join that failed after the other machine answered carries its version too.
+
+- When the other machine is newer, the command prints both versions and the update command, then runs it. The user typed
+  the join, so the run is attended: it ignores the `network.autoUpdate` switch and the hourly limit. On success the
+  command prints "Open sessions keep the old skill text and tool list until they restart.", points the rest of the command at
+  the new install (it restarts a running listener of an older build, and starts the new build when none runs) and retries a failed
+  join once. When no command is known, the command fails, or the update installs nothing newer, the command prints the manual
+  text and goes on. A command tries one update, however many devices it joins. It logs `self-update` with `attempt=1` and
+  then `ok=0` or `ok=1` in `net/cli.log`.
+- When the other machine is older, the command says that machine must update. It says that the machine updates itself when
+  its unattended update is on, and that otherwise the user runs the update there.
+- When the other machine reports no version, it runs a release without this feature. The command says it can't update
+  itself, and the user updates it there.
+
+**On the listening machine.** When a join session ends `paired`, `incomplete` or `failed` and the dialer's `pv` is newer
+than this machine's version, the listener asks for an update attempt. A dialer that is older, equal or in a legacy session
+asks for nothing, and the listener only writes the log line that the join already writes. The attempt runs in a
+background thread, so it never blocks the listener:
+
+1. The limit: one attempt per dialer device id per hour, and at most six per hour in all, so a dialer that changes its
+   device id can't start more. `net/selfupdate.json` (private) holds the attempts of the last hour. The limit counts every
+   attempt, including one that only sends a notice. A file that can't be read or written allows no attempt.
+2. When `network.autoUpdate` is on and an update command is known, the listener logs
+   `self-update: attempt peer=<device id> command=<command>` in `net/listener.log`, runs the update, and logs
+   `self-update: ok` or `self-update: failed <summary>`. The summary is the last lines of the command's output, at most 200
+   characters.
+3. On success, the listener sends the local sessions a notice: this machine updated ide-agent-tabs to the new version after
+   a join from a machine on the dialer's version, the listener restarts on the new build, and open sessions keep the old tool list
+   until they restart. Then it starts `agent_tabs.py net lan start` from the new install as a detached process, with this
+   machine's home and server port. That process finds a listener of an older build and restarts it (see Listener). When the
+   update installs nothing newer, the notice says so and asks the user to run `net lan start`, and the listener keeps running.
+4. When the switch is off, no command is known or the update fails, the listener sends the sessions one notice with the
+   manual text and the reason that no update ran.
+
+Notices come from the sender `net-notice`, through the helper that delivers the hub-move notice. They reach live
+sessions on this machine that another machine did not open.
+
+**The command.** It comes from where this machine installed the plugin, never from a peer:
+
+- A Claude Code install lives in `<config dir>/plugins/cache/<marketplace>/ide-agent-tabs/<version>`. The command is
+  `claude plugin marketplace update <marketplace>`, then `claude plugin update ide-agent-tabs@<marketplace>`. The
+  marketplace comes from the path and must match `[A-Za-z0-9._-]{1,64}`. The `installed_plugins.json` in the plugins
+  folder must list `ide-agent-tabs@<marketplace>`. Codex keeps its plugins in the same cache layout, and the check keeps a
+  Codex install from getting a Claude command.
+- A Copilot CLI install lives in `<copilot dir>/installed-plugins/<marketplace>/ide-agent-tabs`. The command is
+  `copilot plugin marketplace update <marketplace>`, then `copilot plugin update ide-agent-tabs@<marketplace>`.
+- Codex has no command that updates one plugin: `codex plugin add` installs and `codex plugin marketplace upgrade` only
+  refreshes the catalog. A repository checkout, the server copy and any other place have no command either. The notice then
+  says to update ide-agent-tabs with the client that installed it.
+
+The command runs without a shell, with the program resolved on `PATH`, the output captured and a 300 s limit for each step.
+A failed run never raises: it returns a short summary. The new install is the newest folder beside the running one whose
+`.claude-plugin/plugin.json` has a version and whose launch scripts exist.
+
+**The limits.**
+
+- A machine updates only itself, and only from the marketplace it installed the plugin from.
+- A peer's frame names no source, no version to install and no command.
+- The limit above holds. Each attempt and its result are logged, and local sessions get a notice.
+- A session that another machine opened can't start an update. No MCP tool and no `net` command starts one. The
+  listener's join path starts the update, and so do the user's own `net hub join` and `net hub create --with`, which fall
+  under the origin guard.
+- `network.autoUpdate` turns the unattended update off. It defaults to on. `net auto-update on|off|status` changes and
+  shows it. `on` and `off` fall under the origin guard.
 
 ### Discovery
 
@@ -2982,7 +3070,7 @@ LAN mode stays the minimal option for one home or office network, with nothing e
   `net discoverable on` on one machine, then `net find` and `net hub join <device id>` (or
   `net hub create --with <device id>`) on the other. The skill keeps the manual `net trust` path as a fallback.
 - Command summary: `net id | status | off | revoke <label> | rename <label> <new label>`;
-  `net discoverable [on | off | status]`; `net find`; `net hub create | join | status | leave`;
+  `net discoverable [on | off | status]`; `net auto-update [on | off | status]`; `net find`; `net hub create | join | status | leave`;
   `net folders [add | remove] [--outbound]`; `net networks [add | remove]`; and, for hand-trusted peers, `net trust`, `net grant`,
   `net lan setup | on | start | stop`.
 
@@ -3313,7 +3401,7 @@ Interfaces:
 
 - **The `agent-tabs net` commands** are the supported writer. Commands that widen access (`lan setup`,
   `lan on`, `trust`, `grant`, `resume`) require typed confirmation in an interactive terminal. The hub commands
-  (`discoverable on`, `hub create`, `hub join`, `folders add`, `networks add`) need no typed confirmation, because an
+  (`discoverable on`, `hub create`, `hub join`, `folders add`, `networks add`, `auto-update on`) need no typed confirmation, because an
   agent runs them in chat. They show a desktop notification where they turn the network on, write a line in
   `net/cli.log`, and fall under the origin guard below. Typed confirmation, where it applies, reduces accidental use. It doesn't prevent an agent following injected instructions from running
   widening commands through its tools. Programs can create terminals and supply input, and code running as this OS
@@ -3324,12 +3412,12 @@ Interfaces:
   desktop. Already elevated processes need no new prompt. This isn't a universal barrier against agent
   execution. Each widening command also shows a desktop notification on that machine and
   writes an audit line in the audit fields below, with no free text. Narrowing commands (`pause`, `revoke`, `off`, `folders remove`, `networks remove`,
-  `discoverable off`, `hub leave`) need no confirmation, and `status` is read-only. Phase 0 checks whether Claude Code's `!` prefix gives a command an interactive terminal.
+  `discoverable off`, `auto-update off`, `hub leave`) need no confirmation, and `status` is read-only. Phase 0 checks whether Claude Code's `!` prefix gives a command an interactive terminal.
 - **No MCP tool and no mod protocol line** sets `network` to `lan`, trusts a peer, adds a grant or
   resumes a peer. The one exception is `net lan start`, which starts the listener only within the
   standing choice (see Listener).
 - **Origin guard.** `net folders add|remove`, `net networks add|remove`, `net discoverable on|off`,
-  `net hub create|join|leave`, `net revoke` and `net grant` refuse to run when the calling process descends from a
+  `net auto-update on|off`, `net hub create|join|leave`, `net revoke` and `net grant` refuse to run when the calling process descends from a
   session that another machine opened, found by the remote-origin ancestry check (see Trust boundary). The refusal
   reads "refused: a session opened by another machine can't change this machine's network settings". `net off`,
   `net lan stop`, `net rename` and the read-only commands don't check. `net lan on` and `net trust` still need a
@@ -3356,6 +3444,7 @@ Per machine, in the `network` section of `config.json`:
 | `memberFolders` | empty | Absolute folders where hub members can open tabs on this machine. `net folders` changes it. |
 | `allowedNetworks` | empty | Network ids where this machine announces, listens and joins. `net networks` changes it. |
 | `discoverable` | `false` | Serve joins and send join announcements. `net discoverable on` or `off` changes it. |
+| `autoUpdate` | `true` | Update this machine's plugin when a join comes from a machine on a newer version (see Updating during a join). `net auto-update on` or `off` changes it. A value other than `true` turns it off. |
 
 Version 1 adds no option to publish remote tabs through Remote Control. That belongs to the separate
 Remote Control review, which must define account and device access, prompt approval, opt-in scope and

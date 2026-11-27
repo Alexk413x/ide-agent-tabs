@@ -414,6 +414,7 @@ class Listener:
         *,
         allow_source: Callable[[str], bool] = lambda _address: True,
         clock: Callable[[], float] = time.monotonic,
+        plugin_version: str = pairing.PACKAGE_VERSION,
     ) -> None:
         self.machine = machine
         self.lines: list[str] = []
@@ -433,6 +434,7 @@ class Listener:
                 "allow_source": allow_source,
                 "log": self.lines.append,
                 "clock": clock,
+                "plugin_version": plugin_version,
             },
             daemon=True,
         )
@@ -444,7 +446,7 @@ class Listener:
         self.thread.join(5)
         self.sock.close()
 
-    def dial(self, machine: Machine, peer_id: str | None = None) -> pairing.PairResult:
+    def dial(self, machine: Machine, peer_id: str | None = None, **options: Any) -> pairing.PairResult:
         return pairing.dial_join(
             "127.0.0.1",
             self.port,
@@ -453,6 +455,7 @@ class Listener:
             machine.side,
             machine.limits,
             timeouts=self.timeouts,
+            **options,
         )
 
     def wait_result(self) -> pairing.PairResult:
@@ -607,11 +610,119 @@ class PairingSessionTest(unittest.TestCase):
         self.assertEqual(lm.side.saved[0].pem, self.b.pem.replace("\r\n", "\n"))
         self.assertEqual(dm.side.saved[0].pem, self.a.pem.replace("\r\n", "\n"))
 
-    def test_the_hello_commits_before_the_listener_speaks_and_the_reveal_opens_it(self) -> None:
+    def test_both_sides_learn_the_other_plugin_version(self) -> None:
         lm, dm = self.machines()
-        listening = Listener(self, lm)
+        listening = Listener(self, lm, plugin_version="1.2.3")
+        dialed = listening.dial(dm, plugin_version="1.3.0")
+        listened = listening.wait_result()
+        self.assertEqual((listened.outcome, dialed.outcome), ("paired", "paired"))
+        assert listened.peer is not None and dialed.peer is not None
+        self.assertEqual((listened.peer.plugin_version, dialed.peer.plugin_version), ("1.3.0", "1.2.3"))
+        self.assertEqual((lm.side.saved[0].plugin_version, dm.side.saved[0].plugin_version), ("1.3.0", "1.2.3"))
+        self.assertEqual((lm.failures(), dm.failures()), (0, 0))
+
+    def test_the_versioned_join_carries_the_hub_like_the_legacy_one(self) -> None:
+        lm, dm = self.machines()
+        listening = Listener(self, lm, plugin_version="1.2.3")
+        self.assertEqual(listening.dial(dm, plugin_version="1.3.0").outcome, "paired")
+        listening.wait_result()
+        (received,) = dm.side.received
+        assert received is not None
+        self.assertEqual((received.hub, received.key), (HUB, HUB_KEY))
+
+    def test_a_dialer_falls_back_to_the_legacy_hello_when_the_listener_does_not_know_join_pv(self) -> None:
+        lm, dm = self.machines()
+        with mock.patch.object(pairing, "_LISTEN_MODES", (pairing.JOIN_MODE, pairing.PROBE_MODE)):
+            listening = Listener(self, lm, plugin_version="1.2.3")
+            with captured_frames() as sent:
+                dialed = listening.dial(dm, plugin_version="1.3.0")
+            listened = listening.wait_result()
+        self.assertEqual((listened.outcome, dialed.outcome), ("paired", "paired"))
+        assert listened.peer is not None and dialed.peer is not None
+        self.assertEqual((listened.peer.plugin_version, dialed.peer.plugin_version), (None, None))
+        self.assertEqual((lm.failures(), dm.failures()), (0, 0))
+        modes = [frame["mode"] for frame in sent.frames if frame["t"] == "hello" and "mode" in frame]
+        self.assertEqual(modes, ["join-pv", "join-pv", "join"])
+        self.assertTrue(all("pv" not in frame for frame in sent.frames if frame.get("mode") == "join"))
+
+    def test_a_legacy_dialer_still_joins_a_listener_that_knows_join_pv(self) -> None:
+        lm, dm = self.machines()
+        listening = Listener(self, lm, plugin_version="1.2.3")
+        dialed = listening.dial(dm, plugin_version="0")
+        listened = listening.wait_result()
+        self.assertEqual((listened.outcome, dialed.outcome), ("paired", "paired"))
+        assert listened.peer is not None and dialed.peer is not None
+        self.assertEqual((listened.peer.plugin_version, dialed.peer.plugin_version), (None, None))
+        self.assertEqual(lm.failures(), 0)
+
+    def test_a_listener_without_a_valid_own_version_does_not_offer_join_pv(self) -> None:
+        lm, dm = self.machines()
+        listening = Listener(self, lm, plugin_version="0")
+        dialed = listening.dial(dm, plugin_version="1.3.0")
+        listened = listening.wait_result()
+        self.assertEqual((listened.outcome, dialed.outcome), ("paired", "paired"))
+        assert dialed.peer is not None
+        self.assertIsNone(dialed.peer.plugin_version)
+        self.assertEqual(lm.failures(), 0)
+
+    def test_a_join_pv_hello_with_a_bad_plugin_version_is_refused(self) -> None:
+        for bad in ("1.2", "1.2.3.4", "1.2.3-beta", "v1.2.3", "a.b.c", "1.2.3\n", "12345.1.1", "1.2.3 ", "", 5, None, ["1.2.3"]):
+            self.refuse_then_pair(
+                lambda rogue, ident, bad=bad: rogue.send(dialer_hello(ident, bytes(32), mode="join-pv", pv=bad)),
+            )
+
+    def test_a_join_pv_hello_without_a_plugin_version_is_refused(self) -> None:
+        self.refuse_then_pair(lambda rogue, ident: rogue.send(dialer_hello(ident, bytes(32), mode="join-pv")))
+
+    def test_a_plugin_version_in_a_legacy_hello_is_refused(self) -> None:
+        for mode in ("join", "probe"):
+            self.refuse_then_pair(lambda rogue, ident, mode=mode: rogue.send(dialer_hello(ident, bytes(32), mode=mode, pv="1.2.3")))
+
+    def test_a_listener_reply_with_a_bad_plugin_version_fails_the_dialer(self) -> None:
+        lm, dm = self.machines()
+        for reply_changes in ({"pv": "1.2"}, {"pv": 3}, {"pv": KeyError}, {"extra": 1}):
+            server = socket.socket()
+            self.addCleanup(server.close)
+            server.bind(("127.0.0.1", 0))
+            server.listen(4)
+            server.settimeout(10)
+
+            def answer(server: socket.socket = server, changes: dict[str, Any] = reply_changes) -> None:
+                conn, _ = server.accept()
+                with conn:
+                    read_json_frame(conn)
+                    frame: dict[str, Any] = {
+                        "t": "hello",
+                        "v": 2,
+                        "name": "alpha",
+                        "cert": b64(lm.identity.der),
+                        "nonce": "00" * 32,
+                        "pv": "1.2.3",
+                    }
+                    for key, value in changes.items():
+                        if value is KeyError:
+                            del frame[key]
+                        else:
+                            frame[key] = value
+                    wire.write_frame(conn, wire.encode(frame))
+                    conn.settimeout(5)
+                    with contextlib.suppress(OSError):
+                        conn.recv(1)
+
+            thread = threading.Thread(target=answer, daemon=True)
+            thread.start()
+            result = pairing.dial_join(
+                "127.0.0.1", server.getsockname()[1], lm.device_id, dm.identity, dm.side, dm.limits, timeouts=FAST, plugin_version="1.3.0"
+            )
+            thread.join(10)
+            self.assertEqual(result.outcome, "failed", reply_changes)
+            self.assertEqual(dm.side.saved, [])
+
+    def check_commit_order(self, dial_options: dict[str, Any], mode: str, extra_keys: list[str]) -> None:
+        lm, dm = self.machines()
+        listening = Listener(self, lm, plugin_version="1.2.3")
         with captured_frames() as capture:
-            dialed = listening.dial(dm)
+            dialed = listening.dial(dm, **dial_options)
             listened = listening.wait_result()
         self.assertEqual((listened.outcome, dialed.outcome), ("paired", "paired"))
         self.assertEqual(
@@ -619,11 +730,17 @@ class PairingSessionTest(unittest.TestCase):
         )
         self.assertEqual(capture.kinds[:3], ["hello", "hello", "reveal"])
         hello, reply, reveal = capture.frames[:3]
-        self.assertEqual(sorted(hello), ["cert", "commit", "mode", "name", "t", "v"])
-        self.assertEqual(hello["mode"], "join")
-        self.assertEqual(sorted(reply), ["cert", "name", "nonce", "t", "v"])
+        self.assertEqual(sorted(hello), sorted(["cert", "commit", "mode", "name", "t", "v", *extra_keys]))
+        self.assertEqual(hello["mode"], mode)
+        self.assertEqual(sorted(reply), sorted(["cert", "name", "nonce", "t", "v", *extra_keys]))
         self.assertEqual(hello["commit"], pairing.commitment(dm.identity.der, bytes.fromhex(reveal["nonce"])).hex())
         self.assertNotIn(reveal["nonce"], json.dumps(hello))
+
+    def test_the_hello_commits_before_the_listener_speaks_and_the_reveal_opens_it(self) -> None:
+        self.check_commit_order({"plugin_version": "1.3.0"}, "join-pv", ["pv"])
+
+    def test_the_legacy_hello_keeps_its_keys(self) -> None:
+        self.check_commit_order({"plugin_version": "0"}, "join", [])
 
     def test_a_listener_with_another_certificate_fails_the_dialer_before_the_reveal(self) -> None:
         lm, dm = self.machines()
@@ -976,7 +1093,7 @@ class PairingSessionTest(unittest.TestCase):
         self.assertTrue(wait_until(lambda: [r.outcome for r in listening.results] == ["probed", "paired"], 30))
         self.assertEqual(lm.failures(), 0)
 
-    def test_a_connection_that_closes_before_the_reply_is_tried_once_more_and_then_explained(self) -> None:
+    def test_a_connection_that_closes_before_the_reply_is_tried_again_and_then_explained(self) -> None:
         lm, dm = self.machines()
         refuser = socket.socket()
         self.addCleanup(refuser.close)
@@ -986,7 +1103,7 @@ class PairingSessionTest(unittest.TestCase):
 
         def close_every_connection() -> None:
             refuser.settimeout(5)
-            while len(accepted) < 2:
+            while len(accepted) < 3:
                 try:
                     conn, _ = refuser.accept()
                 except OSError:
@@ -999,7 +1116,7 @@ class PairingSessionTest(unittest.TestCase):
         result = pairing.dial_join("127.0.0.1", refuser.getsockname()[1], lm.device_id, dm.identity, dm.side, dm.limits, timeouts=FAST)
         thread.join(10)
         self.assertEqual((result.outcome, result.reason), ("failed", pairing.CLOSED_EARLY_TEXT))
-        self.assertEqual(len(accepted), 2)
+        self.assertEqual(len(accepted), 3)
         self.assertEqual(dm.side.saved, [])
 
     def test_the_first_frame_must_arrive_in_time(self) -> None:

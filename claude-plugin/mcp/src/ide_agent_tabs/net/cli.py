@@ -11,6 +11,7 @@ import socket
 import sqlite3
 import ssl
 import stat
+import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -30,7 +31,8 @@ from ..processes import spawn_detached, terminal_environment
 from ..profiles import TAB_ID_ENV
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, parse_port
-from . import elevation, firewall, hubsync, ingress, login_task, tls
+from ..version import PACKAGE_VERSION
+from . import elevation, firewall, hubsync, ingress, login_task, selfupdate, tls
 from .certgen import CertgenError, Identity, generate_identity
 from .client import identity_dir, local_device_id, peer_cert_path, send_request
 from .confirm import ConfirmError, confirm
@@ -86,7 +88,7 @@ if TYPE_CHECKING:
     from .find import FindRequest, FindResult
     from .hub_cli import PairDeps
 
-USAGE = "net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|networks|find>"
+USAGE = "net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|auto-update|networks|find>"
 _GRAMMAR = (
     "agent-tabs net id | status | off | revoke <label> | rename <label> <new label>"
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
@@ -96,6 +98,7 @@ _GRAMMAR = (
     " | hub join <device id> [--folder <session folder>] [--bind <address>] | hub status | hub leave"
     " | folders [--outbound] | folders add <absolute path> [--outbound] | folders remove <absolute path> [--outbound]"
     " | discoverable [on [--bind <address>] [--folder <session folder>] | off | status]"
+    " | auto-update [on | off | status]"
     " | networks | networks add | networks remove <network id>"
     " | find [--json] [--bind <address>]"
 )
@@ -136,13 +139,14 @@ def _launcher() -> str:
     return str(Path(__file__).resolve().parents[3] / "launch" / "net_listener.py")
 
 
-def _spawn_listener(home: str, server_port: int) -> int | None:
-    if not os.path.isabs(sys.executable) or not os.path.isfile(_launcher()):
+def _spawn_listener(home: str, server_port: int, launcher: str | None = None) -> int | None:
+    script = launcher or _launcher()
+    if not os.path.isabs(sys.executable) or not os.path.isfile(script):
         return None
     env = terminal_environment(os.environ)
     env["IDE_AGENT_TABS_HOME"] = home
     try:
-        child = spawn_detached([sys.executable, "-I", "-S", _launcher(), "--server-port", str(server_port)], env, os.path.expanduser("~"))
+        child = spawn_detached([sys.executable, "-I", "-S", script, "--server-port", str(server_port)], env, os.path.expanduser("~"))
     except OSError:
         return None
     return child.pid
@@ -199,10 +203,28 @@ class Services:
     is_remote_origin: Callable[[str], bool] = _caller_is_remote
     migrator: Migrator | None = None
     now_ms: Callable[[], int] = now_ms
+    plugin_version: str = PACKAGE_VERSION
+    update_command: Callable[[], selfupdate.UpdateCommand | None] = lambda: selfupdate.update_command(selfupdate.plugin_root())
+    update_runner: selfupdate.Runner = subprocess.run
+    fresh_install: Callable[[], selfupdate.Install | None] = lambda: selfupdate.newest_install(selfupdate.plugin_root())
+    install_build: Callable[[selfupdate.Install], Build] = lambda install: _build_of(install)
+    spawn_from: Callable[[str, int, str], int | None] = _spawn_listener
 
     def record(self, event: str, **fields: object) -> None:
         pairs = " ".join(f"{key}={value}" for key, value in fields.items())
         append_log(log_file(self.home, "cli.log"), f"{event} {pairs}".strip())
+
+
+def _build_of(install: selfupdate.Install) -> Build:
+    from ..server_copy import Source, bundled_build
+
+    source = Source(os.path.join(install.root, "mcp"), os.path.join(install.root, "dist", "launch"), install.version)
+    return Build(install.version, bundled_build(source))
+
+
+def renewed_services(svc: Services, install: selfupdate.Install) -> Services:
+    build = svc.install_build(install)
+    return replace(svc, build=lambda: build, spawn=lambda home, port: svc.spawn_from(home, port, install.listener_script))
 
 
 def default_services() -> Services:
@@ -1185,6 +1207,26 @@ def _cmd_discoverable(svc: Services, args: Sequence[str]) -> int:
     return hub_cli.discoverable(svc, args)
 
 
+def _cmd_auto_update(svc: Services, args: Sequence[str]) -> int:
+    parser = make_parser("auto-update")
+    parser.add_argument("action", nargs="?", choices=("on", "off", "status"), default="status")
+    options = parser.parse_args(args)
+    if options.action != "status":
+        refuse_remote_origin(svc)
+        set_network(svc.home, {"autoUpdate": options.action == "on"})
+        svc.record("auto-update", state=options.action)
+        svc.out(
+            "Unattended update is on. A join from a machine on a newer ide-agent-tabs updates this machine's plugin from its own marketplace, at most once an hour for each machine."
+            if options.action == "on"
+            else "Unattended update is off. A join from a machine on a newer ide-agent-tabs sends this machine's sessions a notice with the update command."
+        )
+        return 0
+    svc.out(f"unattended update: {'on' if selfupdate.auto_update_enabled(svc.home) else 'off'}")
+    command = svc.update_command()
+    svc.out(f"update command: {command.display if command is not None else 'none known for this install'}")
+    return 0
+
+
 def _cmd_networks(svc: Services, args: Sequence[str]) -> int:
     from . import hub_cli
 
@@ -1229,6 +1271,7 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         "hub": _cmd_hub,
         "folders": _cmd_folders,
         "discoverable": _cmd_discoverable,
+        "auto-update": _cmd_auto_update,
         "networks": _cmd_networks,
         "find": _cmd_find,
     }

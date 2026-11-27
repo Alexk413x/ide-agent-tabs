@@ -27,7 +27,7 @@ from ..shared.client import request as http_request
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, SERVER_LAUNCHER, parse_port
 from ..version import PACKAGE_VERSION, compare_versions
-from . import ingress, pairing, tls, wire
+from . import ingress, pairing, selfupdate, tls, wire
 from .beaconsvc import BeaconService, BeaconSettings, BeaconState
 from .client import (
     IDLE_S,
@@ -44,7 +44,7 @@ from .hubsync import introduce_member
 from .identity import format_digest
 from .interfaces import InterfaceInfo, interface_for, local_addresses
 from .migration import ERRORS as MIGRATION_ERRORS
-from .migration import Migrator
+from .migration import Migrator, post_to_sessions
 from .netid import GateState, current_network_id, fallback_of, gate_state
 from .notify import notify, powershell_path
 from .policy import NetworkConfig, PolicyError, load_network_config, load_policy, policy_path, update_network_section
@@ -459,6 +459,8 @@ class Options:
     rebind_wait_s: float = REBIND_WAIT_S
     migration: Migrator | None = None
     build: Build | None = None
+    plugin_version: str = PACKAGE_VERSION
+    updater: selfupdate.JoinUpdater | None = None
 
 
 class Listener:
@@ -825,6 +827,7 @@ class Listener:
                 "on_result": self._joined,
                 "allow_source": self._options.join_source_ok,
                 "log": self.log,
+                "plugin_version": self._options.plugin_version,
             },
             daemon=True,
         )
@@ -864,6 +867,12 @@ class Listener:
     def _joined(self, result: pairing.PairResult) -> None:
         if result.outcome not in ("paired", "incomplete", "probed"):
             self.log(f"join refused: {result.reason}")
+        if result.outcome in ("paired", "incomplete", "failed") and result.peer is not None:
+            if self._options.updater is None:
+                self._options.updater = selfupdate.JoinUpdater(
+                    self._home, self._options.plugin_version, self.log, post_to_sessions, self._options.server_port
+                )
+            self._options.updater.on_join(result.peer.device_id, result.peer.plugin_version)
 
     def _serve(self) -> None:
         assert self._sock is not None

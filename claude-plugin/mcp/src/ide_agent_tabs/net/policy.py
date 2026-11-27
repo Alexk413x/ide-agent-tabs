@@ -44,6 +44,7 @@ _CONFIG_KEYS = frozenset(
         "memberFolders",
         "allowedNetworks",
         "discoverable",
+        "autoUpdate",
     }
 )
 _PEER_KEYS = frozenset(
