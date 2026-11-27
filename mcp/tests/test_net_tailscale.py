@@ -278,10 +278,13 @@ class ParseStatusTest(unittest.TestCase):
                 parse_status(json.dumps(data))
 
     def test_wrong_peer_container_fails(self) -> None:
-        for value in (None, [], "x", 1):
+        for value in ([], "x", 1, False):
             text = json.dumps({"Self": node(), "Peer": value})
             with self.assertRaises(TailscaleError, msg=str(value)):
                 parse_status(text)
+
+    def test_null_peer_container_means_no_peers(self) -> None:
+        self.assertEqual(parse_status(json.dumps({"Self": node(), "Peer": None})).peers, ())
 
     def test_every_required_node_field_fails_when_missing_or_wrong_typed(self) -> None:
         wrong = {

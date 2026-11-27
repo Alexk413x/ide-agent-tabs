@@ -243,8 +243,8 @@ def parse_status(text: str) -> Status:
     data = _json(text, "the status")
     self_node = _node(_field(data, STATUS_SELF, "the status"), f"the status {STATUS_SELF} entry")
     peers: list[Node] = []
-    if STATUS_PEERS in data:
-        entries = data[STATUS_PEERS]
+    entries = data.get(STATUS_PEERS)
+    if entries is not None:
         if not isinstance(entries, dict):
             raise TailscaleError(f"the status has a {STATUS_PEERS} field that is not a JSON object")
         peers = [_node(entry, f"the status {STATUS_PEERS} entry {key!r}") for key, entry in entries.items()]  # pyright: ignore[reportUnknownVariableType]
