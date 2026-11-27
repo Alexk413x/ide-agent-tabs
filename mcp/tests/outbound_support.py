@@ -33,13 +33,14 @@ class FakeRequest:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
         self.reply: dict[str, Any] = {"re": "r", "ok": True, "body": {"id": MESSAGE_ID}}
+        self.replies: list[dict[str, Any]] = []
         self.error: Exception | None = None
 
     def __call__(self, home: str, peer: str, op: str, body: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
         self.calls.append({"home": home, "peer": peer, "op": op, "body": dict(body), **kwargs})
         if self.error is not None:
             raise self.error
-        return self.reply
+        return self.replies.pop(0) if self.replies else self.reply
 
 
 class FakeService:

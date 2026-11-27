@@ -8,7 +8,6 @@ import re
 import sqlite3
 import stat
 import threading
-import unicodedata
 from collections import OrderedDict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -44,7 +43,6 @@ MINUTE_MS = 60_000
 HOUR_MS = 3_600_000
 MAX_NOTICES = 256
 _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
-_BAD_NAME_CATEGORIES = frozenset({"Cc", "Cs", "Zl", "Zp"})
 
 
 class TabService(Protocol):
@@ -122,10 +120,6 @@ def folder_problem(folder: FolderGrant) -> str | None:
 
 def _digest(request: object) -> str:
     return hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
-
-
-def _clean_name(name: str) -> str:
-    return "".join(" " if unicodedata.category(c) in _BAD_NAME_CATEGORIES else c for c in name)[: wire.MAX_NAME_CHARS]
 
 
 class NetDispatcher:
@@ -453,8 +447,11 @@ class NetDispatcher:
         trace.tab = reservation.tab_id
         return {"tab": reservation.tab_id} if key == "tab" else {"closed": True}
 
-    def _deliver(self, sender: str, to: str, text: str, reply_to: str | None, reason: str) -> str:
-        out: dict[str, Any] = {"from": {"id": sender, "agent": "remote", "path": ""}, "to": to, "text": text}
+    def _deliver(self, sender: str, to: str, text: str, reply_to: str | None, reason: str, sender_name: str | None = None) -> str:
+        party: dict[str, Any] = {"id": sender, "agent": "remote", "path": ""}
+        if sender_name is not None:
+            party["name"] = sender_name
+        out: dict[str, Any] = {"from": party, "to": to, "text": text}
         if reply_to is not None:
             out["replyTo"] = reply_to
         try:
@@ -530,7 +527,8 @@ class NetDispatcher:
             return dict(known[1])
         store = self._open_store()
         now = self._now_ms()
-        sender = f"{grant.label}-remote"
+        sender = f"{grant.label}-remote" if body.from_id is None else f"{body.from_id}@{grant.label}"
+        sender_name = None if body.from_name is None or body.from_name.strip() == "" else f"{body.from_name}@{grant.label}"
         owned = self._owner(store, body.to) == peer
         direct = owned or body.to in grant.send
         allowed = direct or grant.member
@@ -549,7 +547,7 @@ class NetDispatcher:
             raise _Refusal("rate-limit")
         trace.admitted = True
         trace.effect = True
-        reply = {"id": self._deliver(sender, body.to, body.text, body.reply_to, "delivery-failed")}
+        reply = {"id": self._deliver(sender, body.to, body.text, body.reply_to, "delivery-failed", sender_name)}
         self._remember(peer, request_id, digest, reply)
         return reply
 
@@ -574,7 +572,7 @@ class NetDispatcher:
             if not grant.member and p["id"] not in grant.send and self._owner(store, p["id"]) != trace.peer:
                 continue
             if p["agent"] in wire.SESSION_AGENTS and p["state"] in wire.STATUSES:
-                rows.append(wire.RemoteSession(p["id"], _clean_name(names[p["id"]]), p["agent"], p["state"]))
+                rows.append(wire.RemoteSession(p["id"], wire.clean_name(names[p["id"]]), p["agent"], p["state"]))
         folders = [f for f in member_folders if wire.valid_path(f)][: wire.MAX_FOLDERS] if grant.member else None
         try:
             return wire.inventory_body(rows[: wire.MAX_SESSIONS], folders)

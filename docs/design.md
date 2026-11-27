@@ -3134,6 +3134,12 @@ LAN mode stays the minimal option for one home or office network, with nothing e
 - The operations are `open`, `close`, `send`, `inventory` and, between hub members only, `introduce`, `remove` and
   `rekey` (see Hub sync). `open` carries `folder` (an alias, for a hand-trusted peer) or `path` (an absolute folder,
   for a hub member). The `inventory` reply to a hub member carries an optional `folders` list.
+- `send` carries an optional `from` object: the sending session's `id` and, when the sender can name it,
+  its `name`. The receiver delivers the message from `<id>@<peer label>` with the name `<name>@<peer label>`,
+  so the recipient answers with `send_message` to that address and `replyTo` set to the message id, through
+  the reply grant the send created. A send without `from` is delivered from `<peer label>-remote`, which
+  can't be answered. A peer on 0.14.3 or earlier refuses a body with `from`, and the refusal is generic, so a
+  refused send goes once more without `from`. A refusal never delivers, so the retry can't deliver twice.
 
 ### Grants
 

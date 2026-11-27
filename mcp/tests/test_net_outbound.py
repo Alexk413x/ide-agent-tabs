@@ -55,7 +55,7 @@ class SendTest(NetCase):
         self.assertEqual(len(self.request.calls), 1)
         call = self.request.calls[0]
         self.assertEqual((call["home"], call["peer"], call["op"]), (self.home, PEER, "send"))
-        self.assertEqual(call["body"], {"to": "tab-r", "text": "hello"})
+        self.assertEqual(call["body"], {"to": "tab-r", "text": "hello", "from": {"id": "tab-a"}})
         presence = read_presence(self.home, "tab-a")
         assert presence is not None
         generation = session_generation(presence)
@@ -68,7 +68,9 @@ class SendTest(NetCase):
 
     def test_reply_to_goes_in_the_body(self) -> None:
         self.send(replyTo="m-aaaaaaaaaaaaaaaa")
-        self.assertEqual(self.request.calls[0]["body"], {"to": "tab-r", "text": "hello", "replyTo": "m-aaaaaaaaaaaaaaaa"})
+        self.assertEqual(
+            self.request.calls[0]["body"], {"to": "tab-r", "text": "hello", "replyTo": "m-aaaaaaaaaaaaaaaa", "from": {"id": "tab-a"}}
+        )
 
     def test_a_malformed_reply_to_never_goes_out(self) -> None:
         with self.assertRaises(OutboundError):
@@ -143,6 +145,36 @@ class SendTest(NetCase):
         self.assertEqual(str(caught.exception), PEER_REFUSED)
         self.assertEqual(self.nudges, [])
 
+    def test_a_refused_send_goes_once_more_without_the_sender_for_an_older_peer(self) -> None:
+        self.request.replies = [{"re": "r", "ok": False, "refused": True}]
+        self.assertEqual(self.send(replyTo="m-aaaaaaaaaaaaaaaa"), {"id": MESSAGE_ID, "delivery": "remote"})
+        bodies = [c["body"] for c in self.request.calls]
+        self.assertEqual(
+            bodies,
+            [
+                {"to": "tab-r", "text": "hello", "replyTo": "m-aaaaaaaaaaaaaaaa", "from": {"id": "tab-a"}},
+                {"to": "tab-r", "text": "hello", "replyTo": "m-aaaaaaaaaaaaaaaa"},
+            ],
+        )
+        self.assertEqual(self.nudges, [(self.home, PEER)])
+
+    def test_a_send_refused_in_both_forms_goes_out_twice_at_most(self) -> None:
+        self.request.reply = {"re": "r", "ok": False, "refused": True}
+        with self.assertRaises(OutboundError):
+            self.send()
+        self.assertEqual(len(self.request.calls), 2)
+
+    def test_the_sender_carries_its_session_name_when_the_session_is_live(self) -> None:
+        self.clock.at = now_ms()
+        net = self.make_outbound(alive=lambda _pid: True)
+        net.send(self.messaging.caller(), {"to": "tab-r@laptop", "text": "hello"})
+        body = self.request.calls[0]["body"]
+        self.assertEqual(body["from"]["id"], "tab-a")
+        self.assertRegex(body["from"]["name"], r"\S")
+        parsed = wire.parse_request({"id": "r" * 32, "op": "send", "body": body}).body
+        assert isinstance(parsed, wire.SendBody)
+        self.assertEqual((parsed.from_id, parsed.from_name), ("tab-a", body["from"]["name"]))
+
     def test_a_transport_failure_is_an_error_with_no_grant(self) -> None:
         self.request.error = NetClientError("timed out")
         with self.assertRaisesRegex(OutboundError, "timed out"):
@@ -164,7 +196,7 @@ class SendTest(NetCase):
         failed, text = self.call("send_message", {"to": "tab-r@laptop", "text": "over there"})
         self.assertFalse(failed, text)
         self.assertEqual(json.loads(text), {"id": MESSAGE_ID, "delivery": "remote"})
-        self.assertEqual(self.request.calls[-1]["body"], {"to": "tab-r", "text": "over there"})
+        self.assertEqual(self.request.calls[-1]["body"], {"to": "tab-r", "text": "over there", "from": {"id": "tab-a"}})
         failed, text = self.call("send_message", {"to": "tab-b", "text": "right here"})
         self.assertFalse(failed, text)
         self.assertEqual(json.loads(text)["to"], "tab-b")

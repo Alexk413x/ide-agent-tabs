@@ -88,7 +88,8 @@ PowerShell it stands for `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1"`.
 4. **Check.** Run `agent-tabs net hub status` on each machine. Expect the hub, every member as online, the
    member folders and the allowed networks. Then run `list_sessions`: sessions on other members appear
    under a `<label> (remote)` heading. To message one, use `send_message` with the name shown, such as
-   `worker-1@laptop`.
+   `worker-1@laptop`. A message from another machine comes from `<session id>@<label>`. To answer it,
+   call `send_message` with `to` set to that address and `replyTo` set to the message id.
 5. **Ask about discoverability.** While `discoverable` is on, any device on the network can join. Ask the
    user whether to run `agent-tabs net discoverable off` once every machine has joined. Members stay
    connected, and `net discoverable on` turns joins back on when the user adds another machine.

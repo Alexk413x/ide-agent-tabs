@@ -11,6 +11,7 @@ from typing import Any
 
 from ..clock import now_ms as current_ms
 from ..jsjson import trim, utf16_len
+from ..liveness import pid_alive
 from ..messaging.db import MailError
 from ..messaging.sessions import read_presence
 from ..messaging.store import MAX_TEXT_CHARS, check_message_id
@@ -95,8 +96,10 @@ class Outbound:
         open_store: Callable[[str], NetStore] = NetStore,
         start: Callable[[Any], int] | None = None,
         server_port: int | None = None,
+        alive: Callable[[int], bool] = pid_alive,
     ) -> None:
         self.home = home
+        self._alive = alive
         self.server_port = server_port
         self._now = now_ms
         self._request = request
@@ -156,13 +159,29 @@ class Outbound:
                 raise OutboundError(RATE_REFUSAL)
             window.append(now)
 
-    def _call(self, peer: PeerGrant, op: str, body: Mapping[str, Any], timeout: float) -> dict[str, Any]:
+    def _sender(self, session: str) -> dict[str, str]:
+        from ..messaging.messaging import session_names
+        from ..messaging.sessions import SESSIONS_DIR, is_session_id, live_session
+
+        try:
+            files = sorted(n[:-5] for n in os.listdir(os.path.join(self.home, SESSIONS_DIR)) if n.endswith(".json"))
+        except OSError:
+            files = []
+        now = self._now()
+        live = [p for p in (live_session(self.home, f, self._alive, now) for f in files if is_session_id(f)) if p is not None]
+        name = session_names(live).get(session)
+        return {"id": session} if name is None else {"id": session, "name": wire.clean_name(name)}
+
+    def _reply(self, peer: PeerGrant, op: str, body: Mapping[str, Any], timeout: float) -> dict[str, Any]:
         from .client import NetClientError, send_request
 
         try:
-            reply = (self._request or send_request)(self.home, peer.device_id, op, body, timeout=timeout, port=DEFAULT_PORT)
+            return (self._request or send_request)(self.home, peer.device_id, op, body, timeout=timeout, port=DEFAULT_PORT)
         except NetClientError as e:
             raise OutboundError(str(e)) from e
+
+    def _call(self, peer: PeerGrant, op: str, body: Mapping[str, Any], timeout: float) -> dict[str, Any]:
+        reply = self._reply(peer, op, body, timeout)
         if reply.get("ok") is not True:
             raise OutboundError(_refusal_text(peer, reply, body))
         return reply
@@ -199,7 +218,12 @@ class Outbound:
         body: dict[str, Any] = {"to": remote, "text": text}
         if reply_to is not None:
             body["replyTo"] = reply_to
-        message_id = _field(self._call(peer, "send", body, SEND_TIMEOUT_S), "id", _MESSAGE_ID)
+        reply = self._reply(peer, "send", {**body, "from": self._sender(caller.session)}, SEND_TIMEOUT_S)
+        if reply.get("ok") is not True:
+            # A peer on 0.14.3 or earlier refuses a send body that names its sender, and every refusal looks alike to the sender,
+            # so a refused send goes once more in the older form. A refusal never delivers, so this can't send twice.
+            reply = self._call(peer, "send", body, SEND_TIMEOUT_S)
+        message_id = _field(reply, "id", _MESSAGE_ID)
         result: dict[str, Any] = {"id": message_id, "delivery": "remote"}
         presence = read_presence(self.home, caller.session)
         generation = None if presence is None else session_generation(presence)
