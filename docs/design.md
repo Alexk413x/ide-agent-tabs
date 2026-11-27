@@ -3224,7 +3224,9 @@ launch plan, and the request can't name a permission mode.
 
 - While the listener runs, the local server requests inventory at start and every 60 s from each
   currently trusted, unpaused, unexpired peer. Only an accepted non-inventory request may schedule an
-  earlier refresh. Inventory requests, replies and refusals never trigger refreshes. Triggers coalesce:
+  earlier refresh. The server also checks `policy.json` every 2 s, so a peer that a join or an
+  introduction adds, saved by the listener or the CLI in another process, is asked at once on both
+  sides. Inventory requests, replies and refusals never trigger refreshes. Triggers coalesce:
   one outstanding inventory request and at most one attempt per peer per 60 s, with no retry queue,
   a global concurrency cap of 8 and a 30 s total deadline. Inventory requests use the same outbound
   policy and dispatch authority as other LAN work. A peer that doesn't answer is shown as offline with
