@@ -1396,7 +1396,10 @@ other agent CLIs. For that, every session that runs the MCP server can message e
 - `text` is up to 32,000 characters. A session sends at most 20 messages a minute, and a mailbox holds
   at most 50 unread messages; past either limit, `send_message` fails. The same text to the same
   session within a minute returns the first message's id with `duplicate: true`. The limits are checked
-  in the transaction that stores the message, so every process of a session shares them.
+  in the transaction that stores the message, so every process of a session shares them. A message from
+  another machine counts against the sending session's own limit when the peer names that session. A sender
+  id that stands for many sessions, `<label>-remote` from an older peer or `net-notice`, skips the
+  per-session limit, and the peer's `messagesPerMinute` grant bounds it instead.
 - A recipient whose presence file lacks `mail: 2` runs a build from before the database. `send_message`
   refuses it: `<id> runs an older Agent Tabs; restart that session to message it`.
 - The server deletes read messages and logged native traffic after 7 days, and the unread mail of a

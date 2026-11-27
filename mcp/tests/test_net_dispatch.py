@@ -11,7 +11,7 @@ from unittest import mock
 
 from ide_agent_tabs.messaging.db import MailError
 from ide_agent_tabs.messaging.sessions import update_presence
-from ide_agent_tabs.messaging.store import mail_to, stored_for
+from ide_agent_tabs.messaging.store import MAX_SENT_PER_MINUTE, mail_to, stored_for
 from ide_agent_tabs.net import dispatch, policy, wire
 from ide_agent_tabs.net.audit import audit_path
 from ide_agent_tabs.net.dispatch import NetDispatcher, folder_problem, session_generation
@@ -583,8 +583,8 @@ class SendTest(DispatchCase):
     def send_request(self, to: str, text: str = "hello", request_id: str = "s1", **extra: Any) -> dict[str, Any]:
         return {"id": request_id, "op": "send", "body": {"to": to, "text": text, **extra}}
 
-    def named_request(self, to: str, sender: object, request_id: str = "s1") -> dict[str, Any]:
-        request = self.send_request(to, "ping", request_id)
+    def named_request(self, to: str, sender: object, request_id: str = "s1", text: str = "ping") -> dict[str, Any]:
+        request = self.send_request(to, text, request_id)
         request["body"]["from"] = sender
         return request
 
@@ -694,6 +694,22 @@ class SendTest(DispatchCase):
         self.clock.at += MINUTE
         self.assertTrue(self.handle(self.send_request("local-1", "d", "s4"))["ok"])
         self.assertEqual([m["text"] for m in mail_to(self.home, "local-1")], ["a", "b", "d"])
+
+    def test_an_older_peer_is_limited_by_its_grant_and_not_by_the_mailbox_per_sender_limit(self) -> None:
+        write_presence(self.home, "local-1")
+        write_policy(self.home, [self.peer_grant(send=("local-1",), messages_per_minute=60)])
+        total = MAX_SENT_PER_MINUTE + 5
+        for i in range(total):
+            self.assertTrue(self.handle(self.send_request("local-1", f"m{i}", f"s{i}"))["ok"], i)
+        self.assertEqual(len(mail_to(self.home, "local-1")), total)
+
+    def test_each_named_remote_session_has_its_own_mailbox_limit(self) -> None:
+        write_presence(self.home, "local-1")
+        write_policy(self.home, [self.peer_grant(send=("local-1",), messages_per_minute=60)])
+        for i in range(MAX_SENT_PER_MINUTE):
+            self.assertTrue(self.handle(self.named_request("local-1", {"id": "sess-a"}, f"a{i}", f"a{i}"))["ok"], i)
+        self.assertRefused(self.handle(self.named_request("local-1", {"id": "sess-a"}, "a-over", "a-over")), "a-over", "delivery-failed")
+        self.assertTrue(self.handle(self.named_request("local-1", {"id": "sess-b"}, "b0", "b0"))["ok"])
 
     def test_a_repeated_send_returns_the_first_reply_without_another_message(self) -> None:
         write_presence(self.home, "local-1")

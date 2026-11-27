@@ -39,6 +39,14 @@ class SendTest(unittest.TestCase):
         store.send_message(home, out("tab-b", "one more"), T0 + MINUTE)
         store.send_message(home, out("tab-b", "from z", "tab-z"), T0 + 31)
 
+    def test_a_sender_that_stands_for_many_sessions_skips_the_per_sender_limit(self) -> None:
+        home = temp_home(self)
+        for i in range(store.MAX_SENT_PER_MINUTE + 5):
+            store.send_message(home, out(f"tab-{i % 3}", f"m{i}", "laptop-remote"), T0 + i, limit_sender=False)
+        with self.assertRaisesRegex(MailError, "20 messages in the last minute"):
+            for i in range(store.MAX_SENT_PER_MINUTE + 1):
+                store.send_message(home, out("tab-b", f"n{i}", "laptop-remote"), T0 + 100 + i)
+
     def test_the_same_text_to_the_same_recipient_within_dedupe_ms_returns_the_first_id(self) -> None:
         home = temp_home(self)
         first = store.send_message(home, out("tab-b", "review this"), T0)

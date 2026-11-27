@@ -337,7 +337,7 @@ class NetDispatcher:
             for session in self._live_sessions():
                 if self._owner(store, session["id"]) is None:
                     with contextlib.suppress(_Refusal):
-                        self._deliver("net-notice", session["id"], text, None, "notice-failed")
+                        self._deliver("net-notice", session["id"], text, None, "notice-failed", one_session=False)
         except Exception as e:  # noqa: BLE001 - a notice is best effort; the request outcome stands either way
             self._log(f"net: delivering a notice failed: {type(e).__name__}")
 
@@ -447,7 +447,16 @@ class NetDispatcher:
         trace.tab = reservation.tab_id
         return {"tab": reservation.tab_id} if key == "tab" else {"closed": True}
 
-    def _deliver(self, sender: str, to: str, text: str, reply_to: str | None, reason: str, sender_name: str | None = None) -> str:
+    def _deliver(
+        self,
+        sender: str,
+        to: str,
+        text: str,
+        reply_to: str | None,
+        reason: str,
+        sender_name: str | None = None,
+        one_session: bool = True,
+    ) -> str:
         party: dict[str, Any] = {"id": sender, "agent": "remote", "path": ""}
         if sender_name is not None:
             party["name"] = sender_name
@@ -455,7 +464,9 @@ class NetDispatcher:
         if reply_to is not None:
             out["replyTo"] = reply_to
         try:
-            return str(send_message(self.home, out)["id"])
+            # A sender that stands for many sessions (an older peer's label, or the notice sender) skips the mailbox's
+            # per-sender limit, which would throttle every session behind it; the grant's per-peer rate still applies.
+            return str(send_message(self.home, out, limit_sender=one_session)["id"])
         except (MailError, OSError) as e:
             self._log(f"net: delivering a message failed: {type(e).__name__}")
             raise _Refusal(reason, "failed") from None
@@ -527,7 +538,8 @@ class NetDispatcher:
             return dict(known[1])
         store = self._open_store()
         now = self._now_ms()
-        sender = f"{grant.label}-remote" if body.from_id is None else f"{body.from_id}@{grant.label}"
+        legacy = f"{grant.label}-remote"
+        sender = legacy if body.from_id is None else f"{body.from_id}@{grant.label}"
         sender_name = None if body.from_name is None or body.from_name.strip() == "" else f"{body.from_name}@{grant.label}"
         owned = self._owner(store, body.to) == peer
         direct = owned or body.to in grant.send
@@ -547,7 +559,7 @@ class NetDispatcher:
             raise _Refusal("rate-limit")
         trace.admitted = True
         trace.effect = True
-        reply = {"id": self._deliver(sender, body.to, body.text, body.reply_to, "delivery-failed", sender_name)}
+        reply = {"id": self._deliver(sender, body.to, body.text, body.reply_to, "delivery-failed", sender_name, sender != legacy)}
         self._remember(peer, request_id, digest, reply)
         return reply
 
