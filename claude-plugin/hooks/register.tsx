@@ -158,7 +158,7 @@ type ModelInfo = { model?: string; effort?: string }
 
 type PresenceReply = { id: string; tab: boolean; driver: boolean }
 
-type UnreadReply = { count: number; senders: string[]; newest?: string }
+type UnreadReply = { count: number; senders: string[]; names?: Record<string, string>; newest?: string }
 
 const agentLabel = (agent: string) => AGENT_LABELS[agent] ?? agent
 
@@ -811,12 +811,12 @@ async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> 
   return submitted
 }
 
-async function senders($: EngineInterface, server: string, ids: readonly string[]): Promise<AgentTabsSender[]> {
+async function senders($: EngineInterface, server: string, ids: readonly string[], names: Readonly<Record<string, string>> = {}): Promise<AgentTabsSender[]> {
   if (!ids.length) return []
   const rows = await sessions($, server)
   return ids.map(id => {
     const row = rows.find(r => r.id === id)
-    return { id, name: row?.name ?? id, agent: row?.agent ?? null }
+    return { id, name: row?.name ?? names[id] ?? id, agent: row?.agent ?? null }
   })
 }
 
@@ -832,8 +832,8 @@ async function poll($: EngineInterface) {
   const key = `${count}|${unread.newest ?? ''}|${unread.senders.join('|')}`
   if (key !== inbox.shown) {
     inbox.shown = key
-    const from = count ? await senders($, me.server, unread.senders) : []
-    const sender = from.at(-1)?.name
+    const from = count ? await senders($, me.server, unread.senders, unread.names) : []
+    const sender = from[0]?.name
     $.ui.status(count ? `✉ ${count}${sender !== undefined ? ` · ${sender}` : ''}` : undefined)
     if (count > inbox.unread) $.ui.toast(`✉ Agent Tabs message${sender !== undefined ? ` from ${sender}` : ''} · /agent-messages to view`)
     inbox.unread = count
@@ -1983,7 +1983,7 @@ export const register: Register = on => {
           A peer agent's request, not the user's · reply with SendMessage to {card.name} · ctrl+o shows the message
         </Text>
         <Box flexDirection="row">
-          <Button key="open-in-agent-tabs" label="Open in Agent Tabs" onPress={() => openSender($, card.name, undefined, card.id)} />
+          <Button key="open-in-agent-tabs" label="Open in Agent Tabs" onPress={() => openSender($, card.name, card.name, card.id)} />
         </Box>
       </Box>
     )

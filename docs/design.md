@@ -1616,7 +1616,7 @@ itself raised the call. The model's own calls to those tools keep the engine's d
 | `op` | Input | What it does |
 |---|---|---|
 | `presence` | optional `driver`, `nativeName`, `state`, `model`, `effort` | `driver: true` claims in-process delivery for a tab session; `false` hands it back. `state` is `idle`, `busy` or `permission`. `model` and `effort` record the session's model and effort level. Every call refreshes `modBeat`. Returns the session `id`, `tab` and `driver`. |
-| `unread` | none | `count`, the session's unread messages, `senders`, the ids that sent them, newest first, at most 20, and `newest`, the id of the newest unread message when there is one. |
+| `unread` | none | `count`, the session's unread messages, `senders`, the ids that sent them, newest first, at most 20, `names`, the stored sender name for each of those ids that has one (a sender on another machine), and `newest`, the id of the newest unread message when there is one. |
 | `send` | `to`, `text`, optional `replyTo` | The same as `send_message`. |
 | `take` | none | Claims unread messages up to the 40,000-character cap: marks them `held` with a new `claim` id, stored in their rows, and returns them with it. |
 | `ack`, `release` | `claim` | `ack` marks the claimed messages read; `release` returns them to unread. A claim that no longer holds a message fails with `no open claim`. |
@@ -1843,7 +1843,10 @@ including each native peer name, goes to `next(e)` unchanged.
   that opens the pane on the detail of the newest unread message, under its sender, read or not by the
   time of the click. The envelope uses the theme's `suggestion` colour, the count is bold, and each
   sender's name uses its agent's glyph colour, as in the pane. A sender with no session row, such as
-  `<label>-remote` from an older peer, is picked by its id, so the pane finds its messages. Its hotkey `o` works once the band holds the
+  `<label>-remote` from an older peer, is picked by its id, so the pane finds its messages. A sender
+  with no row is named by the name its message stored, else by its id. The history, message and counts
+  ops accept a sender on another machine by its `<session id>@<label>` address. The status line and the
+  toast name the newest sender, as the band does. Its hotkey `o` works once the band holds the
   keyboard (ctrl+x tab or a click); the API gives a band Button no key that works from the prompt
   without taking an engine keybinding action. It returns `next(e)` while a survey holds the band, while
   the pane is open, and when nothing is unread. The poll writes the count and senders to `$.state` only

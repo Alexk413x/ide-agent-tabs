@@ -173,6 +173,7 @@ type WorldOptions = {
   dirs?: string[]
   mailFrom?: Record<string, string>
   newest?: string
+  senderNames?: Record<string, string>
   files?: Record<string, string>
   configDir?: string
   unplaced?: boolean
@@ -299,7 +300,7 @@ function world(on: On, options: WorldOptions = {}) {
         if (e.args.driver === true) claim.lost = false
         return ok({ id: options.tab ?? 's-000000000001', tab: options.tab !== undefined, driver: options.tab !== undefined && e.args.driver !== false && !claim.lost })
       case 'unread':
-        return ok({ count: mail.unread.length, senders: unreadSenders(), ...(options.newest !== undefined && mail.unread.length ? { newest: options.newest } : {}) })
+        return ok({ count: mail.unread.length, senders: unreadSenders(), ...(options.newest !== undefined && mail.unread.length ? { newest: options.newest } : {}), ...(options.senderNames !== undefined ? { names: options.senderNames } : {}) })
       case 'sessions':
         return ok({ sessions: options.rows ?? ROWS })
       case 'send':
@@ -1571,7 +1572,7 @@ describe('opening the pane from a message', () => {
 
     w.mail.unread.push(...Object.keys(FROM))
     await w.clock.advance(2_000)
-    expect(w.toasts).toEqual(['✉ Agent Tabs message from w-1a · /agent-messages to view'])
+    expect(w.toasts).toEqual(['✉ Agent Tabs message from sub-9e · /agent-messages to view'])
     for (const band of bands) {
       expect(await band.find({ type: 'Text', text: '✉ 4 new from sub-9e, docs-9b [11aa22], a-a2, …' })).toBeDefined()
       const open = await band.find({ type: 'Button', key: 'open-inbox' })
@@ -1634,6 +1635,41 @@ describe('opening the pane from a message', () => {
     expect([asked.id, asked.session]).toEqual(['m-0000000000000009', 'marbles-pc-remote'])
     expect(await textIn(pane, 'Please review x.ts')).toBeDefined()
     await pane.unmount()
+  })
+
+  test('a sender on another machine with no session row is named in the band by the name its message stored, and Open asks for it by address', async ($, on) => {
+    engineBand(on)
+    const id = 'remote-1@laptop'
+    const remote = { ...CARD_MESSAGE, id: 'm-0000000000000008', from: { id, name: 'plugins-9c [00b806]@laptop', agent: 'remote', path: '' }, peer: { id } }
+    const w = world(on, { tab: 'tab-c', history: [remote], mailFrom: { '8-m-0000000000000008.json': id }, newest: 'm-0000000000000008', senderNames: { [id]: 'plugins-9c [00b806]@laptop' } })
+    await start($)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    w.mail.unread.push('8-m-0000000000000008.json')
+    await w.clock.advance(2_000)
+    const band = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    expect(await band.find({ type: 'Text', text: '✉ 1 new from plugins-9c [00b806]@laptop' })).toBeDefined()
+    await band.press({ key: 'open-inbox' })
+    await band.unmount()
+    const pane = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'desktop', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await w.clock.settle()
+    expect(w.ops('message').at(-1)!.args.session).toBe(id)
+    await pane.unmount()
+  })
+
+  test("the peer card's Open finds a sender on another machine by its address", async ($, on) => {
+    const remote = { ...CARD_MESSAGE, from: { id: 'marbles-pc-remote', agent: 'remote', path: '' }, peer: { id: 'marbles-pc-remote' } }
+    const w = world(on, { tab: 'tab-c', history: [remote] })
+    await start($)
+    const card = await $.ui.mount({
+      plugin: 'ide-agent-tabs',
+      surface: 'terminal',
+      component: 'UserMessage',
+      requestId: 'u1',
+      props: { text: FRAMED.replaceAll('w-1a', 'marbles-pc-remote'), origin: { kind: 'plugin', name: 'ide-agent-tabs' }, isExpanded: false },
+    })
+    await card.press({ key: 'open-in-agent-tabs' })
+    expect(w.ops('history').at(-1)!.args.session).toBe('marbles-pc-remote')
+    await card.unmount()
   })
 
   test('one unread message from one sender reads as one line', async ($, on) => {

@@ -240,6 +240,16 @@ class ReadTest(unittest.TestCase):
         store.send_message(home, out("tab-x", "other", "tab-d"), T0 + 3)
         self.assertEqual(store.unread_summary(home, "tab-c", T0 + 4), {"count": 3, "senders": ["tab-a", "tab-b"], "newest": newest["id"]})
 
+    def test_unread_summary_names_a_sender_that_stored_its_name(self) -> None:
+        home = temp_home(self)
+        party = {"id": "remote-1@laptop", "name": "plugins-9c [00b806]@laptop", "agent": "remote", "path": ""}
+        store.send_message(home, {"from": party, "to": "tab-c", "text": "hi"}, T0)
+        store.send_message(home, out("tab-c", "2", "tab-a"), T0 + 1)
+        summary = store.unread_summary(home, "tab-c", T0 + 2)
+        self.assertEqual(
+            (summary["senders"], summary["names"]), (["tab-a", "remote-1@laptop"], {"remote-1@laptop": "plugins-9c [00b806]@laptop"})
+        )
+
 
 class HistoryTest(unittest.TestCase):
     def test_history_rows_join_delivery_and_state_and_native_rows_by_owner_or_name(self) -> None:

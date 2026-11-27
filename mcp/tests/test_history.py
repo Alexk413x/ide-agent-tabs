@@ -32,6 +32,23 @@ def json_length(value: Any) -> int:
     return utf16_len(stringify(value))
 
 
+class RemoteSenderHistoryTest(unittest.TestCase):
+    def test_a_sender_on_another_machine_is_a_history_and_a_count_by_its_address(self) -> None:
+        home = temp_home(self)
+        b = session(self, home, "tab-b", "claude", 2)
+        party = {"id": "remote-1@laptop", "name": "plugins-9c [00b806]@laptop", "agent": "remote", "path": ""}
+        sent = store.send_message(home, {"from": party, "to": "tab-b", "text": "from the laptop"})
+        old = store.send_message(
+            home, {"from": {"id": "laptop-remote", "agent": "remote", "path": ""}, "to": "tab-b", "text": "older peer"}
+        )
+        self.assertEqual([m["id"] for m in b.mod_history(Who("remote-1@laptop", []))["messages"]], [sent["id"]])
+        self.assertEqual([m["id"] for m in b.mod_history(Who("laptop-remote", []))["messages"]], [old["id"]])
+        self.assertEqual(b.mod_message(Who("remote-1@laptop", []), sent["id"])["text"], "from the laptop")
+        self.assertEqual(b.mod_counts([Who("remote-1@laptop", []), Who("laptop-remote", [])])["counts"], [1, 1])
+        with self.assertRaisesRegex(MailError, "not a session id"):
+            b.mod_history(Who("a@b@c", []))
+
+
 class SentHistoryTest(unittest.TestCase):
     def test_every_send_is_in_the_senders_history_with_its_delivery(self) -> None:
         home = temp_home(self)

@@ -382,20 +382,19 @@ def unread_summary(home: str, session_id: str, now: float | None = None) -> dict
             session_id,
             *_pending_args(at),
         )
-        senders = (
-            [
-                str(r["from_id"])
-                for r in db.all(
-                    f"SELECT from_id FROM messages WHERE route = 'agent-tabs' AND to_id = ? AND {_PENDING} "
-                    "GROUP BY from_id ORDER BY max(seq) DESC LIMIT ?",
-                    _bind(session_id),
-                    *_pending_args(at),
-                    MAX_SENDERS,
-                )
-            ]
+        rows = (
+            db.all(
+                f"SELECT from_id, max(from_name) AS from_name FROM messages WHERE route = 'agent-tabs' AND to_id = ? AND {_PENDING} "
+                "GROUP BY from_id ORDER BY max(seq) DESC LIMIT ?",
+                _bind(session_id),
+                *_pending_args(at),
+                MAX_SENDERS,
+            )
             if n
             else []
         )
+        senders = [str(r["from_id"]) for r in rows]
+        names = {str(r["from_id"]): r["from_name"] for r in rows if isinstance(r["from_name"], str)}
         newest = (
             db.one(
                 f"SELECT id FROM messages WHERE route = 'agent-tabs' AND to_id = ? AND {_PENDING} ORDER BY seq DESC LIMIT 1",
@@ -405,7 +404,12 @@ def unread_summary(home: str, session_id: str, now: float | None = None) -> dict
             if n
             else None
         )
-        return {"count": n, "senders": senders, **({"newest": str(newest["id"])} if newest is not None else {})}
+        return {
+            "count": n,
+            "senders": senders,
+            **({"names": names} if names else {}),
+            **({"newest": str(newest["id"])} if newest is not None else {}),
+        }
 
     return query(home, work)
 

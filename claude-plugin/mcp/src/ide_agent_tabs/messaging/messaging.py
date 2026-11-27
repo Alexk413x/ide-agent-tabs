@@ -161,6 +161,12 @@ def _suffix_pool(session_id: str) -> str:
     return core + hashlib.sha256(session_id.encode("utf-8", "surrogatepass")).hexdigest()
 
 
+def _history_id(value: str) -> bool:
+    from ..net.outbound import parse_remote_target
+
+    return is_session_id(value) or parse_remote_target(value) is not None
+
+
 def session_names(sessions: Sequence[Mapping[str, Any]]) -> dict[str, str]:
     names: dict[str, str] = {}
     taken: set[str] = set()
@@ -877,7 +883,7 @@ class Messaging:
         return {"id": message_id}
 
     def _history_of(self, who: Who) -> list[dict[str, Any]]:
-        if who.id is not None and not is_session_id(who.id):
+        if who.id is not None and not _history_id(who.id):
             raise MailError(f"not a session id: {who.id}")
         names = [n for n in who.names if is_native_name(n)][:8]
         if who.id is None and not names:
@@ -912,7 +918,7 @@ class Messaging:
 
     def mod_counts(self, whos: Sequence[Who]) -> dict[str, Any]:
         valid = [
-            Who(who.id if who.id is not None and is_session_id(who.id) else None, [n for n in who.names if is_native_name(n)][:8])
+            Who(who.id if who.id is not None and _history_id(who.id) else None, [n for n in who.names if is_native_name(n)][:8])
             for who in whos
         ]
         counts = history_counts(self.deps.home, valid)
