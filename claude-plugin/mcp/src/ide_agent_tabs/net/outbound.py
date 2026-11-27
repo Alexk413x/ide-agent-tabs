@@ -9,12 +9,13 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from ..clock import iso
 from ..clock import now_ms as current_ms
 from ..jsjson import trim, utf16_len
 from ..liveness import pid_alive
 from ..messaging.db import MailError
 from ..messaging.sessions import read_presence
-from ..messaging.store import MAX_TEXT_CHARS, check_message_id
+from ..messaging.store import MAX_TEXT_CHARS, check_message_id, log_native
 from . import wire
 from .origin import REMOTE_ORIGIN_REFUSAL, Caller, OriginChecker
 from .policy import ALIAS, DEFAULT_PORT, NetworkConfig, PeerGrant, PolicyError, load_network_config, load_policy
@@ -218,7 +219,8 @@ class Outbound:
         body: dict[str, Any] = {"to": remote, "text": text}
         if reply_to is not None:
             body["replyTo"] = reply_to
-        reply = self._reply(peer, "send", {**body, "from": self._sender(caller.session)}, SEND_TIMEOUT_S)
+        sender = self._sender(caller.session)
+        reply = self._reply(peer, "send", {**body, "from": sender}, SEND_TIMEOUT_S)
         if reply.get("ok") is not True:
             # A peer on 0.14.3 or earlier refuses a send body that names its sender, and every refusal looks alike to the sender,
             # so a refused send goes once more in the older form. A refusal never delivers, so this can't send twice.
@@ -226,6 +228,8 @@ class Outbound:
         message_id = _field(reply, "id", _MESSAGE_ID)
         result: dict[str, Any] = {"id": message_id, "delivery": "remote"}
         presence = read_presence(self.home, caller.session)
+        if not self._record_sent(sender, presence, f"{remote}@{label}", text, message_id):
+            result["note"] = "the message went out, but it could not be added to this session's message history"
         generation = None if presence is None else session_generation(presence)
         if generation is not None:
             try:
@@ -234,6 +238,26 @@ class Outbound:
                 result["note"] = "the message went out, but the reply grant could not be recorded, so the peer can't answer it"
         self._nudge_poller(peer)
         return result
+
+    def _record_sent(self, sender: Mapping[str, str], presence: Mapping[str, Any] | None, to: str, text: str, message_id: str) -> bool:
+        me: dict[str, Any] = {**sender, "agent": "", "path": ""}
+        if presence is not None:
+            me["agent"], me["path"] = presence.get("agent", ""), presence.get("path", "")
+        record = {
+            "id": message_id,
+            "owner": sender["id"],
+            "direction": "sent",
+            "from": me,
+            "to": {"id": to, "agent": "remote", "path": ""},
+            "text": text,
+            "sentAt": iso(self._now()),
+            "delivery": "sent",
+        }
+        try:
+            log_native(self.home, record)
+        except (MailError, sqlite3.Error, OSError):
+            return False
+        return True
 
     def open(self, caller: Caller, given: Mapping[str, Any]) -> dict[str, Any]:
         label = given.get("host")

@@ -1477,7 +1477,7 @@ function detailRows(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[]): D
     party('To', m.to),
     { label: 'Time', value: m.at.replace('T', ' ').replace(/\.\d+Z$/, 'Z') },
     ...(m.replyTo !== undefined ? [{ label: 'Reply to', value: m.replyTo }] : []),
-    { label: 'Delivery', value: `${delivery} · ${m.route === 'native' ? 'SendMessage' : 'Agent Tabs'}` },
+    { label: 'Delivery', value: `${delivery} · ${m.route !== 'native' ? 'Agent Tabs' : LAN_ID.test(m.to.id ?? '') ? 'network' : 'SendMessage'}` },
   ]
 }
 

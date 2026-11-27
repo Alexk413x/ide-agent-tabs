@@ -7,6 +7,7 @@ from typing import Any
 
 from ide_agent_tabs.clock import now_ms
 from ide_agent_tabs.messaging import store as mail
+from ide_agent_tabs.messaging.history import Who, history
 from ide_agent_tabs.messaging.sessions import read_presence
 from ide_agent_tabs.net import outbound, wire
 from ide_agent_tabs.net.client import NetClientError
@@ -65,6 +66,23 @@ class SendTest(NetCase):
         self.assertTrue(store.check_reply(PEER, "tab-r", "tab-a", generation, MESSAGE_ID, self.clock()))
         self.assertIsNone(store.find_reply_grant(OTHER, "tab-a", generation, MESSAGE_ID, self.clock()))
         self.assertEqual(self.nudges, [(self.home, PEER)])
+
+    def test_a_send_is_stored_in_the_senders_history_and_the_remote_sessions_thread(self) -> None:
+        self.send(text="are you there")
+        own = history(self.home, Who("tab-a", []))
+        self.assertEqual(
+            [(m["direction"], m["peer"]["id"], m["text"], m["id"]) for m in own], [("sent", "tab-r@laptop", "are you there", MESSAGE_ID)]
+        )
+        self.assertEqual(own[0]["delivery"], "sent")
+        thread = history(self.home, Who("tab-r@laptop", []))
+        self.assertEqual([(m["direction"], m["from"]["id"], m["text"]) for m in thread], [("received", "tab-a", "are you there")])
+        self.assertEqual(mail.peek_unread(self.home, "tab-a", self.clock()), [])
+
+    def test_a_refused_send_is_not_stored(self) -> None:
+        self.request.reply = {"re": "r", "ok": False, "error": {"reason": "target-not-granted"}}
+        with self.assertRaises(OutboundError):
+            self.send()
+        self.assertEqual(history(self.home, Who("tab-a", [])), [])
 
     def test_reply_to_goes_in_the_body(self) -> None:
         self.send(replyTo="m-aaaaaaaaaaaaaaaa")

@@ -3246,6 +3246,10 @@ LAN mode stays the minimal option for one home or office network, with nothing e
   the reply grant the send created. A send without `from` is delivered from `<peer label>-remote`, which
   can't be answered. A peer on 0.14.3 or earlier refuses a body with `from`, and the refusal is generic, so a
   refused send goes once more without `from`. A refusal never delivers, so the retry can't deliver twice.
+- A delivered `send` is logged on the sending machine as a `native`-route row the sending session owns, with
+  direction `sent`, the peer's message id, the address `<id>@<peer label>` as the recipient and delivery
+  `sent`. The sender's history and the remote session's thread in the Messages pane then show both
+  directions, and the detail reads `sent · network`. A refused send logs nothing.
 
 ### Grants
 

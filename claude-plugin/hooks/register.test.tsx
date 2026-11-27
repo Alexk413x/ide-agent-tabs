@@ -1393,6 +1393,18 @@ describe('agents pane', () => {
     expect(w.submitted).toEqual([])
   })
 
+  test('a message this session sent to another machine reads as sent over the network', async ($, on) => {
+    const remote = { id: 'm-aaaaaaaaaaaaaaa3', at: AT(3), direction: 'sent', route: 'native', from: { id: 'tab-d', name: 'docs-9b [11aa22]' }, to: { id: 'tab-r@laptop', agent: 'remote' }, peer: { id: 'tab-r@laptop' }, text: 'Are you there?', delivery: 'sent' }
+    world(on, { tab: 'tab-c', history: [...HISTORY, remote] })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await click(ui, 'agent:id:tab-d')
+    await click(ui, 'msg:m-aaaaaaaaaaaaaaa3')
+    expect(await detailValue(ui, 'To')).toBe('tab-r@laptop')
+    expect(await detailValue(ui, 'Delivery')).toBe('sent · network')
+  })
+
   test('the view, the agent and the message stay in $.state across a reload, and the open pane resumes its refresh', async ($, on) => {
     const w = world(on, { tab: 'tab-c', history: HISTORY })
     await start($)
