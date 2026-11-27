@@ -102,6 +102,7 @@ _GRAMMAR = (
 LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MAX_CERT_BYTES = 65536
 _MAX_MODEL_CHARS = 128
+JOINS_START_S = 15
 _DRIVE_REMOTE = 4
 NETWORK_SETTINGS_REFUSAL = "refused: a session opened by another machine can't change this machine's network settings"
 _PROJECT_TABLE = re.compile(r"""\s*\[\s*projects\s*\.\s*("(?:[^"\\]|\\.)*"|'[^']*')\s*\]\s*(?:#.*)?""")
@@ -190,13 +191,14 @@ class Services:
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     user_home: str = field(default_factory=lambda: os.path.expanduser("~"))
     server_port: int = SERVER_DEFAULT_PORT
-    start_wait_s: float = 3.0
+    start_wait_s: float = 20.0
     stop_wait_s: float = 5.0
     cwd: Callable[[], str] = os.getcwd
     new_hub_id: Callable[[], str] = lambda: os.urandom(16).hex()
     network_id: Callable[[str], str | None] = current_network_id
     is_remote_origin: Callable[[str], bool] = _caller_is_remote
     migrator: Migrator | None = None
+    now_ms: Callable[[], int] = now_ms
 
     def record(self, event: str, **fields: object) -> None:
         pairs = " ".join(f"{key}={value}" for key, value in fields.items())
@@ -294,6 +296,12 @@ def start_listener(svc: Services) -> bool:
         return False
     started = _wait_for(lambda: live_listener(svc.home) is not None or not pid_alive(pid), svc.start_wait_s)
     info = live_listener(svc.home) if started else None
+    if info is None and pid_alive(pid):
+        svc.err(
+            f"error: the listener (pid {pid}) has not finished starting after {svc.start_wait_s:g} s; "
+            f"run `agent-tabs net status` in a few seconds, and see {log_file(svc.home)}"
+        )
+        return False
     if info is None:
         svc.err(f"error: the listener did not start; see {log_file(svc.home)}")
         return False
@@ -401,8 +409,11 @@ def listener_lines(svc: Services, info: ListenerInfo | None, expects_joins: bool
         lines.append(f"listener build: {info.build}, newer than the installed {installed.id}")
     else:
         lines.append(f"listener build: {info.build}")
+    age_s = (svc.now_ms() - info.started_ms) // 1000
     if info.serving_joins:
         lines.append("serving joins: yes")
+    elif expects_joins and 0 <= age_s < JOINS_START_S:
+        lines.append(f"serving joins: starting (the listener started {age_s} s ago)")
     elif expects_joins:
         lines.append("serving joins: no (the running listener reports that it serves no joins, although discoverable is on)")
     else:

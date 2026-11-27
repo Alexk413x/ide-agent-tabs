@@ -237,6 +237,19 @@ class DiscoverableTest(HubCliCase):
         self.assertNotIn("serving joins: yes", self.h.text)
         self.assertIn("serving joins: no (the running listener reports that it serves no joins, although discoverable is on)", self.h.text)
 
+    def test_status_says_starting_in_the_first_seconds_after_a_start(self) -> None:
+        self.h.run("discoverable", "on")
+        self.h.write_listener_file(self.a, startedMs=1_000_000, joins=False)
+        self.h.services = dataclasses.replace(self.h.services, now_ms=lambda: 1_004_000)
+        self.h.out.clear()
+        self.assertEqual(self.h.run("discoverable", "status"), 0)
+        self.assertIn("serving joins: starting (the listener started 4 s ago)", self.h.text)
+        self.assertNotIn("although discoverable is on", self.h.text)
+        self.h.services = dataclasses.replace(self.h.services, now_ms=lambda: 1_000_000 + cli.JOINS_START_S * 1000)
+        self.h.out.clear()
+        self.h.run("discoverable", "status")
+        self.assertIn("although discoverable is on", self.h.text)
+
     def test_status_names_a_listener_of_another_build_and_how_to_restart_it(self) -> None:
         self.h.run("discoverable", "on")
         self.h.write_listener_file(self.a, version="0.11.0", build="0.11.0-bbbbbbbbbbbb", joins=None)

@@ -646,6 +646,27 @@ class LanTest(CliTestCase):
         self.assertEqual(harness.run("lan", "on", "--bind", "10.0.0.5"), 1)
         self.assertIn("could not be started", harness.errors)
 
+    def test_start_waits_for_a_listener_that_writes_its_file_late(self) -> None:
+        def late(home: str, server_port: int) -> int:
+            harness.spawned.append((home, server_port))
+            threading.Timer(0.5, harness.write_listener_file, (home,)).start()
+            return os.getpid()
+
+        self.lan_config()
+        harness = Harness(self, self.a, spawn=late)
+        self.assertEqual(harness.run("lan", "start"), 0, harness.errors)
+        self.assertIn("The listener runs", harness.text)
+
+    def test_the_default_start_wait_covers_a_slow_listener_start(self) -> None:
+        self.assertGreaterEqual(Services(home=self.a).start_wait_s, 15)
+
+    def test_a_listener_still_starting_at_the_bound_is_not_reported_as_failed(self) -> None:
+        self.lan_config()
+        harness = Harness(self, self.a, spawn=lambda _home, _port: os.getpid(), start_wait_s=0.2)
+        self.assertEqual(harness.run("lan", "start"), 1)
+        self.assertIn(f"the listener (pid {os.getpid()}) has not finished starting after 0.2 s", harness.errors)
+        self.assertNotIn("did not start", harness.errors)
+
     def test_start_refuses_when_the_network_is_off(self) -> None:
         self.assertEqual(self.h.run("lan", "start"), 1)
         self.assertIn("off", self.h.errors)

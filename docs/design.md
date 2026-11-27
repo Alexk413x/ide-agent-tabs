@@ -3083,7 +3083,10 @@ LAN mode stays the minimal option for one home or office network, with nothing e
   build or another build of an older version, starts the installed build and says so. It leaves a listener of a newer
   version running, so two installs on one machine don't replace each other in turn. `net status` and `net discoverable
   status` print the listener's build and say plainly when it differs. They print `serving joins: yes` only when the
-  running listener reports that it serves joins, and not from the configuration. The restart changes no setting, and
+  running listener reports that it serves joins, and not from the configuration. In the first 15 s after the listener
+  starts, while discoverable is on and joins are not served yet, they print `serving joins: starting`. A command that
+  starts the listener waits up to 20 s for it to write `net/listener.json`. When the started process still runs at
+  that bound, the command says the listener has not finished starting, not that it did not start. The restart changes no setting, and
   `net discoverable on`, `net hub join` and `net hub create` still refuse a session that another machine opened.
 - `net lan on --at-login` registers a Scheduled Task, LaunchAgent or systemd user unit for the listener.
   This is a widening command. The task runs as the logged-in user without elevation, never SYSTEM or
