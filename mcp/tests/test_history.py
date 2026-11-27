@@ -132,6 +132,37 @@ class SentHistoryTest(unittest.TestCase):
         self.assertEqual(b.mod_history(Who(None, [NATIVE_PEER]))["total"], 2)
 
 
+class NameScopeTest(unittest.TestCase):
+    def test_a_name_match_skips_an_earlier_session_that_had_the_same_name(self) -> None:
+        home = temp_home(self)
+        clock = Clock(now_ms() - 2 * 24 * 60 * 60_000)
+        b = session(self, home, "tab-b", "claude", 2, clock)
+        b.mod_presence({"driver": True, "nativeName": NATIVE_SELF, "state": "busy"})
+        old = session(self, home, "tab-y", "claude", 3, clock)
+        old.mod_presence({"driver": True, "nativeName": NATIVE_PEER, "state": "busy"})
+        b.mod_log({"direction": "sent", "peer": NATIVE_PEER, "text": "to the old one"})
+        old.mod_log({"direction": "received", "peer": NATIVE_SELF, "text": "to the old one"})
+        clock.at += 24 * 60 * 60_000
+        new = session(self, home, "tab-x", "claude", 4, clock)
+        new.mod_presence({"driver": True, "nativeName": NATIVE_PEER, "state": "busy"})
+        b.mod_log({"direction": "sent", "peer": NATIVE_PEER, "text": "to the new one"})
+        new.mod_log({"direction": "received", "peer": NATIVE_SELF, "text": "to the new one"})
+        thread = b.mod_history(Who("tab-x", [NATIVE_PEER]))
+        self.assertEqual([m["text"] for m in thread["messages"]], ["to the new one"])
+        self.assertEqual(b.mod_counts([Who("tab-x", [NATIVE_PEER])])["counts"], [1])
+        self.assertEqual([m["text"] for m in b.mod_history(Who("tab-y", [NATIVE_PEER]))["messages"]], ["to the old one"])
+
+    def test_a_row_that_names_another_session_id_never_matches_by_name(self) -> None:
+        home = temp_home(self)
+        clock = Clock(now_ms())
+        old = session(self, home, "tab-y", "claude", 3, clock)
+        old.mod_presence({"driver": True, "nativeName": NATIVE_PEER, "state": "busy"})
+        old.mod_log({"direction": "sent", "peer": NATIVE_SELF, "text": "from y"})
+        new = session(self, home, "tab-x", "claude", 4, clock)
+        self.assertEqual(new.mod_history(Who("tab-x", [NATIVE_PEER]))["total"], 0)
+        self.assertEqual(new.mod_history(Who(None, [NATIVE_PEER]))["total"], 1)
+
+
 class LogTest(unittest.TestCase):
     def test_log_refuses_a_bad_peer_or_direction_and_history_needs_a_session_or_a_name(self) -> None:
         home = temp_home(self)

@@ -57,8 +57,31 @@ def log_id(value: str | None) -> str:
     return value if value is not None and _LOG_ID.fullmatch(value) is not None else new_message_id()
 
 
+def _by_id(who: Who, p: dict[str, Any]) -> bool:
+    return who.id is not None and p.get("id") == who.id
+
+
 def _matches(who: Who, p: dict[str, Any]) -> bool:
-    return (who.id is not None and p.get("id") == who.id) or (p.get("name") is not None and p["name"] in who.names)
+    if _by_id(who, p):
+        return True
+    return p.get("name") is not None and p["name"] in who.names and (who.id is None or p.get("id") is None)
+
+
+def _starts(stored: Sequence[dict[str, Any]], who: Who) -> dict[str, float]:
+    starts: dict[str, float] = {}
+    for m in stored:
+        at = iso_ms(m["sentAt"])
+        ids = [p["id"] for p in (m["from"], m["to"]) if p.get("id") is not None and (p["id"] == who.id or p.get("name") in who.names)]
+        if who.id is not None and m.get("owner") == who.id:
+            ids.append(who.id)
+        for session_id in ids:
+            starts[session_id] = min(at, starts.get(session_id, at))
+    return starts
+
+
+def _claimant(starts: dict[str, float], at: float) -> str | None:
+    started = [(start, session_id) for session_id, start in starts.items() if start - _NATIVE_SAME_MS <= at]
+    return max(started)[1] if started else None
 
 
 def _same_native(a: HistoryItem, b: HistoryItem) -> bool:
@@ -88,10 +111,16 @@ def _select(stored: Sequence[dict[str, Any]], who: Who) -> list[HistoryItem]:
     def add(r: dict[str, Any], direction: str) -> None:
         items.append({**r, "direction": direction, "peer": r["to"] if direction == "sent" else r["from"]})
 
+    # Names repeat across sessions, so a row that matches only by name goes to the newest session with that name
+    # whose first row with its id came before it, less the native pairing window.
+    starts = _starts(stored, who) if who.id is not None else {}
     for m in stored:
         r = _record(m)
         owner = m.get("owner") if m["route"] == "native" else m["from"].get("id")
         own = owner is not None and owner == who.id
+        named_only = not (own or _by_id(who, r["from"]) or _by_id(who, r["to"]))
+        if named_only and who.id is not None and _claimant(starts, iso_ms(r["at"])) != (who.id if who.id in starts else None):
+            continue
         if m.get("direction") == "received":
             if own or _matches(who, r["to"]):
                 add(r, "received")

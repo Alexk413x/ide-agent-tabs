@@ -1982,6 +1982,10 @@ Data:
   logged, and every row of another session that names it, with the mailbox state as status `unread`,
   `delivering` or `read`. A native message logged by both sides shows once. It only reads: no message
   changes state.
+- Names repeat across sessions, so with a session id the name match is scoped. A party that carries
+  another session's id never matches by name. A row that matches only by name goes to the newest
+  session with that name whose first row with its id came before the row, less 2 minutes, so an
+  earlier session's rows stay out of the thread and its count.
 - Cleanup deletes logged native rows after 7 days, as it does read messages.
 
 #### Turning the mod off
