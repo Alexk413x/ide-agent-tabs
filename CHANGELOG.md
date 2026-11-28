@@ -3,6 +3,29 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.14.5
+
+Plugin and MCP server 0.14.5. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Added
+
+- Tailscale mode. `agent-tabs net tailscale on` runs the listener, the join service, hubs and pinned
+  mutual TLS on the machine's Tailscale address, so members reach each other away from the home
+  network. `net tailscale off` or `net lan on` switches back. LAN mode's behaviour does not change.
+- In Tailscale mode, `net find` and the joins take candidates from the user's own tailnet devices
+  and probe each with pinned TLS. Each connection and each dial passes an owner check from
+  `tailscale whois`: one untagged node, not shared in, owned by this machine's Tailscale user.
+- A hub member's stored address moves to its Tailscale address after a pinned check there matches
+  its device id.
+- A join between machines in different modes is refused with `network-mode-mismatch`.
+- The Windows firewall rule for Tailscale mode admits the listener from `100.64.0.0/10` on the
+  Tailscale interface only.
+
+### Fixed
+
+- The stress test gives each HTTP session a real owner process, so the liveness sweep no longer ends
+  its sessions mid-run.
+
 ## 0.14.4
 
 Plugin and MCP server 0.14.4. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
