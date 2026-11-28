@@ -42,13 +42,15 @@ from .client import (
 from .hubjoin import HubJoiner, local_pair_identity
 from .hubsync import introduce_member
 from .identity import format_digest
-from .interfaces import InterfaceInfo, interface_for, local_addresses
+from .interfaces import InterfaceError, InterfaceInfo, interface_for, local_addresses
 from .migration import ERRORS as MIGRATION_ERRORS
 from .migration import Migrator, post_to_sessions
 from .netid import GateState, current_network_id, fallback_of, gate_state
 from .notify import notify, powershell_path
 from .policy import NetworkConfig, PolicyError, load_network_config, load_policy, policy_path, update_network_section
-from .transport import LanTransport, network_enabled
+from .tailscale import TailscaleClient, TailscaleDiscovery, TailscaleError, is_tailscale_address
+from .transport import LanTransport, TailscaleTransport, Transport, network_enabled, transport_for
+from .tsmembers import TailscaleMembers
 
 MAX_CONNECTIONS = 8
 PER_SOURCE = 2
@@ -69,6 +71,7 @@ LISTEN_BACKLOG = 16
 JOIN_RETRY_S = 30.0
 REBIND_WAIT_S = 120.0
 REBIND_RETRY_S = 5.0
+TAILSCALE_WAIT_S = 120.0
 MIGRATION_TICK_S = 30.0
 _PROFILE_SCRIPT = (
     "$ErrorActionPreference = 'Stop';"
@@ -439,10 +442,18 @@ class _Refused(Exception):
     pass
 
 
+class _OwnerRefused(_Refused):
+    pass
+
+
+def _not_public(_bind: str) -> bool | None:
+    return False
+
+
 @dataclass
 class Options:
     config: NetworkConfig | None = None
-    bind_check: Callable[[str], bool] = LanTransport().allows_bind
+    bind_check: Callable[[str], bool] | None = None
     network_check: Callable[[str], bool | None] = windows_network_is_public
     server_port: int = SERVER_DEFAULT_PORT
     stop: threading.Event = field(default_factory=threading.Event)
@@ -451,7 +462,7 @@ class Options:
     network_id: Callable[[str], str | None] = current_network_id
     join_port: int = pairing.PAIRING_PORT
     join_timeouts: pairing.Timeouts = pairing.DEFAULT_TIMEOUTS
-    join_source_ok: Callable[[str], bool] = pairing.private_source
+    join_source_ok: Callable[[str], bool] | None = None
     notice: Callable[[str], object] = notify
     beacons: BeaconSettings | None = None
     member_request: Callable[..., dict[str, Any]] | None = None
@@ -462,6 +473,10 @@ class Options:
     build: Build | None = None
     plugin_version: str = PACKAGE_VERSION
     updater: selfupdate.JoinUpdater | None = None
+    tailscale: TailscaleClient | None = None
+    transport: Transport | None = None
+    ready_wait_s: float = TAILSCALE_WAIT_S
+    members: TailscaleMembers | None = None
 
 
 class Listener:
@@ -498,6 +513,10 @@ class Listener:
         self._rebind_at = 0.0
         self._rebind_note = ""
         self._migration_at = 0.0
+        self._transport: Transport = LanTransport()
+        self._transport_lock = threading.Lock()
+        self._mode = "lan"
+        self._members: TailscaleMembers | None = None
 
     def log(self, text: str) -> None:
         append_log(log_file(self._home), text)
@@ -508,6 +527,30 @@ class Listener:
 
     def _config(self) -> NetworkConfig:
         return self._options.config if self._options.config is not None else load_network_config(self._home)[0]
+
+    def _build_transport(self, config: NetworkConfig) -> Transport:
+        if self._options.transport is not None:
+            return self._options.transport
+        return transport_for(config, self._options.tailscale) or LanTransport()
+
+    def _active_transport(self) -> Transport:
+        with self._transport_lock:
+            held = self._transport
+            if isinstance(held, TailscaleTransport) and not held.allowed_owner_ids and self._options.transport is None:
+                held = self._transport = self._build_transport(self._live)
+            return held
+
+    def _bind_check(self) -> Callable[[str], bool]:
+        return self._options.bind_check or self._transport.allows_bind
+
+    def _network_check(self) -> Callable[[str], bool | None]:
+        return _not_public if self._mode == "tailscale" else self._options.network_check
+
+    def _own_devices(self) -> list[Any]:
+        held = self._active_transport()
+        if not isinstance(held, TailscaleTransport):
+            return []
+        return list(TailscaleDiscovery(held.client, held.allowed_owner_ids).scan())
 
     def _open_socket(self, bind: str, port: int) -> socket.socket:
         sock = socket.socket(socket.AF_INET6 if ":" in bind else socket.AF_INET, socket.SOCK_STREAM)
@@ -532,12 +575,15 @@ class Listener:
             if self._options.candidates is not None:
                 found = self._options.candidates()
             else:
-                found = LanTransport().candidates(local_addresses(), interface_for)
+                found = self._transport.candidates(local_addresses(), interface_for)
         except (OSError, ValueError) as error:
             self._note_rebind(f"the addresses of this machine can't be listed: {error}")
             return None
         usable: list[str] = []
         for info in found:
+            if self._mode == "tailscale":
+                usable.append(info.address)
+                continue
             try:
                 network = self._options.network_id(info.address)
             except (OSError, ValueError):
@@ -574,7 +620,14 @@ class Listener:
         if not network_enabled(config) or config.bind is None:
             return self._refuse("network is not lan or no bind address is set")
         bind = config.bind
-        if not self._is_present(bind):
+        self._mode = config.network
+        self._transport = self._build_transport(config)
+        if self._mode == "tailscale":
+            try:
+                self._transport.wait_ready(bind, self._options.ready_wait_s, True)
+            except InterfaceError as error:
+                return self._refuse(f"the Tailscale address {bind} is not ready after {self._options.ready_wait_s:g} s: {error}")
+        elif not self._is_present(bind):
             moved = self._pick_address(config.allowed_networks, bind)
             if moved is not None:
                 try:
@@ -584,8 +637,12 @@ class Listener:
                 self.log(f"the bind address {bind} is gone; using {moved} and saving it as network.bind")
                 bind = moved
                 config = replace(config, bind=moved)
-        if not self._options.bind_check(bind):
-            return self._refuse("the bind address is not a private IPv4 or IPv6 unique local address")
+        if not self._bind_check()(bind):
+            return self._refuse(
+                "the bind address is not in 100.64.0.0/10"
+                if self._mode == "tailscale"
+                else "the bind address is not a private IPv4 or IPv6 unique local address"
+            )
         problem = tls.runtime_problem()
         if problem is not None:
             return self._refuse(problem)
@@ -596,7 +653,7 @@ class Listener:
         existing = read_listener(self._home)
         if existing is not None and existing.pid != os.getpid() and pid_alive(existing.pid):
             return self._refuse(f"a listener already runs (pid {existing.pid})")
-        watch = NetworkWatch(bind, self._options.network_check, present=self._options.address_present)
+        watch = NetworkWatch(bind, self._network_check(), present=self._options.address_present)
         reason = watch.initial()
         if reason is not None:
             return self._refuse(reason)
@@ -619,7 +676,9 @@ class Listener:
             self._options.ready(port)
         monitor = threading.Thread(target=self._monitor, daemon=True)
         monitor.start()
-        if self._options.beacons is not None:
+        if self._mode == "tailscale":
+            self._members = self._options.members or TailscaleMembers(self._home, self._own_devices, self.log)
+        elif self._options.beacons is not None:
             self._beacons = BeaconService(self._home, bind, self._beacon_state, self._stop, self.log, self._options.beacons)
             self._beacon_thread = self._beacons.start()
         try:
@@ -678,7 +737,7 @@ class Listener:
             if self._options.config is None and time.monotonic() - config_checked >= CONFIG_RECHECK_S:
                 config_checked = time.monotonic()
                 current = self._config()
-                if not network_enabled(current) or current.port != self._started.port:
+                if not network_enabled(current) or current.port != self._started.port or current.network != self._started.network:
                     self._halt("the network setting changed")
                     return
                 if current.bind != self._started.bind and not (current.bind is not None and self._follow_config(current.bind)):
@@ -704,6 +763,8 @@ class Listener:
             self._refresh_gate(force=self._watch.changed)
             self._sync_joins()
             self._tick_migration()
+            if self._members is not None:
+                self._members.tick()
 
     def _tick_migration(self) -> None:
         migration = self._options.migration
@@ -722,10 +783,14 @@ class Listener:
 
     def _move_to(self, bind: str, *, persist: bool) -> bool:
         old = self._bind
-        if not self._options.bind_check(bind):
-            self.log(f"not moving to {bind}: it is not a private IPv4 or IPv6 unique local address")
+        if not self._bind_check()(bind):
+            self.log(
+                f"not moving to {bind}: it is not in 100.64.0.0/10"
+                if self._mode == "tailscale"
+                else f"not moving to {bind}: it is not a private IPv4 or IPv6 unique local address"
+            )
             return False
-        public = self._options.network_check(bind)
+        public = self._network_check()(bind)
         if public is None or public:
             self.log(f"not moving to {bind}: its network is marked Public or its category can't be read")
             return False
@@ -764,7 +829,23 @@ class Listener:
         )
         return True
 
+    def _refresh_tailscale_gate(self, force: bool) -> None:
+        now = time.monotonic()
+        if force or now - self._network_read_at >= PROFILE_REFRESH_S:
+            self._network_read_at = now
+            try:
+                self._active_transport().require_ready(self._bind, True)
+                state = GateState(True)
+            except (InterfaceError, OSError, ValueError, TailscaleError) as error:
+                state = GateState(False, None, str(error))
+            if (state.allowed, state.reason) != (self._gate.allowed, self._gate.reason):
+                self.log("Tailscale is ready" if state.allowed else f"network gate closed: {state.reason}")
+            self._gate = state
+
     def _refresh_gate(self, force: bool = False) -> None:
+        if self._mode == "tailscale":
+            self._refresh_tailscale_gate(force)
+            return
         now = time.monotonic()
         if force or now - self._network_read_at >= PROFILE_REFRESH_S:
             self._network_read_at = now
@@ -837,22 +918,30 @@ class Listener:
             return
         stop = threading.Event()
         handler = HubJoiner(self._home, self._saved, self._introduce)
+        tailscale = self._mode == "tailscale"
+        kwargs: dict[str, Any] = {
+            "timeouts": self._options.join_timeouts,
+            "on_result": self._joined,
+            "allow_source": self._options.join_source_ok or (is_tailscale_address if tailscale else pairing.private_source),
+            "log": self.log,
+            "plugin_version": self._options.plugin_version,
+        }
+        if tailscale:
+            kwargs["transport"] = "tailscale"
+            kwargs["check_connection"] = self._check_owner
         thread = threading.Thread(
             target=pairing.serve_joins,
             args=(sock, identity, handler, pairing.Limits(self._home), stop),
-            kwargs={
-                "timeouts": self._options.join_timeouts,
-                "on_result": self._joined,
-                "allow_source": self._options.join_source_ok,
-                "log": self.log,
-                "plugin_version": self._options.plugin_version,
-            },
+            kwargs=kwargs,
             daemon=True,
         )
         self._join_sock, self._join_stop, self._join_thread = sock, stop, thread
         thread.start()
         self._write_info_quietly()
         self.log(f"serving joins on {self._bind} port {sock.getsockname()[1]}")
+
+    def _check_owner(self, source: str) -> None:
+        self._active_transport().check_connection(source)
 
     def _stop_joins(self, reason: str) -> None:
         sock, thread = self._join_sock, self._join_thread
@@ -910,7 +999,10 @@ class Listener:
         assert self._trust is not None and self._watch is not None
         source = _normalize(host)
         trust = self._trust.current()
-        if source is None or trust.context is None or source not in trust.addresses or not self._watch.allowed() or not self._gate.allowed:
+        if source is None or trust.context is None or not self._watch.allowed() or not self._gate.allowed:
+            conn.close()
+            return
+        if source not in trust.addresses and not (self._mode == "tailscale" and is_tailscale_address(source)):
             conn.close()
             return
         with self._lock:
@@ -968,6 +1060,11 @@ class Listener:
     def _connection(self, conn: socket.socket, source: str, context: ssl.SSLContext) -> None:
         tls_sock: ssl.SSLSocket | None = None
         try:
+            if self._mode == "tailscale":
+                try:
+                    self._check_owner(source)
+                except TailscaleError as error:
+                    raise _OwnerRefused(str(error)) from error
             tls_sock = self._handshake(conn, context)
             peer = self._authenticate(tls_sock)
             sock = as_socket(DeadlineSocket(tls_sock, time.monotonic() + REQUEST_TOTAL_S, IDLE_S))
@@ -1004,7 +1101,8 @@ class Listener:
             if len(self._failures) >= FAILURE_LOG_ENTRIES:
                 self._failures.clear()
             self._failures[source] = now
-        self.log(f"connection from {source} refused: {type(error).__name__}")
+        detail = f" by the owner check: {error}" if isinstance(error, _OwnerRefused) else f": {type(error).__name__}"
+        self.log(f"connection from {source} refused{detail}")
 
 
 def run_listener(home: str, options: Options | None = None) -> int:

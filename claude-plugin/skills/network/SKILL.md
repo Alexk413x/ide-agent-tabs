@@ -1,6 +1,6 @@
 ---
 name: network
-description: Connect the user's machines on one local network into a hub - one machine turns on discoverability, the other finds it and joins, with no codes and no typing by the user. The listener stays on across restarts, and you can check, change folders and networks, remove a member or turn it off. Use when the user asks to connect, link or join their machines, to open or message sessions on another machine, or to check, pause or turn off LAN networking.
+description: Connect the user's machines on one local network into a hub - one machine turns on discoverability, the other finds it and joins, with no codes and no typing by the user. The listener stays on across restarts, and you can check, change folders and networks, remove a member or turn it off. The machines connect over the local network (LAN mode) or over the user's Tailscale network (Tailscale mode). Use when the user asks to connect, link or join their machines, to open or message sessions on another machine, to switch between LAN and Tailscale mode, or to check, pause or turn off LAN or Tailscale networking.
 argument-hint: "[status]"
 ---
 
@@ -108,7 +108,11 @@ PowerShell it stands for `& "${CLAUDE_PLUGIN_ROOT}/mcp/launch/agent-tabs.ps1"`.
 - The UDP rule for port 47831 is missing on a Windows machine. `net discoverable on` creates it.
 - The machines are on different subnets.
 - Wi-Fi client isolation, common on guest networks, blocks all traffic between devices. No LAN method works
-  there. Tell the user that Tailscale mode, which is not available yet, is the answer for that case.
+  there. Tell the user that Tailscale mode is the answer for that case (see Use Tailscale mode).
+
+In Tailscale mode `net find` lists the user's own online Tailscale devices that answer the same TLS probe. A
+phone or a machine without Agent Tabs doesn't appear. When nothing is found, check that Tailscale runs and is logged in
+on both machines, that both machines are in Tailscale mode, and that the other machine is discoverable.
 
 Do not fall back to an IP address.
 
@@ -156,6 +160,37 @@ keep the old tool list until they restart.
 the unattended update off, and `net auto-update on` turns it on again. It is on by default. A machine updates only itself,
 only from its own marketplace, and at most once an hour for each joining machine. A peer never names the source, the
 version or the command. Change the switch only when the user asks.
+
+## Use Tailscale mode
+
+Tailscale mode runs the same hub, joins and pinned TLS over the machine's Tailscale address (`100.64.0.0/10`), so
+machines connect on any network. Ask the user before you switch modes. Every machine in a hub must use the same mode.
+
+- **Needs.** Tailscale installed, running and logged in on each machine, with all of the user's machines in one
+  Tailscale account. Tagged devices and devices shared in from another account are refused. Windows is the tested
+  setup. On macOS and Linux the command prints the ports to allow instead of changing a firewall.
+- **Turn it on.** Run `agent-tabs net tailscale on` on each machine. It checks Tailscale, shows what it will change and
+  asks for confirmation, like `net lan on`. It then sets `network` to `tailscale` and `bind` to the Tailscale address,
+  replaces the Windows firewall rule with one for the Tailscale interface and `100.64.0.0/10`, and restarts the
+  listener. The Windows prompt for administrator rights appears once. `--at-login` registers the login task.
+- **Connect.** Run `agent-tabs net discoverable on` on one machine, then `net find` and `net hub join <device id>`
+  on the other, as in Connect machines. Tailscale mode ignores `network.allowedNetworks`, Private-network checks
+  and UDP announcements.
+- **Move an existing hub.** After `net tailscale on` on both machines, each machine finds the other's Tailscale address
+  within about a minute and switches to it once pinned TLS to that address matches the member's device id. Run
+  `agent-tabs net hub status` to check the addresses.
+- **Check.** `agent-tabs net status` shows `network: tailscale`, the Tailscale address and
+  `network gate: open (Tailscale)`, or the reason Tailscale isn't ready.
+- **Turn it off.** `agent-tabs net tailscale off` runs `net off`. `agent-tabs net lan on --bind <private address>`
+  switches back to LAN mode. It replaces the firewall rule and restarts the listener.
+- **Startup.** After login the listener waits up to 2 minutes for the Tailscale address, then stops and logs why in
+  `net/listener.log`. Run `agent-tabs net lan start` once Tailscale is up.
+- **Refusals.** A connection from a device that isn't the user's own, or that is tagged or shared in, is closed, and
+  `net/listener.log` names the reason once a minute for each address. A join between machines in different modes
+  refuses and names both modes.
+
+Two real Windows machines on Tailscale 1.104.7 are the only tested setup, and the reviewers haven't reviewed Tailscale
+mode. Tell the user that when they turn it on.
 
 ## Folders, networks and members
 
@@ -267,6 +302,7 @@ Code the user types `!` and then the command at the prompt, or runs it in their 
 
 ## What this does not do
 
-It doesn't reach across the internet or share accounts. Discovery works only on the local subnet. A device
+It doesn't share accounts or reach machines outside the user's own network. In LAN mode discovery works only on the local
+subnet. In Tailscale mode it reaches only the user's own Tailscale devices. A device
 that joins a hub gets the full member role, so keep discoverability off when no machine is joining, and
 keep the member folders narrow.

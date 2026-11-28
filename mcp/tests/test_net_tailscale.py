@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import unittest
 from typing import Any
+from unittest import mock
 
-from ide_agent_tabs.net import tailscale
+from ide_agent_tabs.net import tailscale, transport
 from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
 from ide_agent_tabs.net.pairing import PairingError
 from ide_agent_tabs.net.policy import NetworkConfig
@@ -486,9 +487,23 @@ class TailscaleTransportTest(unittest.TestCase):
         shape: Transport = TailscaleTransport(client_for({})[0], {ME})
         self.assertIsNotNone(shape)
 
-    def test_transport_for_still_refuses_tailscale(self) -> None:
-        self.assertIsNone(transport_for(NetworkConfig(network="tailscale")))
+    def test_transport_for_builds_a_transport_per_mode(self) -> None:
+        client, _ = client_for({("status", "--self=true", "--peers=false", "--json"): status_text()})
+        built = transport_for(NetworkConfig(network="tailscale"), client)
+        assert isinstance(built, TailscaleTransport)
+        self.assertEqual(built.allowed_owner_ids, frozenset({ME}))
         self.assertIsInstance(transport_for(NetworkConfig(network="lan")), LanTransport)
+        self.assertIsNone(transport_for(NetworkConfig()))
+
+    def test_a_tailscale_transport_with_an_unreadable_owner_refuses_every_connection(self) -> None:
+        client, _ = client_for({("status", "--self=true", "--peers=false", "--json"): "not json"})
+        built = transport_for(NetworkConfig(network="tailscale"), client)
+        assert isinstance(built, TailscaleTransport)
+        self.assertEqual(built.allowed_owner_ids, frozenset())
+
+    def test_lan_mode_never_builds_a_tailscale_client(self) -> None:
+        with mock.patch.object(transport, "TailscaleClient", side_effect=AssertionError("built a client")):
+            self.assertIsInstance(transport_for(NetworkConfig(network="lan")), LanTransport)
 
     def test_allows_bind_follows_the_range(self) -> None:
         subject, _ = transport_for_test({})

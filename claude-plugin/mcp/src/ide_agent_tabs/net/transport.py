@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Collection, Iterable
+from dataclasses import replace
 from typing import Protocol
 
 from .interfaces import InterfaceError, InterfaceInfo, interface_for, private_interfaces, require_lan_ready
 from .pairing import PairingError, check_lan_destination
 from .policy import NetworkConfig, is_allowed_bind
-from .tailscale import TAILSCALE_SCOPE, TailscaleClient, TailscaleError, check_owner, is_tailscale_address
+from .tailscale import TAILSCALE_SCOPE, TailscaleClient, TailscaleError, check_owner, is_tailscale_address, own_user_id
 
-ENABLED_MODES = frozenset({"lan"})
+ENABLED_MODES = frozenset({"lan", "tailscale"})
 
 
 class Transport(Protocol):
@@ -170,5 +171,26 @@ def network_enabled(config: NetworkConfig) -> bool:
     return config.network in ENABLED_MODES
 
 
-def transport_for(config: NetworkConfig) -> Transport | None:
-    return LanTransport() if config.network == "lan" else None
+def _own_owner_ids(client: TailscaleClient) -> frozenset[int]:
+    try:
+        return frozenset({own_user_id(client.self_status())})
+    except TailscaleError:
+        return frozenset()
+
+
+def transport_for(
+    config: NetworkConfig, client: TailscaleClient | None = None, describe: Callable[[str], InterfaceInfo] = interface_for
+) -> Transport | None:
+    if config.network == "lan":
+        return LanTransport()
+    if config.network == "tailscale":
+        found = client or TailscaleClient()
+        return TailscaleTransport(found, _own_owner_ids(found), describe)
+    return None
+
+
+def command_transport(
+    config: NetworkConfig, client: TailscaleClient | None = None, describe: Callable[[str], InterfaceInfo] = interface_for
+) -> Transport:
+    mode = config if config.network == "tailscale" else replace(config, network="lan")
+    return transport_for(mode, client, describe) or LanTransport()

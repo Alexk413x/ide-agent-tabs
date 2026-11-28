@@ -24,7 +24,6 @@ from .peers import save_peer
 from .policy import Hub, PeerGrant, PolicyError, load_network_config, load_policy, policy_path, save_policy, update_network_section
 from .private_files import ensure_private_dir
 from .store import NetStore, NetStoreError, db_path
-from .transport import network_enabled
 
 MIGRATION_FILE = "hub-migration.json"
 HUB_NAME = "home"
@@ -137,7 +136,7 @@ def migrate(
         config, _warnings = load_network_config(home)
         updates: dict[str, Any] = {}
         network_pending = False
-        if not config.allowed_networks and network_enabled(config) and config.bind is not None:
+        if not config.allowed_networks and config.network == "lan" and config.bind is not None:
             found = _read_network_id(network_id, config.bind)
             if found is None:
                 network_pending = True

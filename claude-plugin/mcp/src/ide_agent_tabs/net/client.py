@@ -99,6 +99,16 @@ def as_socket(bounded: DeadlineSocket) -> socket.socket:
     return cast(socket.socket, bounded)
 
 
+def _check_dial(home: str, address: str, port: int) -> None:
+    from .dialguard import GUARD
+    from .pairing import PairingError
+
+    try:
+        GUARD.check(home, address, port)
+    except PairingError as error:
+        raise NetClientError(f"the connection to {address} is refused: {error}") from error
+
+
 def _reason(error: BaseException) -> str:
     if isinstance(error, ssl.SSLCertVerificationError):
         return "the peer's certificate does not match its pinned certificate"
@@ -160,11 +170,11 @@ def send_request(
             raise wire.WireError("the request is too large")
     except wire.WireError as error:
         raise NetClientError(f"the request is invalid: {error}") from error
+    target = address or peer.address
+    _check_dial(home, target, port)
     try:
         context = tls.client_context(identity.cert, identity.key, lambda: identity.passphrase, [pem])
-        with socket.create_connection(
-            (address or peer.address, port), timeout=max(0.1, min(CONNECT_S, deadline - time.monotonic()))
-        ) as raw:
+        with socket.create_connection((target, port), timeout=max(0.1, min(CONNECT_S, deadline - time.monotonic()))) as raw:
             raw.settimeout(max(0.1, deadline - time.monotonic()))
             with context.wrap_socket(raw, server_hostname=None) as tls_sock:
                 return _exchange(tls_sock, deadline, expected, frame, rid)
@@ -188,6 +198,7 @@ def verify_pinned(home: str, address: str, device_ids: Sequence[str], *, port: i
     if not pinned:
         raise NetClientError("no stored certificate matches a device to check")
     identity = load_identity(home)
+    _check_dial(home, address, port)
     try:
         context = tls.client_context(identity.cert, identity.key, lambda: identity.passphrase, [pem for _, pem in pinned.values()])
         with socket.create_connection((address, port), timeout=max(0.1, min(CONNECT_S, deadline - time.monotonic()))) as raw:

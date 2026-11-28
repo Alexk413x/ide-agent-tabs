@@ -13,8 +13,8 @@ INFO = InterfaceInfo("Ethernet", "192.168.1.10", 24, "192.168.1.0/24", "Private"
 
 
 class ModeTest(unittest.TestCase):
-    def test_enabled_modes_hold_lan_only(self) -> None:
-        self.assertEqual(transport.ENABLED_MODES, frozenset({"lan"}))
+    def test_enabled_modes_hold_lan_and_tailscale(self) -> None:
+        self.assertEqual(transport.ENABLED_MODES, frozenset({"lan", "tailscale"}))
 
     def test_network_enabled_follows_the_mode(self) -> None:
         self.assertTrue(network_enabled(NetworkConfig(network="lan")))

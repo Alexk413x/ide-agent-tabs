@@ -108,8 +108,10 @@ same local network, and message the sessions there. Tell an agent which two mach
 Remote Control. You type nothing; on Windows you approve one firewall
 prompt per machine, the first time. The machines then connect over mutual TLS pinned to each other's
 certificates, and the listener starts at each login. A hub member has no per-peer grants: on each machine,
-you choose the folders a member may open tabs in. LAN mode works on Private networks only. See
-the `network` skill or [Network](docs/design.md#network). Version 1 needs Python with TLS 1.3 and
+you choose the folders a member may open tabs in. LAN mode works on Private networks only. Tailscale mode
+(`agent-tabs net tailscale on`, back with `net lan on --bind <address>`) runs the same hub over your own Tailscale
+devices, on any network. Two Windows machines on Tailscale 1.104.7 are the only tested setup, and the reviewers
+haven't reviewed it. See the `network` skill or [Network](docs/design.md#network). Version 1 needs Python with TLS 1.3 and
 `openssl`, and has been tested on Windows only.
 
 ## Design
@@ -171,7 +173,9 @@ the VS Code extension and the JetBrains plugin makes these network requests, and
 - **LAN mode.** Only after you run `agent-tabs net lan setup` and `net lan on`, a listener on the
   private address you give accepts mutual TLS connections from the machines you paired, and the server
   connects to those machines' listeners. Nothing announces or searches for machines, and nothing leaves
-  your local network.
+  your local network. After `agent-tabs net tailscale on` the listener binds the machine's Tailscale address
+  instead, and the server connects to your own Tailscale devices only. Nothing announces in that mode, and the
+  agent-tabs code runs `tailscale` (by its installed path) to read the addresses and owners of your devices.
 
 Everything else stays on your machine. The MCP server and the IDE endpoints listen on `127.0.0.1`
 only, and the message store, handoff briefs, Jev ledger and settings are files under `~/.ide-agent-tabs`.

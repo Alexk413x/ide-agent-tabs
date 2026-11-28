@@ -11,6 +11,7 @@ from ..files import file_lock, read_text_if_exists, write_atomically
 from ..jev.settings import CONFIG_FILE
 from ..jsjson import parse, stringify
 from ..messaging.sessions import SESSION_ID
+from .tailscale import is_tailscale_address
 
 NET_DIR = "net"
 POLICY_FILE = "policy.json"
@@ -148,18 +149,24 @@ def _network_mode(value: Any, invalid: list[str]) -> str:
     if value == "lan":
         return "lan"
     if value == "tailscale":
-        invalid.append("network.network tailscale is a later stage that version 1 refuses")
-    else:
-        invalid.append('network.network must be "off" or "lan"')
+        return "tailscale"
+    invalid.append('network.network must be "off", "lan" or "tailscale"')
     return "off"
 
 
-def _bind(value: Any, invalid: list[str]) -> str | None:
+def _bind(value: Any, invalid: list[str], mode: str = "lan") -> str | None:
     if value is None:
         return None
-    if isinstance(value, str) and is_allowed_bind(value):
-        return value
-    invalid.append("network.bind must be a private IPv4 or IPv6 unique local address")
+    if isinstance(value, str):
+        if mode == "tailscale":
+            if is_tailscale_address(value):
+                return value
+        elif is_allowed_bind(value) or (mode == "off" and is_tailscale_address(value)):
+            return value
+    if mode == "tailscale":
+        invalid.append("network.bind must be an IPv4 address in 100.64.0.0/10 when network is tailscale")
+    else:
+        invalid.append("network.bind must be a private IPv4 or IPv6 unique local address")
     return None
 
 
@@ -256,9 +263,10 @@ def load_network_config(home: str) -> tuple[NetworkConfig, list[str]]:
         if key not in _CONFIG_KEYS:
             warnings.append(f"Ignoring unknown key network.{key} in {CONFIG_FILE}")
     invalid: list[str] = []
+    mode = _network_mode(section.get("network"), invalid)
     result = NetworkConfig(
-        network=_network_mode(section.get("network"), invalid),
-        bind=_bind(section.get("bind"), invalid),
+        network=mode,
+        bind=_bind(section.get("bind"), invalid, mode),
         port=_port(section.get("port"), invalid),
         openssl=_openssl(section.get("openssl"), invalid),
         outbound_folders=_outbound_folders(section.get("outboundFolders"), invalid),

@@ -27,6 +27,7 @@ from .identity import device_id as device_id_of
 from .identity import format_digest, parse_device_id
 from .ingress import net_dir
 from .private_files import check_private, ensure_private_dir, make_private_file
+from .tailscale import TailscaleError
 
 VERSION = 2
 PAIRING_PORT = 47830
@@ -48,6 +49,8 @@ PROBE_MODE = "probe"
 JOIN_PV_MODE = "join-pv"
 ALREADY_IN_ANOTHER_HUB = "already-in-another-hub"
 NO_HUB = "no-hub"
+NETWORK_MODE_MISMATCH = "network-mode-mismatch"
+LAN_TRANSPORT = "lan"
 CLOSED_EARLY_TEXT = (
     "the other machine closed the connection before it replied; "
     "it may be limiting how often a machine can connect, so wait a few seconds and try again"
@@ -69,7 +72,8 @@ _PLUGIN_VERSION = re.compile(r"[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}")
 _HELLO_KEYS = ("v", "mode", "name", "cert", "commit")
 _HUB_LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MEMBER_KEYS = frozenset({"deviceId", "label", "address", "port", "certificatePem"})
-_UNCOUNTED_REASONS = (ALREADY_IN_ANOTHER_HUB, NO_HUB, "saving the trust entry failed", "the join failed")
+_UNCOUNTED_REASONS = (ALREADY_IN_ANOTHER_HUB, NO_HUB, NETWORK_MODE_MISMATCH, "saving the trust entry failed", "the join failed")
+_TRANSPORTS = (LAN_TRANSPORT, "tailscale")
 _LIMIT_KEYS = frozenset({"addresses", "windows", "open", "failures", "lockedUntil"})
 
 T = TypeVar("T")
@@ -634,7 +638,9 @@ class _Session:
         timeouts: Timeouts,
         join: JoinHandler | None,
         plugin_version: str | None = None,
+        transport: str = LAN_TRANSPORT,
     ) -> None:
+        self.transport = transport
         self.conn = conn
         self.role = role
         self.address = address
@@ -665,6 +671,19 @@ class _Session:
         return _expect(self._recv_raw(deadline), kind, keys)
 
     # Each side waits for the other's reply before it sends again, so data already waiting is trailing or out of order.
+    def _recv_state(self, deadline: float) -> HubRef | None:
+        raw = self._recv_raw(deadline)
+        frame = _expect(raw, "state", ("hub", "transport") if isinstance(raw, dict) and "transport" in raw else ("hub",))
+        theirs = frame.get("transport", LAN_TRANSPORT)
+        if theirs not in _TRANSPORTS:
+            raise PairingError("the other machine's network mode is not known")
+        if theirs != self.transport:
+            raise PairingError(
+                f"{NETWORK_MODE_MISMATCH}: this machine is in {self.transport} mode and the other machine is in {theirs} mode; "
+                "both machines must use the same mode"
+            )
+        return _hub_state(frame["hub"])
+
     def _no_pending(self) -> None:
         readable, _, _ = select.select([self.conn], [], [], 0)
         if readable:
@@ -702,7 +721,7 @@ class _Session:
         try:
             peer, deadline = self._open(peer_id)
             self._upgrade(peer, deadline)
-            hub = _hub_state(self._recv("state", ("hub",), deadline)["hub"])
+            hub = self._recv_state(deadline)
             return JoinProbe(peer.name, peer.device_id, hub)
         except _EXPECTED as error:
             raise PairingError(_describe(error)) from error
@@ -821,10 +840,13 @@ class _Session:
         assert handler is not None
         deadline = time.monotonic() + self.timeouts.consent_s
         mine = handler.hub()
-        self._send({"t": "state", "hub": None if mine is None else {"id": mine.id, "name": mine.name}}, deadline)
+        state: dict[str, object] = {"t": "state", "hub": None if mine is None else {"id": mine.id, "name": mine.name}}
+        if self.transport != LAN_TRANSPORT:
+            state["transport"] = self.transport
+        self._send(state, deadline)
         if self.probing:
             return PairResult("probed", "probed", peer)
-        theirs = _hub_state(self._recv("state", ("hub",), deadline)["hub"])
+        theirs = self._recv_state(deadline)
         if mine is None and theirs is None:
             raise PairingError(f"{NO_HUB}: neither machine is in a hub; create one first")
         if mine is not None and theirs is not None and mine.id != theirs.id:
@@ -859,12 +881,13 @@ def _dial_once(
     handler: JoinHandler,
     timeouts: Timeouts,
     plugin_version: str | None,
+    transport: str = LAN_TRANSPORT,
 ) -> tuple[PairResult, bool]:
     try:
         conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
     except OSError as error:
         return PairResult("failed", f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}"), False
-    session = _Session(conn, DIALER, target, identity, timeouts, handler, plugin_version)
+    session = _Session(conn, DIALER, target, identity, timeouts, handler, plugin_version, transport)
     return session.run_dialer(peer_id), session.closed_early
 
 
@@ -878,6 +901,7 @@ def dial_join(
     *,
     timeouts: Timeouts = DEFAULT_TIMEOUTS,
     plugin_version: str = PACKAGE_VERSION,
+    transport: str = LAN_TRANSPORT,
 ) -> PairResult:
     target = str(_ipv4(address, "the address"))
     _port(port)
@@ -885,7 +909,7 @@ def dial_join(
     limits.check_locked(target)
     own = advertised_version(plugin_version)
     tries = (own, own, None) if own is not None else (None,)
-    result, closed_early = _dial_once(target, port, peer_id, identity, handler, timeouts, tries[0])
+    result, closed_early = _dial_once(target, port, peer_id, identity, handler, timeouts, tries[0], transport)
     for version in tries[1:]:
         if not closed_early:
             break
@@ -893,7 +917,7 @@ def dial_join(
         # A listener that predates join-pv closes that hello unanswered too, so a second join-pv try tells the two
         # apart before the dialer falls back to the legacy hello.
         time.sleep(timeouts.min_interval_s + RETRY_MARGIN_S)
-        result, closed_early = _dial_once(target, port, peer_id, identity, handler, timeouts, version)
+        result, closed_early = _dial_once(target, port, peer_id, identity, handler, timeouts, version, transport)
     return result
 
 
@@ -904,6 +928,7 @@ def probe_join(
     identity: PairIdentity,
     *,
     timeouts: Timeouts = DEFAULT_TIMEOUTS,
+    transport: str = LAN_TRANSPORT,
 ) -> JoinProbe:
     target = str(_ipv4(address, "the address"))
     _port(port)
@@ -913,7 +938,7 @@ def probe_join(
         conn = socket.create_connection((target, port), timeout=timeouts.connect_s)
     except OSError as error:
         raise PairingError(f"cannot connect to {target}:{port}: {error.strerror or 'connection failed'}") from error
-    return _Session(conn, DIALER, target, identity, timeouts, None).run_probe(peer_id)
+    return _Session(conn, DIALER, target, identity, timeouts, None, None, transport).run_probe(peer_id)
 
 
 def _lock_reason(limits: Limits, address: str) -> str | None:
@@ -943,7 +968,18 @@ def _serve_join(
     on_result: Callable[[PairResult], None] | None,
     refused: RefusalLog | None = None,
     plugin_version: str | None = None,
+    transport: str = LAN_TRANSPORT,
+    check_connection: Callable[[str], None] | None = None,
 ) -> None:
+    if check_connection is not None:
+        try:
+            check_connection(address)
+        except (TailscaleError, PairingError) as error:
+            with contextlib.suppress(OSError):
+                conn.close()
+            if refused is not None:
+                refused(address, f"the owner check refused it ({error})")
+            return
     admitted = False
 
     def admit() -> bool:
@@ -951,7 +987,7 @@ def _serve_join(
         admitted = slot.acquire(blocking=False)
         return admitted
 
-    session = _Session(conn, LISTENER, address, identity, timeouts, handler, plugin_version)
+    session = _Session(conn, LISTENER, address, identity, timeouts, handler, plugin_version, transport)
     result: PairResult | None
     try:
         result = session.run_listener(admit)
@@ -992,6 +1028,8 @@ def serve_joins(
     allow_source: Callable[[str], bool] = private_source,
     log: Callable[[str], None] | None = None,
     plugin_version: str = PACKAGE_VERSION,
+    transport: str = LAN_TRANSPORT,
+    check_connection: Callable[[str], None] | None = None,
 ) -> None:
     slot = threading.Lock()
     advertised = advertised_version(plugin_version)
@@ -1012,5 +1050,5 @@ def serve_joins(
             refused(host, reason)
             continue
         conn.settimeout(None)
-        args = (slot, conn, host, identity, handler, limits, timeouts, on_result, refused, advertised)
+        args = (slot, conn, host, identity, handler, limits, timeouts, on_result, refused, advertised, transport, check_connection)
         threading.Thread(target=_serve_join, args=args, daemon=True).start()
