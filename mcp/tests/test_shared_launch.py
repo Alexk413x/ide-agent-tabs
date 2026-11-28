@@ -86,6 +86,7 @@ class ServerHookShellTest(unittest.TestCase):
         found = shells()
         if not found:
             self.skipTest("no shell")
+        self._warm_up(found[0][1], commands["SessionStart"])
         for name, shell in found:
             with self.subTest(shell=name):
                 home = temp_home(self, "iat-launch-")
@@ -102,6 +103,16 @@ class ServerHookShellTest(unittest.TestCase):
                 end = commands["SessionEnd"]
                 done = subprocess.run([*shell, end], input=b'{"reason":"other"}', env=env, capture_output=True, timeout=60, check=False)
                 self.assertEqual((done.returncode, done.stdout), (0, b""), done.stderr)
+
+    # On a Windows CI runner the first server start in a fresh checkout can take longer than the hook's 3 s wait,
+    # and the hook then prints that the server did not start. This start runs first, so the timed ones start warm.
+    def _warm_up(self, shell: list[str], start: str) -> None:
+        home = temp_home(self, "iat-warm-")
+        port = free_port()
+        self.addCleanup(lambda: stop_server(home, port))
+        env = clean_env(home, CLAUDE_PLUGIN_ROOT=PLUGIN.replace("\\", "/"), CLAUDE_PLUGIN_OPTION_SERVER_PORT=str(port))
+        subprocess.run([*shell, start], input=b"{}", env=env, capture_output=True, timeout=60, check=False)
+        stop_server(home, port)
 
 
 def tearDownModule() -> None:

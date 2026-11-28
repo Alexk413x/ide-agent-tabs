@@ -312,7 +312,7 @@ class DiscoverableListenerTest(unittest.TestCase):
         self.assertTrue(wait_until(running.joins_on, 5))
         cell.config = replace(cell.config, discoverable=False)
         self.assertTrue(wait_until(lambda: not running.joins_on(), 5))
-        self.assertIn("stopped serving joins", running.log())
+        self.assertTrue(wait_until(lambda: "stopped serving joins" in running.log(), 5), running.log())
         self.assertEqual(running.code, None)
         cell.config = replace(cell.config, discoverable=True)
         self.assertTrue(wait_until(running.joins_on, 5))
