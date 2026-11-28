@@ -9,6 +9,7 @@ import time
 import unittest
 from typing import Any
 
+from ide_agent_tabs.shared.ancestry import process_lookup
 from ide_agent_tabs.shared.client import probe, stop_server
 from ide_agent_tabs.shared.state import read_token
 from shared_support import McpHttp, free_port
@@ -30,15 +31,20 @@ def clean_env(home: str, **extra: str) -> dict[str, str]:
     return env
 
 
+# Each HTTP session needs an owner process of its own, as a Claude Code session has: the server's liveness sweep ends
+# a session whose pid and start time name no running process, and that releases the messages it holds.
 class HttpSession:
     def __init__(self, port: int, token: str, tab: str, index: int, cwd: str) -> None:
         self.tab = tab
+        self.owner = subprocess.Popen([sys.executable, "-I", "-S", "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE)
+        found = process_lookup()(self.owner.pid)
+        assert found is not None
         identity = {
             "x-agent-tabs-client": f"stress{index:04d}",
             "x-agent-tabs-tab": tab,
             "x-agent-tabs-agent": "claude",
-            "x-agent-tabs-pid": str(os.getpid()),
-            "x-agent-tabs-pid-start": str(1_000_000 + index),
+            "x-agent-tabs-pid": str(self.owner.pid),
+            "x-agent-tabs-pid-start": str(max(0, round(found.start_ms))),
         }
         self.client = McpHttp(port, token, identity, cwd)
 
@@ -49,7 +55,13 @@ class HttpSession:
         return out["json"] or {}
 
     def close(self) -> None:
-        return None
+        if self.owner.stdin is not None:
+            self.owner.stdin.close()
+        try:
+            self.owner.wait(10)
+        except subprocess.TimeoutExpired:
+            self.owner.kill()
+            self.owner.wait()
 
 
 class StdioSession:
