@@ -3,6 +3,41 @@
 Each entry names the Claude Code plugin version (`claude-plugin/.claude-plugin/plugin.json`) and the
 bundled IDE versions when they change. Tags are `ide-agent-tabs--v<version>`.
 
+## 0.14.4
+
+Plugin and MCP server 0.14.4. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
+
+### Added
+
+- Update during a join. The join hello carries the plugin version. When the other machine is newer,
+  `net hub join` and `net hub create --with` run this install's own update command, restart the
+  listener on the new build and retry the join once. A machine that a newer machine joins updates
+  itself from its own marketplace, at most once per peer per hour and six times an hour, logs each
+  attempt and sends local sessions a notice. A peer never names a source, a version or a command.
+  `net auto-update on|off|status` sets `network.autoUpdate`, which defaults to on. A Codex install
+  gets the manual command.
+- `net folders --outbound` lists and edits outbound folders. `list_sessions` warns when this session's
+  folder is outside them.
+- A message from another machine carries the sending session, so the recipient can answer it at
+  `<id>@<label>`. A peer on 0.14.3 or earlier gets the send once more in the older form.
+- The Messages pane lists sessions on other machines under a `<label> (remote)` box, and stores sends
+  to another machine in the sender's history.
+
+### Fixed
+
+- The login task's launcher is rewritten when the plugin updates, so login no longer starts an older
+  listener build.
+- The listener answers a `net find` solicitation at once, so `find` hears announcements.
+- A new member's sessions appear as soon as it joins, not after the next 60 s poll.
+- `net lan start` waits up to 20 s for a slow listener start. `net status` shows
+  `serving joins: starting` for the first 15 s.
+- A failed scheduled read of the network id keeps the last id for up to 120 s instead of closing the
+  network gate.
+- The message band's Open shows the message that raised it, and the band draws in the theme colours.
+- A session that shares a tab but is not its driver shows the message notice.
+- The 20-a-minute mailbox limit counts each session, not a sender id that many sessions share.
+- The by-name history match no longer pulls in an earlier session's messages.
+
 ## 0.14.3
 
 Plugin and MCP server 0.14.3. The bundled IDE packages are unchanged (VS Code 0.1.37, JetBrains 0.4.20).
