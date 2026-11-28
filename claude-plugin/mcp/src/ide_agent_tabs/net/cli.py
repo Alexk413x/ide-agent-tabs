@@ -56,7 +56,7 @@ from .login_task import LoginTaskError
 from .migration import ERRORS as MIGRATION_ERRORS
 from .migration import Migrator
 from .names import BAD_DEVICE_NAME, DeviceNameError, default_label, device_name_of
-from .netid import current_network_id, gate_state
+from .netid import GateState, current_network_id, gate_state
 from .notify import notify
 from .origin import Caller, OriginChecker
 from .outbound import OFFLINE_AFTER_MS
@@ -82,7 +82,8 @@ from .presence import read_presence
 from .private_files import ensure_private_dir
 from .secrets import SecretsError, new_passphrase, store_passphrase
 from .store import NetStore, NetStoreError, db_path
-from .transport import LanTransport, network_enabled
+from .tailscale import TAILSCALE_SCOPE, TailscaleClient, TailscaleError, own_user_id
+from .transport import LanTransport, TailscaleTransport, network_enabled
 
 if TYPE_CHECKING:
     from .find import FindRequest, FindResult
@@ -94,6 +95,7 @@ _GRAMMAR = (
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
     " | grant <label> [--folder <alias>=<absolute path>] [--agent claude|codex] [--model <model>] [--send <session id>]"
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
+    " | tailscale on [--at-login] | tailscale off"
     " | hub create [--name <name>] [--folder <session folder>] [--with <device id> ...] [--bind <address>]"
     " | hub join <device id> [--folder <session folder>] [--bind <address>] | hub status | hub leave"
     " | folders [--outbound] | folders add <absolute path> [--outbound] | folders remove <absolute path> [--outbound]"
@@ -171,6 +173,10 @@ def _caller_is_remote(home: str) -> bool:
         checker.close()
 
 
+def _apply_tailscale_firewall(bind: str, scope: str, alias: str) -> str:
+    return firewall.apply_listener_rule(bind, scope, alias, profile=firewall.PROFILE_ANY)
+
+
 @dataclass
 class Services:
     home: str
@@ -187,6 +193,8 @@ class Services:
     sync_launcher: Callable[[str], str | None] = login_task.sync_launcher
     apply_firewall: Callable[[str, str, str], str] = firewall.apply_listener_rule
     remove_firewall: Callable[[], str] = firewall.remove_listener_rule
+    apply_tailscale_firewall: Callable[[str, str, str], str] = _apply_tailscale_firewall
+    tailscale: TailscaleClient | None = None
     interface_for: Callable[[str], InterfaceInfo] = interface_for
     unsupported_reason: Callable[[], str | None] = elevation.unsupported_reason
     pair: PairDeps | None = None
@@ -348,12 +356,15 @@ def _stop_listener(svc: Services) -> bool:
     return True
 
 
-def apply_firewall(svc: Services, bind: str, port: int) -> None:
+def apply_firewall(svc: Services, bind: str, port: int, mode: str = "lan") -> None:
     try:
         if port != firewall.LISTENER_PORT:
             raise FirewallError(f"{port!r} is not the listener port {firewall.LISTENER_PORT}, so no firewall rule is created")
         info = svc.interface_for(bind)
-        text = svc.apply_firewall(bind, LanTransport().firewall_scope(info), info.alias)
+        if mode == "tailscale":
+            text = svc.apply_tailscale_firewall(bind, TAILSCALE_SCOPE, info.alias)
+        else:
+            text = svc.apply_firewall(bind, LanTransport().firewall_scope(info), info.alias)
     except (FirewallError, InterfaceError) as error:
         svc.err(f"warning: {error}. Peers can connect only when the firewall allows them.")
         return
@@ -415,6 +426,24 @@ def _read_network_id(svc: Services, bind: str) -> str | None:
         return None
 
 
+def tailscale_gate(svc: Services, config: NetworkConfig) -> tuple[GateState, str | None]:
+    if config.bind is None:
+        return GateState(False, None, "no bind address is set"), None
+    held = TailscaleTransport(svc.tailscale or TailscaleClient(), (), svc.interface_for)
+    try:
+        info = held.require_ready(config.bind, True)
+    except (InterfaceError, OSError, ValueError) as error:
+        return GateState(False, None, str(error)), None
+    return GateState(True), info.address
+
+
+def tailscale_gate_lines(gate: GateState, address: str | None) -> list[str]:
+    return [
+        f"tailscale address: {address or 'unavailable'}",
+        f"network gate: {'open (Tailscale)' if gate.allowed else gate.reason}",
+    ]
+
+
 def listener_lines(svc: Services, info: ListenerInfo | None, expects_joins: bool) -> list[str]:
     if info is None:
         return ["listener: not running", "serving joins: no"]
@@ -456,7 +485,11 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     svc.out(f"port: {config.port}")
     svc.out(f"openssl: {config.openssl or 'none'}")
     gate_open = False
-    if network_enabled(config) and config.bind is not None:
+    tailscale = config.network == "tailscale"
+    ts_gate, ts_address = tailscale_gate(svc, config) if tailscale else (GateState(False), None)
+    if tailscale:
+        gate_open = ts_gate.allowed
+    elif network_enabled(config) and config.bind is not None:
         gate_open = gate_state(config.allowed_networks, _read_network_id(svc, config.bind)).allowed
     for line in listener_lines(svc, live_listener(svc.home), config.discoverable and gate_open):
         svc.out(line)
@@ -465,11 +498,15 @@ def _cmd_status(svc: Services, args: Sequence[str]) -> int:
     svc.out(f"pairing: {_pairing_state(svc)}")
     svc.out(f"member folders: {', '.join(config.member_folders) or 'none'}")
     svc.out(f"discoverable: {'on' if config.discoverable else 'off'}")
-    svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
-    if network_enabled(config) and config.bind is not None:
-        gate = gate_state(config.allowed_networks, _read_network_id(svc, config.bind))
-        svc.out(f"current network: {gate.network_id or 'unreadable'}")
-        svc.out(f"network gate: {'open' if gate.allowed else gate.reason}")
+    if tailscale:
+        for line in tailscale_gate_lines(ts_gate, ts_address):
+            svc.out(line)
+    else:
+        svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
+        if network_enabled(config) and config.bind is not None:
+            gate = gate_state(config.allowed_networks, _read_network_id(svc, config.bind))
+            svc.out(f"current network: {gate.network_id or 'unreadable'}")
+            svc.out(f"network gate: {'open' if gate.allowed else gate.reason}")
     try:
         policy = load_policy(svc.home)
     except PolicyError as error:
@@ -536,11 +573,12 @@ def _on_windows() -> bool:
     return sys.platform == "win32"
 
 
-def enable_lan(svc: Services, bind: str, port: int, at_login: bool) -> bool:
-    set_network(svc.home, {"network": "lan", "bind": bind})
-    svc.record("lan-on", bind=bind, port=port)
-    svc.notify(f"LAN network turned on at {bind}")
-    apply_firewall(svc, bind, port)
+def enable_lan(svc: Services, bind: str, port: int, at_login: bool, mode: str = "lan") -> bool:
+    previous = load_network_config(svc.home)[0].network
+    set_network(svc.home, {"network": mode, "bind": bind})
+    svc.record("lan-on" if mode == "lan" else "tailscale-on", bind=bind, port=port)
+    svc.notify(f"LAN network turned on at {bind}" if mode == "lan" else f"Tailscale network turned on at {bind}")
+    apply_firewall(svc, bind, port, mode)
     login_ok = True
     if at_login:
         try:
@@ -548,6 +586,8 @@ def enable_lan(svc: Services, bind: str, port: int, at_login: bool) -> bool:
         except LoginTaskError as error:
             svc.err(f"error: the login task was not registered: {error}")
             login_ok = False
+    if previous not in ("off", mode) and live_listener(svc.home) is not None and not _stop_listener(svc):
+        return False
     return start_listener(svc) and login_ok
 
 
@@ -587,9 +627,80 @@ def _cmd_on(svc: Services, args: Sequence[str]) -> int:
                 if options.at_login
                 else []
             ),
+            *(
+                ["  Tailscale mode turns off: the listener restarts on this address, and the Tailscale firewall rule is replaced."]
+                if config.network == "tailscale"
+                else []
+            ),
         ],
     )
     return 0 if enable_lan(svc, bind, config.port, options.at_login) else 1
+
+
+def _cmd_tailscale_on(svc: Services, args: Sequence[str]) -> int:
+    parser = make_parser("tailscale on")
+    parser.add_argument("--at-login", action="store_true")
+    options = parser.parse_args(args)
+    refuse_remote_origin(svc)
+    problem = tls.runtime_problem()
+    if problem is not None:
+        raise CliError(problem)
+    if local_device_id(svc.home) is None or ingress.read_ingress_token(svc.home) is None:
+        raise CliError("run agent-tabs net lan setup --openssl <absolute path of openssl> first")
+    client = svc.tailscale or TailscaleClient()
+    try:
+        own_user_id(client.self_status())
+        bind = client.ip4()
+    except TailscaleError as error:
+        raise CliError(f"Tailscale mode needs Tailscale installed, running and logged in on this machine: {error}") from error
+    TailscaleTransport(client, (), svc.interface_for).require_ready(bind, True)
+    if not svc.bind_available(bind):
+        raise CliError(f"{bind} is not assigned to a local interface")
+    config, _ = load_network_config(svc.home)
+    _require_confirmed(
+        svc,
+        [
+            "Turn the Tailscale network on:",
+            f"  listener address: {bind} port {config.port} (this machine's Tailscale address)",
+            f"  config.json network: tailscale (it is {config.network} now)",
+            "  The listener accepts connections only from your own Tailscale devices, and only from peers you trust.",
+            *(
+                [
+                    f"  Windows firewall: one rule for ports 47829 and 47830 from {TAILSCALE_SCOPE} on the Tailscale interface only.",
+                    "  The rule replaces the LAN rule. When the rule isn't there yet, the Windows prompt asks for your approval once.",
+                ]
+                if _on_windows()
+                else []
+            ),
+            *(
+                ["  At login: a task starts the listener when you sign in, as you and without administrator rights."]
+                if options.at_login
+                else []
+            ),
+            *(
+                ["  LAN mode turns off: the listener restarts on the Tailscale address. allowedNetworks stays as it is and isn't used."]
+                if config.network == "lan"
+                else []
+            ),
+        ],
+    )
+    return 0 if enable_lan(svc, bind, config.port, options.at_login, "tailscale") else 1
+
+
+def _cmd_tailscale_off(svc: Services, args: Sequence[str]) -> int:
+    make_parser("tailscale off").parse_args(args)
+    config, _ = load_network_config(svc.home)
+    if config.network != "tailscale":
+        svc.out(f"Tailscale mode is not on (network is {config.network}); nothing changed.")
+        return 0
+    return _turn_off(svc)
+
+
+def _cmd_tailscale(svc: Services, args: Sequence[str]) -> int:
+    handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {"on": _cmd_tailscale_on, "off": _cmd_tailscale_off}
+    if not args or args[0] not in handlers:
+        raise UsageError("agent-tabs net tailscale: expected on or off")
+    return handlers[args[0]](svc, args[1:])
 
 
 def _cmd_start(svc: Services, args: Sequence[str]) -> int:
@@ -606,7 +717,8 @@ def _cmd_start(svc: Services, args: Sequence[str]) -> int:
         raise CliError("this machine has no identity; run agent-tabs net lan setup")
     started = start_listener(svc)
     svc.record("lan-start", bind=config.bind, ok=int(started))
-    svc.notify(f"LAN listener started at {config.bind}" if started else "LAN listener start failed")
+    kind = "Tailscale" if config.network == "tailscale" else "LAN"
+    svc.notify(f"{kind} listener started at {config.bind}" if started else f"{kind} listener start failed")
     return 0 if started else 1
 
 
@@ -619,6 +731,10 @@ def _cmd_stop(svc: Services, args: Sequence[str]) -> int:
 
 def _cmd_off(svc: Services, args: Sequence[str]) -> int:
     make_parser("off").parse_args(args)
+    return _turn_off(svc)
+
+
+def _turn_off(svc: Services) -> int:
     net_dir_for(svc.home)
     try:
         set_network(svc.home, {"network": "off", **({"discoverable": False} if load_network_config(svc.home)[0].discoverable else {})})
@@ -1084,7 +1200,8 @@ def _cmd_hub_status(svc: Services, args: Sequence[str]) -> int:
     else:
         svc.out("members: none")
     svc.out(f"member folders: {', '.join(config.member_folders) or 'none'}")
-    svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
+    if config.network != "tailscale":
+        svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
     return 0
 
 
@@ -1268,6 +1385,7 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         "revoke": _cmd_revoke,
         "rename": _cmd_rename,
         "lan": _cmd_lan,
+        "tailscale": _cmd_tailscale,
         "hub": _cmd_hub,
         "folders": _cmd_folders,
         "discoverable": _cmd_discoverable,

@@ -12,9 +12,10 @@ from dataclasses import dataclass, field
 from . import pairing
 from .beacon import Announcement, Endpoint, HubWatch, JoinAnnouncement, Solicitation, Wire
 from .client import NetClientError, verify_pinned
-from .discovery import PROBE, REMEMBERED, LanDiscovery, source_label
+from .discovery import PROBE, REMEMBERED, TAILSCALE, LanDiscovery, source_label
 from .pairing import PAIRING_PORT, JoinProbe, PairIdentity, PairingError, probe_join
 from .policy import DEFAULT_PORT, PeerGrant, PolicyError, load_policy
+from .tailscale import TailscaleDiscovery, TailscaleError
 
 _VERIFY_ERRORS = (NetClientError, PairingError, OSError, ValueError)
 
@@ -56,6 +57,8 @@ class FindRequest:
     device_id: str
     wire: Wire
     log: Callable[[str], None] = lambda _text: None
+    tailscale: TailscaleDiscovery | None = None
+    check: Callable[[str], None] = lambda _address: None
 
 
 def lan_hosts(wire: Wire) -> list[str]:
@@ -241,6 +244,7 @@ class _Find:
                     expected,
                     self.request.identity,
                     timeouts=settings.timeouts,
+                    **({} if self.request.tailscale is None else {"transport": "tailscale"}),
                 )
             except _VERIFY_ERRORS as error:
                 if attempt + 1 < attempts:
@@ -298,7 +302,41 @@ class _Find:
         with self.lock:
             return all(future.done() for future in self.pending)
 
+    def verify_candidate(self, address: str, hard_stop: float) -> None:
+        settings = self.settings
+        try:
+            self.request.check(address)
+        except (PairingError, TailscaleError) as error:
+            self.log(f"{address} is not tried: {error}")
+            return
+        ports: set[int] = set()
+        for port in (settings.member_port, settings.join_port):
+            if settings.clock() < hard_stop and settings.port_is_open(address, port, settings.probe_connect_s):
+                ports.add(port)
+        if settings.member_port in ports and self.members and self.verify_member(address, list(self.members), TAILSCALE):
+            return
+        if settings.join_port in ports:
+            self.verify_join(address, None, TAILSCALE, attempts=2)
+
+    def run_tailscale(self, discovery: TailscaleDiscovery) -> FindResult:
+        settings = self.settings
+        hard_stop = settings.clock() + settings.listen_s
+        for device in discovery.scan():
+            self.tried.add(device.address)
+            self.submit(lambda address=device.address: self.verify_candidate(address, hard_stop))
+        grace_end = hard_stop + settings.grace_s
+        for future in list(self.pending):
+            try:
+                future.result(timeout=max(0.0, grace_end - settings.clock()))
+            except FutureTimeout:
+                self.log("a verification did not finish in time, so that candidate is not listed")
+        self.pool.shutdown(wait=False, cancel_futures=True)
+        devices = self.rows.final(lambda _identifier: frozenset())
+        return FindResult(devices, duplicate_name_warnings(devices), True, 0, discovery.error, 0)
+
     def run(self) -> FindResult:
+        if self.request.tailscale is not None:
+            return self.run_tailscale(self.request.tailscale)
         settings = self.settings
         start = settings.clock()
         hard_stop = start + settings.listen_s
@@ -371,7 +409,20 @@ NOT_FOUND_TEXT = (
 )
 
 
-def not_found_text(result: FindResult, wire: Wire) -> str:
+TAILSCALE_NOT_FOUND_TEXT = (
+    "No device was found. The likely causes are:\n"
+    "- Tailscale is not running or not logged in on this machine or the other machine\n"
+    "- the other machine is not online in this Tailscale account, or belongs to another user\n"
+    "- the other machine is not discoverable: run `agent-tabs net discoverable on` there, in Tailscale mode\n"
+    "- the other machine runs LAN mode, and both machines must use the same mode"
+)
+
+
+def not_found_text(result: FindResult, wire: Wire, tailscale: bool = False) -> str:
+    if tailscale:
+        if result.udp_error is None:
+            return TAILSCALE_NOT_FOUND_TEXT
+        return f"{TAILSCALE_NOT_FOUND_TEXT}\nTailscale could not list the devices of this account: {result.udp_error}."
     notes = [f"Checked: announcements on UDP port {wire.port}"]
     if result.udp_error is not None:
         notes[0] = f"Announcements could not be received on UDP port {wire.port} ({result.udp_error})"

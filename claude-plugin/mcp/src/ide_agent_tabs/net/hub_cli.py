@@ -25,6 +25,8 @@ from .cli import (
     report_folders,
     set_network,
     start_listener,
+    tailscale_gate,
+    tailscale_gate_lines,
 )
 from .client import NetClientError, load_identity, local_device_id, send_request
 from .find import FindRequest, FindResult, device_lines, find_devices, not_found_text
@@ -35,7 +37,8 @@ from .listener import live_listener
 from .netid import fallback_of, gate_state, upgraded_allowed
 from .pairing import INCOMPLETE_TEXT, PAIRING_PORT, PairIdentity, PairResult
 from .policy import NETWORK_ID, NetworkConfig, grant_for, load_network_config, load_policy
-from .transport import LanTransport, network_enabled
+from .tailscale import TAILSCALE_SCOPE, TailscaleDiscovery
+from .transport import LanTransport, TailscaleTransport, Transport, command_transport, network_enabled
 
 
 def find_openssl(
@@ -86,10 +89,17 @@ class Prepared:
     name: str
     iface: InterfaceInfo
     bind: str
+    mode: str = "lan"
+    transport: Transport | None = None
 
 
-def _choose_bind(svc: Services, deps: PairDeps) -> str:
-    found = LanTransport().candidates(deps.local_addresses(), svc.interface_for)
+def _choose_bind(svc: Services, deps: PairDeps, transport: Transport | None = None) -> str:
+    found = (transport or LanTransport()).candidates(deps.local_addresses(), svc.interface_for)
+    if not found and isinstance(transport, TailscaleTransport):
+        raise CliError(
+            f"No Tailscale address ({TAILSCALE_SCOPE}) of this machine was found. "
+            "Check that Tailscale runs and is logged in, then run the command again."
+        )
     if not found:
         raise CliError(
             "No private address (10.x.x.x, 172.16-31.x.x or 192.168.x.x) of a physical network interface was found. "
@@ -102,11 +112,11 @@ def _choose_bind(svc: Services, deps: PairDeps) -> str:
     return found[0].address
 
 
-def current_bind(svc: Services, deps: PairDeps, saved: str | None) -> tuple[str | None, bool]:
+def current_bind(svc: Services, deps: PairDeps, saved: str | None, transport: Transport | None = None) -> tuple[str | None, bool]:
     if saved is None or svc.bind_available(saved):
         return saved, saved is not None
     svc.out(f"The saved address {saved} is no longer assigned to this machine.")
-    return _choose_bind(svc, deps), False
+    return _choose_bind(svc, deps, transport), False
 
 
 def prepare(svc: Services, deps: PairDeps, requested: str | None) -> Prepared:
@@ -117,12 +127,14 @@ def prepare(svc: Services, deps: PairDeps, requested: str | None) -> Prepared:
     for warning in warnings:
         svc.err(f"warning: {warning}")
     name = device_name(svc)
+    mode = "tailscale" if config.network == "tailscale" else "lan"
+    transport = command_transport(config, svc.tailscale, svc.interface_for) if mode == "tailscale" else None
     if requested is not None:
         bind, explicit = requested, True
     else:
-        found, explicit = current_bind(svc, deps, config.bind)
-        bind = found if found is not None else _choose_bind(svc, deps)
-    iface = deps.require_lan_ready(bind, explicit)
+        found, explicit = current_bind(svc, deps, config.bind, transport)
+        bind = found if found is not None else _choose_bind(svc, deps, transport)
+    iface = transport.require_ready(bind, explicit) if transport is not None else deps.require_lan_ready(bind, explicit)
     if local_device_id(svc.home) is None:
         openssl = deps.find_openssl(config.openssl, svc.env)
         if openssl is None:
@@ -141,7 +153,7 @@ def prepare(svc: Services, deps: PairDeps, requested: str | None) -> Prepared:
     device = local_device_id(svc.home)
     if device is None:
         raise CliError("this machine's network identity cannot be read")
-    return Prepared(identity, device, name, iface, bind)
+    return Prepared(identity, device, name, iface, bind, mode, transport)
 
 
 def _read_network_id(svc: Services, bind: str) -> str | None:
@@ -164,7 +176,18 @@ def _require_network_id(svc: Services, bind: str) -> str:
     return found
 
 
-def _setup_lan(svc: Services, prepared: Prepared, network_id: str, folder: str | None, extra: dict[str, object]) -> bool:
+def _setup_tailscale(svc: Services, prepared: Prepared, folder: str | None, extra: dict[str, object]) -> bool:
+    config, _ = load_network_config(svc.home)
+    folders = folder_defaults(svc, config, folder)
+    set_network(svc.home, {"network": "tailscale", "bind": prepared.bind, **extra, **folders})
+    ingress.ensure_ingress_token(svc.home)
+    report_folders(svc, config, folders)
+    return enable_lan(svc, prepared.bind, config.port, True, "tailscale")
+
+
+def _setup_lan(svc: Services, prepared: Prepared, network_id: str | None, folder: str | None, extra: dict[str, object]) -> bool:
+    if network_id is None:
+        return _setup_tailscale(svc, prepared, folder, extra)
     config, _ = load_network_config(svc.home)
     allowed = list(config.allowed_networks)
     upgraded = upgraded_allowed(allowed, network_id)
@@ -181,6 +204,17 @@ def _setup_lan(svc: Services, prepared: Prepared, network_id: str, folder: str |
 
 
 def _find_request(svc: Services, prepared: Prepared) -> FindRequest:
+    transport = prepared.transport
+    if isinstance(transport, TailscaleTransport):
+        return FindRequest(
+            svc.home,
+            prepared.identity,
+            prepared.device_id,
+            wire_for(prepared.bind, prepared.iface.prefix_len),
+            lambda text: svc.record("find", note=text),
+            TailscaleDiscovery(transport.client, transport.allowed_owner_ids),
+            lambda address: _check_tailscale_destination(transport, address, prepared),
+        )
     return FindRequest(
         svc.home,
         prepared.identity,
@@ -188,6 +222,10 @@ def _find_request(svc: Services, prepared: Prepared) -> FindRequest:
         wire_for(prepared.bind, prepared.iface.prefix_len),
         lambda text: svc.record("find", note=text),
     )
+
+
+def _check_tailscale_destination(transport: Transport, address: str, prepared: Prepared) -> None:
+    transport.check_destination(address, PAIRING_PORT, prepared.iface.address, prepared.iface.prefix_len)
 
 
 def run_find(svc: Services, prepared: Prepared) -> FindResult:
@@ -203,7 +241,8 @@ def _resolve(svc: Services, prepared: Prepared, devices: Sequence[str]) -> list[
         svc.err(line)
     found = {d.device_id: d.address for d in result.devices}
     if not result.devices:
-        svc.err(not_found_text(result, _find_request(svc, prepared).wire))
+        request = _find_request(svc, prepared)
+        svc.err(not_found_text(result, request.wire, request.tailscale is not None))
     return [(device, found.get(device)) for device in devices]
 
 
@@ -211,14 +250,18 @@ def _dial_one(svc: Services, deps: PairDeps, prepared: Prepared, device: str, ad
     peer_id = pairing.full_device_id(device)
     if peer_id == prepared.device_id:
         return PairResult("failed", "that is this machine's own device id")
-    target = deps.check_destination(address, PAIRING_PORT, prepared.iface.address, prepared.iface.prefix_len)
+    check = prepared.transport.check_destination if prepared.transport is not None else deps.check_destination
+    target = check(address, PAIRING_PORT, prepared.iface.address, prepared.iface.prefix_len)
 
     def saved(label: str, found: str) -> None:
         svc.record("hub-join", device=peer_id, label=label, address=found)
         svc.notify(f"joined the hub with {label} at {found}")
 
     handler = HubJoiner(svc.home, saved, introduced.append)
-    return deps.dial_join(target, PAIRING_PORT, peer_id, prepared.identity, handler, pairing.Limits(svc.home), timeouts=deps.timeouts)
+    extra: dict[str, str] = {} if prepared.mode == "lan" else {"transport": prepared.mode}
+    return deps.dial_join(
+        target, PAIRING_PORT, peer_id, prepared.identity, handler, pairing.Limits(svc.home), timeouts=deps.timeouts, **extra
+    )
 
 
 @dataclass
@@ -292,7 +335,7 @@ def _dial_attempt(svc: Services, deps: PairDeps, prepared: Prepared, device: str
 
 def _join_all(svc: Services, deps: PairDeps, devices: Sequence[str], bind: str | None, folder: str | None) -> int:
     prepared = prepare(svc, deps, bind)
-    network_id = _require_network_id(svc, prepared.bind)
+    network_id = _require_network_id(svc, prepared.bind) if prepared.mode == "lan" else None
     joined, complete = 0, True
     versions = _Versions(svc.plugin_version)
     for device, address in _resolve(svc, prepared, devices):
@@ -348,9 +391,15 @@ def _discoverable_status(svc: Services, config: NetworkConfig) -> int:
     svc.out(f"discoverable: {'on' if config.discoverable else 'off'}")
     svc.out(f"network: {config.network}")
     svc.out(f"bind: {config.bind or 'none'}")
-    svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
     expects_joins = False
-    if network_enabled(config) and config.bind is not None:
+    if config.network == "tailscale":
+        gate, address = tailscale_gate(svc, config)
+        for line in tailscale_gate_lines(gate, address):
+            svc.out(line)
+        expects_joins = gate.allowed and config.discoverable
+    else:
+        svc.out(f"allowed networks: {', '.join(config.allowed_networks) or 'none'}")
+    if config.network != "tailscale" and network_enabled(config) and config.bind is not None:
         gate = gate_state(config.allowed_networks, _read_network_id(svc, config.bind))
         svc.out(f"current network: {gate.network_id or 'unreadable'}")
         svc.out(f"network gate: {'open' if gate.allowed else gate.reason}")
@@ -380,7 +429,7 @@ def discoverable(svc: Services, args: Sequence[str]) -> int:
     deps = _deps(svc)
     deps.refuse_if_elevated()
     prepared = prepare(svc, deps, options.bind)
-    network_id = _require_network_id(svc, prepared.bind)
+    network_id = _require_network_id(svc, prepared.bind) if prepared.mode == "lan" else None
     applied = _setup_lan(svc, prepared, network_id, options.folder, {"discoverable": True})
     svc.record("discoverable", state="on", bind=prepared.bind)
     svc.out(f"Discoverable as {prepared.name}.")
@@ -390,6 +439,12 @@ def discoverable(svc: Services, args: Sequence[str]) -> int:
 
 
 def _networks_view(svc: Services, config: NetworkConfig) -> None:
+    if config.network == "tailscale":
+        gate, address = tailscale_gate(svc, config)
+        svc.out("allowed networks: not used in Tailscale mode")
+        for line in tailscale_gate_lines(gate, address):
+            svc.out(line)
+        return
     svc.out("allowed networks: " + (", ".join(config.allowed_networks) if config.allowed_networks else "none"))
     if config.bind is None:
         svc.out("current network: unknown (no bind address is set)")
@@ -410,6 +465,8 @@ def networks(svc: Services, args: Sequence[str]) -> int:
         _networks_view(svc, config)
         return 0
     refuse_remote_origin(svc)
+    if config.network == "tailscale":
+        raise CliError("Tailscale mode doesn't use allowed networks; run agent-tabs net lan on to return to LAN mode first")
     allowed = list(config.allowed_networks)
     if options.action == "add":
         if options.id is not None:
@@ -447,7 +504,8 @@ def find(svc: Services, args: Sequence[str]) -> int:
     deps.refuse_if_elevated()
     prepared = prepare(replace(svc, out=svc.err) if options.json else svc, deps, options.bind)
     result = run_find(svc, prepared)
-    message = None if result.devices else not_found_text(result, _find_request(svc, prepared).wire)
+    request = _find_request(svc, prepared)
+    message = None if result.devices else not_found_text(result, request.wire, request.tailscale is not None)
     if options.json:
         body: dict[str, object] = {
             "devices": [d.as_json() for d in result.devices],

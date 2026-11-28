@@ -2481,7 +2481,8 @@ session) agreed to the first design on 2026-11-14, and to the pairing design on 
 shipped in 0.11.0, a pairing command in 0.12.0, and agent-run pairing in 0.13.0. In 0.14.0 hubs, discovery and
 the equal member role replace pairing by invitation. The hub design hasn't had the reviewers' review, and two real machines
 haven't run it: the tests bind loopback only. The elevated firewall helper ran on a real machine. Accepting the
-design doesn't certify the implementation.
+design doesn't certify the implementation. Tailscale mode runs in the code (see Tailscale mode). The reviewers haven't
+reviewed it, and two real Windows machines on Tailscale 1.104.7 are the only setup it has run on.
 
 ### Scope
 
@@ -2492,12 +2493,12 @@ design doesn't certify the implementation.
   network, not a shared, guest, office or public network. Remote and untrusted cases belong to Tailscale mode.
 - One setting, `network` in `config.json`, picks the mode: `off` (the default: today's single-machine
   tooling, nothing beyond `127.0.0.1`), `lan` or `tailscale`. Team mode is an addition to
-  `lan` or `tailscale`, not a separate value. The code accepts `off` and `lan` and refuses `tailscale` and the
-  team-mode keys until their reviews pass. The `net` commands are the supported writer; an update never
+  `lan` or `tailscale`, not a separate value. The code accepts `off`, `lan` and `tailscale` and refuses the
+  team-mode keys until their review passes. The `net` commands are the supported writer; an update never
   changes it.
 - LAN mode is the first networked mode and needs no outside tool.
-- **Tailscale mode** (see Tailscale mode below), a supported option for reaching home machines from
-  another network. The listener binds the machine's Tailscale address instead of a LAN address, so
+- **Tailscale mode** (see Tailscale mode below), an option for reaching home machines from
+  another network. Its review hasn't happened. The listener binds the machine's Tailscale address instead of a LAN address, so
   connected machines reach each other without a public inbound port. Tailscale addresses are in
   `100.64.0.0/10` (RFC 6598 shared space, not RFC 1918), so that review names the range explicitly
   rather than widening the LAN address check. The design recommends Tailnet Lock and a
@@ -2997,8 +2998,58 @@ serves no join, and `net status` says why.
 `network: tailscale` runs the same listener, joins, hubs and pinned mutual TLS over the Tailscale
 interface instead of a LAN address. Tailscale gives each machine a fixed `100.x` address on any network,
 reaches machines away from home, and encrypts everything with WireGuard. It is the recommended mode for
-more than one network, for travel and for teammates later. The code refuses `tailscale` until the review passes;
-this section is the design the seam in the next section prepares for.
+more than one network, for travel and for teammates later. The code accepts `tailscale` and runs this section's
+design. The reviewers haven't reviewed it, and two real Windows machines on Tailscale 1.104.7 are the only tested
+setup: no other platform, no other Tailscale version and no Headscale server has run it.
+
+What the code does in Tailscale mode:
+
+- **Switch.** `agent-tabs net tailscale on` checks that Tailscale is installed, running and logged in, asks for the same
+  confirmation as `net lan on`, sets `network` to `tailscale` and `bind` to the Tailscale address, replaces the Windows
+  firewall rule and restarts the listener. `net tailscale off` runs `net off`. `net lan on --bind <address>` from
+  Tailscale mode switches back, replaces the rule and restarts the listener. `net lan start` and `stop` start and stop the
+  listener in whichever mode is on. `net status` shows the mode, the Tailscale address and `network gate: open (Tailscale)`
+  or the reason Tailscale isn't ready, in place of the allowed-network lines.
+- **Bind.** `bind` is the output of `tailscale ip -4`. A bind outside `100.64.0.0/10` is refused in Tailscale mode, and
+  one inside it is refused in LAN mode. `off` keeps either kind of saved bind, so `net tailscale off` leaves a valid file.
+- **Gate.** The network-id gate is a LAN concept. In Tailscale mode `network.allowedNetworks` is neither read nor changed,
+  and the gate is open while the transport's `require_ready` passes for the bind address: the address is this machine's
+  Tailscale address and an interface carries it. The 120 s grace of LAN mode doesn't apply. The Windows Public-network
+  refusal doesn't apply, because WireGuard protects the link.
+- **No announcements.** The UDP announcement and the member beacons are off. The join service and the listener bind the
+  Tailscale address only. The listener runs a 60 s cycle in place of the beacon service that checks member addresses,
+  records presence and delivers queued hub changes.
+- **Discovery.** `net find`, and the discovery behind `net hub join` and `net hub create --with`, take their candidates
+  from `tailscale status --json`: the user's own online devices, not tagged and not shared in. Each candidate gets the
+  same pinned-TLS probe as in LAN mode, on the same ports, with source `tailscale`. A device that doesn't answer (a phone, a
+  machine without Agent Tabs) is dropped without an error. There is no manual address entry.
+- **Owner check.** For every accepted connection on the listener and the join service, and before every outbound dial,
+  the code asks `tailscale whois --json` about the address and requires an untagged device of this machine's user that
+  isn't shared in. A refusal closes the connection and is logged at most once a minute for each address. Outbound
+  member traffic (`send_request`, `verify_pinned`) goes through one guard that skips the check in LAN mode and remembers a
+  pass for 30 s. The check narrows. The pinned certificate and the device id decide who the peer is.
+- **Source address.** In LAN mode the listener admits a connection only from a stored peer address. In Tailscale mode it
+  admits any `100.64.0.0/10` source that passes the owner check, because a member's stored address changes only after a
+  connection from its new address succeeds. Pinned mutual TLS still admits only a trusted certificate.
+- **Member addresses.** An address in `policy.json` and `net/hub.json` changes only after a pinned mutual-TLS check at
+  the new address matches that member's device id. In Tailscale mode the listener runs that check at start and every
+  60 s against each online own device whose address no member has stored. In LAN mode the member beacon path does it, and
+  it replaces a `100.x` address with the LAN one the same way. A hub introduction accepts a Tailscale address in Tailscale
+  mode. The code stores one address for each peer, so a member stays unreachable after a switch until the check moves
+  its address.
+- **Wire value.** The hub join exchange carries `transport` in the `state` frame, sent before any hub secret, only when
+  the value isn't `lan`. A missing value means `lan`. A receiver refuses a join whose `transport` differs from its own mode and
+  names both modes. A refusal for the mode doesn't count toward the failure lock. The UDP join announcement keeps
+  `transport` set to `lan`, and only LAN mode sends it.
+- **Firewall.** The Windows rule admits the listener program on ports 47829 and 47830 from `100.64.0.0/10` on the
+  Tailscale interface alias, with the profile `Any`. The helper also creates the UDP 47831 discovery rule with the same scope,
+  which nothing uses in this mode. Switching modes replaces both rules and never leaves two sets.
+- **Startup.** The listener waits up to 120 s for the Tailscale address, then stops and logs why.
+- **Fails closed.** A missing, slow or logged-out `tailscale`, or output in an unknown shape, closes the gate or refuses the
+  connection. It never falls back to LAN behavior or a wider bind. A machine whose owner can't be read refuses every
+  connection.
+- **Owner set.** The allowed owner is this machine's own Tailscale user id. Team mode isn't part of this change, and there
+  is no configuration for teammates.
 
 - **Requirements.** Tailscale installed, running and logged in on both machines. Tailscale's client runs
   while the person is logged in unless they chose `tailscale up --unattended`. Phase 0 records whether
@@ -3010,8 +3061,9 @@ this section is the design the seam in the next section prepares for.
   device id as in LAN mode. No UDP beacon is needed.
 - **Tailscale check.** Before dialing, and for each accepted connection, the command asks the local
   Tailscale service (`tailscale whois --json`, by absolute path, with a timeout) about the address. It
-  requires exactly one node, in this tailnet, not shared in, not tagged, and owned by the same user as
-  this machine, read from documented fields. It fails closed when the local identity, the node, the
+  requires exactly one node, not shared in, not tagged, and owned by the same user as
+  this machine, read from documented fields. "In this tailnet" has no usable `whois` field: a peer's `whois` carries no
+  `StableTailnetID` in Tailscale 1.104.7, so the shared-in test (the `Sharer` field) and the owner test stand in for it. It fails closed when the local identity, the node, the
   owner or the share status is missing, ambiguous or in an unknown format, or when `tailscale` doesn't
   answer. The listener reads its own owner from `tailscale status --self --json` at start. Tests cover
   each supported Tailscale and Headscale version before the design claims support for it. This check
@@ -3044,23 +3096,28 @@ The LAN code reaches the network through one interface and one discovery class, 
 parts without touching the hub, the member role or the join protocol. The code builds the interface; Tailscale
 implements neither yet.
 
-- **`Transport`** (`net/transport.py`), chosen by `transport_for(config)`, which returns the LAN transport for `lan` and
-  nothing for any other value. Methods: `allows_bind(address)`, `bind_address(config)`,
+- **`Transport`** (`net/transport.py`), chosen by `transport_for(config)`, which returns the LAN transport for `lan`, a
+  `TailscaleTransport` for `tailscale` and nothing for `off`. The Tailscale transport takes an injected `TailscaleClient`
+  and the allowed owner ids, which `transport_for` reads from `tailscale status` when it builds the transport. When that
+  read fails, the owner set stays empty and every check refuses. Nothing in LAN mode builds a client or runs
+  the program. Methods: `allows_bind(address)`, `bind_address(config)`,
   `candidates(addresses, describe)` (the addresses that can serve as the bind address, used for the first choice and for
   the rebind), `check_destination(address, port, interface_address, prefix_len)`, `check_connection(address)` (a no-op for LAN; the
   `whois` owner check for Tailscale), `firewall_scope(info)` (the subnet for LAN, `100.64.0.0/10` on the Tailscale
   interface), `require_ready(address, allow_virtual)` and `wait_ready(address, timeout_s, ...)`.
 - **Discovery** (`net/discovery.py`). `LanDiscovery` receives announcements and member beacons over UDP multicast
-  and broadcast and yields each datagram once, with the paths that carried it. `net find` calls it directly. Tailscale
-  would read `tailscale status --json` instead. No interface type names this seam yet.
-- **Mode checks.** `network_enabled(config)` (the mode is in `ENABLED_MODES`, which holds `lan`) replaces every
+  and broadcast and yields each datagram once, with the paths that carried it. `TailscaleDiscovery` (`net/tailscale.py`)
+  reads `tailscale status --json` instead. `net find` picks one by the request: a request that carries a
+  `TailscaleDiscovery` takes its candidates from there. No interface type names this seam.
+- **Mode checks.** `network_enabled(config)` (the mode is in `ENABLED_MODES`, which holds `lan` and `tailscale`) replaces every
   `network != "lan"` check in the outbound, dispatch, listener, poller and messaging code.
-- Join and beacon payloads carry a `transport` field (`lan`). A receiver refuses a join announcement with another value.
+- UDP join announcements carry a `transport` field (`lan`), and a receiver refuses another value. The TLS join exchange
+  carries `transport` too, in the `state` frame, and only when it isn't `lan`.
 - **Same in both modes:** pinned TLS, device ids, commit-then-reveal, hubs, the equal member role, revoke, leave and key
   storage. **Different in Tailscale mode:** the discovery source, owner checks, the optional Remote Control token and
   approval, and the firewall scope.
-- Not yet behind the seam: the beacon service (`net/beaconsvc.py`) and the `net find` probe call the LAN implementation
-  directly, and the login task runs `net lan start`.
+- The beacon service (`net/beaconsvc.py`) calls the LAN implementation directly, because it runs only in LAN mode. The login
+  task, the self-update and the outbound restart run `net lan start`, which starts the listener in whichever mode is on.
 
 ### LAN mode limits
 
@@ -3086,7 +3143,7 @@ LAN mode stays the minimal option for one home or office network, with nothing e
 - Command summary: `net id | status | off | revoke <label> | rename <label> <new label>`;
   `net discoverable [on | off | status]`; `net auto-update [on | off | status]`; `net find`; `net hub create | join | status | leave`;
   `net folders [add | remove] [--outbound]`; `net networks [add | remove]`; and, for hand-trusted peers, `net trust`, `net grant`,
-  `net lan setup | on | start | stop`.
+  `net lan setup | on | start | stop`; `net tailscale on | off`.
 
 ### Certificates and keys
 

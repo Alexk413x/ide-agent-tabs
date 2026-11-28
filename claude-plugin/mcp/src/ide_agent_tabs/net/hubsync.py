@@ -27,7 +27,8 @@ from .hubstate import (
 from .names import default_label
 from .pairing import MAX_JOIN_MEMBERS, MemberRef, PairingError, canonical_pem, check_member_fields, private_source
 from .peers import LabelTaken, remove_peer, save_peer
-from .policy import DEFAULT_PORT, PeerGrant, PolicyError, grant_for, load_policy
+from .policy import DEFAULT_PORT, PeerGrant, PolicyError, grant_for, load_network_config, load_policy
+from .tailscale import is_tailscale_address
 
 SEND_TIMEOUT_S = 5.0
 WORKERS = 4
@@ -315,7 +316,7 @@ class HubSync:
         bump_generation: Callable[[], object],
         request: Request = send_request,
         spawn: Callable[[Callable[[], None]], None] = _start,
-        allow_address: Callable[[str], bool] = private_source,
+        allow_address: Callable[[str], bool] | None = None,
     ) -> None:
         self._home = home
         self._log = log
@@ -327,6 +328,13 @@ class HubSync:
         self._rotation_lock = threading.Lock()
         self._rotation_queue: list[str] = []
         self._rotation_running = False
+
+    def _address_allowed(self, address: str) -> bool:
+        if self._allow_address is not None:
+            return self._allow_address(address)
+        if load_network_config(self._home)[0].network == "tailscale" and is_tailscale_address(address):
+            return True
+        return private_source(address)
 
     def _state(self) -> HubState:
         try:
@@ -364,7 +372,7 @@ class HubSync:
             raise HubRefusal("invalid-member") from None
         if ref.device_id == local_device_id(self._home):
             return {"added": False}
-        if not self._allow_address(ref.address):
+        if not self._address_allowed(ref.address):
             raise HubRefusal("address-not-private")
         if self._state().is_removed(ref.device_id):
             raise HubRefusal("removed-member")

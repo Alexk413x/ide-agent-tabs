@@ -115,17 +115,38 @@ class NetworkConfigTest(unittest.TestCase):
         self.assertIn("network.color", warnings[0])
 
     def test_later_stage_and_unknown_modes_are_off_with_a_warning(self) -> None:
-        for mode in ("tailscale", "team", "LAN", 1, True):
+        for mode in ("team", "LAN", 1, True):
             with self.subTest(mode=mode):
                 write_config(self.home, {"network": mode, "bind": "192.168.0.9"})
                 config, warnings = policy.load_network_config(self.home)
                 self.assertEqual(config, NetworkConfig())
                 self.assertEqual(len(warnings), 1)
 
-    def test_tailscale_warning_names_the_later_stage(self) -> None:
+    def test_tailscale_mode_accepts_a_tailscale_bind(self) -> None:
         write_config(self.home, {"network": "tailscale", "bind": "100.100.1.1"})
-        _, warnings = policy.load_network_config(self.home)
-        self.assertTrue(any("later stage" in w for w in warnings))
+        config, warnings = policy.load_network_config(self.home)
+        self.assertEqual((config.network, config.bind, warnings), ("tailscale", "100.100.1.1", []))
+
+    def test_tailscale_mode_refuses_a_bind_outside_the_tailscale_range(self) -> None:
+        for bind in ("192.168.0.9", "10.0.0.5", "100.63.255.255", "100.128.0.0", "0.0.0.0", "127.0.0.1", "fd7a:115c:a1e0::1"):
+            with self.subTest(bind=bind):
+                write_config(self.home, {"network": "tailscale", "bind": bind})
+                config, warnings = policy.load_network_config(self.home)
+                self.assertEqual(config, NetworkConfig())
+                self.assertTrue(any("100.64.0.0/10" in w for w in warnings))
+
+    def test_lan_mode_still_refuses_a_tailscale_bind(self) -> None:
+        write_config(self.home, {"network": "lan", "bind": "100.100.1.1"})
+        config, warnings = policy.load_network_config(self.home)
+        self.assertEqual(config, NetworkConfig())
+        self.assertTrue(any("private IPv4" in w for w in warnings))
+
+    def test_off_keeps_either_kind_of_bind(self) -> None:
+        for bind in ("100.100.1.1", "192.168.0.9"):
+            with self.subTest(bind=bind):
+                write_config(self.home, {"network": "off", "bind": bind})
+                config, warnings = policy.load_network_config(self.home)
+                self.assertEqual((config.network, config.bind, warnings), ("off", bind, []))
 
     def test_invalid_values_fall_back_to_off(self) -> None:
         cases: list[dict[str, Any]] = [
