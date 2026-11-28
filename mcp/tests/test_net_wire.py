@@ -264,6 +264,15 @@ class RequestTest(unittest.TestCase):
         parsed = parse_request(request("send", {"to": "s", "text": "hi", "replyTo": "m-0123456789abcdef"}))
         self.assertEqual(parsed.body, SendBody(to="s", text="hi", reply_to="m-0123456789abcdef"))
 
+    def test_send_with_a_sender(self) -> None:
+        parsed = parse_request(request("send", {"to": "s", "text": "hi", "from": {"id": "remote_1", "name": "plugins-9c [00b806]"}}))
+        self.assertEqual(parsed.body, SendBody(to="s", text="hi", from_id="remote_1", from_name="plugins-9c [00b806]"))
+        parsed = parse_request(request("send", {"to": "s", "text": "hi", "from": {"id": "remote_1"}}))
+        self.assertEqual(parsed.body, SendBody(to="s", text="hi", from_id="remote_1"))
+        for sender in ({}, {"id": ""}, {"id": 1}, {"id": "s", "name": 2}, {"id": "s", "name": "n" * 129}, {"id": "s", "x": 1}, [], None):
+            with self.subTest(sender=sender):
+                self.assertRejects(request("send", {"to": "s", "text": "hi", "from": sender}))
+
     def test_send_text_limit(self) -> None:
         parse_request(request("send", {"to": "s", "text": "é" * 32000}))
         self.assertRejects(request("send", {"to": "s", "text": "x" * 32001}))

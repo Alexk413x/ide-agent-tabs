@@ -27,7 +27,7 @@ from ..shared.client import request as http_request
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, SERVER_LAUNCHER, parse_port
 from ..version import PACKAGE_VERSION, compare_versions
-from . import ingress, pairing, tls, wire
+from . import ingress, pairing, selfupdate, tls, wire
 from .beaconsvc import BeaconService, BeaconSettings, BeaconState
 from .client import (
     IDLE_S,
@@ -44,7 +44,7 @@ from .hubsync import introduce_member
 from .identity import format_digest
 from .interfaces import InterfaceInfo, interface_for, local_addresses
 from .migration import ERRORS as MIGRATION_ERRORS
-from .migration import Migrator
+from .migration import Migrator, post_to_sessions
 from .netid import GateState, current_network_id, fallback_of, gate_state
 from .notify import notify, powershell_path
 from .policy import NetworkConfig, PolicyError, load_network_config, load_policy, policy_path, update_network_section
@@ -59,6 +59,7 @@ SERVER_START_WAIT_MS = 3_000
 SERVER_START_INTERVAL_S = 10.0
 PROFILE_REFRESH_S = 30.0
 PROFILE_TIMEOUT_S = 15
+NETWORK_ID_GRACE_S = 120.0
 MONITOR_S = 1.0
 CONFIG_RECHECK_S = 5.0
 FAILURE_LOG_INTERVAL_S = 60.0
@@ -459,6 +460,8 @@ class Options:
     rebind_wait_s: float = REBIND_WAIT_S
     migration: Migrator | None = None
     build: Build | None = None
+    plugin_version: str = PACKAGE_VERSION
+    updater: selfupdate.JoinUpdater | None = None
 
 
 class Listener:
@@ -480,6 +483,7 @@ class Listener:
         self._network_id: str | None = None
         self._fallback_noted: str | None = None
         self._network_read_at = float("-inf")
+        self._unread_since: float | None = None
         self._join_sock: socket.socket | None = None
         self._join_thread: threading.Thread | None = None
         self._join_stop = threading.Event()
@@ -765,14 +769,30 @@ class Listener:
         if force or now - self._network_read_at >= PROFILE_REFRESH_S:
             self._network_read_at = now
             try:
-                self._network_id = self._options.network_id(self._bind)
+                found = self._options.network_id(self._bind)
             except (OSError, ValueError):
-                self._network_id = None
+                found = None
+            self._network_id = self._kept_network_id(found, now, force)
         self._note_fallback()
         state = gate_state(self._live.allowed_networks, self._network_id)
         if (state.allowed, state.reason) != (self._gate.allowed, self._gate.reason):
             self.log("this network is allowed" if state.allowed else f"network gate closed: {state.reason}")
         self._gate = state
+
+    def _kept_network_id(self, found: str | None, now: float, force: bool) -> str | None:
+        # A forced read follows a start or an address change, which can mean another network, so it never keeps the last id.
+        if found is not None or force or self._network_id is None:
+            if found is not None and self._unread_since is not None:
+                self.log("the id of this network can be read again")
+            self._unread_since = None
+            return found
+        if self._unread_since is None:
+            self._unread_since = now
+            self.log(f"the id of this network can't be read; the gate keeps the last id for up to {NETWORK_ID_GRACE_S:g} s")
+        if now - self._unread_since < NETWORK_ID_GRACE_S:
+            return self._network_id
+        self._unread_since = None
+        return None
 
     def _note_fallback(self) -> None:
         note = fallback_of(self._network_id)
@@ -825,6 +845,7 @@ class Listener:
                 "on_result": self._joined,
                 "allow_source": self._options.join_source_ok,
                 "log": self.log,
+                "plugin_version": self._options.plugin_version,
             },
             daemon=True,
         )
@@ -864,6 +885,12 @@ class Listener:
     def _joined(self, result: pairing.PairResult) -> None:
         if result.outcome not in ("paired", "incomplete", "probed"):
             self.log(f"join refused: {result.reason}")
+        if result.outcome in ("paired", "incomplete", "failed") and result.peer is not None:
+            if self._options.updater is None:
+                self._options.updater = selfupdate.JoinUpdater(
+                    self._home, self._options.plugin_version, self.log, post_to_sessions, self._options.server_port
+                )
+            self._options.updater.on_join(result.peer.device_id, result.peer.plugin_version)
 
     def _serve(self) -> None:
         assert self._sock is not None
@@ -946,7 +973,11 @@ class Listener:
             sock = as_socket(DeadlineSocket(tls_sock, time.monotonic() + REQUEST_TOTAL_S, IDLE_S))
             wire.check_hello(wire.parse_json(wire.read_frame(sock)))
             wire.write_frame(sock, wire.hello_frame())
-            reply = self._answer(peer, wire.parse_json(wire.read_frame(sock)))
+            try:
+                frame = wire.read_frame(sock)
+            except wire.ConnectionClosed:
+                return
+            reply = self._answer(peer, wire.parse_json(frame))
             if reply is not None:
                 wire.write_frame(sock, wire.encode(reply))
         except (OSError, wire.WireError, _Refused) as error:

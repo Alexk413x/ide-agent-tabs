@@ -12,12 +12,15 @@ from .beacon import (
     Inbox,
     MemberBeacon,
     MemberCheck,
+    Solicitation,
     Wire,
+    build_solicit,
 )
 
 REMEMBERED = "remembered"
 PROBE = "probe"
 SOURCE_ORDER = (REMEMBERED, MULTICAST, BROADCAST, PROBE)
+SOLICIT_AGAIN_S = 2.5
 
 
 def source_label(paths: frozenset[str] | set[str]) -> str:
@@ -34,6 +37,8 @@ class LanDiscovery:
         make_endpoint: Callable[[Wire], Endpoint] = Endpoint,
         clock: Callable[[], float] = time.time,
         poll_s: float = 0.25,
+        solicit: bool = True,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.wire = wire
         self.device_id = device_id
@@ -41,12 +46,17 @@ class LanDiscovery:
         self.datagrams = 0
         self.invalid = 0
         self.ignored_beacons = 0
+        self.own = 0
+        self.solicitations = 0
+        self.solicits_sent = 0
         self.group_joined: bool | None = None
         self.setup_notes: tuple[str, ...] = ()
         self._hub_view = hub_view
         self._make_endpoint = make_endpoint
         self._clock = clock
         self._poll_s = poll_s
+        self._solicit = solicit
+        self._monotonic = monotonic
         self._inbox: Inbox | None = None
 
     def paths_for(self, identifier: str) -> frozenset[str]:
@@ -63,13 +73,21 @@ class LanDiscovery:
         inbox = Inbox(self.wire, self.device_id)
         self._inbox = inbox
         check = MemberCheck(self._hub_view, self._clock) if self._hub_view is not None else None
+        solicit_again = self._send_solicit(endpoint)
         try:
             while not until():
+                if solicit_again is not None and self._monotonic() >= solicit_again:
+                    self._send_solicit(endpoint)
+                    solicit_again = None
                 datagram = endpoint.recv(self._poll_s)
                 if datagram is not None:
                     self.datagrams += 1
                 heard = inbox.accept(datagram) if datagram is not None else None
                 self.invalid = inbox.rejected
+                self.own = inbox.own
+                if heard is not None and isinstance(heard.announcement, Solicitation):
+                    self.solicitations += 1
+                    heard = None
                 if (
                     heard is not None
                     and isinstance(heard.announcement, MemberBeacon)
@@ -80,3 +98,12 @@ class LanDiscovery:
                 yield heard
         finally:
             endpoint.close()
+
+    def _send_solicit(self, endpoint: Endpoint) -> float | None:
+        if not self._solicit:
+            return None
+        result = endpoint.send(build_solicit())
+        if result.sent:
+            self.solicits_sent += 1
+        self.setup_notes += tuple(f"solicitation not sent on {error}" for error in result.errors)
+        return self._monotonic() + SOLICIT_AGAIN_S

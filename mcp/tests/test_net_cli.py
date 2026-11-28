@@ -646,6 +646,27 @@ class LanTest(CliTestCase):
         self.assertEqual(harness.run("lan", "on", "--bind", "10.0.0.5"), 1)
         self.assertIn("could not be started", harness.errors)
 
+    def test_start_waits_for_a_listener_that_writes_its_file_late(self) -> None:
+        def late(home: str, server_port: int) -> int:
+            harness.spawned.append((home, server_port))
+            threading.Timer(0.5, harness.write_listener_file, (home,)).start()
+            return os.getpid()
+
+        self.lan_config()
+        harness = Harness(self, self.a, spawn=late)
+        self.assertEqual(harness.run("lan", "start"), 0, harness.errors)
+        self.assertIn("The listener runs", harness.text)
+
+    def test_the_default_start_wait_covers_a_slow_listener_start(self) -> None:
+        self.assertGreaterEqual(Services(home=self.a).start_wait_s, 15)
+
+    def test_a_listener_still_starting_at_the_bound_is_not_reported_as_failed(self) -> None:
+        self.lan_config()
+        harness = Harness(self, self.a, spawn=lambda _home, _port: os.getpid(), start_wait_s=0.2)
+        self.assertEqual(harness.run("lan", "start"), 1)
+        self.assertIn(f"the listener (pid {os.getpid()}) has not finished starting after 0.2 s", harness.errors)
+        self.assertNotIn("did not start", harness.errors)
+
     def test_start_refuses_when_the_network_is_off(self) -> None:
         self.assertEqual(self.h.run("lan", "start"), 1)
         self.assertIn("off", self.h.errors)
@@ -828,7 +849,9 @@ class StatusAndDispatchTest(CliTestCase):
 
     def test_net_is_registered_in_the_agent_tabs_command(self) -> None:
         self.assertEqual(top_cli.COMMANDS["net"], "ide_agent_tabs.net.cli")
-        self.assertIn("net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|networks|find>", top_cli.usage())
+        self.assertIn(
+            "net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|auto-update|networks|find>", top_cli.usage()
+        )
         captured = io.StringIO()
         with mock.patch.dict(os.environ, {"IDE_AGENT_TABS_HOME": self.a}), contextlib.redirect_stdout(captured):
             self.assertEqual(top_cli.main(["net", "status"]), 0)
@@ -875,6 +898,34 @@ class SetNetworkTest(unittest.TestCase):
         Path(home, "config.json").write_text(json.dumps({"network": []}), encoding="utf-8")
         with self.assertRaisesRegex(cli.CliError, "must be an object"):
             cli.set_network(home, {"discoverable": True})
+
+
+class LauncherSyncTest(unittest.TestCase):
+    def test_every_command_brings_the_login_launcher_up_to_the_installed_plugin(self) -> None:
+        home = make_root(self)
+        homes: list[str] = []
+
+        def sync(target: str) -> str | None:
+            homes.append(target)
+            return "The login task's launcher now starts version 0.14.3."
+
+        harness = Harness(self, home, sync_launcher=sync)
+        self.assertEqual(harness.run("status"), 0)
+        self.assertEqual(homes, [home])
+        self.assertIn("The login task's launcher now starts version 0.14.3.", harness.errors)
+        self.assertNotIn("launcher now", harness.text)
+        self.assertIn("launcher ok=1", Path(log_file(home, "cli.log")).read_text(encoding="utf-8"))
+
+    def test_a_refused_rewrite_warns_and_the_command_still_runs(self) -> None:
+        home = make_root(self)
+
+        def refuse(_home: str) -> str | None:
+            raise LoginTaskError("the launcher was not updated because other users could change the installed plugin")
+
+        harness = Harness(self, home, sync_launcher=refuse)
+        self.assertEqual(harness.run("status"), 0)
+        self.assertIn("warning: the launcher was not updated", harness.errors)
+        self.assertIn("network: off", harness.text)
 
 
 class DefaultLabelTest(unittest.TestCase):

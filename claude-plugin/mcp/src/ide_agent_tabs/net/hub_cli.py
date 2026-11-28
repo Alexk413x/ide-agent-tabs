@@ -7,7 +7,8 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from . import elevation, hubsync, ingress, pairing, tls
+from ..version import compare_versions
+from . import elevation, hubsync, ingress, pairing, selfupdate, tls
 from .beacon import wire_for
 from .cli import (
     CliError,
@@ -20,8 +21,10 @@ from .cli import (
     listener_lines,
     make_parser,
     refuse_remote_origin,
+    renewed_services,
     report_folders,
     set_network,
+    start_listener,
 )
 from .client import NetClientError, load_identity, local_device_id, send_request
 from .find import FindRequest, FindResult, device_lines, find_devices, not_found_text
@@ -218,23 +221,95 @@ def _dial_one(svc: Services, deps: PairDeps, prepared: Prepared, device: str, ad
     return deps.dial_join(target, PAIRING_PORT, peer_id, prepared.identity, handler, pairing.Limits(svc.home), timeouts=deps.timeouts)
 
 
+@dataclass
+class _Versions:
+    own: str
+    attempted: bool = False
+
+
+def _update_here(svc: Services, versions: _Versions, theirs: str) -> Services | None:
+    command = svc.update_command()
+    if versions.attempted:
+        svc.out(selfupdate.manual_text(command))
+        return None
+    versions.attempted = True
+    if command is None:
+        svc.out(selfupdate.manual_text(None))
+        return None
+    svc.out(f"Updating this machine with: {command.display}")
+    svc.record("self-update", attempt=1, theirs=theirs, mine=versions.own)
+    outcome = selfupdate.run_update(command, svc.update_runner)
+    svc.record("self-update", ok=int(outcome.ok))
+    if not outcome.ok:
+        svc.err(f"warning: the update failed: {outcome.summary}")
+        svc.out(selfupdate.manual_text(command))
+        return None
+    svc.out(selfupdate.RESTART_NOTE)
+    fresh = svc.fresh_install()
+    if fresh is None or compare_versions(fresh.version, versions.own) <= 0:
+        svc.err(
+            "warning: no newer install of ide-agent-tabs was found, so the listener keeps its current build. Run agent-tabs net lan start in a new session."
+        )
+        return None
+    try:
+        renewed = renewed_services(svc, fresh)
+    except OSError as error:
+        svc.err(f"warning: the new install cannot be read ({error}). Run agent-tabs net lan start in a new session.")
+        return None
+    versions.own = fresh.version
+    if live_listener(renewed.home) is not None:
+        start_listener(renewed)
+    return renewed
+
+
+def _compare_versions(svc: Services, versions: _Versions, where: str, peer: pairing.PeerInfo) -> Services | None:
+    theirs = peer.plugin_version
+    if theirs is None:
+        svc.out(
+            f"{where}: the other machine reports no ide-agent-tabs version, so it runs a release older than this one "
+            "and cannot update itself. Update ide-agent-tabs on that machine."
+        )
+        return None
+    order = compare_versions(theirs, versions.own)
+    if order == 0:
+        return None
+    svc.out(f"{where}: the other machine runs ide-agent-tabs {theirs} and this machine runs {versions.own}.")
+    if order < 0:
+        svc.out(
+            "The other machine must update. It updates itself when its unattended update is on; otherwise run the update on that machine."
+        )
+        return None
+    return _update_here(svc, versions, theirs)
+
+
+def _dial_attempt(svc: Services, deps: PairDeps, prepared: Prepared, device: str, address: str) -> tuple[PairResult, list[str]]:
+    introduced: list[str] = []
+    try:
+        return _dial_one(svc, deps, prepared, device, address, introduced), introduced
+    except pairing.PairingError as error:
+        return PairResult("failed", str(error)), introduced
+
+
 def _join_all(svc: Services, deps: PairDeps, devices: Sequence[str], bind: str | None, folder: str | None) -> int:
     prepared = prepare(svc, deps, bind)
     network_id = _require_network_id(svc, prepared.bind)
     joined, complete = 0, True
+    versions = _Versions(svc.plugin_version)
     for device, address in _resolve(svc, prepared, devices):
         if address is None:
             svc.err(f"{device[:15]}: did not join: no verified device with that id was found. Nothing was saved on this machine for it.")
             continue
-        introduced: list[str] = []
-        try:
-            result = _dial_one(svc, deps, prepared, device, address, introduced)
-        except pairing.PairingError as error:
-            result = PairResult("failed", str(error))
+        where = f"{device[:15]}@{address}"
+        result, introduced = _dial_attempt(svc, deps, prepared, device, address)
+        if result.peer is not None:
+            renewed = _compare_versions(svc, versions, where, result.peer)
+            if renewed is not None:
+                svc = renewed
+                if result.outcome == "failed":
+                    result, introduced = _dial_attempt(svc, deps, prepared, device, address)
         for newcomer in introduced:
             report = hubsync.introduce_member(svc.home, newcomer, svc.member_request or send_request)
             svc.record("hub-introduce", device=newcomer, told=len(report.told), queued=len(report.queued))
-        where = f"{device[:15]}@{address}"
         if result.outcome in ("paired", "incomplete") and result.peer is not None:
             peer = grant_for(load_policy(svc.home), result.peer.device_id)
             hub = load_policy(svc.home).hub

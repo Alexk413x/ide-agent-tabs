@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Mapping
 
 from ..home import agent_tabs_home
@@ -20,6 +21,13 @@ def _reason(raw: bytes) -> object:
     return data.get("reason") if isinstance(data, dict) else None
 
 
+def _sync_login_launcher(home: str) -> None:
+    from ..net.login_task import LoginTaskError, sync_launcher
+
+    with contextlib.suppress(LoginTaskError, OSError):
+        sync_launcher(home)
+
+
 def run(event: str, env: Mapping[str, str], launcher: str, stdin: bytes | None = None, version: str = PACKAGE_VERSION) -> str | None:
     port = parse_port(env.get(PORT_OPTION_ENV)) or DEFAULT_PORT
     home = agent_tabs_home(env)
@@ -33,4 +41,5 @@ def run(event: str, env: Mapping[str, str], launcher: str, stdin: bytes | None =
     if event != "SessionStart":
         return None
     ensured = ensure_server(server_command(launcher, port), port, home, version, env=env)
+    _sync_login_launcher(home)
     return None if ensured.problem is None else f"Agent Tabs: {ensured.problem}."

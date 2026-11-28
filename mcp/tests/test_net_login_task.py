@@ -203,6 +203,71 @@ class LauncherTest(unittest.TestCase):
             self.assertEqual(done.returncode, 2, args)
 
 
+class SyncLauncherTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.box = Sandbox(self)
+        self.old = os.path.join(self.box.install, "0.11.0", "agent_tabs.py")
+        os.makedirs(os.path.dirname(self.old))
+        Path(self.old).write_text("pass\n", encoding="utf-8")
+
+    def target(self) -> login_task.LauncherTarget:
+        return login_task.launcher_target(login_task.launcher_path(self.box.home).read_text(encoding="utf-8"))
+
+    def write_unversioned(self, script: str) -> None:
+        text = login_task.launcher_source(self.box.home, script)
+        text = "".join(line for line in text.splitlines(keepends=True) if not line.startswith("VERSION = "))
+        login_task.launcher_path(self.box.home).write_text(text, encoding="utf-8")
+
+    def test_the_launcher_records_its_version(self) -> None:
+        login_task.refresh_launcher(self.box.home, self.box.launch_script, "0.14.3")
+        self.assertEqual(self.target(), login_task.LauncherTarget("0.14.3", self.box.launch_script))
+
+    def test_no_launcher_means_no_login_task_and_nothing_is_written(self) -> None:
+        self.assertIsNone(login_task.sync_launcher(self.box.home, self.box.env("win32"), "0.14.3"))
+        self.assertFalse(login_task.launcher_path(self.box.home).exists())
+
+    def test_a_launcher_of_an_older_version_is_rewritten_to_the_installed_plugin(self) -> None:
+        login_task.refresh_launcher(self.box.home, self.old, "0.11.0")
+        message = login_task.sync_launcher(self.box.home, self.box.env("win32"), "0.14.3")
+        self.assertIsNotNone(message)
+        assert message is not None
+        self.assertIn("0.14.3", message)
+        self.assertIn(self.old, message)
+        self.assertEqual(self.target(), login_task.LauncherTarget("0.14.3", self.box.launch_script))
+        self.assertEqual(check_private(login_task.launcher_path(self.box.home)), [])
+
+    def test_a_launcher_that_records_no_version_is_rewritten(self) -> None:
+        login_task.refresh_launcher(self.box.home, self.old)
+        self.write_unversioned(self.old)
+        self.assertEqual(self.target().version, None)
+        self.assertIsNotNone(login_task.sync_launcher(self.box.home, self.box.env("win32"), "0.14.3"))
+        self.assertEqual(self.target(), login_task.LauncherTarget("0.14.3", self.box.launch_script))
+
+    def test_a_launcher_whose_script_is_gone_is_rewritten_even_when_newer(self) -> None:
+        login_task.refresh_launcher(self.box.home, self.old, "0.15.0")
+        os.remove(self.old)
+        self.assertIsNotNone(login_task.sync_launcher(self.box.home, self.box.env("win32"), "0.14.3"))
+        self.assertEqual(self.target(), login_task.LauncherTarget("0.14.3", self.box.launch_script))
+
+    def test_a_current_or_newer_launcher_is_left_alone(self) -> None:
+        for version in ("0.14.3", "0.15.0"):
+            login_task.refresh_launcher(self.box.home, self.old, version)
+            before = login_task.launcher_path(self.box.home).read_bytes()
+            self.assertIsNone(login_task.sync_launcher(self.box.home, self.box.env("win32"), "0.14.3"), version)
+            self.assertEqual(login_task.launcher_path(self.box.home).read_bytes(), before)
+
+    def test_an_install_folder_others_can_change_is_refused_and_the_launcher_kept(self) -> None:
+        login_task.refresh_launcher(self.box.home, self.old, "0.11.0")
+        self.box.entries = [AclEntry(0, 0, MODIFY, SID), AclEntry(0, 0, MODIFY, "S-1-1-0")]
+        with self.assertRaises(LoginTaskError):
+            login_task.sync_launcher(self.box.home, self.box.env("win32"), "0.14.3")
+        self.assertEqual(self.target(), login_task.LauncherTarget("0.11.0", self.old))
+
+    def test_a_hostile_launcher_text_names_no_target(self) -> None:
+        text = "LAUNCH_SCRIPT = __import__('os').getcwd()\nVERSION = 99\n"
+        self.assertEqual(login_task.launcher_target(text), login_task.LauncherTarget(None, None))
+
+
 class WindowsTaskTest(unittest.TestCase):
     SCHTASKS = os.path.join(WINDOWS, "System32", "schtasks.exe")
 

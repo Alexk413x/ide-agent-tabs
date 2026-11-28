@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import sys
 import unittest
 from pathlib import Path
 from typing import Any
@@ -15,12 +16,14 @@ from ide_agent_tabs.net.find import FindRequest, FindResult, FoundDevice
 from ide_agent_tabs.net.hub_cli import PairDeps
 from ide_agent_tabs.net.hubstate import read_hub_state
 from ide_agent_tabs.net.interfaces import InterfaceError, InterfaceInfo
-from ide_agent_tabs.net.listener import listener_file
+from ide_agent_tabs.net.listener import Build, listener_file
 from ide_agent_tabs.net.netid import tagged_network_id
-from ide_agent_tabs.net.pairing import PairResult
+from ide_agent_tabs.net.pairing import PairResult, PeerInfo
 from ide_agent_tabs.net.policy import Hub, PeerGrant, Policy, load_network_config, load_policy, policy_path, save_policy
+from ide_agent_tabs.net.selfupdate import Install, UpdateCommand
 from ide_agent_tabs.net.store import NetStore
 from ide_agent_tabs.profiles import TAB_ID_ENV
+from ide_agent_tabs.version import PACKAGE_VERSION
 from net_support import HAS_OPENSSL, OPENSSL, create_home, device_of, make_root
 from test_net_cli import NEEDS, Harness
 from test_net_join import FAST, HUB_ID, JoinServer, make_hub, reset, set_name
@@ -73,6 +76,7 @@ class HubCliCase(unittest.TestCase):
         self.user_home = make_root(self, "iat-hub-user-")
         self.session = os.path.join(self.user_home, "code", "app")
         os.makedirs(self.session)
+        self.own_version = PACKAGE_VERSION
         self.h = self.harness(self.a)
 
     def deps(self) -> PairDeps:
@@ -94,9 +98,15 @@ class HubCliCase(unittest.TestCase):
             "is_remote_origin": lambda _home: self.remote.value,
             "user_home": self.user_home,
             "find": self.fake_find,
+            "plugin_version": self.own_version,
+            "update_command": lambda: None,
+            "update_runner": self.refuse_real_update,
         }
         values.update(overrides)
         return Harness(self, home, **values)
+
+    def refuse_real_update(self, *args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(f"a test ran an update command: {args!r}")
 
     def fake_find(self, request: FindRequest) -> FindResult:
         self.requests.append(request)
@@ -120,7 +130,7 @@ class HubCliCase(unittest.TestCase):
         target = self.targets.get(address)
         if target is None:
             return PairResult("failed", f"cannot connect to {address}:{port}: connection refused")
-        return pairing.dial_join("127.0.0.1", target, peer_id, *args, **kwargs)
+        return pairing.dial_join("127.0.0.1", target, peer_id, *args, plugin_version=self.own_version, **kwargs)
 
     def assertConfigUntouched(self) -> None:
         self.assertEqual(json.loads(Path(self.a, "config.json").read_text(encoding="utf-8")), {"network": {"deviceName": "alpha"}})
@@ -236,6 +246,19 @@ class DiscoverableTest(HubCliCase):
         self.assertIn("network gate: open", self.h.text)
         self.assertNotIn("serving joins: yes", self.h.text)
         self.assertIn("serving joins: no (the running listener reports that it serves no joins, although discoverable is on)", self.h.text)
+
+    def test_status_says_starting_in_the_first_seconds_after_a_start(self) -> None:
+        self.h.run("discoverable", "on")
+        self.h.write_listener_file(self.a, startedMs=1_000_000, joins=False)
+        self.h.services = dataclasses.replace(self.h.services, now_ms=lambda: 1_004_000)
+        self.h.out.clear()
+        self.assertEqual(self.h.run("discoverable", "status"), 0)
+        self.assertIn("serving joins: starting (the listener started 4 s ago)", self.h.text)
+        self.assertNotIn("although discoverable is on", self.h.text)
+        self.h.services = dataclasses.replace(self.h.services, now_ms=lambda: 1_000_000 + cli.JOINS_START_S * 1000)
+        self.h.out.clear()
+        self.h.run("discoverable", "status")
+        self.assertIn("although discoverable is on", self.h.text)
 
     def test_status_names_a_listener_of_another_build_and_how_to_restart_it(self) -> None:
         self.h.run("discoverable", "on")
@@ -530,7 +553,223 @@ class HubJoinTest(HubCliCase):
         self.assertIsNone(read_hub_state(self.a))
 
 
+class Completed:
+    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+class JoinUpdateTest(HubCliCase):
+    NEW_ROOT = os.path.join(os.sep, "plugins", "ide-agent-tabs", "9.0.0")
+    COMMAND = UpdateCommand(
+        (sys.executable, "plugin", "update", "ide-agent-tabs@market"),
+        "tool plugin marketplace update market && tool plugin update ide-agent-tabs@market",
+        (sys.executable, "plugin", "marketplace", "update", "market"),
+    )
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.own_version = "0.14.3"
+        self.calls: list[list[str]] = []
+        self.runner_result = Completed()
+        self.launchers: list[str] = []
+        self.install: Install | None = Install(self.NEW_ROOT, "9.0.0")
+        self.command: UpdateCommand | None = self.COMMAND
+        self.h = self.update_harness()
+
+    def run_update(self, argv: list[str], **kwargs: Any) -> Completed:
+        self.calls.append(argv)
+        return self.runner_result
+
+    def spawn_from(self, home: str, port: int, launcher: str) -> int | None:
+        self.launchers.append(launcher)
+        self.h.spawned.append((home, port))
+        self.h.write_listener_file(home, version="9.0.0", build="9.0.0-bbbbbbbbbbbb")
+        return os.getpid()
+
+    def update_harness(self, **overrides: Any) -> Harness:
+        values: dict[str, Any] = {
+            "update_command": lambda: self.command,
+            "update_runner": self.run_update,
+            "fresh_install": lambda: self.install,
+            "install_build": lambda install: Build(install.version, f"{install.version}-bbbbbbbbbbbb"),
+            "spawn_from": self.spawn_from,
+        }
+        values.update(overrides)
+        return self.harness(self.a, **values)
+
+    def join_newer(self, version: str = "9.0.0") -> JoinServer:
+        make_hub(self.b)
+        server = JoinServer(self, self.b, plugin_version=version)
+        self.targets[PEER] = server.port
+        self.announce(self.b)
+        return server
+
+    def test_a_newer_machine_updates_this_one_restarts_the_listener_and_the_join_stands(self) -> None:
+        server = self.join_newer()
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
+        self.assertEqual(server.wait_result().outcome, "paired")
+        self.assertEqual([call[1:] for call in self.calls], [list(self.COMMAND.refresh or ())[1:], list(self.COMMAND.argv)[1:]])
+        for part in (
+            "the other machine runs ide-agent-tabs 9.0.0 and this machine runs 0.14.3.",
+            f"Updating this machine with: {self.COMMAND.display}",
+            "Open sessions keep the old skill text and tool list until they restart.",
+            "joined the hub home as bravo",
+        ):
+            self.assertIn(part, self.h.text)
+        self.assertEqual(self.launchers, [os.path.join(self.NEW_ROOT, "mcp", "launch", "net_listener.py")])
+        self.assertEqual(self.h.spawned, [(self.a, self.h.services.server_port)])
+        log = Path(self.a, "net", "cli.log").read_text(encoding="utf-8")
+        self.assertIn("self-update attempt=1 theirs=9.0.0 mine=0.14.3", log)
+        self.assertIn("self-update ok=1", log)
+
+    def test_a_running_listener_of_the_old_build_restarts_on_the_new_one(self) -> None:
+        self.join_newer()
+        self.h.write_listener_file(self.a, version="0.14.3", build="0.14.3-aaaaaaaaaaaa", joins=None)
+        thread = self.h.answer_stop()
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
+        thread.join(5)
+        self.assertIn("Restarting it.", self.h.text)
+        self.assertEqual(self.launchers, [os.path.join(self.NEW_ROOT, "mcp", "launch", "net_listener.py")])
+
+    def test_a_join_that_failed_is_tried_once_more_after_the_update(self) -> None:
+        self.join_newer()
+        attempts: list[int] = []
+        real = self.dial_join
+
+        def flaky(address: str, port: int, peer_id: str, *args: Any, **kwargs: Any) -> PairResult:
+            attempts.append(1)
+            if len(attempts) == 1:
+                return PairResult(
+                    "failed", "the other machine's protocol version is not supported", PeerInfo("bravo", address, peer_id, b"x", "9.0.0")
+                )
+            return real(address, port, peer_id, *args, **kwargs)
+
+        self.h = self.update_harness(pair=dataclasses.replace(self.deps(), dial_join=flaky))
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual([m.label for m in self.members(self.a)], ["bravo"])
+
+    def test_a_failed_join_is_not_retried_when_the_update_fails(self) -> None:
+        self.join_newer()
+        attempts: list[int] = []
+
+        def failing(address: str, port: int, peer_id: str, *args: Any, **kwargs: Any) -> PairResult:
+            attempts.append(1)
+            return PairResult("failed", "the join failed", PeerInfo("bravo", address, peer_id, b"x", "9.0.0"))
+
+        self.runner_result = Completed(1, "", "network unreachable")
+        self.h = self.update_harness(pair=dataclasses.replace(self.deps(), dial_join=failing))
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 1)
+        self.assertEqual(len(attempts), 1)
+
+    def test_a_failed_update_prints_the_manual_command_and_the_join_goes_on(self) -> None:
+        self.join_newer()
+        self.runner_result = Completed(1, "", "network unreachable")
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
+        self.assertIn("warning: the update failed: exit 1: network unreachable", self.h.errors)
+        self.assertIn(f"To update ide-agent-tabs, run: {self.COMMAND.display}", self.h.text)
+        self.assertNotIn("Open sessions keep", self.h.text)
+        self.assertEqual(self.launchers, [])
+        self.assertIn("joined the hub home as bravo", self.h.text)
+        self.assertIn("self-update ok=0", Path(self.a, "net", "cli.log").read_text(encoding="utf-8"))
+
+    def test_an_install_with_no_command_prints_the_generic_text_and_runs_nothing(self) -> None:
+        self.join_newer()
+        self.command = None
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
+        self.assertIn("Update ide-agent-tabs with the client that installed it.", self.h.text)
+        self.assertEqual(self.calls, [])
+
+    def test_an_update_that_installs_nothing_newer_keeps_the_listener_build(self) -> None:
+        self.join_newer()
+        self.install = Install(self.NEW_ROOT, "0.14.3")
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
+        self.assertIn("no newer install", self.h.errors)
+        self.assertEqual(self.launchers, [])
+
+    def test_an_older_machine_is_told_to_update_itself_and_nothing_runs_here(self) -> None:
+        self.join_newer("0.1.0")
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
+        self.assertIn("the other machine runs ide-agent-tabs 0.1.0 and this machine runs 0.14.3.", self.h.text)
+        self.assertIn("The other machine must update. It updates itself when its unattended update is on", self.h.text)
+        self.assertEqual(self.calls, [])
+
+    def test_a_machine_that_reports_no_version_is_told_to_update(self) -> None:
+        make_hub(self.b)
+        self.serve(self.b)
+        self.announce(self.b)
+        with mock.patch.object(pairing, "_LISTEN_MODES", (pairing.JOIN_MODE, pairing.PROBE_MODE)):
+            self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
+        self.assertIn("reports no ide-agent-tabs version", self.h.text)
+        self.assertIn("cannot update itself", self.h.text)
+        self.assertEqual(self.calls, [])
+
+    def test_the_same_version_prints_nothing_about_versions(self) -> None:
+        self.join_newer("0.14.3")
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 0, self.h.errors)
+        self.assertNotIn("ide-agent-tabs 0.14.3", self.h.text)
+        self.assertEqual(self.calls, [])
+
+    def test_create_with_updates_once_for_several_newer_machines(self) -> None:
+        make_hub(self.b)
+        make_hub(self.c)
+        for home, address, name in ((self.b, PEER, "bravo"), (self.c, "192.168.50.21", "charlie")):
+            self.targets[address] = JoinServer(self, home, plugin_version="9.0.0").port
+            self.announce(home, address, name)
+        code = self.h.run("hub", "create", "--name", "home", "--with", device_of(self.b), "--with", device_of(self.c))
+        self.assertEqual(code, 0, self.h.errors)
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(self.h.text.count("Updating this machine with"), 1)
+
+    def test_a_remote_session_cannot_start_an_update_through_a_join(self) -> None:
+        self.join_newer()
+        self.remote.value = True
+        self.assertEqual(self.h.run("hub", "join", device_of(self.b)), 1)
+        self.assertEqual((self.calls, self.dialed), ([], []))
+
+
+class AutoUpdateTest(HubCliCase):
+    def test_status_defaults_to_on_and_shows_the_command(self) -> None:
+        command = UpdateCommand(("claude", "plugin", "update", "ide-agent-tabs@market"), "claude plugin update ide-agent-tabs@market")
+        h = self.harness(self.a, update_command=lambda: command)
+        self.assertEqual(h.run("auto-update"), 0, h.errors)
+        self.assertEqual(h.out, ["unattended update: on", "update command: claude plugin update ide-agent-tabs@market"])
+        h.out.clear()
+        self.assertEqual(self.h.run("auto-update", "status"), 0)
+        self.assertEqual(self.h.out, ["unattended update: on", "update command: none known for this install"])
+
+    def test_off_and_on_change_network_auto_update_and_keep_the_other_keys(self) -> None:
+        Path(self.a, "config.json").write_text(json.dumps({"theme": "dark", "network": {"deviceName": "alpha", "port": 47829}}))
+        self.assertEqual(self.h.run("auto-update", "off"), 0, self.h.errors)
+        saved = json.loads(Path(self.a, "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["network"], {"deviceName": "alpha", "port": 47829, "autoUpdate": False})
+        self.assertEqual(saved["theme"], "dark")
+        self.h.out.clear()
+        self.h.run("auto-update", "status")
+        self.assertIn("unattended update: off", self.h.text)
+        self.assertEqual(self.h.run("auto-update", "on"), 0, self.h.errors)
+        self.assertIs(self.config()["autoUpdate"], True)
+        log = Path(self.a, "net", "cli.log").read_text(encoding="utf-8")
+        self.assertIn("auto-update state=off", log)
+        self.assertIn("auto-update state=on", log)
+
+    def test_a_session_opened_by_another_machine_cannot_change_the_switch(self) -> None:
+        remote = self.harness(self.a, is_remote_origin=lambda _home: True)
+        for action in ("on", "off"):
+            self.assertEqual(remote.run("auto-update", action), 1)
+        self.assertIn(REFUSAL, remote.errors)
+        self.assertConfigUntouched()
+        self.assertEqual(remote.run("auto-update", "status"), 0)
+
+    def test_usage_errors(self) -> None:
+        self.assertEqual(self.h.run("auto-update", "maybe"), 2)
+        self.assertEqual(self.h.run("auto-update", "on", "extra"), 2)
+
+
 GUARDED: list[tuple[str, ...]] = [
+    ("auto-update", "on"),
+    ("auto-update", "off"),
     ("folders", "add", "/x"),
     ("folders", "remove", "/x"),
     ("networks", "add"),
@@ -546,6 +785,8 @@ GUARDED: list[tuple[str, ...]] = [
     ("grant", "laptop", "--agent", "claude"),
 ]
 READ_ONLY: list[tuple[str, ...]] = [
+    ("auto-update",),
+    ("auto-update", "status"),
     ("status",),
     ("folders",),
     ("networks",),

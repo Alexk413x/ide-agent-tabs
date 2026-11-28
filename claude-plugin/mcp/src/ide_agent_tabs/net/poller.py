@@ -10,7 +10,7 @@ from typing import Any
 from ..clock import now_ms as current_ms
 from . import wire
 from .client import NetClientError, send_request
-from .policy import NetworkConfig, Policy, PolicyError, load_network_config, load_policy
+from .policy import NetworkConfig, Policy, PolicyError, load_network_config, load_policy, policy_path
 from .store import NetStore
 from .transport import network_enabled
 
@@ -18,6 +18,7 @@ PERIOD_S = 60.0
 DEADLINE_S = 30.0
 MAX_CONCURRENT = 8
 MIN_WAIT_S = 0.05
+POLICY_CHECK_S = 2.0
 
 Fetch = Callable[..., "dict[str, Any]"]
 
@@ -61,6 +62,7 @@ class Poller:
         period_s: float = PERIOD_S,
         deadline_s: float = DEADLINE_S,
         max_concurrent: int = MAX_CONCURRENT,
+        policy_check_s: float = POLICY_CHECK_S,
     ) -> None:
         self.home = home
         self._fetch = fetch
@@ -73,6 +75,7 @@ class Poller:
         self._period_s = period_s
         self._deadline_s = deadline_s
         self._max_concurrent = max_concurrent
+        self._policy_check_s = policy_check_s
         self._lock = threading.Lock()
         self._last: dict[str, float] = {}
         self._inflight: set[str] = set()
@@ -131,6 +134,7 @@ class Poller:
         last_error: str | None = None
         while not self._stop.is_set():
             self._wake.clear()
+            mark = self._policy_mark()
             try:
                 self.poll_once()
                 last_error = None
@@ -139,7 +143,25 @@ class Poller:
                 if text != last_error:
                     self._log(f"net: the inventory poll failed: {text}")
                 last_error = text
-            self._wake.wait(self._next_wait_s())
+            self._sleep(self._next_wait_s(), mark)
+
+    def _policy_mark(self) -> tuple[int, int] | None:
+        try:
+            found = os.stat(policy_path(self.home))
+        except OSError:
+            return None
+        return (found.st_mtime_ns, found.st_size)
+
+    def _sleep(self, wait_s: float, mark: tuple[int, int] | None) -> None:
+        # A join or an introduction saves the new member in another process, so the poller watches the policy file
+        # to ask a new member for its inventory at once instead of on the next round.
+        end = time.monotonic() + wait_s
+        while not self._stop.is_set():
+            left = end - time.monotonic()
+            if left <= 0 or self._wake.wait(min(left, self._policy_check_s)):
+                return
+            if self._policy_mark() != mark:
+                return
 
     def _peers(self) -> list[str]:
         config, _ = self._load_config(self.home)

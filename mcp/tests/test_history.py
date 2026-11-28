@@ -32,6 +32,23 @@ def json_length(value: Any) -> int:
     return utf16_len(stringify(value))
 
 
+class RemoteSenderHistoryTest(unittest.TestCase):
+    def test_a_sender_on_another_machine_is_a_history_and_a_count_by_its_address(self) -> None:
+        home = temp_home(self)
+        b = session(self, home, "tab-b", "claude", 2)
+        party = {"id": "remote-1@laptop", "name": "plugins-9c [00b806]@laptop", "agent": "remote", "path": ""}
+        sent = store.send_message(home, {"from": party, "to": "tab-b", "text": "from the laptop"})
+        old = store.send_message(
+            home, {"from": {"id": "laptop-remote", "agent": "remote", "path": ""}, "to": "tab-b", "text": "older peer"}
+        )
+        self.assertEqual([m["id"] for m in b.mod_history(Who("remote-1@laptop", []))["messages"]], [sent["id"]])
+        self.assertEqual([m["id"] for m in b.mod_history(Who("laptop-remote", []))["messages"]], [old["id"]])
+        self.assertEqual(b.mod_message(Who("remote-1@laptop", []), sent["id"])["text"], "from the laptop")
+        self.assertEqual(b.mod_counts([Who("remote-1@laptop", []), Who("laptop-remote", [])])["counts"], [1, 1])
+        with self.assertRaisesRegex(MailError, "not a session id"):
+            b.mod_history(Who("a@b@c", []))
+
+
 class SentHistoryTest(unittest.TestCase):
     def test_every_send_is_in_the_senders_history_with_its_delivery(self) -> None:
         home = temp_home(self)
@@ -113,6 +130,37 @@ class SentHistoryTest(unittest.TestCase):
         clock.at += 200_000
         c.mod_log({"direction": "sent", "peer": NATIVE_PEER, "text": "same words"})
         self.assertEqual(b.mod_history(Who(None, [NATIVE_PEER]))["total"], 2)
+
+
+class NameScopeTest(unittest.TestCase):
+    def test_a_name_match_skips_an_earlier_session_that_had_the_same_name(self) -> None:
+        home = temp_home(self)
+        clock = Clock(now_ms() - 2 * 24 * 60 * 60_000)
+        b = session(self, home, "tab-b", "claude", 2, clock)
+        b.mod_presence({"driver": True, "nativeName": NATIVE_SELF, "state": "busy"})
+        old = session(self, home, "tab-y", "claude", 3, clock)
+        old.mod_presence({"driver": True, "nativeName": NATIVE_PEER, "state": "busy"})
+        b.mod_log({"direction": "sent", "peer": NATIVE_PEER, "text": "to the old one"})
+        old.mod_log({"direction": "received", "peer": NATIVE_SELF, "text": "to the old one"})
+        clock.at += 24 * 60 * 60_000
+        new = session(self, home, "tab-x", "claude", 4, clock)
+        new.mod_presence({"driver": True, "nativeName": NATIVE_PEER, "state": "busy"})
+        b.mod_log({"direction": "sent", "peer": NATIVE_PEER, "text": "to the new one"})
+        new.mod_log({"direction": "received", "peer": NATIVE_SELF, "text": "to the new one"})
+        thread = b.mod_history(Who("tab-x", [NATIVE_PEER]))
+        self.assertEqual([m["text"] for m in thread["messages"]], ["to the new one"])
+        self.assertEqual(b.mod_counts([Who("tab-x", [NATIVE_PEER])])["counts"], [1])
+        self.assertEqual([m["text"] for m in b.mod_history(Who("tab-y", [NATIVE_PEER]))["messages"]], ["to the old one"])
+
+    def test_a_row_that_names_another_session_id_never_matches_by_name(self) -> None:
+        home = temp_home(self)
+        clock = Clock(now_ms())
+        old = session(self, home, "tab-y", "claude", 3, clock)
+        old.mod_presence({"driver": True, "nativeName": NATIVE_PEER, "state": "busy"})
+        old.mod_log({"direction": "sent", "peer": NATIVE_SELF, "text": "from y"})
+        new = session(self, home, "tab-x", "claude", 4, clock)
+        self.assertEqual(new.mod_history(Who("tab-x", [NATIVE_PEER]))["total"], 0)
+        self.assertEqual(new.mod_history(Who(None, [NATIVE_PEER]))["total"], 1)
 
 
 class LogTest(unittest.TestCase):

@@ -9,11 +9,13 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from ..clock import iso
 from ..clock import now_ms as current_ms
 from ..jsjson import trim, utf16_len
+from ..liveness import pid_alive
 from ..messaging.db import MailError
 from ..messaging.sessions import read_presence
-from ..messaging.store import MAX_TEXT_CHARS, check_message_id
+from ..messaging.store import MAX_TEXT_CHARS, check_message_id, log_native
 from . import wire
 from .origin import REMOTE_ORIGIN_REFUSAL, Caller, OriginChecker
 from .policy import ALIAS, DEFAULT_PORT, NetworkConfig, PeerGrant, PolicyError, load_network_config, load_policy
@@ -33,6 +35,14 @@ PEER_REFUSED = "the peer refused the request"
 FOLDER_NOT_ALLOWED = (
     "{label} refused: {path} is not in that machine's member folders. Its user can add it there with agent-tabs net folders add."
 )
+OUTSIDE_OUTBOUND = (
+    "this session's folder {path} is outside network.outboundFolders, so it sees and messages no session on another "
+    'machine. To allow it, ask your user, then run: agent-tabs net folders add --outbound "{path}"'
+)
+OUTSIDE_OUTBOUND_PLAIN = (
+    "this session's folder is outside network.outboundFolders, so it sees and messages no session on another machine. "
+    "To allow it, ask your user to add the folder with agent-tabs net folders add --outbound."
+)
 PEER_REPLY_INVALID = "the peer's reply was not valid, so the outcome is unknown"
 OPEN_REFUSED_FIELDS = ("args", "env", "ide", "via", "focus")
 
@@ -40,6 +50,7 @@ _TARGET = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]{0,127})@([a-z0-9-]{1,32})")
 _LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MESSAGE_ID = re.compile(r"m-[0-9a-f]{16}")
 _TAB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+_SHELL_UNSAFE = frozenset("\"'`$;|&<>%")
 
 
 class OutboundError(Exception):
@@ -49,6 +60,10 @@ class OutboundError(Exception):
 def parse_remote_target(to: object) -> tuple[str, str] | None:
     found = _TARGET.fullmatch(to) if isinstance(to, str) else None
     return None if found is None else (found.group(1), found.group(2))
+
+
+def shell_safe_folder(path: str) -> bool:
+    return path.isprintable() and not any(char in _SHELL_UNSAFE for char in path) and os.path.isdir(path)
 
 
 def is_inside(path: str, folder: str) -> bool:
@@ -82,8 +97,10 @@ class Outbound:
         open_store: Callable[[str], NetStore] = NetStore,
         start: Callable[[Any], int] | None = None,
         server_port: int | None = None,
+        alive: Callable[[int], bool] = pid_alive,
     ) -> None:
         self.home = home
+        self._alive = alive
         self.server_port = server_port
         self._now = now_ms
         self._request = request
@@ -143,13 +160,29 @@ class Outbound:
                 raise OutboundError(RATE_REFUSAL)
             window.append(now)
 
-    def _call(self, peer: PeerGrant, op: str, body: Mapping[str, Any], timeout: float) -> dict[str, Any]:
+    def _sender(self, session: str) -> dict[str, str]:
+        from ..messaging.messaging import session_names
+        from ..messaging.sessions import SESSIONS_DIR, is_session_id, live_session
+
+        try:
+            files = sorted(n[:-5] for n in os.listdir(os.path.join(self.home, SESSIONS_DIR)) if n.endswith(".json"))
+        except OSError:
+            files = []
+        now = self._now()
+        live = [p for p in (live_session(self.home, f, self._alive, now) for f in files if is_session_id(f)) if p is not None]
+        name = session_names(live).get(session)
+        return {"id": session} if name is None else {"id": session, "name": wire.clean_name(name)}
+
+    def _reply(self, peer: PeerGrant, op: str, body: Mapping[str, Any], timeout: float) -> dict[str, Any]:
         from .client import NetClientError, send_request
 
         try:
-            reply = (self._request or send_request)(self.home, peer.device_id, op, body, timeout=timeout, port=DEFAULT_PORT)
+            return (self._request or send_request)(self.home, peer.device_id, op, body, timeout=timeout, port=DEFAULT_PORT)
         except NetClientError as e:
             raise OutboundError(str(e)) from e
+
+    def _call(self, peer: PeerGrant, op: str, body: Mapping[str, Any], timeout: float) -> dict[str, Any]:
+        reply = self._reply(peer, op, body, timeout)
         if reply.get("ok") is not True:
             raise OutboundError(_refusal_text(peer, reply, body))
         return reply
@@ -186,9 +219,17 @@ class Outbound:
         body: dict[str, Any] = {"to": remote, "text": text}
         if reply_to is not None:
             body["replyTo"] = reply_to
-        message_id = _field(self._call(peer, "send", body, SEND_TIMEOUT_S), "id", _MESSAGE_ID)
+        sender = self._sender(caller.session)
+        reply = self._reply(peer, "send", {**body, "from": sender}, SEND_TIMEOUT_S)
+        if reply.get("ok") is not True:
+            # A peer on 0.14.3 or earlier refuses a send body that names its sender, and every refusal looks alike to the sender,
+            # so a refused send goes once more in the older form. A refusal never delivers, so this can't send twice.
+            reply = self._call(peer, "send", body, SEND_TIMEOUT_S)
+        message_id = _field(reply, "id", _MESSAGE_ID)
         result: dict[str, Any] = {"id": message_id, "delivery": "remote"}
         presence = read_presence(self.home, caller.session)
+        if not self._record_sent(sender, presence, f"{remote}@{label}", text, message_id):
+            result["note"] = "the message went out, but it could not be added to this session's message history"
         generation = None if presence is None else session_generation(presence)
         if generation is not None:
             try:
@@ -197,6 +238,26 @@ class Outbound:
                 result["note"] = "the message went out, but the reply grant could not be recorded, so the peer can't answer it"
         self._nudge_poller(peer)
         return result
+
+    def _record_sent(self, sender: Mapping[str, str], presence: Mapping[str, Any] | None, to: str, text: str, message_id: str) -> bool:
+        me: dict[str, Any] = {**sender, "agent": "", "path": ""}
+        if presence is not None:
+            me["agent"], me["path"] = presence.get("agent", ""), presence.get("path", "")
+        record = {
+            "id": message_id,
+            "owner": sender["id"],
+            "direction": "sent",
+            "from": me,
+            "to": {"id": to, "agent": "remote", "path": ""},
+            "text": text,
+            "sentAt": iso(self._now()),
+            "delivery": "sent",
+        }
+        try:
+            log_native(self.home, record)
+        except (MailError, sqlite3.Error, OSError):
+            return False
+        return True
 
     def open(self, caller: Caller, given: Mapping[str, Any]) -> dict[str, Any]:
         label = given.get("host")
@@ -244,6 +305,18 @@ class Outbound:
         if code != 0:
             raise OutboundError("; ".join(problems or lines) or "the listener did not start")
         return {"started": True, "status": " ".join(lines)}
+
+    def outbound_warning(self, caller: Caller) -> str | None:
+        config, _ = load_network_config(self.home)
+        if not network_enabled(config) or any(is_inside(caller.path, folder) for folder in config.outbound_folders):
+            return None
+        try:
+            has_members = any(peer.member for peer in load_policy(self.home).peers)
+        except PolicyError:
+            return None
+        if not has_members or self._origin.is_remote(caller):
+            return None
+        return OUTSIDE_OUTBOUND.format(path=caller.path) if shell_safe_folder(caller.path) else OUTSIDE_OUTBOUND_PLAIN
 
     def remote_rows(self, caller: Caller, now_ms: int | None = None) -> list[dict[str, Any]]:
         config, _ = load_network_config(self.home)
@@ -357,3 +430,7 @@ class SessionNet:
 
 def remote_session_rows(home: str, caller: Caller, now_ms: int) -> list[dict[str, Any]]:
     return outbound_for(home).remote_rows(caller, now_ms)
+
+
+def outbound_warning(home: str, caller: Caller) -> str | None:
+    return outbound_for(home).outbound_warning(caller)

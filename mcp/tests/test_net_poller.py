@@ -267,9 +267,20 @@ class ThreadTest(PollerCase):
         made.start()
         return made
 
+    def test_a_member_saved_by_another_process_is_asked_within_the_policy_check(self) -> None:
+        write_policy(self.home, peers(1))
+        made = self.start(policy_check_s=0.05)
+        self.assertTrue(wait_until(lambda: self.fetch.asked() == [peer_id(0)]))
+        write_policy(self.home, peers(2))
+        self.assertTrue(wait_until(lambda: self.fetch.asked() == [peer_id(0), peer_id(1)]))
+        write_policy(self.home, [peer_grant(peer_id(0), "peer-0", "192.168.1.99"), peers(2)[1]])
+        time.sleep(0.3)
+        self.assertEqual(len(self.fetch.asked()), 2, "a changed policy never asks a known peer again inside a minute")
+        self.assertTrue(made.running)
+
     def test_the_loop_asks_at_start_and_a_nudge_brings_a_new_peer_in_early(self) -> None:
         write_policy(self.home, peers(1))
-        made = self.start()
+        made = self.start(policy_check_s=60.0)
         self.assertTrue(wait_until(lambda: self.fetch.asked() == [peer_id(0)]))
         write_policy(self.home, peers(2))
         time.sleep(0.2)

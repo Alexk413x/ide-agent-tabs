@@ -11,7 +11,7 @@ from unittest import mock
 
 from ide_agent_tabs.messaging.db import MailError
 from ide_agent_tabs.messaging.sessions import update_presence
-from ide_agent_tabs.messaging.store import mail_to
+from ide_agent_tabs.messaging.store import MAX_SENT_PER_MINUTE, mail_to, stored_for
 from ide_agent_tabs.net import dispatch, policy, wire
 from ide_agent_tabs.net.audit import audit_path
 from ide_agent_tabs.net.dispatch import NetDispatcher, folder_problem, session_generation
@@ -583,6 +583,11 @@ class SendTest(DispatchCase):
     def send_request(self, to: str, text: str = "hello", request_id: str = "s1", **extra: Any) -> dict[str, Any]:
         return {"id": request_id, "op": "send", "body": {"to": to, "text": text, **extra}}
 
+    def named_request(self, to: str, sender: object, request_id: str = "s1", text: str = "ping") -> dict[str, Any]:
+        request = self.send_request(to, text, request_id)
+        request["body"]["from"] = sender
+        return request
+
     def test_a_session_outside_the_send_list_is_refused(self) -> None:
         write_presence(self.home, "local-1")
         self.assertRefused(self.handle(self.send_request("local-1")), "s1", "target-not-granted")
@@ -598,6 +603,32 @@ class SendTest(DispatchCase):
         self.assertEqual([(m["text"], m["from"]) for m in mail], [("ping", {"id": "laptop-remote", "agent": "remote", "path": ""})])
         self.assertEqual(reply["body"], {"id": mail[0]["id"]})
         self.assertEqual(self.last_audit()["outcome"], "completed")
+
+    def test_a_send_that_names_its_sender_is_delivered_from_that_session_on_the_peer(self) -> None:
+        write_presence(self.home, "local-1")
+        write_policy(self.home, [self.peer_grant(send=("local-1",))])
+        reply = self.handle(self.named_request("local-1", {"id": "remote-sess", "name": "plugins-9c [00b806]"}))
+        self.assertTrue(reply["ok"])
+        mail = mail_to(self.home, "local-1")
+        self.assertEqual(mail[0]["from"], {"id": "remote-sess@laptop", "agent": "remote", "path": ""})
+        stored = stored_for(self.home, "local-1", [])
+        self.assertEqual(stored[0]["from"]["name"], "plugins-9c [00b806]@laptop")
+
+    def test_a_sender_with_a_blank_name_is_delivered_by_id_only(self) -> None:
+        write_presence(self.home, "local-1")
+        write_policy(self.home, [self.peer_grant(send=("local-1",))])
+        self.assertTrue(self.handle(self.named_request("local-1", {"id": "remote-sess", "name": " "}))["ok"])
+        stored = stored_for(self.home, "local-1", [])
+        self.assertEqual(stored[0]["from"]["id"], "remote-sess@laptop")
+        self.assertNotIn("name", stored[0]["from"])
+
+    def test_a_malformed_sender_is_a_bad_request(self) -> None:
+        write_presence(self.home, "local-1")
+        write_policy(self.home, [self.peer_grant(send=("local-1",))])
+        for sender in ({"id": "a b"}, {"name": "x"}, {"id": "s", "extra": 1}, {"id": "s", "name": "a\nb"}, "s"):
+            with self.subTest(sender=sender):
+                self.assertRefused(self.handle(self.named_request("local-1", sender, "s9")), "s9", "bad-request")
+        self.assertEqual(mail_to(self.home, "local-1"), [])
 
     def test_a_granted_session_that_is_not_live_is_refused(self) -> None:
         write_policy(self.home, [self.peer_grant(send=("local-1",))])
@@ -663,6 +694,22 @@ class SendTest(DispatchCase):
         self.clock.at += MINUTE
         self.assertTrue(self.handle(self.send_request("local-1", "d", "s4"))["ok"])
         self.assertEqual([m["text"] for m in mail_to(self.home, "local-1")], ["a", "b", "d"])
+
+    def test_an_older_peer_is_limited_by_its_grant_and_not_by_the_mailbox_per_sender_limit(self) -> None:
+        write_presence(self.home, "local-1")
+        write_policy(self.home, [self.peer_grant(send=("local-1",), messages_per_minute=60)])
+        total = MAX_SENT_PER_MINUTE + 5
+        for i in range(total):
+            self.assertTrue(self.handle(self.send_request("local-1", f"m{i}", f"s{i}"))["ok"], i)
+        self.assertEqual(len(mail_to(self.home, "local-1")), total)
+
+    def test_each_named_remote_session_has_its_own_mailbox_limit(self) -> None:
+        write_presence(self.home, "local-1")
+        write_policy(self.home, [self.peer_grant(send=("local-1",), messages_per_minute=60)])
+        for i in range(MAX_SENT_PER_MINUTE):
+            self.assertTrue(self.handle(self.named_request("local-1", {"id": "sess-a"}, f"a{i}", f"a{i}"))["ok"], i)
+        self.assertRefused(self.handle(self.named_request("local-1", {"id": "sess-a"}, "a-over", "a-over")), "a-over", "delivery-failed")
+        self.assertTrue(self.handle(self.named_request("local-1", {"id": "sess-b"}, "b0", "b0"))["ok"])
 
     def test_a_repeated_send_returns_the_first_reply_without_another_message(self) -> None:
         write_presence(self.home, "local-1")

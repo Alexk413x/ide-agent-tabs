@@ -7,6 +7,7 @@ from typing import Any
 
 from ide_agent_tabs.clock import now_ms
 from ide_agent_tabs.messaging import store as mail
+from ide_agent_tabs.messaging.history import Who, history
 from ide_agent_tabs.messaging.sessions import read_presence
 from ide_agent_tabs.net import outbound, wire
 from ide_agent_tabs.net.client import NetClientError
@@ -25,6 +26,7 @@ from ide_agent_tabs.net.outbound import (
 )
 from ide_agent_tabs.net.policy import load_policy
 from outbound_support import MESSAGE_ID, OTHER, PEER, NetCase, peer_grant, write_config, write_member_policy, write_policy
+from support import session
 
 SENTINEL = "PEER-TEXT-SENTINEL"
 
@@ -54,7 +56,7 @@ class SendTest(NetCase):
         self.assertEqual(len(self.request.calls), 1)
         call = self.request.calls[0]
         self.assertEqual((call["home"], call["peer"], call["op"]), (self.home, PEER, "send"))
-        self.assertEqual(call["body"], {"to": "tab-r", "text": "hello"})
+        self.assertEqual(call["body"], {"to": "tab-r", "text": "hello", "from": {"id": "tab-a"}})
         presence = read_presence(self.home, "tab-a")
         assert presence is not None
         generation = session_generation(presence)
@@ -65,9 +67,28 @@ class SendTest(NetCase):
         self.assertIsNone(store.find_reply_grant(OTHER, "tab-a", generation, MESSAGE_ID, self.clock()))
         self.assertEqual(self.nudges, [(self.home, PEER)])
 
+    def test_a_send_is_stored_in_the_senders_history_and_the_remote_sessions_thread(self) -> None:
+        self.send(text="are you there")
+        own = history(self.home, Who("tab-a", []))
+        self.assertEqual(
+            [(m["direction"], m["peer"]["id"], m["text"], m["id"]) for m in own], [("sent", "tab-r@laptop", "are you there", MESSAGE_ID)]
+        )
+        self.assertEqual(own[0]["delivery"], "sent")
+        thread = history(self.home, Who("tab-r@laptop", []))
+        self.assertEqual([(m["direction"], m["from"]["id"], m["text"]) for m in thread], [("received", "tab-a", "are you there")])
+        self.assertEqual(mail.peek_unread(self.home, "tab-a", self.clock()), [])
+
+    def test_a_refused_send_is_not_stored(self) -> None:
+        self.request.reply = {"re": "r", "ok": False, "error": {"reason": "target-not-granted"}}
+        with self.assertRaises(OutboundError):
+            self.send()
+        self.assertEqual(history(self.home, Who("tab-a", [])), [])
+
     def test_reply_to_goes_in_the_body(self) -> None:
         self.send(replyTo="m-aaaaaaaaaaaaaaaa")
-        self.assertEqual(self.request.calls[0]["body"], {"to": "tab-r", "text": "hello", "replyTo": "m-aaaaaaaaaaaaaaaa"})
+        self.assertEqual(
+            self.request.calls[0]["body"], {"to": "tab-r", "text": "hello", "replyTo": "m-aaaaaaaaaaaaaaaa", "from": {"id": "tab-a"}}
+        )
 
     def test_a_malformed_reply_to_never_goes_out(self) -> None:
         with self.assertRaises(OutboundError):
@@ -142,6 +163,36 @@ class SendTest(NetCase):
         self.assertEqual(str(caught.exception), PEER_REFUSED)
         self.assertEqual(self.nudges, [])
 
+    def test_a_refused_send_goes_once_more_without_the_sender_for_an_older_peer(self) -> None:
+        self.request.replies = [{"re": "r", "ok": False, "refused": True}]
+        self.assertEqual(self.send(replyTo="m-aaaaaaaaaaaaaaaa"), {"id": MESSAGE_ID, "delivery": "remote"})
+        bodies = [c["body"] for c in self.request.calls]
+        self.assertEqual(
+            bodies,
+            [
+                {"to": "tab-r", "text": "hello", "replyTo": "m-aaaaaaaaaaaaaaaa", "from": {"id": "tab-a"}},
+                {"to": "tab-r", "text": "hello", "replyTo": "m-aaaaaaaaaaaaaaaa"},
+            ],
+        )
+        self.assertEqual(self.nudges, [(self.home, PEER)])
+
+    def test_a_send_refused_in_both_forms_goes_out_twice_at_most(self) -> None:
+        self.request.reply = {"re": "r", "ok": False, "refused": True}
+        with self.assertRaises(OutboundError):
+            self.send()
+        self.assertEqual(len(self.request.calls), 2)
+
+    def test_the_sender_carries_its_session_name_when_the_session_is_live(self) -> None:
+        self.clock.at = now_ms()
+        net = self.make_outbound(alive=lambda _pid: True)
+        net.send(self.messaging.caller(), {"to": "tab-r@laptop", "text": "hello"})
+        body = self.request.calls[0]["body"]
+        self.assertEqual(body["from"]["id"], "tab-a")
+        self.assertRegex(body["from"]["name"], r"\S")
+        parsed = wire.parse_request({"id": "r" * 32, "op": "send", "body": body}).body
+        assert isinstance(parsed, wire.SendBody)
+        self.assertEqual((parsed.from_id, parsed.from_name), ("tab-a", body["from"]["name"]))
+
     def test_a_transport_failure_is_an_error_with_no_grant(self) -> None:
         self.request.error = NetClientError("timed out")
         with self.assertRaisesRegex(OutboundError, "timed out"):
@@ -163,7 +214,7 @@ class SendTest(NetCase):
         failed, text = self.call("send_message", {"to": "tab-r@laptop", "text": "over there"})
         self.assertFalse(failed, text)
         self.assertEqual(json.loads(text), {"id": MESSAGE_ID, "delivery": "remote"})
-        self.assertEqual(self.request.calls[-1]["body"], {"to": "tab-r", "text": "over there"})
+        self.assertEqual(self.request.calls[-1]["body"], {"to": "tab-r", "text": "over there", "from": {"id": "tab-a"}})
         failed, text = self.call("send_message", {"to": "tab-b", "text": "right here"})
         self.assertFalse(failed, text)
         self.assertEqual(json.loads(text)["to"], "tab-b")
@@ -530,6 +581,38 @@ class MemberRowsTest(NetCase):
         self.seed({"sessions": [wire_row("tab-r")], "folders": []})
         self.enable(outboundFolders=[])
         self.assertEqual(self.remote_rows(), [])
+
+    def test_a_session_outside_the_outbound_folders_gets_a_warning_that_names_the_setting(self) -> None:
+        self.seed({"sessions": [wire_row("tab-r")], "folders": []})
+        self.assertNotIn("warnings", self.messaging.list_sessions())
+        self.enable(outboundFolders=[os.path.join(self.home, "elsewhere")])
+        listed = self.messaging.list_sessions()
+        self.assertEqual([r for r in listed["sessions"] if r["route"] == "remote"], [])
+        (warning,) = listed["warnings"]
+        self.assertIn("network.outboundFolders", warning)
+        self.assertIn(f'agent-tabs net folders add --outbound "{self.folder}"', warning)
+        failed, text = self.call("list_sessions")
+        self.assertFalse(failed, text)
+        self.assertEqual(json.loads(text)["warnings"], [warning])
+
+    def test_the_warning_leaves_out_a_path_with_shell_syntax(self) -> None:
+        folder = os.path.join(self.home, "a$b")
+        os.makedirs(folder)
+        self.enable(outboundFolders=[self.folder])
+        (warning,) = session(self, self.home, "tab-q", "claude", 2, cwd=folder).list_sessions()["warnings"]
+        self.assertNotIn("a$b", warning)
+        self.assertIn("agent-tabs net folders add --outbound", warning)
+
+    def test_no_warning_without_members_with_the_network_off_or_for_a_remote_origin_session(self) -> None:
+        self.enable(outboundFolders=[])
+        write_member_policy(self.home, [peer_grant()])
+        self.assertNotIn("warnings", self.messaging.list_sessions())
+        write_member_policy(self.home, [peer_grant(member=True)])
+        self.assertIn("warnings", self.messaging.list_sessions())
+        self.record_remote_tab("tab-a")
+        self.assertNotIn("warnings", self.messaging.list_sessions())
+        write_config(self.home, network="off")
+        self.assertNotIn("warnings", self.make_session("tab-b", 3).list_sessions())
 
     def test_an_inventory_with_bad_folders_is_skipped(self) -> None:
         self.seed({"sessions": [wire_row("tab-r")], "folders": ["relative"]})

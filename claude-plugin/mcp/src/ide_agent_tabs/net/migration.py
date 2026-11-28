@@ -198,7 +198,9 @@ def post_to_sessions(home: str, text: str) -> int:
         if session["id"] in owned:
             continue
         try:
-            send_message(home, {"from": {"id": NOTICE_SENDER, "agent": "remote", "path": ""}, "to": session["id"], "text": text})
+            send_message(
+                home, {"from": {"id": NOTICE_SENDER, "agent": "remote", "path": ""}, "to": session["id"], "text": text}, limit_sender=False
+            )
             sent += 1
         except (MailError, OSError):
             continue

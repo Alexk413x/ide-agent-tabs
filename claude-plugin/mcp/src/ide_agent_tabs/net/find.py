@@ -10,7 +10,7 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 
 from . import pairing
-from .beacon import Announcement, Endpoint, HubWatch, JoinAnnouncement, Wire
+from .beacon import Announcement, Endpoint, HubWatch, JoinAnnouncement, Solicitation, Wire
 from .client import NetClientError, verify_pinned
 from .discovery import PROBE, REMEMBERED, LanDiscovery, source_label
 from .pairing import PAIRING_PORT, JoinProbe, PairIdentity, PairingError, probe_join
@@ -320,7 +320,7 @@ class _Find:
             except StopIteration:
                 exhausted = True
                 continue
-            if heard is not None:
+            if heard is not None and not isinstance(heard.announcement, Solicitation):
                 self.heard += 1
                 self.announced_device(heard.announcement, heard.host)
         stream.close()
@@ -345,7 +345,8 @@ class _Find:
             return
         joined = {True: "yes", False: "no", None: "unknown"}[discovery.group_joined]
         self.log(
-            f"udp: joined the group {joined}; {discovery.datagrams} datagram(s) received, {discovery.invalid} invalid, "
+            f"udp: joined the group {joined}; {discovery.solicits_sent} solicitation(s) sent; {discovery.datagrams} datagram(s) received, "
+            f"{discovery.own} from this machine, {discovery.solicitations} solicitation(s) from other finds, {discovery.invalid} invalid, "
             f"{discovery.ignored_beacons} member beacon(s) ignored, {self.heard} announcement(s) accepted"
             + "".join(f"; {note}" for note in discovery.setup_notes)
         )

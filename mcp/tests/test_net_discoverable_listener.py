@@ -4,6 +4,7 @@ import contextlib
 import json
 import os
 import socket
+import sys
 import threading
 import time
 import unittest
@@ -20,6 +21,7 @@ from ide_agent_tabs.net.listener import Listener, Options
 from ide_agent_tabs.net.netid import tagged_network_id
 from ide_agent_tabs.net.peers import save_peer
 from ide_agent_tabs.net.policy import Hub, NetworkConfig, Policy, grant_for, load_policy, save_policy
+from ide_agent_tabs.net.selfupdate import Install, JoinUpdater, UpdateCommand
 from net_support import (
     LOOPBACK,
     FakeIngress,
@@ -58,6 +60,7 @@ class Running:
         cell: Cell,
         ingress_port: int,
         source_ok: Callable[[str], bool] = lambda _address: True,
+        extra: dict[str, Any] | None = None,
     ) -> None:
         self.home = home
         self.ready = threading.Event()
@@ -71,6 +74,7 @@ class Running:
             notice=NOTICES.append,
             server_port=ingress_port,
             ready=lambda _port: self.ready.set(),
+            **(extra or {}),
         )
         self.listener = Listener(home, self.options)
         self.code: int | None = None
@@ -123,7 +127,10 @@ class DiscoverableListenerTest(unittest.TestCase):
             os.remove(os.path.join(self.a, "config.json"))
         self.ingress = FakeIngress(self.a)
         self.addCleanup(self.ingress.close)
-        patch = mock.patch.multiple(listener, PROFILE_REFRESH_S=0.0, MONITOR_S=0.05, CONFIG_RECHECK_S=0.05, JOIN_RETRY_S=0.0)
+        self.listener_options: dict[str, Any] = {}
+        patch = mock.patch.multiple(
+            listener, PROFILE_REFRESH_S=0.0, MONITOR_S=0.05, CONFIG_RECHECK_S=0.05, JOIN_RETRY_S=0.0, NETWORK_ID_GRACE_S=0.0
+        )
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -140,13 +147,20 @@ class DiscoverableListenerTest(unittest.TestCase):
         loader = mock.patch.object(listener, "load_network_config", cell.load)
         loader.start()
         self.addCleanup(loader.stop)
-        return Running(self, self.a, cell, self.ingress.port, source_ok), cell
+        return Running(self, self.a, cell, self.ingress.port, source_ok, self.listener_options), cell
 
-    def join(self, running: Running) -> pairing.PairResult:
+    def join(self, running: Running, **options: Any) -> pairing.PairResult:
         port = running.listener.join_port()
         assert port is not None
         return pairing.dial_join(
-            LOOPBACK, port, device_of(self.a), local_pair_identity(self.b), HubJoiner(self.b), pairing.Limits(self.b), timeouts=FAST
+            LOOPBACK,
+            port,
+            device_of(self.a),
+            local_pair_identity(self.b),
+            HubJoiner(self.b),
+            pairing.Limits(self.b),
+            timeouts=FAST,
+            **options,
         )
 
     def give_b_a_hub(self) -> None:
@@ -165,6 +179,56 @@ class DiscoverableListenerTest(unittest.TestCase):
         self.assertEqual(load_policy(self.a).hub, Hub(HUB_ID, "home"))
         self.assertIn("a device joined the hub", running.log())
         self.assertTrue(any("joined this machine's hub" in notice for notice in NOTICES))
+
+    def updater(self, log: list[str], posted: list[str], calls: list[list[str]], restarts: list[str]) -> JoinUpdater:
+        command = UpdateCommand((sys.executable, "plugin", "update", "ide-agent-tabs@market"), "tool plugin update ide-agent-tabs@market")
+
+        def run(argv: list[str], **_kwargs: Any) -> Any:
+            calls.append(argv)
+            return mock.Mock(returncode=0, stdout="updated", stderr="")
+
+        return JoinUpdater(
+            self.a,
+            "0.14.3",
+            log.append,
+            lambda _home, text: posted.append(text) or 1,
+            command=lambda: command,
+            fresh=lambda: Install("/plugins/0.15.0", "0.15.0"),
+            runner=run,
+            spawn=lambda _home, install, _port: restarts.append(install.root) or True,
+            background=lambda job: job(),
+        )
+
+    def test_a_join_from_a_newer_machine_runs_the_unattended_update_and_notifies_the_sessions(self) -> None:
+        self.give_b_a_hub()
+        log: list[str] = []
+        posted: list[str] = []
+        calls: list[list[str]] = []
+        restarts: list[str] = []
+        self.listener_options = {"plugin_version": "0.14.3", "updater": self.updater(log, posted, calls, restarts)}
+        running, _cell = self.start()
+        self.assertTrue(wait_until(running.joins_on, 5))
+        result = self.join(running, plugin_version="0.15.0")
+        self.assertEqual(result.outcome, "paired")
+        self.assertTrue(wait_until(lambda: restarts == ["/plugins/0.15.0"], 5), running.log())
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(log[0].split(" command=")[0], f"self-update: attempt peer={device_of(self.b)}")
+        self.assertEqual(log[1], "self-update: ok")
+        self.assertIn("a join from a machine on version 0.15.0", posted[0])
+        self.assertEqual(result.peer.plugin_version if result.peer else None, "0.14.3")
+
+    def test_a_join_from_an_older_or_legacy_machine_runs_no_update(self) -> None:
+        self.give_b_a_hub()
+        log: list[str] = []
+        posted: list[str] = []
+        calls: list[list[str]] = []
+        restarts: list[str] = []
+        self.listener_options = {"plugin_version": "0.14.3", "updater": self.updater(log, posted, calls, restarts)}
+        running, _cell = self.start()
+        self.assertTrue(wait_until(running.joins_on, 5))
+        self.assertEqual(self.join(running, plugin_version="0.14.2").outcome, "paired")
+        self.assertTrue(wait_until(lambda: "a device joined the hub" in running.log(), 5))
+        self.assertEqual((calls, log, posted, restarts), ([], [], [], []))
 
     def test_a_refused_join_connection_is_logged_with_its_address_and_reason(self) -> None:
         running, _cell = self.start(source_ok=lambda _address: False)
@@ -279,6 +343,43 @@ class DiscoverableListenerTest(unittest.TestCase):
         self.assertIn("can't be read", running.log())
         with self.assertRaises(NetClientError):
             send_request(self.b, device_of(self.a), "inventory", {}, timeout=10, port=running.port)
+
+    def test_a_network_id_that_briefly_can_not_be_read_keeps_the_gate_open(self) -> None:
+        trust_peer(self.a, self.b, "laptop")
+        trust_peer(self.b, self.a, "desktop")
+        with mock.patch.object(listener, "NETWORK_ID_GRACE_S", 60.0):
+            running, cell = self.start()
+            self.assertTrue(wait_until(running.joins_on, 5))
+            cell.network = None
+            self.assertTrue(wait_until(lambda: "the gate keeps the last id for up to 60 s" in running.log(), 5))
+            time.sleep(0.5)
+            self.assertTrue(running.joins_on())
+            self.assertTrue(send_request(self.b, device_of(self.a), "inventory", {}, timeout=10, port=running.port)["ok"])
+            cell.network = HOME_NETWORK
+            self.assertTrue(wait_until(lambda: "the id of this network can be read again" in running.log(), 5))
+        self.assertNotIn("network gate closed", running.log())
+        self.assertNotIn("stopped serving joins", running.log())
+
+    def test_a_network_id_that_stays_unreadable_past_the_grace_period_closes_the_gate(self) -> None:
+        with mock.patch.object(listener, "NETWORK_ID_GRACE_S", 0.5):
+            running, cell = self.start()
+            self.assertTrue(wait_until(running.joins_on, 5))
+            cell.network = None
+            self.assertTrue(wait_until(lambda: not running.joins_on(), 5))
+        log = running.log()
+        self.assertLess(log.index("the gate keeps the last id"), log.index("network gate closed: the id of this network can't be read"))
+
+    def test_a_changed_address_never_keeps_the_last_network_id(self) -> None:
+        cell = Cell(NetworkConfig(network="lan", bind=LOOPBACK, allowed_networks=(HOME_NETWORK,)))
+        gate = Listener(self.a, Options(network_id=cell.network_id))
+        gate._live = cell.config  # pyright: ignore[reportPrivateUsage]
+        gate._refresh_gate(force=True)  # pyright: ignore[reportPrivateUsage]
+        self.assertTrue(gate._gate.allowed)  # pyright: ignore[reportPrivateUsage]
+        cell.network = None
+        with mock.patch.object(listener, "NETWORK_ID_GRACE_S", 60.0):
+            gate._refresh_gate(force=True)  # pyright: ignore[reportPrivateUsage]
+        self.assertFalse(gate._gate.allowed)  # pyright: ignore[reportPrivateUsage]
+        self.assertNotIn("the gate keeps the last id", Path(listener.log_file(self.a)).read_text(encoding="utf-8"))
 
     def test_removing_the_network_from_the_allowed_list_closes_the_gate_at_once(self) -> None:
         running, cell = self.start()

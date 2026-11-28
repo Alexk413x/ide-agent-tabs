@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import os
 import plistlib
@@ -18,6 +19,7 @@ from xml.sax.saxutils import escape
 from .. import processes
 from ..files import read_text_if_exists, remove_file, write_atomically
 from ..processes import RunResult
+from ..version import PACKAGE_VERSION, compare_versions
 from . import private_files
 from .private_files import PrivateFileError, check_private, ensure_private_dir, make_private_file
 
@@ -38,6 +40,7 @@ _SE_FILE_OBJECT = 1
 _DACL_SECURITY_INFORMATION = 0x4
 _XML_DECLARATION = re.compile(r"^\s*<\?xml[^>]*\?>")
 _UNSAFE_PATH = re.compile(r"[\x00-\x1f\"]")
+_LAUNCHER_CONSTANT = re.compile(r"^(VERSION|LAUNCH_SCRIPT) = (.{1,1024})$", re.MULTILINE)
 
 Run = Callable[..., RunResult]
 
@@ -131,7 +134,7 @@ def launcher_path(home: str) -> Path:
     return net_folder(home) / LAUNCHER_FILE
 
 
-def launcher_source(home: str, launch_script: str) -> str:
+def launcher_source(home: str, launch_script: str, version: str = PACKAGE_VERSION) -> str:
     return (
         "from __future__ import annotations\n"
         "\n"
@@ -140,6 +143,7 @@ def launcher_source(home: str, launch_script: str) -> str:
         "import sys\n"
         "\n"
         f"HOME = {home!r}\n"
+        f"VERSION = {version!r}\n"
         f"LAUNCH_SCRIPT = {launch_script!r}\n"
         "\n"
         f"if sys.argv[1:] != [{LAUNCHER_ARGUMENT!r}]:\n"
@@ -156,16 +160,61 @@ def _checked_path(path: str, what: str) -> str:
     return path
 
 
-def refresh_launcher(home: str, launch_script: str | None = None) -> Path:
+def refresh_launcher(home: str, launch_script: str | None = None, version: str = PACKAGE_VERSION) -> Path:
     script = _checked_path(launch_script or default_launch_script(), "the launch script")
     if not os.path.isfile(script):
         raise LoginTaskError(f"the launch script {script} does not exist")
     folder = net_folder(home)
     ensure_private_dir(folder)
     path = launcher_path(home)
-    write_atomically(str(path), launcher_source(home, script))
+    write_atomically(str(path), launcher_source(home, script, version))
     make_private_file(path)
     return path
+
+
+class LauncherTarget(NamedTuple):
+    version: str | None
+    script: str | None
+
+
+def launcher_target(text: str) -> LauncherTarget:
+    found: dict[str, str] = {}
+    for match in _LAUNCHER_CONSTANT.finditer(text):
+        try:
+            value = ast.literal_eval(match.group(2))
+        except (ValueError, SyntaxError):
+            continue
+        if isinstance(value, str):
+            found.setdefault(match.group(1), value)
+    return LauncherTarget(found.get("VERSION"), found.get("LAUNCH_SCRIPT"))
+
+
+def _launcher_current(target: LauncherTarget, script: str, version: str) -> bool:
+    if target.script is None or not os.path.isfile(target.script):
+        return False
+    if target.script == script and target.version == version:
+        return True
+    return target.version is not None and compare_versions(target.version, version) >= 0
+
+
+def sync_launcher(home: str, env: Environment | None = None, version: str = PACKAGE_VERSION) -> str | None:
+    path = launcher_path(home)
+    text = read_text_if_exists(str(path))
+    if text is None:
+        return None
+    env = env or Environment()
+    target = launcher_target(text)
+    if _launcher_current(target, env.launch_script, version):
+        return None
+    problems = _folder_problems(os.path.dirname(env.launch_script), env)
+    if problems:
+        raise LoginTaskError("the launcher was not updated because other users could change the installed plugin: " + "; ".join(problems))
+    try:
+        refresh_launcher(home, env.launch_script, version)
+    except PrivateFileError as error:
+        raise LoginTaskError(str(error)) from error
+    named = f"{target.script} (version {target.version or 'not recorded'})" if target.script else "an unreadable target"
+    return f"The login task's launcher now starts version {version} from {env.launch_script}; it named {named}."
 
 
 def task_xml(*, sid: str, interpreter: str, launcher: str, working_directory: str) -> str:
@@ -261,6 +310,10 @@ def writable_by_others(entries: Sequence[AclEntry] | None) -> list[str]:
         if group is not None and entry.mask & _WRITE_RIGHTS and group not in names:
             names.append(group)
     return [f"{name} can change it" for name in names]
+
+
+def install_folder_problems(folder: str, env: Environment | None = None) -> list[str]:
+    return _folder_problems(folder, env or Environment())
 
 
 def _folder_problems(folder: str, env: Environment) -> list[str]:

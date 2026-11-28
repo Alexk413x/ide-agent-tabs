@@ -35,6 +35,7 @@ _ID = re.compile(r"[0-9a-f]{32}")
 _MAC = re.compile(r"[0-9a-f]{64}")
 _JOIN_KEYS = ("v", "kind", "id", "deviceName", "deviceId", "hubId", "hubName", "port", "transport")
 _MEMBER_KEYS = ("v", "kind", "id", "hubId", "deviceId", "port", "ts", "mac")
+_SOLICIT_KEYS = ("v", "kind", "id")
 
 
 class BeaconError(ValueError):
@@ -62,7 +63,13 @@ class MemberBeacon:
     mac: str = field(repr=False)
 
 
+@dataclass(frozen=True)
+class Solicitation:
+    id: str
+
+
 Announcement = Union[JoinAnnouncement, MemberBeacon]
+Datum = Union[JoinAnnouncement, MemberBeacon, Solicitation]
 
 
 def new_announcement_id() -> str:
@@ -97,6 +104,10 @@ def build_join(
             "transport": TRANSPORT,
         }
     )
+
+
+def build_solicit(announcement_id: str | None = None) -> bytes:
+    return _encode({"v": VERSION, "kind": "solicit", "id": announcement_id or new_announcement_id()})
 
 
 def _mac(key: str, announcement_id: str, hub_id: str, device_id: str, port: int, ts: int) -> str:
@@ -175,7 +186,7 @@ def _hub(hub_id: object, hub_name: object) -> tuple[str | None, str | None]:
         raise BeaconError(str(error)) from error
 
 
-def parse_datagram(data: bytes) -> Announcement:
+def parse_datagram(data: bytes) -> Datum:
     if len(data) > MAX_DATAGRAM:
         raise BeaconError("the datagram is too large")
     try:
@@ -187,12 +198,14 @@ def parse_datagram(data: bytes) -> Announcement:
     version, kind = value.get("v"), value.get("kind")  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
     if isinstance(version, bool) or version != VERSION:
         raise BeaconError("the version is not supported")
-    keys = {"join": _JOIN_KEYS, "member": _MEMBER_KEYS}.get(kind) if isinstance(kind, str) else None
+    keys = {"join": _JOIN_KEYS, "member": _MEMBER_KEYS, "solicit": _SOLICIT_KEYS}.get(kind) if isinstance(kind, str) else None
     if keys is None or set(value) != set(keys):  # pyright: ignore[reportUnknownArgumentType]
         raise BeaconError("the kind is unknown or a field is missing or unknown")
     identifier = value["id"]
     if not isinstance(identifier, str) or _ID.fullmatch(identifier) is None:
         raise BeaconError("id is malformed")
+    if kind == "solicit":
+        return Solicitation(identifier)
     if kind == "join":
         name = value["deviceName"]
         if not isinstance(name, str) or not valid_device_name(name):
@@ -422,7 +435,7 @@ class Endpoint:
 
 @dataclass(frozen=True)
 class Heard:
-    announcement: Announcement
+    announcement: Datum
     host: str
     path: str
 
@@ -434,6 +447,7 @@ class Inbox:
         self._clock = clock
         self._seen: dict[str, tuple[float, set[str]]] = {}
         self.rejected = 0
+        self.own = 0
 
     def _path_of(self, datagram: Datagram) -> str:
         return MULTICAST if datagram.port == self._wire.port else BROADCAST
@@ -463,6 +477,9 @@ class Inbox:
         return frozenset(known[1]) if known is not None else frozenset()
 
     def accept(self, datagram: Datagram) -> Heard | None:
+        if datagram.host == self._wire.bind:
+            self.own += 1
+            return None
         if not self._in_scope(datagram.host):
             return None
         try:
@@ -470,7 +487,8 @@ class Inbox:
         except BeaconError:
             self.rejected += 1
             return None
-        if announcement.device_id == self._own:
+        if not isinstance(announcement, Solicitation) and announcement.device_id == self._own:
+            self.own += 1
             return None
         if not self._remember(announcement.id, self._path_of(datagram)):
             return None

@@ -172,9 +172,12 @@ type WorldOptions = {
   uname?: string
   dirs?: string[]
   mailFrom?: Record<string, string>
+  newest?: string
+  senderNames?: Record<string, string>
   files?: Record<string, string>
   configDir?: string
   unplaced?: boolean
+  forked?: boolean
 }
 
 function world(on: On, options: WorldOptions = {}) {
@@ -296,9 +299,10 @@ function world(on: On, options: WorldOptions = {}) {
     switch (e.args.op) {
       case 'presence':
         if (e.args.driver === true) claim.lost = false
+        if (options.forked) return ok({ id: 's-000000000002', tab: false, driver: false })
         return ok({ id: options.tab ?? 's-000000000001', tab: options.tab !== undefined, driver: options.tab !== undefined && e.args.driver !== false && !claim.lost })
       case 'unread':
-        return ok({ count: mail.unread.length, senders: unreadSenders() })
+        return ok({ count: mail.unread.length, senders: unreadSenders(), ...(options.newest !== undefined && mail.unread.length ? { newest: options.newest } : {}), ...(options.senderNames !== undefined ? { names: options.senderNames } : {}) })
       case 'sessions':
         return ok({ sessions: options.rows ?? ROWS })
       case 'send':
@@ -1391,6 +1395,18 @@ describe('agents pane', () => {
     expect(w.submitted).toEqual([])
   })
 
+  test('a message this session sent to another machine reads as sent over the network', async ($, on) => {
+    const remote = { id: 'm-aaaaaaaaaaaaaaa3', at: AT(3), direction: 'sent', route: 'native', from: { id: 'tab-d', name: 'docs-9b [11aa22]' }, to: { id: 'tab-r@laptop', agent: 'remote' }, peer: { id: 'tab-r@laptop' }, text: 'Are you there?', delivery: 'sent' }
+    world(on, { tab: 'tab-c', history: [...HISTORY, remote] })
+    await start($)
+    await openPane($)
+    const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await click(ui, 'agent:id:tab-d')
+    await click(ui, 'msg:m-aaaaaaaaaaaaaaa3')
+    expect(await detailValue(ui, 'To')).toBe('tab-r@laptop')
+    expect(await detailValue(ui, 'Delivery')).toBe('sent · network')
+  })
+
   test('the view, the agent and the message stay in $.state across a reload, and the open pane resumes its refresh', async ($, on) => {
     const w = world(on, { tab: 'tab-c', history: HISTORY })
     await start($)
@@ -1570,7 +1586,7 @@ describe('opening the pane from a message', () => {
 
     w.mail.unread.push(...Object.keys(FROM))
     await w.clock.advance(2_000)
-    expect(w.toasts).toEqual(['✉ Agent Tabs message from w-1a · /agent-messages to view'])
+    expect(w.toasts).toEqual(['✉ Agent Tabs message from sub-9e · /agent-messages to view'])
     for (const band of bands) {
       expect(await band.find({ type: 'Text', text: '✉ 4 new from sub-9e, docs-9b [11aa22], a-a2, …' })).toBeDefined()
       const open = await band.find({ type: 'Button', key: 'open-inbox' })
@@ -1597,6 +1613,90 @@ describe('opening the pane from a message', () => {
       expect((await band.find({ type: 'Text' }))?.text).toBe('engine band')
       await band.unmount()
     }
+  })
+
+  test('a fork that shares the tab id shows the notice for its own mailbox and leaves delivery to the driver', async ($, on) => {
+    engineBand(on)
+    const w = world(on, { tab: 'tab-c', forked: true, mailFrom: FROM })
+    await start($)
+    w.mail.unread.push('1-m-0000000000000001.json')
+    await w.clock.advance(2_000)
+    const band = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    expect((await band.findAll({ type: 'Text' })).some(t => t.text === '1 new')).toBe(true)
+    expect(w.ops('take')).toEqual([])
+    expect(w.ops('presence').some(c => c.args.state !== undefined && c.args.driver === undefined)).toBe(false)
+    await band.unmount()
+  })
+
+  test('the band draws the envelope in the theme colour and each sender in its agent colour', async ($, on) => {
+    engineBand(on)
+    const w = world(on, { tab: 'tab-c', mailFrom: FROM })
+    await start($)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    w.mail.unread.push('1-m-0000000000000001.json')
+    await w.clock.advance(2_000)
+    const band = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    const exact = async (text: string) => (await band.findAll({ type: 'Text' })).filter(t => t.text === text).map(t => t.props.color ?? (t.props.bold ? 'bold' : 'plain'))
+    expect(await exact('✉')).toEqual(['suggestion'])
+    expect(await exact('1 new')).toEqual(['bold'])
+    expect(await exact('w-1a')).toContain('#10a37f')
+    await band.unmount()
+  })
+
+  test("the band's Open shows the message that raised the notice, from a sender on another machine, after it was read", async ($, on) => {
+    engineBand(on)
+    const remote = { ...CARD_MESSAGE, id: 'm-0000000000000009', from: { id: 'marbles-pc-remote', agent: 'remote', path: '' }, peer: { id: 'marbles-pc-remote' } }
+    const w = world(on, { tab: 'tab-c', history: [remote], mailFrom: { '9-m-0000000000000009.json': 'marbles-pc-remote' }, newest: 'm-0000000000000009' })
+    await start($)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    w.mail.unread.push('9-m-0000000000000009.json')
+    await w.clock.advance(2_000)
+    const band = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    expect(await band.find({ type: 'Text', text: '✉ 1 new from marbles-pc-remote' })).toBeDefined()
+    await band.press({ key: 'open-inbox' })
+    await band.unmount()
+    w.mail.read.push(...w.mail.unread.splice(0))
+    const pane = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'desktop', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await w.clock.settle()
+    const asked = w.ops('message').at(-1)!.args
+    expect([asked.id, asked.session]).toEqual(['m-0000000000000009', 'marbles-pc-remote'])
+    expect(await textIn(pane, 'Please review x.ts')).toBeDefined()
+    await pane.unmount()
+  })
+
+  test('a sender on another machine with no session row is named in the band by the name its message stored, and Open asks for it by address', async ($, on) => {
+    engineBand(on)
+    const id = 'remote-1@laptop'
+    const remote = { ...CARD_MESSAGE, id: 'm-0000000000000008', from: { id, name: 'plugins-9c [00b806]@laptop', agent: 'remote', path: '' }, peer: { id } }
+    const w = world(on, { tab: 'tab-c', history: [remote], mailFrom: { '8-m-0000000000000008.json': id }, newest: 'm-0000000000000008', senderNames: { [id]: 'plugins-9c [00b806]@laptop' } })
+    await start($)
+    await $.turn.start({ text: 'go', turnId: 't1' })
+    w.mail.unread.push('8-m-0000000000000008.json')
+    await w.clock.advance(2_000)
+    const band = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'AbovePrompt', props: BAND })
+    expect(await band.find({ type: 'Text', text: '✉ 1 new from plugins-9c [00b806]@laptop' })).toBeDefined()
+    await band.press({ key: 'open-inbox' })
+    await band.unmount()
+    const pane = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'desktop', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
+    await w.clock.settle()
+    expect(w.ops('message').at(-1)!.args.session).toBe(id)
+    await pane.unmount()
+  })
+
+  test("the peer card's Open finds a sender on another machine by its address", async ($, on) => {
+    const remote = { ...CARD_MESSAGE, from: { id: 'marbles-pc-remote', agent: 'remote', path: '' }, peer: { id: 'marbles-pc-remote' } }
+    const w = world(on, { tab: 'tab-c', history: [remote] })
+    await start($)
+    const card = await $.ui.mount({
+      plugin: 'ide-agent-tabs',
+      surface: 'terminal',
+      component: 'UserMessage',
+      requestId: 'u1',
+      props: { text: FRAMED.replaceAll('w-1a', 'marbles-pc-remote'), origin: { kind: 'plugin', name: 'ide-agent-tabs' }, isExpanded: false },
+    })
+    await card.press({ key: 'open-in-agent-tabs' })
+    expect(w.ops('history').at(-1)!.args.session).toBe('marbles-pc-remote')
+    await card.unmount()
   })
 
   test('one unread message from one sender reads as one line', async ($, on) => {
@@ -1847,12 +1947,15 @@ describe('sessions on other machines', () => {
     expect(sent.reason).toContain('studio is offline')
   })
 
-  test('the agents pane leaves remote groups out', async ($, on) => {
-    world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!, ROWS[3]!, remoteRow('studio', 'w-1a')] })
+  test('the agents pane lists the sessions of each other machine under its label, with their message counts and thread', async ($, on) => {
+    const w = world(on, { tab: 'c1a2b3c4-0000', rows: [ROWS[0]!, ROWS[3]!, remoteRow('studio', 'w-1a')] })
     await start($)
     await openPane($)
     const ui = await $.ui.mount({ plugin: 'ide-agent-tabs', surface: 'terminal', component: 'Pane', requestId: 'agent-tabs', props: PANE_PROPS() })
-    expect(await ui.find({ type: 'Text', text: 'studio (remote)' })).toBeUndefined()
+    expect((await drawnLines(ui)).some(l => l.includes('studio (remote)'))).toBe(true)
+    expect(w.ops('counts').at(-1)?.args.agents).toContainEqual({ session: 'w-1a@studio', names: ['w-1a@studio'] })
+    await click(ui, 'agent:id:w-1a@studio')
+    expect(w.ops('history').at(-1)?.args).toMatchObject({ session: 'w-1a@studio' })
     await ui.unmount()
   })
 

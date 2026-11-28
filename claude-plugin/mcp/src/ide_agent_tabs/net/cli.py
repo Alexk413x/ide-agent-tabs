@@ -11,6 +11,7 @@ import socket
 import sqlite3
 import ssl
 import stat
+import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -30,7 +31,8 @@ from ..processes import spawn_detached, terminal_environment
 from ..profiles import TAB_ID_ENV
 from ..shared.state import DEFAULT_PORT as SERVER_DEFAULT_PORT
 from ..shared.state import PORT_OPTION_ENV, parse_port
-from . import elevation, firewall, hubsync, ingress, login_task, tls
+from ..version import PACKAGE_VERSION
+from . import elevation, firewall, hubsync, ingress, login_task, selfupdate, tls
 from .certgen import CertgenError, Identity, generate_identity
 from .client import identity_dir, local_device_id, peer_cert_path, send_request
 from .confirm import ConfirmError, confirm
@@ -86,7 +88,7 @@ if TYPE_CHECKING:
     from .find import FindRequest, FindResult
     from .hub_cli import PairDeps
 
-USAGE = "net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|networks|find>"
+USAGE = "net <id|status|off|trust|grant|revoke|rename|lan|hub|folders|discoverable|auto-update|networks|find>"
 _GRAMMAR = (
     "agent-tabs net id | status | off | revoke <label> | rename <label> <new label>"
     " | trust <cert file> --id <device id> --address <IP> --label <name>"
@@ -94,14 +96,16 @@ _GRAMMAR = (
     " | lan setup --openssl <absolute path> | lan on --bind <address> [--at-login] | lan start | lan stop"
     " | hub create [--name <name>] [--folder <session folder>] [--with <device id> ...] [--bind <address>]"
     " | hub join <device id> [--folder <session folder>] [--bind <address>] | hub status | hub leave"
-    " | folders | folders add <absolute path> | folders remove <absolute path>"
+    " | folders [--outbound] | folders add <absolute path> [--outbound] | folders remove <absolute path> [--outbound]"
     " | discoverable [on [--bind <address>] [--folder <session folder>] | off | status]"
+    " | auto-update [on | off | status]"
     " | networks | networks add | networks remove <network id>"
     " | find [--json] [--bind <address>]"
 )
 LABEL = re.compile(r"[a-z0-9-]{1,32}")
 _MAX_CERT_BYTES = 65536
 _MAX_MODEL_CHARS = 128
+JOINS_START_S = 15
 _DRIVE_REMOTE = 4
 NETWORK_SETTINGS_REFUSAL = "refused: a session opened by another machine can't change this machine's network settings"
 _PROJECT_TABLE = re.compile(r"""\s*\[\s*projects\s*\.\s*("(?:[^"\\]|\\.)*"|'[^']*')\s*\]\s*(?:#.*)?""")
@@ -135,13 +139,14 @@ def _launcher() -> str:
     return str(Path(__file__).resolve().parents[3] / "launch" / "net_listener.py")
 
 
-def _spawn_listener(home: str, server_port: int) -> int | None:
-    if not os.path.isabs(sys.executable) or not os.path.isfile(_launcher()):
+def _spawn_listener(home: str, server_port: int, launcher: str | None = None) -> int | None:
+    script = launcher or _launcher()
+    if not os.path.isabs(sys.executable) or not os.path.isfile(script):
         return None
     env = terminal_environment(os.environ)
     env["IDE_AGENT_TABS_HOME"] = home
     try:
-        child = spawn_detached([sys.executable, "-I", "-S", _launcher(), "--server-port", str(server_port)], env, os.path.expanduser("~"))
+        child = spawn_detached([sys.executable, "-I", "-S", script, "--server-port", str(server_port)], env, os.path.expanduser("~"))
     except OSError:
         return None
     return child.pid
@@ -179,6 +184,7 @@ class Services:
     register_login: Callable[[str], str] = login_task.register
     remove_login: Callable[[str], str] = login_task.remove
     login_status: Callable[[str], str] = login_task.status
+    sync_launcher: Callable[[str], str | None] = login_task.sync_launcher
     apply_firewall: Callable[[str, str, str], str] = firewall.apply_listener_rule
     remove_firewall: Callable[[], str] = firewall.remove_listener_rule
     interface_for: Callable[[str], InterfaceInfo] = interface_for
@@ -189,17 +195,36 @@ class Services:
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     user_home: str = field(default_factory=lambda: os.path.expanduser("~"))
     server_port: int = SERVER_DEFAULT_PORT
-    start_wait_s: float = 3.0
+    start_wait_s: float = 20.0
     stop_wait_s: float = 5.0
     cwd: Callable[[], str] = os.getcwd
     new_hub_id: Callable[[], str] = lambda: os.urandom(16).hex()
     network_id: Callable[[str], str | None] = current_network_id
     is_remote_origin: Callable[[str], bool] = _caller_is_remote
     migrator: Migrator | None = None
+    now_ms: Callable[[], int] = now_ms
+    plugin_version: str = PACKAGE_VERSION
+    update_command: Callable[[], selfupdate.UpdateCommand | None] = lambda: selfupdate.update_command(selfupdate.plugin_root())
+    update_runner: selfupdate.Runner = subprocess.run
+    fresh_install: Callable[[], selfupdate.Install | None] = lambda: selfupdate.newest_install(selfupdate.plugin_root())
+    install_build: Callable[[selfupdate.Install], Build] = lambda install: _build_of(install)
+    spawn_from: Callable[[str, int, str], int | None] = _spawn_listener
 
     def record(self, event: str, **fields: object) -> None:
         pairs = " ".join(f"{key}={value}" for key, value in fields.items())
         append_log(log_file(self.home, "cli.log"), f"{event} {pairs}".strip())
+
+
+def _build_of(install: selfupdate.Install) -> Build:
+    from ..server_copy import Source, bundled_build
+
+    source = Source(os.path.join(install.root, "mcp"), os.path.join(install.root, "dist", "launch"), install.version)
+    return Build(install.version, bundled_build(source))
+
+
+def renewed_services(svc: Services, install: selfupdate.Install) -> Services:
+    build = svc.install_build(install)
+    return replace(svc, build=lambda: build, spawn=lambda home, port: svc.spawn_from(home, port, install.listener_script))
 
 
 def default_services() -> Services:
@@ -293,6 +318,12 @@ def start_listener(svc: Services) -> bool:
         return False
     started = _wait_for(lambda: live_listener(svc.home) is not None or not pid_alive(pid), svc.start_wait_s)
     info = live_listener(svc.home) if started else None
+    if info is None and pid_alive(pid):
+        svc.err(
+            f"error: the listener (pid {pid}) has not finished starting after {svc.start_wait_s:g} s; "
+            f"run `agent-tabs net status` in a few seconds, and see {log_file(svc.home)}"
+        )
+        return False
     if info is None:
         svc.err(f"error: the listener did not start; see {log_file(svc.home)}")
         return False
@@ -400,8 +431,11 @@ def listener_lines(svc: Services, info: ListenerInfo | None, expects_joins: bool
         lines.append(f"listener build: {info.build}, newer than the installed {installed.id}")
     else:
         lines.append(f"listener build: {info.build}")
+    age_s = (svc.now_ms() - info.started_ms) // 1000
     if info.serving_joins:
         lines.append("serving joins: yes")
+    elif expects_joins and 0 <= age_s < JOINS_START_S:
+        lines.append(f"serving joins: starting (the listener started {age_s} s ago)")
     elif expects_joins:
         lines.append("serving joins: no (the running listener reports that it serves no joins, although discoverable is on)")
     else:
@@ -1115,36 +1149,43 @@ def _cmd_folders(svc: Services, args: Sequence[str]) -> int:
     parser = make_parser("folders")
     parser.add_argument("action", nargs="?", choices=("add", "remove"))
     parser.add_argument("path", nargs="?")
+    parser.add_argument("--outbound", action="store_true")
     options = parser.parse_args(args)
     if options.action is not None:
         refuse_remote_origin(svc)
     config, warnings = load_network_config(svc.home)
     for warning in warnings:
         svc.err(f"warning: {warning}")
-    folders = list(config.member_folders)
+    kind, key = ("outbound folder", "outboundFolders") if options.outbound else ("member folder", "memberFolders")
+    folders = list(config.outbound_folders if options.outbound else config.member_folders)
     if options.action is None:
-        svc.out("member folders: " + (", ".join(folders) if folders else "none"))
+        if options.outbound:
+            svc.out("outbound folders: " + (", ".join(folders) or "none"))
+        else:
+            svc.out("member folders: " + (", ".join(config.member_folders) or "none"))
+            svc.out("outbound folders: " + (", ".join(config.outbound_folders) or "none"))
         return 0
     path: str | None = options.path
     if path is None:
         raise UsageError(f"agent-tabs net folders {options.action}: expected an absolute path")
     if options.action == "add":
-        real = _local_folder(path, "member folder")
+        real = _local_folder(path, kind)
         if any(_folder_key(f) == _folder_key(real) for f in folders):
-            svc.out(f"{real} is already a member folder.")
+            svc.out(f"{real} is already an {kind}." if options.outbound else f"{real} is already a {kind}.")
             return 0
         folders.append(real)
     else:
         if not os.path.isabs(path):
-            raise CliError("member folder: the path must be an absolute path")
+            raise CliError(f"{kind}: the path must be an absolute path")
         wanted = {_folder_key(path), _folder_key(os.path.realpath(path))}
         kept = [f for f in folders if _folder_key(f) not in wanted]
         if len(kept) == len(folders):
-            raise CliError(f"{path} is not a member folder; agent-tabs net folders lists them")
+            flag = " --outbound" if options.outbound else ""
+            raise CliError(f"{path} is not {'an' if options.outbound else 'a'} {kind}; agent-tabs net folders{flag} lists them")
         folders = kept
-    set_network(svc.home, {"memberFolders": folders})
-    svc.record("folders", action=options.action, count=len(folders))
-    svc.out("member folders: " + (", ".join(folders) if folders else "none"))
+    set_network(svc.home, {key: folders})
+    svc.record("folders", action=options.action, count=len(folders), **({"kind": "outbound"} if options.outbound else {}))
+    svc.out(f"{kind}s: " + (", ".join(folders) if folders else "none"))
     return 0
 
 
@@ -1166,6 +1207,26 @@ def _cmd_discoverable(svc: Services, args: Sequence[str]) -> int:
     return hub_cli.discoverable(svc, args)
 
 
+def _cmd_auto_update(svc: Services, args: Sequence[str]) -> int:
+    parser = make_parser("auto-update")
+    parser.add_argument("action", nargs="?", choices=("on", "off", "status"), default="status")
+    options = parser.parse_args(args)
+    if options.action != "status":
+        refuse_remote_origin(svc)
+        set_network(svc.home, {"autoUpdate": options.action == "on"})
+        svc.record("auto-update", state=options.action)
+        svc.out(
+            "Unattended update is on. A join from a machine on a newer ide-agent-tabs updates this machine's plugin from its own marketplace, at most once an hour for each machine."
+            if options.action == "on"
+            else "Unattended update is off. A join from a machine on a newer ide-agent-tabs sends this machine's sessions a notice with the update command."
+        )
+        return 0
+    svc.out(f"unattended update: {'on' if selfupdate.auto_update_enabled(svc.home) else 'off'}")
+    command = svc.update_command()
+    svc.out(f"update command: {command.display if command is not None else 'none known for this install'}")
+    return 0
+
+
 def _cmd_networks(svc: Services, args: Sequence[str]) -> int:
     from . import hub_cli
 
@@ -1178,6 +1239,18 @@ def _cmd_find(svc: Services, args: Sequence[str]) -> int:
     return hub_cli.find(svc, args)
 
 
+def _sync_launcher(svc: Services) -> None:
+    try:
+        changed = svc.sync_launcher(svc.home)
+    except (LoginTaskError, OSError) as error:
+        svc.record("launcher", ok=0)
+        svc.err(f"warning: {error}")
+        return
+    if changed is not None:
+        svc.record("launcher", ok=1)
+        svc.err(changed)
+
+
 def main(argv: Sequence[str], services: Services | None = None) -> int:
     svc = services or default_services()
     if svc.migrator is not None:
@@ -1185,6 +1258,7 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
             svc.migrator.start(svc.home, svc.cwd())
         except MIGRATION_ERRORS as error:
             svc.record("migrate-failed", error=type(error).__name__)
+    _sync_launcher(svc)
     handlers: dict[str, Callable[[Services, Sequence[str]], int]] = {
         "id": _cmd_id,
         "status": _cmd_status,
@@ -1197,6 +1271,7 @@ def main(argv: Sequence[str], services: Services | None = None) -> int:
         "hub": _cmd_hub,
         "folders": _cmd_folders,
         "discoverable": _cmd_discoverable,
+        "auto-update": _cmd_auto_update,
         "networks": _cmd_networks,
         "find": _cmd_find,
     }

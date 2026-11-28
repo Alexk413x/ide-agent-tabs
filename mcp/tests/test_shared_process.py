@@ -9,8 +9,10 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
+from unittest import mock
 
 from ide_agent_tabs.liveness import pid_alive
+from ide_agent_tabs.net.login_task import LoginTaskError
 from ide_agent_tabs.shared.client import ensure_server, probe, server_command, start_server, stop_server
 from ide_agent_tabs.shared.handover import claim_port
 from ide_agent_tabs.shared.headers import helper_headers, launcher_path
@@ -205,6 +207,20 @@ class StartHookTest(unittest.TestCase):
         env = {**os.environ, "IDE_AGENT_TABS_HOME": home, "CLAUDE_PLUGIN_OPTION_SERVER_PORT": str(port)}
         self.assertIsNone(run_hook("SessionStart", env, LAUNCHER))
         self.assertEqual(probe(port).kind, "ours")
+
+    def test_session_start_brings_the_login_launcher_up_to_date_and_survives_a_refusal(self) -> None:
+        home = temp_home(self, "iat-hook-")
+        port = free_port()
+        stop_after(self, home, port)
+        env = {**os.environ, "IDE_AGENT_TABS_HOME": home, "CLAUDE_PLUGIN_OPTION_SERVER_PORT": str(port)}
+        with mock.patch("ide_agent_tabs.net.login_task.sync_launcher", return_value="changed") as sync:
+            self.assertIsNone(run_hook("SessionStart", env, LAUNCHER))
+        sync.assert_called_once_with(home)
+        with mock.patch("ide_agent_tabs.net.login_task.sync_launcher", side_effect=LoginTaskError("refused")):
+            self.assertIsNone(run_hook("SessionStart", env, LAUNCHER))
+        with mock.patch("ide_agent_tabs.net.login_task.sync_launcher") as sync:
+            run_hook("SessionEnd", env, LAUNCHER, b'{"reason":"clear"}')
+        sync.assert_not_called()
 
     def test_session_end_posts_the_claude_pid_and_skips_a_clear(self) -> None:
         home = temp_home(self, "iat-hook-")

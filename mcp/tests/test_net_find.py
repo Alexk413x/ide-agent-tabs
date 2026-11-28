@@ -166,7 +166,8 @@ class AnnouncementTest(FindCase):
         result = self.run_find(served)
         self.assertEqual((result.datagrams, result.heard), (3, 1))
         self.assertIn(
-            "find: udp: joined the group yes; 3 datagram(s) received, 1 invalid, 1 member beacon(s) ignored, 1 announcement(s) accepted",
+            "find: udp: joined the group yes; 1 solicitation(s) sent; 3 datagram(s) received, 0 from this machine, "
+            "0 solicitation(s) from other finds, 1 invalid, 1 member beacon(s) ignored, 1 announcement(s) accepted",
             self.logs,
         )
 

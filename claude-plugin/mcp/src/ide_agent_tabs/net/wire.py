@@ -86,6 +86,8 @@ class SendBody:
     to: str
     text: str
     reply_to: str | None = None
+    from_id: str | None = None
+    from_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -338,11 +340,16 @@ def _parse_close(body: dict[str, Any]) -> CloseBody:
 
 
 def _parse_send(body: dict[str, Any]) -> SendBody:
-    _only(body, ("to", "text"), ("replyTo",), "send body")
+    _only(body, ("to", "text"), ("replyTo", "from"), "send body")
+    sender = _object(body["from"], "from") if "from" in body else None
+    if sender is not None:
+        _only(sender, ("id",), ("name",), "from")
     return SendBody(
         to=_text(body["to"], "to", _SESSION_ID),
         text=_text(body["text"], "text", None, MAX_TEXT_CHARS),
         reply_to=_text(body["replyTo"], "replyTo", _MESSAGE_ID) if "replyTo" in body else None,
+        from_id=None if sender is None else _text(sender["id"], "from id", _SESSION_ID),
+        from_name=None if sender is None or "name" not in sender else _session_name(sender["name"]),
     )
 
 
@@ -441,6 +448,10 @@ def refused_reply(request_id: str, reason: str | None = None) -> dict[str, Any]:
     if reason in REFUSAL_REASONS:
         reply["reason"] = reason
     return reply
+
+
+def clean_name(name: str) -> str:
+    return "".join(" " if unicodedata.category(c) in _BAD_NAME_CATEGORIES else c for c in name)[:MAX_NAME_CHARS]
 
 
 def _session_name(value: object) -> str:

@@ -39,6 +39,14 @@ class SendTest(unittest.TestCase):
         store.send_message(home, out("tab-b", "one more"), T0 + MINUTE)
         store.send_message(home, out("tab-b", "from z", "tab-z"), T0 + 31)
 
+    def test_a_sender_that_stands_for_many_sessions_skips_the_per_sender_limit(self) -> None:
+        home = temp_home(self)
+        for i in range(store.MAX_SENT_PER_MINUTE + 5):
+            store.send_message(home, out(f"tab-{i % 3}", f"m{i}", "laptop-remote"), T0 + i, limit_sender=False)
+        with self.assertRaisesRegex(MailError, "20 messages in the last minute"):
+            for i in range(store.MAX_SENT_PER_MINUTE + 1):
+                store.send_message(home, out("tab-b", f"n{i}", "laptop-remote"), T0 + 100 + i)
+
     def test_the_same_text_to_the_same_recipient_within_dedupe_ms_returns_the_first_id(self) -> None:
         home = temp_home(self)
         first = store.send_message(home, out("tab-b", "review this"), T0)
@@ -236,9 +244,19 @@ class ReadTest(unittest.TestCase):
         self.assertEqual(store.unread_summary(home, "tab-c", T0), {"count": 0, "senders": []})
         store.send_message(home, out("tab-c", "1", "tab-a"), T0)
         store.send_message(home, out("tab-c", "2", "tab-b"), T0 + 1)
-        store.send_message(home, out("tab-c", "3", "tab-a"), T0 + 2)
+        newest = store.send_message(home, out("tab-c", "3", "tab-a"), T0 + 2)
         store.send_message(home, out("tab-x", "other", "tab-d"), T0 + 3)
-        self.assertEqual(store.unread_summary(home, "tab-c", T0 + 4), {"count": 3, "senders": ["tab-a", "tab-b"]})
+        self.assertEqual(store.unread_summary(home, "tab-c", T0 + 4), {"count": 3, "senders": ["tab-a", "tab-b"], "newest": newest["id"]})
+
+    def test_unread_summary_names_a_sender_that_stored_its_name(self) -> None:
+        home = temp_home(self)
+        party = {"id": "remote-1@laptop", "name": "plugins-9c [00b806]@laptop", "agent": "remote", "path": ""}
+        store.send_message(home, {"from": party, "to": "tab-c", "text": "hi"}, T0)
+        store.send_message(home, out("tab-c", "2", "tab-a"), T0 + 1)
+        summary = store.unread_summary(home, "tab-c", T0 + 2)
+        self.assertEqual(
+            (summary["senders"], summary["names"]), (["tab-a", "remote-1@laptop"], {"remote-1@laptop": "plugins-9c [00b806]@laptop"})
+        )
 
 
 class HistoryTest(unittest.TestCase):

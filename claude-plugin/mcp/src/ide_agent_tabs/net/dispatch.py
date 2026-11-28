@@ -8,7 +8,6 @@ import re
 import sqlite3
 import stat
 import threading
-import unicodedata
 from collections import OrderedDict, deque
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -21,7 +20,7 @@ from ..messaging.store import send_message
 from . import wire
 from .audit import ADMITTED, REFUSED, Audit, AuditError, AuditRecord
 from .hubsync import HubRefusal, HubSync
-from .outbound import is_inside
+from .outbound import is_inside, shell_safe_folder
 from .policy import (
     FolderGrant,
     NetworkConfig,
@@ -44,8 +43,6 @@ MINUTE_MS = 60_000
 HOUR_MS = 3_600_000
 MAX_NOTICES = 256
 _REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
-_BAD_NAME_CATEGORIES = frozenset({"Cc", "Cs", "Zl", "Zp"})
-_SHELL_UNSAFE = frozenset("\"'`$;|&<>%")
 
 
 class TabService(Protocol):
@@ -121,16 +118,8 @@ def folder_problem(folder: FolderGrant) -> str | None:
     return None
 
 
-def _shell_safe_folder(path: str) -> bool:
-    return path.isprintable() and not any(char in _SHELL_UNSAFE for char in path) and os.path.isdir(path)
-
-
 def _digest(request: object) -> str:
     return hashlib.sha256(json.dumps(request, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
-
-
-def _clean_name(name: str) -> str:
-    return "".join(" " if unicodedata.category(c) in _BAD_NAME_CATEGORIES else c for c in name)[: wire.MAX_NAME_CHARS]
 
 
 class NetDispatcher:
@@ -329,7 +318,7 @@ class NetDispatcher:
             while len(self._noticed) > MAX_NOTICES:
                 self._noticed.popitem(last=False)
         label = wire.escape_display(grant.label)
-        if _shell_safe_folder(path):
+        if shell_safe_folder(path):
             text = (
                 f"{label} asked to open a tab in {path}, which is outside network.memberFolders, "
                 "so this machine refused. To allow it, ask your user, then run: "
@@ -348,7 +337,7 @@ class NetDispatcher:
             for session in self._live_sessions():
                 if self._owner(store, session["id"]) is None:
                     with contextlib.suppress(_Refusal):
-                        self._deliver("net-notice", session["id"], text, None, "notice-failed")
+                        self._deliver("net-notice", session["id"], text, None, "notice-failed", one_session=False)
         except Exception as e:  # noqa: BLE001 - a notice is best effort; the request outcome stands either way
             self._log(f"net: delivering a notice failed: {type(e).__name__}")
 
@@ -458,12 +447,26 @@ class NetDispatcher:
         trace.tab = reservation.tab_id
         return {"tab": reservation.tab_id} if key == "tab" else {"closed": True}
 
-    def _deliver(self, sender: str, to: str, text: str, reply_to: str | None, reason: str) -> str:
-        out: dict[str, Any] = {"from": {"id": sender, "agent": "remote", "path": ""}, "to": to, "text": text}
+    def _deliver(
+        self,
+        sender: str,
+        to: str,
+        text: str,
+        reply_to: str | None,
+        reason: str,
+        sender_name: str | None = None,
+        one_session: bool = True,
+    ) -> str:
+        party: dict[str, Any] = {"id": sender, "agent": "remote", "path": ""}
+        if sender_name is not None:
+            party["name"] = sender_name
+        out: dict[str, Any] = {"from": party, "to": to, "text": text}
         if reply_to is not None:
             out["replyTo"] = reply_to
         try:
-            return str(send_message(self.home, out)["id"])
+            # A sender that stands for many sessions (an older peer's label, or the notice sender) skips the mailbox's
+            # per-sender limit, which would throttle every session behind it; the grant's per-peer rate still applies.
+            return str(send_message(self.home, out, limit_sender=one_session)["id"])
         except (MailError, OSError) as e:
             self._log(f"net: delivering a message failed: {type(e).__name__}")
             raise _Refusal(reason, "failed") from None
@@ -535,7 +538,9 @@ class NetDispatcher:
             return dict(known[1])
         store = self._open_store()
         now = self._now_ms()
-        sender = f"{grant.label}-remote"
+        legacy = f"{grant.label}-remote"
+        sender = legacy if body.from_id is None else f"{body.from_id}@{grant.label}"
+        sender_name = None if body.from_name is None or body.from_name.strip() == "" else f"{body.from_name}@{grant.label}"
         owned = self._owner(store, body.to) == peer
         direct = owned or body.to in grant.send
         allowed = direct or grant.member
@@ -554,7 +559,7 @@ class NetDispatcher:
             raise _Refusal("rate-limit")
         trace.admitted = True
         trace.effect = True
-        reply = {"id": self._deliver(sender, body.to, body.text, body.reply_to, "delivery-failed")}
+        reply = {"id": self._deliver(sender, body.to, body.text, body.reply_to, "delivery-failed", sender_name, sender != legacy)}
         self._remember(peer, request_id, digest, reply)
         return reply
 
@@ -579,7 +584,7 @@ class NetDispatcher:
             if not grant.member and p["id"] not in grant.send and self._owner(store, p["id"]) != trace.peer:
                 continue
             if p["agent"] in wire.SESSION_AGENTS and p["state"] in wire.STATUSES:
-                rows.append(wire.RemoteSession(p["id"], _clean_name(names[p["id"]]), p["agent"], p["state"]))
+                rows.append(wire.RemoteSession(p["id"], wire.clean_name(names[p["id"]]), p["agent"], p["state"]))
         folders = [f for f in member_folders if wire.valid_path(f)][: wire.MAX_FOLDERS] if grant.member else None
         try:
             return wire.inventory_body(rows[: wire.MAX_SESSIONS], folders)

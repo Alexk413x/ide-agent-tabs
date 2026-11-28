@@ -158,7 +158,7 @@ type ModelInfo = { model?: string; effort?: string }
 
 type PresenceReply = { id: string; tab: boolean; driver: boolean }
 
-type UnreadReply = { count: number; senders: string[] }
+type UnreadReply = { count: number; senders: string[]; names?: Record<string, string>; newest?: string }
 
 const agentLabel = (agent: string) => AGENT_LABELS[agent] ?? agent
 
@@ -449,7 +449,7 @@ function lanEntry(r: SessionRow): Entry | undefined {
     folder: null,
     lan: { label: lan.label, offline: lan.offline },
     id: r.id,
-    names: [r.name, r.id],
+    names: distinct(r.name, r.id),
   }
 }
 
@@ -791,7 +791,7 @@ async function boot($: EngineInterface): Promise<AgentTabsSelf | null> {
     ...(SESSION_ID.test(fallback) ? { session: fallback } : {}),
   })) as PresenceReply
   Object.assign(reported, info)
-  const me: AgentTabsSelf = { server, id: reply.id, name: name ?? fallback, isDriver: reply.driver }
+  const me: AgentTabsSelf = { server, id: reply.id, name: name ?? fallback, isDriver: reply.driver, inTab }
   await $.state.set(selfRef, me)
   await $.state.set(activityRef, 'idle')
   return me
@@ -811,10 +811,13 @@ async function deliver($: EngineInterface, me: AgentTabsSelf): Promise<boolean> 
   return submitted
 }
 
-async function senders($: EngineInterface, server: string, ids: readonly string[]): Promise<AgentTabsSender[]> {
+async function senders($: EngineInterface, server: string, ids: readonly string[], names: Readonly<Record<string, string>> = {}): Promise<AgentTabsSender[]> {
   if (!ids.length) return []
   const rows = await sessions($, server)
-  return ids.map(id => ({ id, name: rows.find(r => r.id === id)?.name ?? id }))
+  return ids.map(id => {
+    const row = rows.find(r => r.id === id)
+    return { id, name: row?.name ?? names[id] ?? id, agent: row?.agent ?? null }
+  })
 }
 
 const inbox = { delivering: false, retryAt: 0, shown: '', unread: 0 }
@@ -822,21 +825,21 @@ let timers: { cancel: () => void }[] = []
 
 async function poll($: EngineInterface) {
   const me = await self($)
-  if (!me?.isDriver) return
+  if (!me?.inTab) return
   const unread = (await callMod($, me.server, { op: 'unread' }).catch(quiet($, 'unread', undefined))) as UnreadReply | undefined
   if (unread === undefined) return
   const { count } = unread
-  const key = `${count}|${unread.senders.join('|')}`
+  const key = `${count}|${unread.newest ?? ''}|${unread.senders.join('|')}`
   if (key !== inbox.shown) {
     inbox.shown = key
-    const from = count ? await senders($, me.server, unread.senders) : []
-    const sender = from.at(-1)?.name
+    const from = count ? await senders($, me.server, unread.senders, unread.names) : []
+    const sender = from[0]?.name
     $.ui.status(count ? `✉ ${count}${sender !== undefined ? ` · ${sender}` : ''}` : undefined)
     if (count > inbox.unread) $.ui.toast(`✉ Agent Tabs message${sender !== undefined ? ` from ${sender}` : ''} · /agent-messages to view`)
     inbox.unread = count
-    await $.state.set(inboxRef, count ? { count, senders: from } : null)
+    await $.state.set(inboxRef, count ? { count, senders: from, newest: unread.newest ?? null } : null)
   }
-  if (!count || inbox.delivering) return
+  if (!me.isDriver || !count || inbox.delivering) return
   const { value: state = 'idle' } = await $.state.get(activityRef)
   if (state !== 'idle' || (await $.clock.now()) < inbox.retryAt) return
   inbox.delivering = true
@@ -868,10 +871,8 @@ async function begin($: EngineInterface, cwd: string | undefined): Promise<Agent
   }
   const configured = ((await $.settings.read().catch(quiet($, 'settings.read', {}))) as { agent?: unknown }).agent
   await noteAgent($, agentNoted.pending ?? configured, sessionCwd.current)
-  if (me.isDriver) {
-    timers.push($.clock.every(BEAT_MS, () => void beat($)))
-    timers.push($.clock.every(POLL_MS, () => void poll($).catch(quiet($, 'poll', undefined))))
-  }
+  if (me.isDriver) timers.push($.clock.every(BEAT_MS, () => void beat($)))
+  if (me.inTab) timers.push($.clock.every(POLL_MS, () => void poll($).catch(quiet($, 'poll', undefined))))
   await $.command
     .register({ name: PANE_COMMAND, description: 'Show or hide the Agent Tabs Messages pane: agents, and the messages each sent or received' })
     .catch(quiet($, 'command.register', undefined))
@@ -939,8 +940,7 @@ const paneRow = (e: Entry): AgentTabsPaneRow => ({
 
 function paneHosts(listing: string | undefined, rows: readonly SessionRow[], now?: number): AgentTabsPaneHost[] {
   const merged = mergeEntries(listing, rows, now)
-  const { ownFolder, ownHost } = merged
-  const entries = merged.entries.filter(e => e.lan === undefined)
+  const { ownFolder, ownHost, entries } = merged
   return hostGroups(entries, ownFolder, ownHost).map(h => ({
     heading: h.heading,
     folders: h.folders.map((f): AgentTabsPaneFolder => ({ path: f.path, heading: f.heading, rows: f.entries.map(paneRow) })),
@@ -1237,7 +1237,7 @@ async function goUp($: EngineInterface) {
 
 function senderPick(rows: readonly SessionRow[], name: string, id?: string): AgentTabsPick {
   const r = rows.find(one => !one.self && one.route !== 'remote' && ((id !== undefined && one.id === id) || one.name === name || one.id === name || one.shortName === name || one.legacyName === name))
-  if (r === undefined) return { key: `name:${name}`, name, id: null, names: [name] }
+  if (r === undefined) return id !== undefined ? { key: `id:${id}`, name, id, names: distinct(name, id) } : { key: `name:${name}`, name, id: null, names: [name] }
   return { key: `id:${r.id}`, name, id: r.id, names: distinct(name, r.name, r.nativeName, r.shortName, r.legacyName, r.id) }
 }
 
@@ -1474,7 +1474,7 @@ function detailRows(m: AgentTabsMessage, hosts: readonly AgentTabsPaneHost[]): D
     party('To', m.to),
     { label: 'Time', value: m.at.replace('T', ' ').replace(/\.\d+Z$/, 'Z') },
     ...(m.replyTo !== undefined ? [{ label: 'Reply to', value: m.replyTo }] : []),
-    { label: 'Delivery', value: `${delivery} · ${m.route === 'native' ? 'SendMessage' : 'Agent Tabs'}` },
+    { label: 'Delivery', value: `${delivery} · ${m.route !== 'native' ? 'Agent Tabs' : LAN_ID.test(m.to.id ?? '') ? 'network' : 'SendMessage'}` },
   ]
 }
 
@@ -1980,7 +1980,7 @@ export const register: Register = on => {
           A peer agent's request, not the user's · reply with SendMessage to {card.name} · ctrl+o shows the message
         </Text>
         <Box flexDirection="row">
-          <Button key="open-in-agent-tabs" label="Open in Agent Tabs" onPress={() => openSender($, card.name, undefined, card.id)} />
+          <Button key="open-in-agent-tabs" label="Open in Agent Tabs" onPress={() => openSender($, card.name, card.name, card.id)} />
         </Box>
       </Box>
     )
@@ -1991,15 +1991,27 @@ export const register: Register = on => {
     const { value: open = false } = await $.state.get(paneOpenRef)
     if (e.props.hasSurvey || open || !unread?.count) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
-    const names = unread.senders.map(s => s.name)
-    const from = names.length ? ` from ${names.slice(0, BAND_NAMES).join(', ')}${names.length > BAND_NAMES ? ', …' : ''}` : ''
+    const shown = unread.senders.slice(0, BAND_NAMES)
     const newest = unread.senders[0]
     return (
       <Box flexDirection="row" gap={2}>
         <Text wrap="truncate-end">
-          ✉ {unread.count} new{from}
+          <Text color="suggestion">✉</Text> <Text bold>{unread.count} new</Text>
+          {shown.length ? ' from ' : ''}
+          {shown.map((s, i) => (
+            <Text key={s.id}>
+              {i ? ', ' : ''}
+              <Text color={(AGENT_GLYPHS[s.agent ?? ''] ?? OTHER_GLYPH).color}>{s.name}</Text>
+            </Text>
+          ))}
+          {unread.senders.length > BAND_NAMES ? ', …' : ''}
         </Text>
-        <Button key="open-inbox" label="Open" hotkey="o" onPress={() => (newest ? openSender($, newest.name, newest.id, null) : openPaneOn($, { view: 'agents', agent: null, message: null }))} />
+        <Button
+          key="open-inbox"
+          label="Open"
+          hotkey="o"
+          onPress={() => (newest ? openSender($, newest.name, newest.id, unread.newest ?? null) : openPaneOn($, { view: 'agents', agent: null, message: null }))}
+        />
       </Box>
     )
   })

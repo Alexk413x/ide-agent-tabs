@@ -135,7 +135,9 @@ def _count(db: Db, text: str, *args: object) -> int:
     return int(row["n"]) if row is not None else 0
 
 
-def _insert_checked(db: Db, out: Message, message_id: str, digest: str, now: int, delivery: str | None) -> Message:
+def _insert_checked(
+    db: Db, out: Message, message_id: str, digest: str, now: int, delivery: str | None, limit_sender: bool = True
+) -> Message:
     sender = out["from"]
     dup = db.one(
         "SELECT id FROM messages WHERE route = 'agent-tabs' AND from_id = ? AND to_id = ? AND digest = ? AND sent_ms > ? "
@@ -147,8 +149,15 @@ def _insert_checked(db: Db, out: Message, message_id: str, digest: str, now: int
     )
     if dup is not None:
         return {"id": str(dup["id"]), "duplicate": True}
-    sent_last_minute = _count(
-        db, "SELECT count(*) AS n FROM messages WHERE route = 'agent-tabs' AND from_id = ? AND sent_ms > ?", sender["id"], now - _MINUTE_MS
+    sent_last_minute = (
+        _count(
+            db,
+            "SELECT count(*) AS n FROM messages WHERE route = 'agent-tabs' AND from_id = ? AND sent_ms > ?",
+            sender["id"],
+            now - _MINUTE_MS,
+        )
+        if limit_sender
+        else 0
     )
     if sent_last_minute >= MAX_SENT_PER_MINUTE:
         raise MailError(f"this session sent {MAX_SENT_PER_MINUTE} messages in the last minute; wait before sending more")
@@ -188,6 +197,7 @@ def send_message(
     deadline_ms: float = TOOL_DEADLINE_MS,
     label: str | None = "send",
     delivery: str | None = None,
+    limit_sender: bool = True,
 ) -> Message:
     if utf16_len(out["text"]) > MAX_TEXT_CHARS:
         raise MailError(f"text exceeds {MAX_TEXT_CHARS} characters")
@@ -200,7 +210,10 @@ def send_message(
         message_id = new_message_id()
         try:
             sent = tx(
-                home, lambda db, message_id=message_id: _insert_checked(db, out, message_id, digest, at, delivery), deadline_ms, label
+                home,
+                lambda db, message_id=message_id: _insert_checked(db, out, message_id, digest, at, delivery, limit_sender),
+                deadline_ms,
+                label,
             )
         except sqlite3.Error as e:
             if is_constraint(e) and attempt == 0:
@@ -382,21 +395,34 @@ def unread_summary(home: str, session_id: str, now: float | None = None) -> dict
             session_id,
             *_pending_args(at),
         )
-        senders = (
-            [
-                str(r["from_id"])
-                for r in db.all(
-                    f"SELECT from_id FROM messages WHERE route = 'agent-tabs' AND to_id = ? AND {_PENDING} "
-                    "GROUP BY from_id ORDER BY max(seq) DESC LIMIT ?",
-                    _bind(session_id),
-                    *_pending_args(at),
-                    MAX_SENDERS,
-                )
-            ]
+        rows = (
+            db.all(
+                f"SELECT from_id, max(from_name) AS from_name FROM messages WHERE route = 'agent-tabs' AND to_id = ? AND {_PENDING} "
+                "GROUP BY from_id ORDER BY max(seq) DESC LIMIT ?",
+                _bind(session_id),
+                *_pending_args(at),
+                MAX_SENDERS,
+            )
             if n
             else []
         )
-        return {"count": n, "senders": senders}
+        senders = [str(r["from_id"]) for r in rows]
+        names = {str(r["from_id"]): r["from_name"] for r in rows if isinstance(r["from_name"], str)}
+        newest = (
+            db.one(
+                f"SELECT id FROM messages WHERE route = 'agent-tabs' AND to_id = ? AND {_PENDING} ORDER BY seq DESC LIMIT 1",
+                _bind(session_id),
+                *_pending_args(at),
+            )
+            if n
+            else None
+        )
+        return {
+            "count": n,
+            "senders": senders,
+            **({"names": names} if names else {}),
+            **({"newest": str(newest["id"])} if newest is not None else {}),
+        }
 
     return query(home, work)
 
